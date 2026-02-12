@@ -3,7 +3,7 @@
 # This workflow builds WASM extensions when a version tag is pushed.
 # WASM extensions compile once and run on all platforms!
 
-name: Release WASM Extensions
+name: Build WASM Extensions
 
 on:
   push:
