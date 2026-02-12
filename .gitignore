@@ -54,3 +54,6 @@ package-lock.json
 
 # Test coverage
 coverage/
+
+# Serena MCP tool (cache and config)
+.serena/
