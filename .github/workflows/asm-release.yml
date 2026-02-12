@@ -48,32 +48,43 @@ jobs:
         run: |
           mkdir -p release
           WASM_FILE=$(find extensions/as-hello/build -name "as-hello.wasm" | head -1)
-          cp "$WASM_FILE" release/as-hello.wasm
-          cp extensions/as-hello/metadata.json release/as-hello.json
-          echo "Release artifacts:"
-          ls -lh release/
+          # Create extension directory
+          mkdir -p "as-hello"
+          cp "$WASM_FILE" "as-hello/as-hello.wasm"
+          cp extensions/as-hello/metadata.json "as-hello/as-hello.json"
+          echo "Extension files:"
+          ls -lh as-hello/
 
       - name: Calculate SHA256 checksums
         run: |
           cd release
-          sha256sum as-hello.wasm | awk '{print $1}' > as-hello.wasm.sha256
-          WASM_SHA=$(cat as-hello.wasm.sha256)
+          sha256sum as-hello/as-hello.wasm | awk '{print $1}' > as-hello/as-hello.wasm.sha256
+          WASM_SHA=$(cat as-hello/as-hello.wasm.sha256)
           echo "WASM SHA256: $WASM_SHA"
-          sha256sum as-hello.json | awk '{print $1}' > as-hello.json.sha256
-          JSON_SHA=$(cat as-hello.json.sha256)
+          sha256sum as-hello/as-hello.json | awk '{print $1}' > as-hello/as-hello.json.sha256
+          JSON_SHA=$(cat as-hello/as-hello.json.sha256)
           echo "JSON SHA256: $JSON_SHA"
           cat > checksums.txt << 'EOF'
           # SHA256 Checksums - WASM Extensions
           # Generated from GitHub Actions
-          $WASM_SHA  as-hello.wasm
-          $JSON_SHA  as-hello.json
+          $WASM_SHA  as-hello/as-hello.wasm
+          $JSON_SHA  as-hello/as-hello.json
           EOF
-          cat checksums.txt
+          mv checksums.txt as-hello/
+          echo "Extension package:"
+          ls -lh as-hello/
+
+      - name: Create extension package
+        run: |
+          cd release
+          tar -czvf as-hello-${{ steps.version.outputs.tag }}.tar.gz as-hello/
+          echo "Created package:"
+          ls -lh *.tar.gz
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release/*
+          files: release/*.tar.gz
           generate_release_notes: true
           draft: false
           prerelease: false
