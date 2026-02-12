@@ -1,22 +1,9 @@
 # NeoMind Extensions - Automated Release Workflow
 #
 # This workflow builds extensions for multiple platforms when a version tag is pushed.
-#
-# Usage:
-#   git tag v0.5.8
-#   git push origin v0.5.8
-#
-# The workflow will automatically:
-#   1. Build extensions for all platforms
-#   2. Calculate SHA256 checksums
-#   3. Create a GitHub Release
-#   4. Upload all binaries
+# Extensions use public neomind-core from crates.io - no local dependencies needed.
 
 name: Release
-
-env:
-  NEOMIND_REPO: "camthink-ai/NeoMind"
-  NEOMIND_BRANCH: "main"
 
 on:
   push:
@@ -25,6 +12,9 @@ on:
 
 permissions:
   contents: write
+
+env:
+  NEOMIND_BRANCH: "main"
 
 jobs:
   build:
@@ -38,48 +28,28 @@ jobs:
             name: darwin-aarch64
             ext: dylib
             rust: stable
-
-          # macOS Intel (x86_64) - requires cross-compilation on ARM64
+          # macOS Intel (x86_64)
           - os: macos-latest
             target: x86_64-apple-darwin
             name: darwin-x86_64
             ext: dylib
             rust: stable
-
           # Linux x86_64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             name: linux-x86_64
             ext: so
             rust: stable
-
           # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             name: windows-x86_64
             ext: dll
             rust: stable
-
     runs-on: ${{ matrix.os }}
-
     steps:
-      - name: Checkout extension repository
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-      # Clone NeoMind repository (required for dependencies)
-      - name: Clone NeoMind repository
-        run: |
-          git clone --depth 1 --branch ${{ env.NEOMIND_BRANCH }} \
-            https://github.com/${{ env.NEOMIND_REPO }}.git \
-            ../NeoMind
-
-      - name: Verify NeoMind clone
-        run: |
-          echo "NeoMind repository contents:"
-          ls -la ../NeoMind/
-          echo ""
-          echo "Available crates:"
-          ls ../NeoMind/crates/
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -111,7 +81,7 @@ jobs:
         if: matrix.name == 'darwin-x86_64'
         run: rustup target add x86_64-apple-darwin
 
-      # Build the extension
+      # Build extension
       - name: Build extension (${{ matrix.name }})
         run: |
           cargo build --release --target ${{ matrix.target }}
@@ -121,7 +91,6 @@ jobs:
         shell: bash
         run: |
           echo "Organizing build output for ${{ matrix.name }}..."
-
           # Find all built extensions and rename them with platform suffix
           case "${{ matrix.ext }}" in
             dylib)
@@ -164,28 +133,23 @@ jobs:
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release/
-
           # Prefix based on platform
           PREFIX="libneomind_extension_"
           if [ "${{ matrix.ext }}" = "dll" ]; then
             PREFIX="neomind_extension_"
           fi
-
           # Find and process all built extensions
           FOUND=0
           for lib in ${PREFIX}*-${{ matrix.name }}.${{ matrix.ext }}; do
             if [ -f "$lib" ]; then
               FOUND=1
               echo "Calculating SHA256 for $lib..."
-
               if [ "${{ runner.os }}" = "Windows" ]; then
                 sha256sum "$lib" | awk '{print $1}' > "${lib}.sha256"
               else
                 shasum -a 256 "$lib" | awk '{print $1}' > "${lib}.sha256"
               fi
-
               echo "SHA256: $(cat ${lib}.sha256)"
-
               # Get file size
               if [ "${{ runner.os }}" = "macOS" ]; then
                 SIZE=$(stat -f%z "$lib")
@@ -193,12 +157,10 @@ jobs:
                 SIZE=$(stat -c%s "$lib")
               fi
               echo "Size: $SIZE bytes"
-
               # Append to build info
               echo "$(basename $lib)|$SIZE" >> ../build_info.txt
             fi
           done
-
           if [ $FOUND -eq 0 ]; then
             echo "Error: No binaries found!"
             ls -la
@@ -212,14 +174,13 @@ jobs:
           name: ${{ matrix.name }}
           path: |
             target/${{ matrix.target }}/release/*-${{ matrix.name }}.${{ matrix.ext }}
-            target/${{ matrix.target }}/release/*-${{ matrix.name }}.${{ matrix.ext }}.sha256
-          if-no-files-found: error
+          target/${{ matrix.target }}/release/*-${{ matrix.name }}.${{ matrix.ext }}.sha256
+        if-no-files-found: error
 
   # Create GitHub Release with all binaries
   release:
     needs: build
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -227,14 +188,17 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: |
+            darwin-aarch64/*
+            darwin-x86_64/*
+            linux-x86_64/*
+            windows-x86_64/*
 
       - name: Display artifacts
         run: |
           echo "Downloaded artifacts:"
           ls -R artifacts
           echo ""
-
       - name: Extract version from tag
         id: version
         run: |
@@ -249,15 +213,13 @@ jobs:
           echo "" >> checksums.txt
           echo "Generated from GitHub Actions" >> checksums.txt
           echo "" >> checksums.txt
-
           for file in artifacts/*/*.sha256; do
             if [ -f "$file" ]; then
               filename=$(basename "$file" .sha256)
               checksum=$(cat "$file")
-              echo "$checksum  $filename" >> checksums.txt
+              echo "$checksum $filename" >> checksums.txt
             fi
           done
-
           echo "Checksums:"
           cat checksums.txt
 
@@ -285,13 +247,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update release info output
+      - name: Release summary
         run: |
           echo "## Release Created!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tag:** ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Binaries" >> $GITHUB_STEP_SUMMARY
+          echo "### Released Files" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           ls -lh release/ >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
