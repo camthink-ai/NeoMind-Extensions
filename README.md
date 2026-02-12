@@ -1,12 +1,16 @@
 # NeoMind Extensions
 
-Official collection of extensions for the NeoMind Edge AI Platform.
+Official extension repository for the NeoMind Edge AI Platform.
 
 [中文文档](README.zh.md)
 
-## Overview
+## Project Description
 
-This repository contains multiple extensions that extend NeoMind's capabilities. NeoMind supports **two types of extensions**:
+This repository contains officially maintained extensions for the NeoMind Edge AI Platform. Each extension extends NeoMind's capabilities with additional features such as weather data, sensor integration, and custom commands.
+
+### Extension Types
+
+NeoMind supports **two types of extensions**:
 
 | Type | File Format | Description | Best For |
 |------|-------------|-------------|----------|

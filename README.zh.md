@@ -1,8 +1,12 @@
 # NeoMind 扩展
 
-NeoMind 边缘 AI 平台的官方扩展集合。
+NeoMind 边缘 AI 平台的官方扩展仓库。
 
 [English Documentation](README.md)
+
+## 项目描述
+
+此仓库包含为 NeoMind 边缘 AI 平台官方维护的扩展集合。每个扩展都扩展了 NeoMind 的功能，提供天气预报、传感器集成、自定义命令等额外能力。
 
 ## 概述
 
