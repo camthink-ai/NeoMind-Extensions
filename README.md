@@ -372,11 +372,4 @@ git push origin main
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
-
 ---
-
-## Authors
-
-CamThink
-
-Repository: https://github.com/camthink-ai/NeoMind-Extensions
