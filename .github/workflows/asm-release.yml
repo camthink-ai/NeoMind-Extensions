@@ -1,7 +1,7 @@
 # NeoMind WASM Extensions - Automated Release Workflow
 #
 # This workflow builds WASM extensions when a version tag is pushed.
-# WASM extensions compile once and run on all platforms!
+# Dynamically detects and builds all WASM extensions in the extensions/ directory.
 
 name: Build WASM Extensions
 
@@ -20,65 +20,139 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build asm-hello extension
+      - name: Find WASM extensions
+        id: find-extensions
         run: |
-          cd extensions/as-hello
-          npm install
-          npm run build
+          # Find all directories with package.json (WASM extensions)
+          EXTENSIONS=""
+          for dir in extensions/*/; do
+            if [ -f "$dir/package.json" ]; then
+              EXT_NAME=$(basename "$dir")
+              if [ -n "$EXTENSIONS" ]; then
+                EXTENSIONS="$EXTENSIONS,$EXT_NAME"
+              else
+                EXTENSIONS="$EXT_NAME"
+              fi
+            fi
+          done
+          echo "extensions=$EXTENSIONS" >> $GITHUB_OUTPUT
+          echo "Found WASM extensions: $EXTENSIONS"
 
-      - name: Verify WASM output
+      - name: Build all WASM extensions
         run: |
-          WASM_FILE=$(find extensions/as-hello/build -name "as-hello.wasm" | head -1)
-          if [ -z "$WASM_FILE" ]; then
-            echo "Error: WASM file not found!"
-            find extensions/as-hello/build -type f
+          EXTENSIONS="${{ steps.find-extensions.outputs.extensions }}"
+          if [ -z "$EXTENSIONS" ]; then
+            echo "No WASM extensions found!"
             exit 1
           fi
-          echo "WASM file found: $WASM_FILE"
-          ls -lh "$WASM_FILE"
+
+          # Build each extension
+          for EXT in ${EXTENSIONS//,/ }; do
+            echo "================================"
+            echo "Building extension: $EXT"
+            echo "================================"
+            cd "extensions/$EXT"
+            npm install
+            npm run build
+            cd ../..
+          done
 
       - name: Extract version from tag
         id: version
         run: |
           TAG=${GITHUB_REF#refs/tags/}
           echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
           echo "Release tag: $TAG"
 
       - name: Prepare release artifacts
         run: |
+          EXTENSIONS="${{ steps.find-extensions.outputs.extensions }}"
           mkdir -p release
-          WASM_FILE=$(find extensions/as-hello/build -name "as-hello.wasm" | head -1)
-          # Create extension directory
-          mkdir -p "as-hello"
-          cp "$WASM_FILE" "as-hello/as-hello.wasm"
-          cp extensions/as-hello/metadata.json "as-hello/as-hello.json"
-          echo "Extension files:"
-          ls -lh as-hello/
+
+          # Process each extension
+          for EXT in ${EXTENSIONS//,/ }; do
+            echo "Packaging extension: $EXT"
+
+            # Find WASM file
+            WASM_FILE=$(find "extensions/$EXT/build" -name "$EXT.wasm" -o -name "*.wasm" | head -1)
+            if [ -z "$WASM_FILE" ]; then
+              echo "Warning: WASM file not found for $EXT"
+              continue
+            fi
+
+            # Create extension directory
+            EXT_DIR="release/$EXT"
+            mkdir -p "$EXT_DIR"
+
+            # Copy WASM file with standardized name
+            cp "$WASM_FILE" "$EXT_DIR/$EXT.wasm"
+
+            # Copy metadata if exists
+            if [ -f "extensions/$EXT/metadata.json" ]; then
+              cp "extensions/$EXT/metadata.json" "$EXT_DIR/$EXT.json"
+            fi
+
+            echo "  Packaged: $EXT"
+            ls -lh "$EXT_DIR"
+          done
+
+          echo ""
+          echo "All packages:"
+          ls -lh release/
 
       - name: Calculate SHA256 checksums
         run: |
           cd release
-          sha256sum as-hello/as-hello.wasm | awk '{print $1}' > as-hello/as-hello.wasm.sha256
-          WASM_SHA=$(cat as-hello/as-hello.wasm.sha256)
-          echo "WASM SHA256: $WASM_SHA"
-          sha256sum as-hello/as-hello.json | awk '{print $1}' > as-hello/as-hello.json.sha256
-          JSON_SHA=$(cat as-hello/as-hello.json.sha256)
-          echo "JSON SHA256: $JSON_SHA"
-          cat > checksums.txt << 'EOF'
-          # SHA256 Checksums - WASM Extensions
-          # Generated from GitHub Actions
-          $WASM_SHA  as-hello/as-hello.wasm
-          $JSON_SHA  as-hello/as-hello.json
-          EOF
-          mv checksums.txt as-hello/
-          echo "Extension package:"
-          ls -lh as-hello/
 
-      - name: Create extension package
+          # Calculate checksums for each extension
+          for EXT_DIR in */; do
+            echo "Calculating checksums for $EXT_DIR"
+
+            # WASM file checksum
+            if [ -f "$EXT_DIR/$EXT_DIR.wasm" ]; then
+              sha256sum "$EXT_DIR/$EXT_DIR.wasm" | awk '{print $1}' > "$EXT_DIR/$EXT_DIR.wasm.sha256"
+              WASM_SHA=$(cat "$EXT_DIR/$EXT_DIR.wasm.sha256")
+              echo "    WASM: $WASM_SHA"
+            fi
+
+            # JSON file checksum
+            if [ -f "$EXT_DIR/$EXT_DIR.json" ]; then
+              sha256sum "$EXT_DIR/$EXT_DIR.json" | awk '{print $1}' > "$EXT_DIR/$EXT_DIR.json.sha256"
+              JSON_SHA=$(cat "$EXT_DIR/$EXT_DIR.json.sha256")
+              echo "    JSON: $JSON_SHA"
+            fi
+
+            # Create checksums.txt for this extension
+            cat > "$EXT_DIR/checksums.txt" << 'EOF'
+            # SHA256 Checksums
+            # Generated from GitHub Actions
+            EOF
+            if [ -f "$EXT_DIR/$EXT_DIR.wasm.sha256" ]; then
+              echo "$(cat $EXT_DIR/$EXT_DIR.wasm.sha256)  $EXT_DIR.wasm" >> "$EXT_DIR/checksums.txt"
+            fi
+            if [ -f "$EXT_DIR/$EXT_DIR.json.sha256" ]; then
+              echo "$(cat $EXT_DIR/$EXT_DIR.json.sha256)  $EXT_DIR.json" >> "$EXT_DIR/checksums.txt"
+            fi
+          done
+
+          echo ""
+          echo "All packages with checksums:"
+          find . -name "checksums.txt" -exec echo "  {}:" \; -exec cat {} \; -exec echo ""
+
+      - name: Create extension packages
         run: |
           cd release
-          tar -czvf as-hello-${{ steps.version.outputs.tag }}.tar.gz as-hello/
-          echo "Created package:"
+          VERSION="${{ steps.version.outputs.tag }}"
+
+          # Create tar.gz for each extension
+          for EXT_DIR in */; do
+            echo "Packaging $EXT_DIR..."
+            tar -czvf "$EXT_DIR-$VERSION.tar.gz" "$EXT_DIR"
+          done
+
+          echo ""
+          echo "Created packages:"
           ls -lh *.tar.gz
 
       - name: Create GitHub Release
@@ -98,7 +172,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tag:** ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Released Files" >> $GITHUB_STEP_SUMMARY
+          echo "### Released Extensions" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          ls -lh release/ >> $GITHUB_STEP_SUMMARY
+          ls -lh release/*.tar.gz >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
