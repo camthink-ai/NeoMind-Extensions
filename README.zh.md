@@ -381,12 +381,6 @@ git push origin main
 
 ## 许可证
 
-MIT License - 详见 [LICENSE](LICENSE) 文件。
+MIT License
 
 ---
-
-## 作者
-
-CamThink
-
-仓库地址：https://github.com/camthink-ai/NeoMind-Extensions

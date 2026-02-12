@@ -371,5 +371,5 @@ git push origin main
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT License
 ---
