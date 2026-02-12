@@ -6,7 +6,7 @@ Official extension repository for the NeoMind Edge AI Platform.
 
 ## Project Description
 
-This repository contains officially maintained extensions for the NeoMind Edge AI Platform. Each extension extends NeoMind's capabilities with additional features such as weather data, sensor integration, and custom commands.
+This repository contains officially maintained extensions for the NeoMind Edge AI Platform.
 
 ### Extension Types
 
