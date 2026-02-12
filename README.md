@@ -2,7 +2,7 @@
 
 Official collection of extensions for the NeoMind Edge AI Platform.
 
-[中文文档](README.zh.md) | English Documentation
+[中文文档](README.zh.md)
 
 ## Overview
 

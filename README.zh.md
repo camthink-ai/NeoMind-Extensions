@@ -2,7 +2,7 @@
 
 NeoMind 边缘 AI 平台的官方扩展集合。
 
-[中文文档](README.zh.md) | [English Documentation](README.md)
+[English Documentation](README.md)
 
 ## 概述
 

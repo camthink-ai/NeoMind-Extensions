@@ -2,7 +2,7 @@
 
 This guide explains how to develop, build, and install extensions for the NeoMind Edge AI Platform using the **V2 Extension API**.
 
-[中文指南](EXTENSION_GUIDE.zh.md) | English Documentation
+[中文指南](EXTENSION_GUIDE.zh.md)
 
 ---
 

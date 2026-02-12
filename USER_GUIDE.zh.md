@@ -2,7 +2,7 @@
 
 本指南解释如何查找、安装和使用 NeoMind 扩展。
 
-[中文指南](USER_GUIDE.zh.md) | [English Documentation](USER_GUIDE.md)
+[English Documentation](USER_GUIDE.md)
 
 ---
 
