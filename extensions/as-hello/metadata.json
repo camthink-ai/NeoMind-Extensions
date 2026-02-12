@@ -4,11 +4,10 @@
   "description": "A simple WASM extension written in AssemblyScript (TypeScript-like language) demonstrating cross-platform extension development",
   "version": "0.3.0",
   "author": "CamThink",
-  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions",
   "license": "MIT",
-  "language": "AssemblyScript (TypeScript-like)",
-  "wasm": true,
-  "min_neomind_version": "0.5.8",
+  "categories": ["example", "wasm", "cross-platform", "assemblyscript", "typescript"],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions",
+  "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
   "capabilities": {
     "metrics": [
       {
@@ -142,7 +141,7 @@
         "parameters": [],
         "fixed_values": {},
         "samples": [{}],
-        "llm_hints": "Retrieve all metrics (counter, temperature, humidity) with current values.",
+        "llm_hints": "Retrieve all metrics (counter, temperature, humidity) with their current values.",
         "parameter_groups": []
       }
     ]
@@ -155,6 +154,7 @@
     }
   },
   "requirements": {
+    "min_neomind_version": "0.5.8",
     "network": false,
     "file_access": false,
     "max_memory_mb": 16
