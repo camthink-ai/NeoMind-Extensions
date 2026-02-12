@@ -175,10 +175,8 @@ jobs:
           path: |
             target/${{ matrix.target }}/release/*-${{ matrix.name }}.${{ matrix.ext }}
             target/${{ matrix.target }}/release/*-${{ matrix.name }}.${{ matrix.ext }}.sha256
-        if-no-files-found: error
-        if-no-files-found: error
 
-  # Create GitHub Release with all binaries
+      # Create GitHub Release with all binaries
   release:
     needs: build
     runs-on: ubuntu-latest
@@ -200,6 +198,7 @@ jobs:
           echo "Downloaded artifacts:"
           ls -R artifacts
           echo ""
+
       - name: Extract version from tag
         id: version
         run: |
