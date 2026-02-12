@@ -174,7 +174,8 @@ jobs:
           name: ${{ matrix.name }}
           path: |
             target/${{ matrix.target }}/release/*-${{ matrix.name }}.${{ matrix.ext }}
-          target/${{ matrix.target }}/release/*-${{ matrix.name }}.${{ matrix.ext }}.sha256
+            target/${{ matrix.target }}/release/*-${{ matrix.name }}.${{ matrix.ext }}.sha256
+        if-no-files-found: error
         if-no-files-found: error
 
   # Create GitHub Release with all binaries
