@@ -148,9 +148,9 @@
   },
   "builds": {
     "wasm": {
-      "file": "as-hello.wasm",
-      "size_kb": "~15 KB",
-      "notes": "Single WASM file for all platforms"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v0.3.0/as-hello-v0.3.0.tar.gz",
+      "sha256": "",
+      "size": 15000
     }
   },
   "requirements": {
