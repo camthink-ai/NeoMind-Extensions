@@ -124,10 +124,10 @@ jobs:
             fi
 
             # Create checksums.txt for this extension
-            cat > "$EXT_DIR/checksums.txt" << 'EOF'
+            cat > "$EXT_DIR/checksums.txt" << CHECKSUM_EOF
             # SHA256 Checksums
             # Generated from GitHub Actions
-            EOF
+            CHECKSUM_EOF
             if [ -f "$EXT_DIR/$EXT_DIR.wasm.sha256" ]; then
               echo "$(cat $EXT_DIR/$EXT_DIR.wasm.sha256)  $EXT_DIR.wasm" >> "$EXT_DIR/checksums.txt"
             fi
