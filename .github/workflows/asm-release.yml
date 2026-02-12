@@ -68,12 +68,12 @@ jobs:
           sha256sum as-hello.json | awk '{print $1}' > as-hello.json.sha256
           JSON_SHA=$(cat as-hello.json.sha256)
           echo "JSON SHA256: $JSON_SHA"
-          cat > checksums.txt << EOF
-# SHA256 Checksums - WASM Extensions
-# Generated from GitHub Actions
-$WASM_SHA  as-hello.wasm
-$JSON_SHA  as-hello.json
-EOF
+          cat > checksums.txt << 'EOF'
+          # SHA256 Checksums - WASM Extensions
+          # Generated from GitHub Actions
+          $WASM_SHA  as-hello.wasm
+          $JSON_SHA  as-hello.json
+          EOF
           cat checksums.txt
 
       - name: Create GitHub Release
