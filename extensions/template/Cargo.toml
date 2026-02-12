@@ -12,8 +12,8 @@ name = "neomind_extension_template"
 crate-type = ["cdylib"]
 
 [dependencies]
-neomind-core = "0.5"
-neomind-devices = "0.5"
+neomind-core = { workspace = true }
+neomind-devices = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
