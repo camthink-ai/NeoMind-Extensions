@@ -1,26 +1,26 @@
-[package]
-name = "neomind-weather-extension"
-version = "0.2.0"
+[workspace]
+resolver = "2"
+members = [
+    "extensions/*",
+]
+exclude = [
+    "extensions/as-hello",  # AssemblyScript project (not Rust)
+]
+
+[workspace.package]
+version = "0.5.8"
 edition = "2021"
-authors = ["NeoMind Team"]
-description = "Weather forecast extension for NeoMind Edge AI Platform"
+authors = ["CamThink"]
 license = "MIT"
+repository = "https://github.com/camthink-ai/NeoMind-Extensions"
 
-[lib]
-name = "neomind_extension_weather_forecast"
-crate-type = ["cdylib"]
-
-[dependencies]
-neomind-extension-sdk = { path = "../NeoTalk/crates/neomind-extension-sdk" }
+[workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+async-trait = "0.1"
 
-[dev-dependencies]
-# For testing only
-
-[features]
-default = []
-
-# Build metadata for development
-[metadata.dist]
-targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]
+# WASM release profile (applies to all workspace members)
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"

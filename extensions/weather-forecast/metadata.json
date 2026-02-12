@@ -1,0 +1,134 @@
+{
+  "id": "weather-forecast",
+  "name": "Weather Forecast",
+  "description": "Global weather data and forecasts for any city. Provides current weather conditions including temperature, humidity, wind speed, and cloud cover.",
+  "version": "0.5.8",
+  "author": "CamThink",
+  "license": "MIT",
+  "categories": ["weather", "data"],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions",
+  "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
+  "readme_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/weather-forecast/README.md",
+
+  "capabilities": {
+    "tools": [
+      {
+        "name": "query_weather",
+        "display_name": "Query Weather",
+        "description": "Get current weather for any city. Returns temperature, humidity, wind speed, and cloud cover.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string",
+              "description": "Name of the city (e.g., Beijing, London, Tokyo)"
+            }
+          },
+          "required": ["city"]
+        },
+        "returns": "Weather data including temperature, humidity, wind speed, and cloud cover"
+      }
+    ],
+    "metrics": [
+      {
+        "name": "temperature_c",
+        "display_name": "Temperature",
+        "data_type": "Float",
+        "unit": "°C",
+        "description": "Current temperature in Celsius",
+        "min": -50.0,
+        "max": 60.0
+      },
+      {
+        "name": "humidity_percent",
+        "display_name": "Humidity",
+        "data_type": "Integer",
+        "unit": "%",
+        "description": "Relative humidity percentage",
+        "min": 0.0,
+        "max": 100.0
+      },
+      {
+        "name": "wind_speed_kmph",
+        "display_name": "Wind Speed",
+        "data_type": "Float",
+        "unit": "km/h",
+        "description": "Wind speed in kilometers per hour",
+        "min": 0.0,
+        "max": 200.0
+      },
+      {
+        "name": "cloud_cover_percent",
+        "display_name": "Cloud Cover",
+        "data_type": "Integer",
+        "unit": "%",
+        "description": "Cloud cover percentage",
+        "min": 0.0,
+        "max": 100.0
+      }
+    ],
+    "commands": [
+      {
+        "name": "query_weather",
+        "display_name": "Query Weather",
+        "description": "Query current weather for any city. Returns temperature, humidity, wind speed, and cloud cover.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string",
+              "description": "Name of the city"
+            }
+          },
+          "required": []
+        }
+      },
+      {
+        "name": "refresh",
+        "display_name": "Refresh Weather Data",
+        "description": "Force refresh cached weather data for the default city",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      }
+    ]
+  },
+
+  "builds": {
+    "darwin-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v0.1.0/libneomind_extension_weather_forecast-darwin-aarch64.dylib",
+      "sha256": "",
+      "size": 0
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v0.1.0/libneomind_extension_weather_forecast-darwin-x86_64.dylib",
+      "sha256": "",
+      "size": 0
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v0.1.0/libneomind_extension_weather_forecast-linux-x86_64.so",
+      "sha256": "",
+      "size": 0
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v0.1.0/neomind_extension_weather_forecast-windows-x86_64.dll",
+      "sha256": "",
+      "size": 0
+    }
+  },
+
+  "requirements": {
+    "min_neomind_version": "0.5.8",
+    "network": true,
+    "api_keys": []
+  },
+
+  "permissions": [],
+
+  "safety": {
+    "timeout_seconds": 30,
+    "max_memory_mb": 100
+  }
+}

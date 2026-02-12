@@ -1,0 +1,14 @@
+{
+  "name": "as-hello-extension",
+  "version": "0.3.0",
+  "description": "AssemblyScript Hello Extension for NeoMind",
+  "type": "module",
+  "scripts": {
+    "asbuild": "asc assembly/extension.ts --target release --runtime minimal --exportRuntime --outFile build/as-hello.wasm -O3z",
+    "build": "npm run asbuild",
+    "test": "node tests/test.js"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.27.29"
+  }
+}

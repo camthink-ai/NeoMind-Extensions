@@ -1,6 +1,9 @@
 # Rust
 /target/
 **/*.rs.bk
+*.pdb
+
+# Cargo
 Cargo.lock
 
 # IDE
@@ -10,8 +13,44 @@ Cargo.lock
 *.swo
 *~
 .DS_Store
+*.iml
 
 # Build outputs
 *.dylib
 *.so
 *.dll
+*.a
+*.lib
+
+# Profiling
+*.profraw
+*.profdata
+
+# Debug
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Log files
+*.log
+
+# Temporary files
+tmp/
+temp/
+
+# Node.js / AssemblyScript
+node_modules/
+package-lock.json
+*.wasm
+*.wat
+# Build outputs from AssemblyScript
+/extensions/as-hello/build/
+
+# Test coverage
+coverage/

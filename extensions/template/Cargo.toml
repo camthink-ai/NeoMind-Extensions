@@ -1,0 +1,22 @@
+[package]
+name = "neomind-template-extension"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Template extension for NeoMind - copy this to create your own"
+publish = false
+
+[lib]
+name = "neomind_extension_template"
+crate-type = ["cdylib"]
+
+[dependencies]
+neomind-core = { path = "../../../NeoMind/crates/neomind-core" }
+neomind-devices = { path = "../../../NeoMind/crates/neomind-devices" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+once_cell = "1.19"
+semver = "1.0"
+tokio = { version = "1", features = ["sync"] }

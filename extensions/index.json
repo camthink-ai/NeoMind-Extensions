@@ -1,0 +1,28 @@
+{
+  "version": "1.0",
+  "last_updated": "2025-02-11T00:00:00Z",
+  "extensions": [
+    {
+      "id": "as-hello",
+      "name": "AssemblyScript Hello Extension",
+      "description": "A WASM extension written in AssemblyScript (TypeScript-like) with fast compile times and small binary size",
+      "version": "0.3.0",
+      "author": "CamThink",
+      "license": "MIT",
+      "categories": ["example", "wasm", "cross-platform", "assemblyscript", "typescript"],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/as-hello",
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/as-hello/metadata.json"
+    },
+    {
+      "id": "weather-forecast",
+      "name": "Weather Forecast",
+      "description": "Global weather data and forecasts for any city",
+      "version": "0.5.8",
+      "author": "CamThink",
+      "license": "MIT",
+      "categories": ["weather", "data"],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/weather-forecast",
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/weather-forecast/metadata.json"
+    }
+  ]
+}

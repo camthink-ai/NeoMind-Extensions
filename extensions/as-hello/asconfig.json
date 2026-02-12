@@ -1,0 +1,17 @@
+{
+  "extends": "assemblyscript/std/assembly.json",
+  "entry": "assembly/extension.ts",
+  "targets": {
+    "release": {
+      "binaryFile": "build/as-hello.wasm",
+      "textFile": "build/as-hello.wat",
+      "bindings": "esm",
+      "optimizeLevel": 3,
+      "shrinkLevel": 0,
+      "noExportRuntime": false,
+      "runtime": "minimal"
+    }
+  },
+  "options": {
+  }
+}

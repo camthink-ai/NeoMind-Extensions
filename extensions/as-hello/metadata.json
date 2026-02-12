@@ -1,0 +1,167 @@
+{
+  "id": "as-hello",
+  "name": "AssemblyScript Hello Extension",
+  "description": "A simple WASM extension written in AssemblyScript (TypeScript-like language) demonstrating cross-platform extension development",
+  "version": "0.3.0",
+  "author": "CamThink",
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions",
+  "license": "MIT",
+  "language": "AssemblyScript (TypeScript-like)",
+  "wasm": true,
+  "min_neomind_version": "0.5.8",
+  "capabilities": {
+    "metrics": [
+      {
+        "name": "counter",
+        "display_name": "Counter",
+        "data_type": "integer",
+        "unit": "count",
+        "min": null,
+        "max": null,
+        "required": false,
+        "description": "A simple counter that can be incremented"
+      },
+      {
+        "name": "temperature",
+        "display_name": "Temperature",
+        "data_type": "float",
+        "unit": "°C",
+        "min": -20.0,
+        "max": 50.0,
+        "required": false,
+        "description": "Simulated temperature reading"
+      },
+      {
+        "name": "humidity",
+        "display_name": "Humidity",
+        "data_type": "float",
+        "unit": "%",
+        "min": 0.0,
+        "max": 100.0,
+        "required": false,
+        "description": "Simulated humidity reading"
+      }
+    ],
+    "commands": [
+      {
+        "name": "get_counter",
+        "display_name": "Get Counter",
+        "description": "Get the current counter value",
+        "payload_template": "{}",
+        "parameters": [],
+        "fixed_values": {},
+        "samples": [{}],
+        "llm_hints": "Get the current counter value. Returns the counter as an integer.",
+        "parameter_groups": []
+      },
+      {
+        "name": "increment_counter",
+        "display_name": "Increment Counter",
+        "description": "Increment the counter by 1",
+        "payload_template": "{}",
+        "parameters": [],
+        "fixed_values": {},
+        "samples": [{}],
+        "llm_hints": "Increment the counter by 1 and return the new value.",
+        "parameter_groups": []
+      },
+      {
+        "name": "reset_counter",
+        "display_name": "Reset Counter",
+        "description": "Reset the counter to its default value (42)",
+        "payload_template": "{}",
+        "parameters": [],
+        "fixed_values": {},
+        "samples": [{}],
+        "llm_hints": "Reset the counter to 42 and return the new value.",
+        "parameter_groups": []
+      },
+      {
+        "name": "get_temperature",
+        "display_name": "Get Temperature",
+        "description": "Get the current temperature reading",
+        "payload_template": "{}",
+        "parameters": [],
+        "fixed_values": {},
+        "samples": [{}],
+        "llm_hints": "Get the current temperature reading in Celsius.",
+        "parameter_groups": []
+      },
+      {
+        "name": "set_temperature",
+        "display_name": "Set Temperature",
+        "description": "Set a new temperature value (for testing)",
+        "payload_template": "{\"temperature\": {{temperature}}}",
+        "parameters": [
+          {
+            "name": "temperature",
+            "display_name": "Temperature",
+            "description": "New temperature value",
+            "type": "float",
+            "required": true,
+            "default": null,
+            "min": -50.0,
+            "max": 60.0
+          }
+        ],
+        "fixed_values": {},
+        "samples": [
+          {"temperature": 25.5},
+          {"temperature": 30.0}
+        ],
+        "llm_hints": "Set the temperature to a new value. Takes a temperature parameter in Celsius.",
+        "parameter_groups": []
+      },
+      {
+        "name": "get_humidity",
+        "display_name": "Get Humidity",
+        "description": "Get the current humidity reading",
+        "payload_template": "{}",
+        "parameters": [],
+        "fixed_values": {},
+        "samples": [{}],
+        "llm_hints": "Get the current humidity reading as a percentage.",
+        "parameter_groups": []
+      },
+      {
+        "name": "hello",
+        "display_name": "Hello",
+        "description": "Say hello from the AssemblyScript extension",
+        "payload_template": "{}",
+        "parameters": [],
+        "fixed_values": {},
+        "samples": [{}],
+        "llm_hints": "Returns a greeting message from the AssemblyScript WASM extension.",
+        "parameter_groups": []
+      },
+      {
+        "name": "get_all_metrics",
+        "display_name": "Get All Metrics",
+        "description": "Get all current metric values with slight variation",
+        "payload_template": "{}",
+        "parameters": [],
+        "fixed_values": {},
+        "samples": [{}],
+        "llm_hints": "Retrieve all metrics (counter, temperature, humidity) with current values.",
+        "parameter_groups": []
+      }
+    ]
+  },
+  "builds": {
+    "wasm": {
+      "file": "as-hello.wasm",
+      "size_kb": "~15 KB",
+      "notes": "Single WASM file for all platforms"
+    }
+  },
+  "requirements": {
+    "network": false,
+    "file_access": false,
+    "max_memory_mb": 16
+  },
+  "safety": {
+    "timeout_seconds": 5,
+    "max_memory_mb": 16,
+    "sandboxed": true
+  }
+}

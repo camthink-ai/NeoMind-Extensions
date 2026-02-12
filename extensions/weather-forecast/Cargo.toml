@@ -1,0 +1,21 @@
+[package]
+name = "neomind-weather-forecast"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Weather forecast extension for NeoMind"
+publish = false
+
+[lib]
+name = "neomind_extension_weather_forecast"
+crate-type = ["cdylib"]
+
+[dependencies]
+neomind-core = { path = "../../../NeoMind/crates/neomind-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+once_cell = "1.19"
+semver = { version = "1", features = ["serde"] }
+tokio = { version = "1", features = ["sync"] }
