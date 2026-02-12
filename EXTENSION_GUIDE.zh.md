@@ -2,7 +2,7 @@
 
 本指南解释如何使用 **V2 扩展 API** 为 NeoMind 边缘 AI 平台开发、构建和安装扩展。
 
-**中文指南** | **[English Documentation](EXTENSION_GUIDE.md)**
+[中文指南](EXTENSION_GUIDE.zh.md) | [English Documentation](EXTENSION_GUIDE.md)
 
 ---
 

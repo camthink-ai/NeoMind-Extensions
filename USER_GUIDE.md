@@ -2,7 +2,7 @@
 
 This guide explains how to find, install, and use NeoMind extensions.
 
-**[中文指南](USER_GUIDE.zh.md)** | English Documentation
+[中文指南](USER_GUIDE.zh.md) | English Documentation
 
 ---
 

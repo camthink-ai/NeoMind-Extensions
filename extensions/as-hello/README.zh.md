@@ -2,7 +2,7 @@
 
 一个使用 [AssemblyScript](https://www.assemblyscript.org/) 编写的 NeoMind WASM 扩展——AssemblyScript 是一种类似 TypeScript 的语言，可以编译为 WebAssembly。
 
-**中文文档** | **[English Documentation](README.md)**
+[中文文档](README.zh.md) | [English Documentation](README.md)
 
 ## 为什么选择 AssemblyScript？
 

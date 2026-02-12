@@ -2,7 +2,7 @@
 
 A NeoMind WASM extension written in [AssemblyScript](https://www.assemblyscript.org/) - a TypeScript-like language that compiles to WebAssembly.
 
-**[中文文档](README.zh.md)** | English Documentation
+[中文文档](README.zh.md) | English Documentation
 
 ## Why AssemblyScript?
 
