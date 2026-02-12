@@ -1,0 +1,132 @@
+# NeoMind WASM Extensions - Automated Release Workflow
+#
+# This workflow builds WASM extensions when a version tag is pushed.
+# WASM extensions compile once and run on all platforms!
+
+name: Release WASM Extensions
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v0.1.0)'
+        required: true
+        default: 'v0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+
+      - name: Verify WASM target
+        run: |
+          rustup target list | grep wasm
+          rustc --print target-list | grep wasm32-unknown
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: wasm-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache Cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: wasm-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache Cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: wasm-cargo-build-wasm32-unknown
+
+      - name: Build asm-hello extension
+        run: |
+          cd extensions/as-hello
+          npm install
+          npm run build
+
+      - name: Verify WASM output
+        run: |
+          WASM_FILE=$(find extensions/as-hello/build -name "as-hello.wasm" | head -1)
+          if [ -z "$WASM_FILE" ]; then
+            echo "Error: WASM file not found!"
+            find extensions/as-hello/target -type f
+            exit 1
+          fi
+          echo "WASM file found: $WASM_FILE"
+          ls -lh "$WASM_FILE"
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Release tag: $TAG"
+
+      - name: Prepare release artifacts
+        run: |
+          mkdir -p release
+          # Find and copy WASM file
+          WASM_FILE=$(find extensions/as-hello/build -name "as-hello.wasm" | head -1)
+          cp "$WASM_FILE" release/as-hello.wasm
+          # Copy JSON metadata
+          cp extensions/as-hello/metadata.json release/as-hello.json
+          echo "Release artifacts:"
+          ls -lh release/
+
+      - name: Calculate SHA256 checksums
+        run: |
+          cd release
+          # SHA256 for WASM file
+          sha256sum as-hello.wasm | awk '{print $1}' > as-hello.wasm.sha256
+          WASM_SHA=$(cat as-hello.wasm.sha256)
+          echo "WASM SHA256: $WASM_SHA"
+          # SHA256 for JSON file
+          sha256sum as-hello.json | awk '{print $1}' > as-hello.json.sha256
+          JSON_SHA=$(cat as-hello.json.sha256)
+          echo "JSON SHA256: $JSON_SHA"
+          # Create checksums.txt
+          cat > checksums.txt << EOF
+# SHA256 Checksums - WASM Extensions
+# Generated from GitHub Actions
+$WASM_SHA  as-hello.wasm
+$JSON_SHA  as-hello.json
+EOF
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          name: ${{ steps.version.outputs.tag }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release summary
+        run: |
+          echo "## WASM Release Created!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Released Files" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          ls -lh release/ >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
