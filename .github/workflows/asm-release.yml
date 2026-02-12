@@ -126,10 +126,10 @@ jobs:
             # Create checksums.txt for this extension using printf (avoid heredoc issues)
             printf "# SHA256 Checksums\n# Generated from GitHub Actions\n" > "$EXT_DIR/checksums.txt"
             if [ -f "$EXT_DIR/$EXT_DIR.wasm.sha256" ]; then
-              printf "%s  %s\n" "$(cat $EXT_DIR/$EXT_DIR.wasm.sha256)" "$EXT_DIR.wasm" >> "$EXT_DIR/checksums.txt"
+              printf "%s\n" "$(cat $EXT_DIR/$EXT_DIR.wasm.sha256)" "$EXT_DIR.wasm" >> "$EXT_DIR/checksums.txt"
             fi
             if [ -f "$EXT_DIR/$EXT_DIR.json.sha256" ]; then
-              printf "%s  %s\n" "$(cat $EXT_DIR/$EXT_DIR.json.sha256)" "$EXT_DIR.json" >> "$EXT_DIR/checksums.txt"
+              printf "%s\n" "$(cat $EXT_DIR/$EXT_DIR.json.sha256)" "$EXT_DIR.json" >> "$EXT_DIR/checksums.txt"
             fi
           done
 
