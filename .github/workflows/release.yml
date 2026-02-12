@@ -91,10 +91,8 @@ jobs:
         shell: bash
         run: |
           echo "Organizing build output for ${{ matrix.name }}..."
-          # Find all built extensions and rename them with platform suffix
           case "${{ matrix.ext }}" in
             dylib)
-              # macOS
               for lib in target/${{ matrix.target }}/release/libneomind_extension_*.dylib; do
                 if [ -f "$lib" ]; then
                   basename_lib=$(basename "$lib")
@@ -105,7 +103,6 @@ jobs:
               done
               ;;
             so)
-              # Linux
               for lib in target/${{ matrix.target }}/release/libneomind_extension_*.so; do
                 if [ -f "$lib" ]; then
                   basename_lib=$(basename "$lib")
@@ -116,7 +113,6 @@ jobs:
               done
               ;;
             dll)
-              # Windows
               for lib in target/${{ matrix.target }}/release/neomind_extension_*.dll; do
                 if [ -f "$lib" ]; then
                   basename_lib=$(basename "$lib")
@@ -133,12 +129,10 @@ jobs:
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release/
-          # Prefix based on platform
           PREFIX="libneomind_extension_"
           if [ "${{ matrix.ext }}" = "dll" ]; then
             PREFIX="neomind_extension_"
           fi
-          # Find and process all built extensions
           FOUND=0
           for lib in ${PREFIX}*-${{ matrix.name }}.${{ matrix.ext }}; do
             if [ -f "$lib" ]; then
@@ -150,14 +144,12 @@ jobs:
                 shasum -a 256 "$lib" | awk '{print $1}' > "${lib}.sha256"
               fi
               echo "SHA256: $(cat ${lib}.sha256)"
-              # Get file size
               if [ "${{ runner.os }}" = "macOS" ]; then
                 SIZE=$(stat -f%z "$lib")
               else
                 SIZE=$(stat -c%s "$lib")
               fi
               echo "Size: $SIZE bytes"
-              # Append to build info
               echo "$(basename $lib)|$SIZE" >> ../build_info.txt
             fi
           done
@@ -176,7 +168,7 @@ jobs:
             target/${{ matrix.target }}/release/*-${{ matrix.name }}.${{ matrix.ext }}
             target/${{ matrix.target }}/release/*-${{ matrix.name }}.${{ matrix.ext }}.sha256
 
-      # Create GitHub Release with all binaries
+  # Create GitHub Release with all binaries
   release:
     needs: build
     runs-on: ubuntu-latest
@@ -254,6 +246,6 @@ jobs:
           echo "**Tag:** ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Released Files" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
           ls -lh release/ >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
