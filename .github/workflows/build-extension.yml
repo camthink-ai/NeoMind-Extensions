@@ -1,0 +1,369 @@
+name: Build Extensions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'extensions/**'
+  workflow_dispatch:
+    inputs:
+      extension:
+        description: 'Extension name (build all if empty)'
+        required: false
+        default: ''
+      release:
+        description: 'Create GitHub Release'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # 构建原生扩展 (Rust)
+  build-native:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: darwin-aarch64
+            ext: dylib
+            target: aarch64-apple-darwin
+          - os: macos-13
+            platform: darwin-x86_64
+            ext: dylib
+            target: x86_64-apple-darwin
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+            ext: so
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-22.04
+            platform: linux-aarch64
+            ext: so
+            target: aarch64-unknown-linux-gnu
+            cross: aarch64-linux-gnu
+          - os: windows-2022
+            platform: windows-x86_64
+            ext: dll
+            target: x86_64-pc-windows-msvc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross compiler (Linux ARM)
+        if: matrix.cross == 'aarch64-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Get extensions to build
+        id: get_exts
+        shell: bash
+        run: |
+          if [ "${{ inputs.extension }}" != "" ]; then
+            echo "exts=${{ inputs.extension }}" >> $GITHUB_OUTPUT
+          else
+            # 获取变更的扩展目录
+            if [ "${{ github.event_name }}" = "push" ]; then
+              changed=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} 2>/dev/null || echo "")
+            else
+              changed=""
+            fi
+
+            echo "$changed" | grep '^extensions/' 2>/dev/null | cut -d'/' -f2 | sort -u > /tmp/exts.txt || true
+
+            # 如果没变更则构建全部
+            if [ ! -s /tmp/exts.txt ]; then
+              ls -1 extensions 2>/dev/null | grep -v node_modules > /tmp/exts.txt || true
+            fi
+
+            exts=$(cat /tmp/exts.txt | tr '\n' ' ' | sed 's/ *$//;s/^ *//;s/ *$//')
+            echo "exts=$exts" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build
+        shell: bash
+        env:
+          EXTENSIONS: ${{ steps.get_exts.outputs.exts }}
+          PLATFORM: ${{ matrix.platform }}
+          OUT_EXT: ${{ matrix.ext }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          echo "Building for: ${{ matrix.platform }} (${{ matrix.os }})"
+          echo "Extensions: $EXTENSIONS"
+
+          mkdir -p dist
+
+          for ext in $EXTENSIONS; do
+            [ -z "$ext" ] && continue
+
+            ext_dir="extensions/$ext"
+            [ ! -d "$ext_dir" ] && continue
+
+            echo "--- Building: $ext"
+
+            # 跳过 template 和非 Rust 扩展
+            [ "$ext" = "template" ] && continue
+            [ ! -f "$ext_dir/Cargo.toml" ] && continue
+
+            cd "$ext_dir"
+
+            echo "  Target: $TARGET"
+
+            # 构建
+            cargo build --release --target "$TARGET"
+
+            # 找构建产物
+            libname="libneomind_extension_${ext}.${{ matrix.ext }}"
+            if [ "${{ matrix.os }}" = "windows-2022" ]; then
+              libname="neomind_extension_${ext}.${{ matrix.ext }}"
+            fi
+
+            src="target/$TARGET/release/$libname"
+
+            if [ -f "$src" ]; then
+              # 计算信息
+              if [ "${{ runner.os }}" = "Windows" ]; then
+                sha=$(certutil -hashfile "$src" SHA256 | grep -o '[a-f0-9]\{64\}')
+                size=$(powershell -command "(Get-Item '$src').length")
+              else
+                sha=$(sha256sum "$src" 2>/dev/null || shasum -a 256 "$src" | cut -d' ' -f1)
+                size=$(wc -c < "$src")
+              fi
+
+              dst="../../dist/${ext}-${{ matrix.platform }}.${{ matrix.ext }}"
+              cp "$src" "$dst"
+
+              echo "$ext|${{ matrix.platform }}|$sha|$size" >> ../../dist/checksums.txt
+              echo "  ✓ $libname"
+              echo "    SHA256: $sha"
+              echo "    Size: $size bytes"
+            else
+              echo "  ✗ Build output not found: $src"
+            fi
+
+            cd ../..
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.platform }}
+          path: dist/
+          retention-days: 7
+
+  # 构建 WASM 扩展
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Get extensions to build
+        id: get_exts
+        run: |
+          if [ "${{ inputs.extension }}" != "" ]; then
+            echo "exts=${{ inputs.extension }}" >> $GITHUB_OUTPUT
+          else
+            if [ "${{ github.event_name }}" = "push" ]; then
+              changed=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} 2>/dev/null || echo "")
+            else
+              changed=""
+            fi
+
+            echo "$changed" | grep '^extensions/' 2>/dev/null | cut -d'/' -f2 | sort -u > /tmp/exts.txt || true
+
+            if [ ! -s /tmp/exts.txt ]; then
+              ls -1 extensions 2>/dev/null | grep -v node_modules > /tmp/exts.txt || true
+            fi
+
+            exts=$(cat /tmp/exts.txt | tr '\n' ' ' | sed 's/ *$//;s/^ *//;s/ *$//')
+            echo "exts=$exts" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build WASM
+        env:
+          EXTENSIONS: ${{ steps.get_exts.outputs.exts }}
+        run: |
+          echo "Building WASM extensions: $EXTENSIONS"
+          mkdir -p dist
+
+          for ext in $EXTENSIONS; do
+            [ -z "$ext" ] && continue
+
+            ext_dir="extensions/$ext"
+            [ ! -d "$ext_dir" ] && continue
+
+            # 只处理有 package.json 的 WASM 扩展
+            [ ! -f "$ext_dir/package.json" ] && continue
+
+            echo "--- Building WASM: $ext"
+
+            cd "$ext_dir"
+            npm install --silent
+            npm run build
+
+            # 找 .wasm 文件
+            for wasm in build/*.wasm; do
+              [ ! -f "$wasm" ] && continue
+
+              name=$(basename "$wasm" .wasm)
+              sha=$(sha256sum "$wasm" | cut -d' ' -f1)
+              size=$(wc -c < "$wasm")
+
+              dst="../../dist/${name}.wasm"
+              cp "$wasm" "$dst"
+
+              echo "$ext|wasm|$sha|$size|$name" >> ../../dist/checksums.txt
+              echo "  ✓ $name.wasm"
+              echo "    SHA256: $sha"
+              echo "    Size: $size bytes"
+            done
+
+            cd ../..
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: dist/
+          retention-days: 7
+
+  # 更新 metadata.json
+  update-metadata:
+    needs: [build-native, build-wasm]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Combine checksums
+        id: checksums
+        run: |
+          cat */checksums.txt 2>/dev/null > all-checksums.txt || true
+          if [ -s all-checksums.txt ]; then
+            echo "checksums_file=all-checksums.txt" >> $GITHUB_OUTPUT
+            echo "Found checksums:"
+            cat all-checksums.txt
+          else
+            echo "checksums_file=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update metadata.json
+        env:
+          CHECKSUMS: ${{ steps.checksums.outputs.checksums_file }}
+        run: |
+          if [ -z "$CHECKSUMS" ] || [ ! -f "$CHECKSUMS" ]; then
+            echo "No checksums to process"
+            exit 0
+          fi
+
+          while IFS='|' read -r ext platform sha size name; do
+            metadata="extensions/$ext/metadata.json"
+
+            [ ! -f "$metadata" ] && echo "Skipping $ext (no metadata)" && continue
+
+            echo "Updating $metadata for $platform"
+
+            # 更新 JSON
+            if [ "$platform" = "wasm" ]; then
+              jq --arg sha "$sha" --arg size "$size" '
+                .builds.wasm.sha256 = $sha |
+                .builds.wasm.size = ($size | tonumber)
+              ' "$metadata" > tmp.json && mv tmp.json "$metadata"
+            else
+              jq --arg platform "$platform" --arg sha "$sha" --arg size "$size" '
+                .builds[$platform].sha256 = $sha |
+                .builds[$platform].size = ($size | tonumber)
+              ' "$metadata" > tmp.json && mv tmp.json "$metadata"
+            fi
+          done < "$CHECKSUMS"
+
+      - name: Commit metadata updates
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add extensions/*/metadata.json
+
+          if git diff --staged --quiet; then
+            echo "No metadata changes to commit"
+          else
+            git commit -m "chore: update build metadata [skip ci]"
+            git push
+          fi
+
+  # 创建 Release
+  create-release:
+    needs: update-metadata
+    runs-on: ubuntu-latest
+    if: |
+      github.ref == 'refs/heads/main' &&
+      (inputs.release == 'true' || contains(github.event.head_commit.message, '[release]'))
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Get version
+        id: version
+        run: |
+          # 从 workspace Cargo.toml 获取版本号
+          version=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Collect binaries
+        run: |
+          mkdir -p release-files
+          find . -type f \( -name "*.dylib" -o -name "*.so" -o -name "*.dll" -o -name "*.wasm" \) -exec cp {} release-files/ \;
+          ls -lh release-files/
+
+      - name: Create Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          echo "Creating release: v$VERSION"
+
+          # 删除旧 Release (如果存在)
+          if gh release view "v$VERSION" &>/dev/null; then
+            echo "Deleting old release v$VERSION"
+            gh release delete "v$VERSION" || true
+            sleep 2
+          fi
+
+          # 创建新 Release
+          gh release create "v$VERSION" \
+            --title "NeoMind Extensions v$VERSION" \
+            --notes "See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for installation instructions." \
+            --latest
+
+          # 上传所有文件
+          gh release upload "v$VERSION" --pattern 'release-files/*' --clobber
+
+          echo "Release v$VERSION created successfully"
