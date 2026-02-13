@@ -1,8 +1,8 @@
 {
   "id": "as-hello",
   "name": "AssemblyScript Hello Extension",
-  "description": "A simple WASM extension written in AssemblyScript (TypeScript-like language) demonstrating cross-platform extension development",
-  "version": "0.3.0",
+  "description": "A simple WASM extension written in AssemblyScript (TypeScript-like language) with fast compile times and small binary size",
+  "version": "0.5.8",
   "author": "CamThink",
   "license": "MIT",
   "categories": [
@@ -172,9 +172,9 @@
   },
   "builds": {
     "wasm": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v0.3.0/as-hello-v0.3.0.tar.gz",
-      "sha256": "d4180bb08662a6f28831acf6428572ebc3a9a686d5db6d7767bf6229e6be1391",
-      "size": 11970
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v0.5.8/as-hello-v0.5.8.wasm",
+      "sha256": "",
+      "size": 0
     }
   },
   "requirements": {

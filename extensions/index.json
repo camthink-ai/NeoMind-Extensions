@@ -6,7 +6,7 @@
       "id": "as-hello",
       "name": "AssemblyScript Hello Extension",
       "description": "A WASM extension written in AssemblyScript (TypeScript-like) with fast compile times and small binary size",
-      "version": "0.3.0",
+      "version": "0.5.8",
       "author": "CamThink",
       "license": "MIT",
       "categories": ["example", "wasm", "cross-platform", "assemblyscript", "typescript"],

@@ -1,6 +1,6 @@
 {
   "name": "as-hello-extension",
-  "version": "0.3.0",
+  "version": "0.5.8",
   "description": "AssemblyScript Hello Extension for NeoMind",
   "type": "module",
   "scripts": {

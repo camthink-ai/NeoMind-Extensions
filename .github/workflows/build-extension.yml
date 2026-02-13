@@ -98,10 +98,11 @@ jobs:
               sha=$(sha256sum "$wasm" | cut -d' ' -f1)
               size=$(wc -c < "$wasm")
 
-              cp "$wasm" "../../release-files/${name}.wasm"
+              # 使用扩展名-版本号格式命名
+              cp "$wasm" "../../release-files/${ext}-v${{ steps.version.outputs.version }}.wasm"
 
-              echo "$ext|wasm|$sha|$size|$name" >> ../../dist/checksums.txt
-              echo "  ✓ $name.wasm"
+              echo "$ext|wasm|$sha|$size|${ext}-v${{ steps.version.outputs.version }}" >> ../../dist/checksums.txt
+              echo "  ✓ ${ext}-v${{ steps.version.outputs.version }}.wasm"
               echo "    SHA256: $sha"
               echo "    Size: $size bytes"
             done
