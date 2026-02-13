@@ -15,6 +15,10 @@ on:
         description: 'Create GitHub Release'
         required: false
         default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 permissions:
   contents: write
@@ -34,7 +38,7 @@ jobs:
             platform: darwin-aarch64
             ext: dylib
             target: aarch64-apple-darwin
-          - os: macos-13
+          - os: macos-latest
             platform: darwin-x86_64
             ext: dylib
             target: x86_64-apple-darwin
@@ -47,7 +51,7 @@ jobs:
             ext: so
             target: aarch64-unknown-linux-gnu
             cross: aarch64-linux-gnu
-          - os: windows-2022
+          - os: windows-latest
             platform: windows-x86_64
             ext: dll
             target: x86_64-pc-windows-msvc
@@ -58,7 +62,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
@@ -72,7 +76,7 @@ jobs:
         id: get_exts
         shell: bash
         run: |
-          if [ "${{ inputs.extension }}" != "" ]; then
+          if [ -n "${{ inputs.extension }}" ]; then
             echo "exts=${{ inputs.extension }}" >> $GITHUB_OUTPUT
           else
             # 获取变更的扩展目录
@@ -127,7 +131,7 @@ jobs:
 
             # 找构建产物
             libname="libneomind_extension_${ext}.${{ matrix.ext }}"
-            if [ "${{ matrix.os }}" = "windows-2022" ]; then
+            if [ "${{ runner.os }}" = "Windows" ]; then
               libname="neomind_extension_${ext}.${{ matrix.ext }}"
             fi
 
@@ -136,10 +140,10 @@ jobs:
             if [ -f "$src" ]; then
               # 计算信息
               if [ "${{ runner.os }}" = "Windows" ]; then
-                sha=$(certutil -hashfile "$src" SHA256 | grep -o '[a-f0-9]\{64\}')
+                sha=$(certutil -hashfile "$src" SHA256 | grep -o '[a-f0-9]\{64\}' || echo "")
                 size=$(powershell -command "(Get-Item '$src').length")
               else
-                sha=$(sha256sum "$src" 2>/dev/null || shasum -a 256 "$src" | cut -d' ' -f1)
+                sha=$(sha256sum "$src" 2>/dev/null | cut -d' ' -f1)
                 size=$(wc -c < "$src")
               fi
 
@@ -181,7 +185,7 @@ jobs:
       - name: Get extensions to build
         id: get_exts
         run: |
-          if [ "${{ inputs.extension }}" != "" ]; then
+          if [ -n "${{ inputs.extension }}" ]; then
             echo "exts=${{ inputs.extension }}" >> $GITHUB_OUTPUT
           else
             if [ "${{ github.event_name }}" = "push" ]; then
@@ -274,9 +278,9 @@ jobs:
 
       - name: Update metadata.json
         env:
-          CHECKSUMS: ${{ steps.checksums.outputs.checksums_file }}
+          CHECKSUMS_FILE: ${{ steps.checksums.outputs.checksums_file }}
         run: |
-          if [ -z "$CHECKSUMS" ] || [ ! -f "$CHECKSUMS" ]; then
+          if [ -z "$CHECKSUMS_FILE" ] || [ ! -f "$CHECKSUMS_FILE" ]; then
             echo "No checksums to process"
             exit 0
           fi
@@ -300,7 +304,7 @@ jobs:
                 .builds[$platform].size = ($size | tonumber)
               ' "$metadata" > tmp.json && mv tmp.json "$metadata"
             fi
-          done < "$CHECKSUMS"
+          done < "$CHECKSUMS_FILE"
 
       - name: Commit metadata updates
         run: |
@@ -322,7 +326,7 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.ref == 'refs/heads/main' &&
-      (inputs.release == 'true' || contains(github.event.head_commit.message, '[release]'))
+      inputs.release == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -345,7 +349,7 @@ jobs:
 
       - name: Create Release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           echo "Creating release: v$VERSION"
