@@ -27,148 +27,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # 构建原生扩展 (Rust)
-  build-native:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-14
-            platform: darwin-aarch64
-            ext: dylib
-            target: aarch64-apple-darwin
-          - os: macos-latest
-            platform: darwin-x86_64
-            ext: dylib
-            target: x86_64-apple-darwin
-          - os: ubuntu-22.04
-            platform: linux-x86_64
-            ext: so
-            target: x86_64-unknown-linux-gnu
-          - os: ubuntu-22.04
-            platform: linux-aarch64
-            ext: so
-            target: aarch64-unknown-linux-gnu
-            cross: aarch64-linux-gnu
-          - os: windows-latest
-            platform: windows-x86_64
-            ext: dll
-            target: x86_64-pc-windows-msvc
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Install cross compiler (Linux ARM)
-        if: matrix.cross == 'aarch64-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-
-      - name: Get extensions to build
-        id: get_exts
-        shell: bash
-        run: |
-          if [ -n "${{ inputs.extension }}" ]; then
-            echo "exts=${{ inputs.extension }}" >> $GITHUB_OUTPUT
-          else
-            # 获取变更的扩展目录
-            if [ "${{ github.event_name }}" = "push" ]; then
-              changed=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} 2>/dev/null || echo "")
-            else
-              changed=""
-            fi
-
-            echo "$changed" | grep '^extensions/' 2>/dev/null | cut -d'/' -f2 | sort -u > /tmp/exts.txt || true
-
-            # 如果没变更则构建全部
-            if [ ! -s /tmp/exts.txt ]; then
-              ls -1 extensions 2>/dev/null | grep -v node_modules > /tmp/exts.txt || true
-            fi
-
-            exts=$(cat /tmp/exts.txt | tr '\n' ' ' | sed 's/ *$//;s/^ *//;s/ *$//')
-            echo "exts=$exts" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Build
-        shell: bash
-        env:
-          EXTENSIONS: ${{ steps.get_exts.outputs.exts }}
-          PLATFORM: ${{ matrix.platform }}
-          OUT_EXT: ${{ matrix.ext }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          echo "Building for: ${{ matrix.platform }} (${{ matrix.os }})"
-          echo "Extensions: $EXTENSIONS"
-
-          mkdir -p dist
-
-          for ext in $EXTENSIONS; do
-            [ -z "$ext" ] && continue
-
-            ext_dir="extensions/$ext"
-            [ ! -d "$ext_dir" ] && continue
-
-            echo "--- Building: $ext"
-
-            # 跳过 template 和非 Rust 扩展
-            [ "$ext" = "template" ] && continue
-            [ ! -f "$ext_dir/Cargo.toml" ] && continue
-
-            cd "$ext_dir"
-
-            echo "  Target: $TARGET"
-
-            # 构建
-            cargo build --release --target "$TARGET"
-
-            # 找构建产物
-            libname="libneomind_extension_${ext}.${{ matrix.ext }}"
-            if [ "${{ runner.os }}" = "Windows" ]; then
-              libname="neomind_extension_${ext}.${{ matrix.ext }}"
-            fi
-
-            src="target/$TARGET/release/$libname"
-
-            if [ -f "$src" ]; then
-              # 计算信息
-              if [ "${{ runner.os }}" = "Windows" ]; then
-                sha=$(certutil -hashfile "$src" SHA256 | grep -o '[a-f0-9]\{64\}' || echo "")
-                size=$(powershell -command "(Get-Item '$src').length")
-              else
-                sha=$(sha256sum "$src" 2>/dev/null | cut -d' ' -f1)
-                size=$(wc -c < "$src")
-              fi
-
-              dst="../../dist/${ext}-${{ matrix.platform }}.${{ matrix.ext }}"
-              cp "$src" "$dst"
-
-              echo "$ext|${{ matrix.platform }}|$sha|$size" >> ../../dist/checksums.txt
-              echo "  ✓ $libname"
-              echo "    SHA256: $sha"
-              echo "    Size: $size bytes"
-            else
-              echo "  ✗ Build output not found: $src"
-            fi
-
-            cd ../..
-          done
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-${{ matrix.platform }}
-          path: dist/
-          retention-days: 7
-
-  # 构建 WASM 扩展
+  # 构建 WASM 扩展 (AssemblyScript/TypeScript)
   build-wasm:
     runs-on: ubuntu-latest
     steps:
@@ -218,7 +77,7 @@ jobs:
             [ ! -d "$ext_dir" ] && continue
 
             # 只处理有 package.json 的 WASM 扩展
-            [ ! -f "$ext_dir/package.json" ] && continue
+            [ ! -f "$ext_dir/package.json" ] && echo "  Skipping $ext (no package.json)" && continue
 
             echo "--- Building WASM: $ext"
 
@@ -255,7 +114,7 @@ jobs:
 
   # 更新 metadata.json
   update-metadata:
-    needs: [build-native, build-wasm]
+    needs: build-wasm
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
