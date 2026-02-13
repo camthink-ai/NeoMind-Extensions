@@ -30,11 +30,20 @@ jobs:
   # 构建 WASM 扩展 (AssemblyScript/TypeScript)
   build-wasm:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      checksums: ${{ steps.checksums.outputs.checksums }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Get version
+        id: version
+        run: |
+          version=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$version" >> $GITHUB_OUTPUT
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -68,7 +77,7 @@ jobs:
           EXTENSIONS: ${{ steps.get_exts.outputs.exts }}
         run: |
           echo "Building WASM extensions: $EXTENSIONS"
-          mkdir -p dist
+          mkdir -p release-files
 
           for ext in $EXTENSIONS; do
             [ -z "$ext" ] && continue
@@ -85,7 +94,7 @@ jobs:
             npm install --silent
             npm run build
 
-            # 找 .wasm 文件
+            # 复制 .wasm 文件到 release-files
             for wasm in build/*.wasm; do
               [ ! -f "$wasm" ] && continue
 
@@ -93,8 +102,7 @@ jobs:
               sha=$(sha256sum "$wasm" | cut -d' ' -f1)
               size=$(wc -c < "$wasm")
 
-              dst="../../dist/${name}.wasm"
-              cp "$wasm" "$dst"
+              cp "$wasm" "../../release-files/${name}.wasm"
 
               echo "$ext|wasm|$sha|$size|$name" >> ../../dist/checksums.txt
               echo "  ✓ $name.wasm"
@@ -105,12 +113,20 @@ jobs:
             cd ../..
           done
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: wasm
-          path: dist/
-          retention-days: 7
+      - name: Show build results
+        run: |
+          echo "=== Built files ==="
+          ls -lh release-files/ || echo "No files built"
+
+      - name: Generate checksums
+        id: checksums
+        if: hashFiles('dist/checksums.txt') == 'true'
+        run: |
+          if [ -f dist/checksums.txt ]; then
+            echo "checksums=$(cat dist/checksums.txt)" >> $GITHUB_OUTPUT
+          else
+            echo "checksums=" >> $GITHUB_OUTPUT
+          fi
 
   # 更新 metadata.json
   update-metadata:
@@ -120,30 +136,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-
-      - name: Combine checksums
-        id: checksums
-        run: |
-          cat */checksums.txt 2>/dev/null > all-checksums.txt || true
-          if [ -s all-checksums.txt ]; then
-            echo "checksums_file=all-checksums.txt" >> $GITHUB_OUTPUT
-            echo "Found checksums:"
-            cat all-checksums.txt
-          else
-            echo "checksums_file=" >> $GITHUB_OUTPUT
-          fi
-
       - name: Update metadata.json
         env:
-          CHECKSUMS_FILE: ${{ steps.checksums.outputs.checksums_file }}
+          CHECKSUMS: ${{ needs.build-wasm.outputs.checksums }}
         run: |
-          if [ -z "$CHECKSUMS_FILE" ] || [ ! -f "$CHECKSUMS_FILE" ]; then
+          if [ -z "$CHECKSUMS" ]; then
             echo "No checksums to process"
             exit 0
           fi
 
+          echo "$CHECKSUMS"
           while IFS='|' read -r ext platform sha size name; do
             metadata="extensions/$ext/metadata.json"
 
@@ -163,7 +165,7 @@ jobs:
                 .builds[$platform].size = ($size | tonumber)
               ' "$metadata" > tmp.json && mv tmp.json "$metadata"
             fi
-          done < "$CHECKSUMS_FILE"
+          done <<< "$CHECKSUMS"
 
       - name: Commit metadata updates
         run: |
@@ -181,7 +183,7 @@ jobs:
 
   # 创建 Release
   create-release:
-    needs: update-metadata
+    needs: [build-wasm, update-metadata]
     runs-on: ubuntu-latest
     if: |
       github.ref == 'refs/heads/main' &&
@@ -190,31 +192,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Download built files
         uses: actions/download-artifact@v4
+        with:
+          name: wasm
+          path: release-files/
 
-      - name: Get version
-        id: version
+      - name: Show downloaded files
         run: |
-          # 从 workspace Cargo.toml 获取版本号
-          version=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "=== Downloaded files ==="
+          ls -lh release-files/ || echo "No files found"
 
-      - name: Collect binaries
-        run: |
-          mkdir -p release-files
-          # Find all built files (artifacts are downloaded to current directory)
-          find . -type f -name "*.wasm" -exec cp {} release-files/ \;
-          # Also check for any tar.gz files
-          find . -type f -name "*.tar.gz" -exec cp {} release-files/ \;
-          ls -lh release-files/
-
-      - name: Create Release
+      - name: Create Release and upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.build-wasm.outputs.version }}
         run: |
           echo "Creating release: v$VERSION"
+
+          # 检查是否有文件要上传
+          if [ ! -d release-files ] || [ -z "$(ls -A release-files)" ]; then
+            echo "No files to upload!"
+            exit 1
+          fi
 
           # 删除旧 Release (如果存在)
           if gh release view "v$VERSION" &>/dev/null; then
@@ -230,6 +230,10 @@ jobs:
             --latest
 
           # 上传所有文件
-          gh release upload "v$VERSION" --pattern 'release-files/*' --clobber
+          for file in release-files/*; do
+            [ -f "$file" ] || continue
+            echo "Uploading: $file"
+            gh release upload "v$VERSION" "$file"
+          done
 
           echo "Release v$VERSION created successfully"
