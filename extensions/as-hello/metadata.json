@@ -173,8 +173,8 @@
   "builds": {
     "wasm": {
       "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v0.5.8/as-hello-v0.5.8.wasm",
-      "sha256": "",
-      "size": 0
+      "sha256": "d4180bb08662a6f28831acf6428572ebc3a9a686d5db6d7767bf6229e6be1391",
+      "size": 11970
     }
   },
   "requirements": {
