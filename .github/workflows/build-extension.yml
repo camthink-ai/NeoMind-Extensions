@@ -203,7 +203,10 @@ jobs:
       - name: Collect binaries
         run: |
           mkdir -p release-files
-          find . -type f \( -name "*.dylib" -o -name "*.so" -o -name "*.dll" -o -name "*.wasm" \) -exec cp {} release-files/ \;
+          # Find all built files (artifacts are downloaded to current directory)
+          find . -type f -name "*.wasm" -exec cp {} release-files/ \;
+          # Also check for any tar.gz files
+          find . -type f -name "*.tar.gz" -exec cp {} release-files/ \;
           ls -lh release-files/
 
       - name: Create Release
