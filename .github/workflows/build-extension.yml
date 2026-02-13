@@ -27,12 +27,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # 构建 WASM 扩展 (AssemblyScript/TypeScript)
-  build-wasm:
+  build-and-release:
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      checksums: ${{ steps.checksums.outputs.checksums }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -72,12 +68,12 @@ jobs:
             echo "exts=$exts" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build WASM
+      - name: Build WASM extensions
         env:
           EXTENSIONS: ${{ steps.get_exts.outputs.exts }}
         run: |
           echo "Building WASM extensions: $EXTENSIONS"
-          mkdir -p release-files
+          mkdir -p release-files dist
 
           for ext in $EXTENSIONS; do
             [ -z "$ext" ] && continue
@@ -94,7 +90,7 @@ jobs:
             npm install --silent
             npm run build
 
-            # 复制 .wasm 文件到 release-files
+            # 复制 .wasm 文件到 release-files 并生成 checksums
             for wasm in build/*.wasm; do
               [ ! -f "$wasm" ] && continue
 
@@ -117,35 +113,19 @@ jobs:
         run: |
           echo "=== Built files ==="
           ls -lh release-files/ || echo "No files built"
-
-      - name: Generate checksums
-        id: checksums
-        if: hashFiles('dist/checksums.txt') == 'true'
-        run: |
+          echo ""
           if [ -f dist/checksums.txt ]; then
-            echo "checksums=$(cat dist/checksums.txt)" >> $GITHUB_OUTPUT
-          else
-            echo "checksums=" >> $GITHUB_OUTPUT
+            echo "=== Checksums ==="
+            cat dist/checksums.txt
           fi
 
-  # 更新 metadata.json
-  update-metadata:
-    needs: build-wasm
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Update metadata.json
-        env:
-          CHECKSUMS: ${{ needs.build-wasm.outputs.checksums }}
         run: |
-          if [ -z "$CHECKSUMS" ]; then
+          if [ ! -f dist/checksums.txt ]; then
             echo "No checksums to process"
             exit 0
           fi
 
-          echo "$CHECKSUMS"
           while IFS='|' read -r ext platform sha size name; do
             metadata="extensions/$ext/metadata.json"
 
@@ -165,7 +145,7 @@ jobs:
                 .builds[$platform].size = ($size | tonumber)
               ' "$metadata" > tmp.json && mv tmp.json "$metadata"
             fi
-          done <<< "$CHECKSUMS"
+          done < dist/checksums.txt
 
       - name: Commit metadata updates
         run: |
@@ -181,37 +161,18 @@ jobs:
             git push
           fi
 
-  # 创建 Release
-  create-release:
-    needs: [build-wasm, update-metadata]
-    runs-on: ubuntu-latest
-    if: |
-      github.ref == 'refs/heads/main' &&
-      inputs.release == 'true'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download built files
-        uses: actions/download-artifact@v4
-        with:
-          name: wasm
-          path: release-files/
-
-      - name: Show downloaded files
-        run: |
-          echo "=== Downloaded files ==="
-          ls -lh release-files/ || echo "No files found"
-
       - name: Create Release and upload
+        if: |
+          github.ref == 'refs/heads/main' &&
+          inputs.release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ needs.build-wasm.outputs.version }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           echo "Creating release: v$VERSION"
 
           # 检查是否有文件要上传
-          if [ ! -d release-files ] || [ -z "$(ls -A release-files)" ]; then
+          if [ ! -d release-files ] || [ -z "$(ls -A release-files 2>/dev/null)" ]; then
             echo "No files to upload!"
             exit 1
           fi
@@ -231,9 +192,9 @@ jobs:
 
           # 上传所有文件
           for file in release-files/*; do
-            [ -f "$file" ] || continue
-            echo "Uploading: $file"
-            gh release upload "v$VERSION" "$file"
+            [ ! -f "$file" ] && continue
+            echo "Uploading: $(basename "$file")"
+            gh release upload "v$VERSION" "$file" --clobber || true
           done
 
           echo "Release v$VERSION created successfully"
