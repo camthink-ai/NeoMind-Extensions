@@ -5,7 +5,13 @@
   "version": "0.3.0",
   "author": "CamThink",
   "license": "MIT",
-  "categories": ["example", "wasm", "cross-platform", "assemblyscript", "typescript"],
+  "categories": [
+    "example",
+    "wasm",
+    "cross-platform",
+    "assemblyscript",
+    "typescript"
+  ],
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions",
   "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
   "capabilities": {
@@ -49,7 +55,9 @@
         "payload_template": "{}",
         "parameters": [],
         "fixed_values": {},
-        "samples": [{}],
+        "samples": [
+          {}
+        ],
         "llm_hints": "Get the current counter value. Returns the counter as an integer.",
         "parameter_groups": []
       },
@@ -60,7 +68,9 @@
         "payload_template": "{}",
         "parameters": [],
         "fixed_values": {},
-        "samples": [{}],
+        "samples": [
+          {}
+        ],
         "llm_hints": "Increment the counter by 1 and return the new value.",
         "parameter_groups": []
       },
@@ -71,7 +81,9 @@
         "payload_template": "{}",
         "parameters": [],
         "fixed_values": {},
-        "samples": [{}],
+        "samples": [
+          {}
+        ],
         "llm_hints": "Reset the counter to 42 and return the new value.",
         "parameter_groups": []
       },
@@ -82,7 +94,9 @@
         "payload_template": "{}",
         "parameters": [],
         "fixed_values": {},
-        "samples": [{}],
+        "samples": [
+          {}
+        ],
         "llm_hints": "Get the current temperature reading in Celsius.",
         "parameter_groups": []
       },
@@ -105,8 +119,12 @@
         ],
         "fixed_values": {},
         "samples": [
-          {"temperature": 25.5},
-          {"temperature": 30.0}
+          {
+            "temperature": 25.5
+          },
+          {
+            "temperature": 30.0
+          }
         ],
         "llm_hints": "Set the temperature to a new value. Takes a temperature parameter in Celsius.",
         "parameter_groups": []
@@ -118,7 +136,9 @@
         "payload_template": "{}",
         "parameters": [],
         "fixed_values": {},
-        "samples": [{}],
+        "samples": [
+          {}
+        ],
         "llm_hints": "Get the current humidity reading as a percentage.",
         "parameter_groups": []
       },
@@ -129,7 +149,9 @@
         "payload_template": "{}",
         "parameters": [],
         "fixed_values": {},
-        "samples": [{}],
+        "samples": [
+          {}
+        ],
         "llm_hints": "Returns a greeting message from the AssemblyScript WASM extension.",
         "parameter_groups": []
       },
@@ -140,7 +162,9 @@
         "payload_template": "{}",
         "parameters": [],
         "fixed_values": {},
-        "samples": [{}],
+        "samples": [
+          {}
+        ],
         "llm_hints": "Retrieve all metrics (counter, temperature, humidity) with their current values.",
         "parameter_groups": []
       }
@@ -149,8 +173,8 @@
   "builds": {
     "wasm": {
       "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v0.3.0/as-hello-v0.3.0.tar.gz",
-      "sha256": "",
-      "size": 15000
+      "sha256": "d4180bb08662a6f28831acf6428572ebc3a9a686d5db6d7767bf6229e6be1391",
+      "size": 11970
     }
   },
   "requirements": {
