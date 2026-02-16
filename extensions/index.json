@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2025-02-14T12:00:00Z",
+  "last_updated": "2025-02-16T12:00:00Z",
   "extensions": [
     {
       "id": "as-hello",
@@ -23,6 +23,39 @@
       "categories": ["weather", "data"],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/weather-forecast",
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/weather-forecast/metadata.json"
+    },
+    {
+      "id": "com.example.template",
+      "name": "Template Extension",
+      "description": "A basic native extension template for NeoMind. Provides example metrics and commands to help developers get started with extension development.",
+      "version": "1.0.0",
+      "author": "NeoMind Team",
+      "license": "MIT",
+      "categories": ["example", "template", "developer"],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/template",
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/template/metadata.json"
+    },
+    {
+      "id": "image-analyzer",
+      "name": "Image Analyzer",
+      "description": "Stateless image analysis extension that detects objects and analyzes image properties. Supports JPEG, PNG, and WebP formats.",
+      "version": "1.0.0",
+      "author": "NeoMind Team",
+      "license": "MIT",
+      "categories": ["image", "vision", "streaming", "stateless"],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/image-analyzer",
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/image-analyzer/metadata.json"
+    },
+    {
+      "id": "yolo-video",
+      "name": "YOLO Video Processor",
+      "description": "Stateful video stream processing with YOLO object detection. Maintains session context for continuous video processing with real-time FPS metrics.",
+      "version": "1.0.0",
+      "author": "NeoMind Team",
+      "license": "MIT",
+      "categories": ["video", "vision", "streaming", "stateful", "detection"],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/yolo-video",
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/yolo-video/metadata.json"
     }
   ]
 }

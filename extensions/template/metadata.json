@@ -1,0 +1,79 @@
+{
+  "id": "com.example.template",
+  "name": "Template Extension",
+  "description": "A basic native extension template for NeoMind. Provides example metrics and commands to help developers get started with extension development.",
+  "version": "1.0.0",
+  "author": "NeoMind Team",
+  "license": "MIT",
+  "categories": ["example", "template", "developer"],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions",
+  "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
+  "readme_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/template/README.md",
+
+  "capabilities": {
+    "metrics": [
+      {
+        "name": "example_metric",
+        "display_name": "Example Metric",
+        "data_type": "Integer",
+        "unit": "count",
+        "description": "An example metric that demonstrates the extension system",
+        "min": 0.0,
+        "max": 1000.0
+      }
+    ],
+    "commands": [
+      {
+        "name": "example_command",
+        "display_name": "Example Command",
+        "description": "An example command that demonstrates the command system. Returns a success message with the provided parameter.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "param": {
+              "type": "string",
+              "description": "Example parameter"
+            }
+          },
+          "required": []
+        }
+      }
+    ]
+  },
+
+  "builds": {
+    "darwin-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v1.0.0/libneomind_extension_template-darwin-aarch64.dylib",
+      "sha256": "b30f9ffdf160020d356ca0d589748d27f010e8de54d47ed2ee649eb258be842f",
+      "size": 555488
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v1.0.0/libneomind_extension_template-darwin-x86_64.dylib",
+      "sha256": "",
+      "size": 0
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v1.0.0/libneomind_extension_template-linux-x86_64.so",
+      "sha256": "",
+      "size": 0
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v1.0.0/neomind_extension_template-windows-x86_64.dll",
+      "sha256": "",
+      "size": 0
+    }
+  },
+
+  "requirements": {
+    "min_neomind_version": "0.5.8",
+    "network": false,
+    "api_keys": []
+  },
+
+  "permissions": [],
+
+  "safety": {
+    "timeout_seconds": 5,
+    "max_memory_mb": 50
+  }
+}

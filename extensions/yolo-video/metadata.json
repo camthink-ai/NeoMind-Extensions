@@ -1,0 +1,112 @@
+{
+  "id": "yolo-video",
+  "name": "YOLO Video Processor",
+  "description": "Stateful video stream processing with YOLO object detection. Maintains session context for continuous video processing. Supports JPEG, PNG images and H264/H265 video streams. Tracks objects across frames and provides real-time FPS metrics.",
+  "version": "1.0.0",
+  "author": "NeoMind Team",
+  "license": "MIT",
+  "categories": [
+    "video",
+    "vision",
+    "streaming",
+    "stateful",
+    "detection"
+  ],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions",
+  "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
+  "capabilities": {
+    "streaming": {
+      "mode": "stateful",
+      "direction": "upload",
+      "supported_data_types": [
+        "image/jpeg",
+        "image/png",
+        "video/h264",
+        "video/h265"
+      ],
+      "max_chunk_size": 5242880,
+      "preferred_chunk_size": 1048576,
+      "max_concurrent_sessions": 5
+    },
+    "metrics": [
+      {
+        "name": "active_sessions",
+        "display_name": "Active Sessions",
+        "data_type": "Integer",
+        "unit": "count",
+        "description": "Number of currently active video processing sessions",
+        "min": 0.0,
+        "max": 5.0
+      },
+      {
+        "name": "total_frames_processed",
+        "display_name": "Total Frames Processed",
+        "data_type": "Integer",
+        "unit": "frames",
+        "description": "Total number of video frames processed across all sessions",
+        "min": 0.0,
+        "max": null
+      },
+      {
+        "name": "avg_fps",
+        "display_name": "Average FPS",
+        "data_type": "Float",
+        "unit": "fps",
+        "description": "Average frames per second across all active sessions",
+        "min": 0.0,
+        "max": null
+      }
+    ],
+    "commands": [
+      {
+        "name": "get_session_info",
+        "display_name": "Get Session Info",
+        "description": "Get information about an active processing session including frame count, processing time, and detection statistics",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "description": "The session identifier"
+            }
+          },
+          "required": [
+            "session_id"
+          ]
+        }
+      }
+    ]
+  },
+  "builds": {
+    "darwin-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v1.0.0/libneomind_extension_yolo_video-darwin-aarch64.dylib",
+      "sha256": "4353004999c880360f1f7a20d2b2c7e0213fd86d81702399c9dcac7876a14d77",
+      "size": 612864
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v1.0.0/libneomind_extension_yolo_video-darwin-x86_64.dylib",
+      "sha256": "",
+      "size": 0
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v1.0.0/libneomind_extension_yolo_video-linux-x86_64.so",
+      "sha256": "",
+      "size": 0
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v1.0.0/neomind_extension_yolo_video-windows-x86_64.dll",
+      "sha256": "",
+      "size": 0
+    }
+  },
+  "requirements": {
+    "min_neomind_version": "0.5.8",
+    "network": false,
+    "api_keys": []
+  },
+  "permissions": [],
+  "safety": {
+    "timeout_seconds": 60,
+    "max_memory_mb": 500
+  }
+}

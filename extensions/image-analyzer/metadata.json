@@ -1,0 +1,103 @@
+{
+  "id": "image-analyzer",
+  "name": "Image Analyzer",
+  "description": "Stateless image analysis extension that detects objects and analyzes image properties. Supports JPEG, PNG, and WebP formats. Provides object detection results with bounding boxes, confidence scores, and image metadata.",
+  "version": "1.0.0",
+  "author": "NeoMind Team",
+  "license": "MIT",
+  "categories": [
+    "image",
+    "vision",
+    "streaming",
+    "stateless"
+  ],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions",
+  "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
+  "capabilities": {
+    "streaming": {
+      "mode": "stateless",
+      "direction": "upload",
+      "supported_data_types": [
+        "image/jpeg",
+        "image/png",
+        "image/webp"
+      ],
+      "max_chunk_size": 10485760,
+      "preferred_chunk_size": 1048576,
+      "max_concurrent_sessions": 10
+    },
+    "metrics": [
+      {
+        "name": "images_processed",
+        "display_name": "Images Processed",
+        "data_type": "Integer",
+        "unit": "count",
+        "description": "Total number of images processed",
+        "min": 0.0,
+        "max": null
+      },
+      {
+        "name": "avg_processing_time_ms",
+        "display_name": "Average Processing Time",
+        "data_type": "Float",
+        "unit": "ms",
+        "description": "Average time to process an image",
+        "min": 0.0,
+        "max": null
+      },
+      {
+        "name": "total_detections",
+        "display_name": "Total Detections",
+        "data_type": "Integer",
+        "unit": "count",
+        "description": "Total number of objects detected across all images",
+        "min": 0.0,
+        "max": null
+      }
+    ],
+    "commands": [
+      {
+        "name": "reset_stats",
+        "display_name": "Reset Statistics",
+        "description": "Resets all processing statistics to zero",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      }
+    ]
+  },
+  "builds": {
+    "darwin-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v1.0.0/libneomind_extension_image_analyzer-darwin-aarch64.dylib",
+      "sha256": "4176ef8acf5150280b2c810c78566467082e5ea565294bf4f504944ecfcf9b47",
+      "size": 572880
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v1.0.0/libneomind_extension_image_analyzer-darwin-x86_64.dylib",
+      "sha256": "",
+      "size": 0
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v1.0.0/libneomind_extension_image_analyzer-linux-x86_64.so",
+      "sha256": "",
+      "size": 0
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v1.0.0/neomind_extension_image_analyzer-windows-x86_64.dll",
+      "sha256": "",
+      "size": 0
+    }
+  },
+  "requirements": {
+    "min_neomind_version": "0.5.8",
+    "network": false,
+    "api_keys": []
+  },
+  "permissions": [],
+  "safety": {
+    "timeout_seconds": 30,
+    "max_memory_mb": 200
+  }
+}
