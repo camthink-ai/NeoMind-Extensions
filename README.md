@@ -112,6 +112,47 @@ cp metadata.json ~/.neomind/extensions/as-hello.json
 
 ## Available Extensions
 
+### [image-analyzer](extensions/image-analyzer/) - Stateless Streaming
+
+Demonstrates **Stateless** streaming mode for single-chunk image processing.
+
+| Capability | Type | Description |
+|-----------|------|-------------|
+| Image Analysis | Stream | Analyze JPEG/PNG/WebP images |
+| Object Detection | Metric | Detected objects with bounding boxes |
+| `reset_stats` | Command | Reset processing statistics |
+
+**Streaming Mode**: Stateless (independent processing of each chunk)
+**Direction**: Upload (client → extension)
+**Max Chunk Size**: 10MB
+
+**Installation**:
+```bash
+cargo build --release -p neomind-image-analyzer
+cp target/release/libneomind_extension_image_analyzer.dylib ~/.neomind/extensions/
+```
+
+### [yolo-video](extensions/yolo-video/) - Stateful Streaming
+
+Demonstrates **Stateful** streaming mode for session-based video processing.
+
+| Capability | Type | Description |
+|-----------|------|-------------|
+| Video Processing | Stream | Process H264/H265 video frames |
+| Object Detection | Stream | YOLO-based real-time detection |
+| `get_session_info` | Command | Get active session statistics |
+
+**Streaming Mode**: Stateful (maintains session context)
+**Direction**: Upload (client → extension)
+**Max Chunk Size**: 5MB per frame
+**Max Concurrent Sessions**: 5
+
+**Installation**:
+```bash
+cargo build --release -p neomind-yolo-video
+cp target/release/libneomind_extension_yolo_video.dylib ~/.neomind/extensions/
+```
+
 ### [as-hello](extensions/as-hello/) - WASM Example (AssemblyScript/TypeScript)
 
 A WASM extension written in AssemblyScript (TypeScript-like language) with fast compile times and small binary size.
@@ -176,6 +217,12 @@ NeoMind-Extensions/
 ├── extensions/
 │   ├── index.json              # Main marketplace index
 │   │   # Lists all available extensions with metadata URLs
+│   ├── image-analyzer/         # Stateless streaming extension
+│   │   ├── Cargo.toml          # Package configuration
+│   │   └── src/lib.rs          # Source code
+│   ├── yolo-video/             # Stateful streaming extension
+│   │   ├── Cargo.toml          # Package configuration
+│   │   └── src/lib.rs          # Source code
 │   ├── as-hello/               # WASM extension example (AssemblyScript) ⭐ Recommended
 │   │   ├── package.json        # npm dependencies
 │   │   ├── asconfig.json       # AssemblyScript compiler config

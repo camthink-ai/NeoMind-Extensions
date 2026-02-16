@@ -1,14 +1,14 @@
 [package]
-name = "neomind-template-extension"
+name = "neomind-yolo-video"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Template extension for NeoMind - copy this to create your own"
+description = "Stateful video stream processing with YOLO object detection"
 publish = false
 
 [lib]
-name = "neomind_extension_template"
+name = "neomind_extension_yolo_video"
 crate-type = ["cdylib"]
 
 [dependencies]
@@ -16,6 +16,8 @@ neomind-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
+chrono = { workspace = true }
+semver = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
 once_cell = "1.19"
-semver = "1.0"
-tokio = { version = "1", features = ["sync"] }

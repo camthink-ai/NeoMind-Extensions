@@ -132,29 +132,43 @@ cp metadata.json ~/.neomind/extensions/as-hello.json
 
 ## 可用扩展
 
-### [wasm-hello](extensions/wasm-hello/) - WASM 示例（Rust）
-一个用 Rust 编写的简单 WASM 扩展，展示跨平台兼容性。
+### [image-analyzer](extensions/image-analyzer/) - 无状态流式处理
+演示 **Stateless** 流式模式，用于单块图像处理。
 
 | 功能 | 类型 | 描述 |
 |-----------|------|-------------|
-| `get_counter` | 命令 | 获取当前计数器值 |
-| `increment_counter` | 命令 | 增加计数器 |
-| `get_temperature` | 命令 | 获取温度读数（模拟） |
-| `get_humidity` | 命令 | 获取湿度读数（模拟） |
-| `hello` | 命令 | 从 WASM 打招呼 |
+| 图像分析 | 流 | 分析 JPEG/PNG/WebP 图像 |
+| 目标检测 | 指标 | 带边界框的检测对象 |
+| `reset_stats` | 命令 | 重置处理统计 |
 
-**指标**：counter、temperature、humidity
+**流式模式**：无状态（独立处理每个数据块）
+**方向**：上传（客户端 → 扩展）
+**最大块大小**：10MB
 
 **安装**：
 ```bash
-# 构建 WASM 扩展
-cd extensions/wasm-hello
-rustup target add wasm32-wasi
-cargo build --release --target wasm32-wasi
+cargo build --release -p neomind-image-analyzer
+cp target/release/libneomind_extension_image_analyzer.dylib ~/.neomind/extensions/
+```
 
-# 安装（需要两个文件）
-cp target/wasm32-wasi/release/wasm_hello.wasm ~/.neomind/extensions/
-cp metadata.json ~/.neomind/extensions/wasm-hello.json
+### [yolo-video](extensions/yolo-video/) - 有状态流式处理
+演示 **Stateful** 流式模式，用于基于会话的视频处理。
+
+| 功能 | 类型 | 描述 |
+|-----------|------|-------------|
+| 视频处理 | 流 | 处理 H264/H265 视频帧 |
+| 目标检测 | 流 | 基于 YOLO 的实时检测 |
+| `get_session_info` | 命令 | 获取活动会话统计 |
+
+**流式模式**：有状态（维护会话上下文）
+**方向**：上传（客户端 → 扩展）
+**最大块大小**：每帧 5MB
+**最大并发会话**：5
+
+**安装**：
+```bash
+cargo build --release -p neomind-yolo-video
+cp target/release/libneomind_extension_yolo_video.dylib ~/.neomind/extensions/
 ```
 
 ### [as-hello](extensions/as-hello/) - WASM 示例（AssemblyScript/TypeScript）
@@ -220,11 +234,12 @@ NeoMind-Extensions/
 ├── extensions/
 │   ├── index.json              # 主市场索引
 │   │   # 列出所有可用扩展及其元数据 URL
-│   ├── wasm-hello/             # WASM 扩展示例（Rust）
+│   ├── image-analyzer/         # 无状态流式扩展
 │   │   ├── Cargo.toml          # 包配置
-│   │   ├── metadata.json       # 元数据（sidecar 文件）
-│   │   ├── README.md           # 扩展文档
-│   │   └── src/lib.rs          # 源代码（wasm32-wasi 目标）
+│   │   └── src/lib.rs          # 源代码
+│   ├── yolo-video/             # 有状态流式扩展
+│   │   ├── Cargo.toml          # 包配置
+│   │   └── src/lib.rs          # 源代码
 │   ├── as-hello/               # WASM 扩展示例（AssemblyScript）
 │   │   ├── package.json        # npm 依赖
 │   │   ├── asconfig.json       # AssemblyScript 编译器配置

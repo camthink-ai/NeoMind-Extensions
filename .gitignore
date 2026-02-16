@@ -57,3 +57,4 @@ coverage/
 
 # Serena MCP tool (cache and config)
 .serena/
+.DS_Store
