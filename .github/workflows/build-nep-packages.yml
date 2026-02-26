@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'extensions/**'
+      - 'extensions/weather-forecast/**'
       - 'scripts/package.sh'
       - 'Makefile'
   workflow_dispatch:
@@ -16,15 +16,15 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  build-wasm:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
-            platform: linux_amd64
+            platform: wasm
           - os: macos-latest
-            platform: darwin_aarch64
+            platform: wasm
     steps:
       - uses: actions/checkout@v4
 
@@ -34,9 +34,8 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: Checkout NeoMind main repo
-        run: |
-          git clone --depth=1 https://github.com/mingmingshen/NeoMind.git
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
 
       - name: Install dependencies (Ubuntu)
         if: runner.os == 'Linux'
@@ -46,38 +45,29 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install zip jq
 
-      - name: Install dependencies (Windows)
-        if: runner.os == 'Windows'
-        run: choco install zip -y
-
-      - name: Build packages
+      - name: Build WASM package
         run: |
-          make package-all
+          make package-weather-forecast
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: nep-packages-${{ matrix.platform }}
+          name: nep-packages-wasm
           path: dist/*.nep
           retention-days: 30
-          if-no-files-found: ignore
+          if-no-files-found: warn
 
   release:
-    needs: build
+    needs: build-wasm
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
-
-      - name: Move artifacts to dist
-        run: |
-          mkdir -p dist
-          find artifacts -name "*.nep" -exec cp {} dist \;
+          path: dist
 
       - name: Create Release
         env:
@@ -89,10 +79,10 @@ jobs:
           cat > /tmp/release_notes.md << 'EOF'
           NeoMind Extension Packages v0.1.0
 
-          ## Extensions
-          - **image-analyzer** - Object detection and image analysis
-          - **weather-forecast** - Real-time weather data (WASM)
-          - **yolo-video** - Video stream processing with YOLO detection
+          ## WASM Extension
+          - **weather-forecast** - Real-time weather data (cross-platform)
+
+          Note: Native extensions (image-analyzer, yolo-video) require local build.
 
           ## Installation
           Via NeoMind Web UI or API:
@@ -110,7 +100,7 @@ jobs:
           fi
 
           # Upload packages
-          for nep in dist/*.nep; do
+          for nep in dist/*.nep dist/**/**/*.nep; do
             [ -f "$nep" ] || continue
             echo "Uploading: $(basename "$nep")"
             gh release upload "v$VERSION" "$nep" --clobber

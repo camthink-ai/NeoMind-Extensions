@@ -85,3 +85,6 @@ list:
 			echo "  - $$name (v$$version)"; \
 		fi \
 	done
+package-weather-forecast:
+	@echo "Building weather-forecast WASM package..."
+	@bash scripts/package.sh -d extensions/weather-forecast
