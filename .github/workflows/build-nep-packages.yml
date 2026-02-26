@@ -27,6 +27,8 @@ jobs:
             platform: darwin_aarch64
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
