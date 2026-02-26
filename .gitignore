@@ -24,6 +24,9 @@ Cargo.lock
 *.wasm
 *.wat
 
+# Exception: Pre-built WASM files for CI
+!extensions/weather-forecast/weather_forecast_wasm.wasm
+
 # Built .nep packages (too large for git)
 dist/
 *.nep
@@ -67,6 +70,10 @@ node_modules/
 package-lock.json
 *.wasm
 *.wat
+
+# Exception: Pre-built WASM files for CI
+!extensions/weather-forecast/weather_forecast_wasm.wasm
+
 # Build outputs from AssemblyScript
 /extensions/*/build/
 /extensions/*/target/
