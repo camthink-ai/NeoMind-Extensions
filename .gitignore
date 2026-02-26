@@ -92,3 +92,4 @@ coverage/
 # Release files (these should be in Releases, not git)
 release-files/
 releases/
+/NeoMind

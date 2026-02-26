@@ -27,8 +27,6 @@ jobs:
             platform: darwin_aarch64
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -36,11 +34,9 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: Setup symlink for neomind-core
+      - name: Checkout NeoMind main repo
         run: |
-          # Git submodule is checked out at NeoMind/
-          # Create symlink for ../NeoMind (expected by Cargo.toml)
-          ln -s NeoMind ../NeoMind
+          git clone --depth=1 https://github.com/mingmingshen/NeoMind.git
 
       - name: Install dependencies (Ubuntu)
         if: runner.os == 'Linux'
