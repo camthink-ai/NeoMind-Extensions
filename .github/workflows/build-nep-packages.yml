@@ -52,7 +52,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: nep-packages-wasm
+          name: nep-packages-wasm-${{ runner.os }}
           path: dist/*.nep
           retention-days: 30
           if-no-files-found: warn
