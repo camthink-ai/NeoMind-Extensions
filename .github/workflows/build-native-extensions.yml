@@ -42,8 +42,6 @@ jobs:
     steps:
       - name: Checkout extension repo
         uses: actions/checkout@v4
-        with:
-          path: extensions
 
       - name: Checkout NeoMind core
         uses: actions/checkout@v4
