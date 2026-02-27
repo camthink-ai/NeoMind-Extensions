@@ -4,154 +4,225 @@ NeoMind 边缘 AI 平台的官方扩展仓库。
 
 [English Documentation](README.md)
 
-## 项目描述
+## 概述
 
-此仓库包含为 NeoMind 边缘 AI 平台官方维护的扩展集合。
+本仓库包含使用 **NeoMind Extension SDK V2** 构建的官方维护扩展。
 
-### 扩展分发格式
+### 核心特性
 
-NeoMind 支持 **三种扩展分发格式**：
-
-| 格式 | 文件扩展名 | 描述 | 推荐用途 |
-|------|-------------|-------------|----------|
-| **.nep 包** | `.nep` | ZIP 压缩包，包含二进制 + 前端 + 元数据 | **推荐**：完整的扩展分发 |
-| **原生二进制** | `.dylib` / `.so` / `.dll` | 平台特定的动态库 | 开发构建、自定义扩展 |
-| **WASM 模块** | `.wasm` + `.json` | WebAssembly 模块 | 跨平台但不打包 |
-
-### 为什么选择 .nep 包？
-
-**.nep (NeoMind Extension Package)** 是推荐的分发格式：
-- ✅ **单文件** - 包含二进制、前端组件和元数据
-- ✅ **多平台** - 一个包包含所有平台的二进制
-- ✅ **前端支持** - 可打包仪表板使用的 React 组件
-- ✅ **校验和验证** - SHA256 校验确保完整性
-- ✅ **简单安装** - NeoMind Web UI 拖放安装
-
----
-
-## 快速开始：安装扩展
-
-### 方法 1：拖放安装（推荐）
-
-1. 从 [Releases](https://github.com/camthink-ai/NeoMind-Extensions/releases) 下载 `.nep` 包
-2. 打开 NeoMind Web UI → 扩展
-3. 点击 **添加扩展** → 切换到 **文件模式**
-4. 拖放 `.nep` 文件
-5. 点击 **上传并安装**
-
-### 方法 2：扩展市场
-
-1. 打开 NeoMind Web UI → 扩展 → 市场
-2. 浏览可用扩展
-3. 点击任意扩展的 **安装** 按钮
-4. 扩展将自动下载并安装
-
-### 方法 3：API 安装
-
-```bash
-curl -X POST http://your-neomind:9375/api/extensions/upload/file \
-  -H "Content-Type: application/octet-stream" \
-  --data-binary @extension-name.nep
-```
-
----
-
-## 扩展开发者指南
-
-### 构建 .nep 包
-
-使用提供的 `package.sh` 脚本构建 .nep 包：
-
-```bash
-# 构建单个扩展
-bash scripts/package.sh -d extensions/weather-forecast-wasm
-
-# 构建并验证
-bash scripts/package.sh -d extensions/weather-forecast-wasm -v
-
-# 仅构建当前平台
-bash scripts/package.sh -d extensions/template -p current
-```
-
-脚本会：
-1. 构建扩展（Rust/Cargo 或使用预构建的 WASM）
-2. 创建正确的目录结构
-3. 打包二进制、前端组件和元数据
-4. 计算 SHA256 校验和
-5. 输出：`dist/{扩展id}-{版本}.nep`
-
-### 扩展目录结构
-
-```
-extensions/
-└── your-extension/
-    ├── manifest.json       # 扩展元数据（必需）
-    ├── Cargo.toml          # Rust 项目（如果是原生/WASM）
-    ├── src/                # 源代码
-    │   └── lib.rs
-    ├── frontend/           # React 组件（可选）
-    │   ├── src/
-    │   ├── package.json
-    │   └── dist/           # 构建的 JS 文件
-    └── README.md           # 文档
-```
-
-### manifest.json 格式
-
-```json
-{
-  "format": "neomind-extension-package",
-  "format_version": "1.0",
-  "id": "neomind.example.extension",
-  "name": "示例扩展",
-  "version": "1.0.0",
-  "description": "一个示例扩展",
-  "author": "您的名字",
-  "license": "MIT",
-  "type": "wasm",
-  "binaries": {
-    "wasm": "binaries/wasm/extension.wasm"
-  },
-  "permissions": [],
-  "config_parameters": [],
-  "metrics": [],
-  "commands": [],
-  "dashboard_components": []
-}
-```
-
-详细文档请参考 [EXTENSION_GUIDE.zh.md](EXTENSION_GUIDE.zh.md)。
+- **统一 SDK**：单个 SDK 同时支持 Native 和 WASM 目标
+- **ABI 版本 3**：新的扩展接口，改进安全性
+- **前端组件**：基于 React 的仪表板组件
+- **CSS 变量主题**：明暗模式支持
+- **进程隔离**：高风险扩展的可选隔离
 
 ---
 
 ## 可用扩展
 
-### 天气预报 (WASM)
-- **ID**: `neomind.weather.forecast.wasm`
-- **描述**: 使用 Open-Meteo API 的实时天气数据
-- **包**: [下载](https://github.com/camthink-ai/NeoMind-Extensions/releases/latest)
-- **组件**: 天气卡片仪表板组件
+### 天气预报 V2
 
-### 更多扩展开发中...
+**ID**: `weather-forecast-v2`
+
+使用 Open-Meteo API 的实时天气数据。
+
+| 能力 | 类型 | 描述 |
+|-----|------|------|
+| `get_weather` | 命令 | 获取任意城市的天气 |
+| temperature_c | 指标 | 摄氏温度 |
+| humidity_percent | 指标 | 相对湿度 |
+| wind_speed_kmph | 指标 | 风速 |
+
+**前端组件**：WeatherCard - 美观的天气显示，带动态图标
+
+```bash
+# 构建
+cargo build --release -p neomind-weather-forecast-v2
+
+# 安装
+cp target/release/libneomind_extension_weather_forecast_v2.dylib ~/.neomind/extensions/
+```
 
 ---
 
-## CI/CD
+### 图像分析器 V2
 
-此仓库使用 GitHub Actions 自动构建：
+**ID**: `image-analyzer-v2`
 
-- **推送到 main**：构建已更改的扩展
-- **手动触发**：构建特定扩展或全部扩展
-- **发布版本**：创建包含 .nep 包的 GitHub Releases
+使用 YOLOv8 目标检测的 AI 图像分析。
 
-查看 [`.github/workflows/build-nep-packages.yml`](.github/workflows/build-nep-packages.yml)
+| 能力 | 类型 | 描述 |
+|-----|------|------|
+| `analyze_image` | 命令 | 分析图像中的物体 |
+| images_processed | 指标 | 已处理图像总数 |
+| total_detections | 指标 | 检测到的物体数 |
+| avg_processing_time_ms | 指标 | 平均处理时间 |
+
+**前端组件**：ImageAnalyzer - 拖放图像上传，带检测框显示
+
+```bash
+# 构建
+cargo build --release -p neomind-image-analyzer-v2
+
+# 安装
+cp target/release/libneomind_extension_image_analyzer_v2.dylib ~/.neomind/extensions/
+```
 
 ---
 
-## 贡献
+### YOLO 视频 V2
 
-欢迎贡献！请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解指南。
+**ID**: `yolo-video-v2`
+
+使用 YOLOv11 目标检测的实时视频流处理。
+
+| 能力 | 类型 | 描述 |
+|-----|------|------|
+| `start_stream` | 命令 | 启动视频流 |
+| `stop_stream` | 命令 | 停止视频流 |
+| `get_stream_stats` | 命令 | 获取流统计 |
+| active_streams | 指标 | 活跃流数量 |
+| total_frames_processed | 指标 | 已处理帧数 |
+
+**前端组件**：YoloVideoDisplay - MJPEG 流显示，带实时检测
+
+```bash
+# 构建
+cargo build --release -p neomind-yolo-video-v2
+
+# 安装
+cp target/release/libneomind_extension_yolo_video_v2.dylib ~/.neomind/extensions/
+```
+
+---
+
+## 快速开始
+
+### 前置条件
+
+```bash
+# 安装 Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# 克隆仓库
+git clone https://github.com/camthink-ai/NeoMind-Extension.git
+cd NeoMind-Extension
+```
+
+### 构建所有扩展
+
+```bash
+cargo build --release
+```
+
+### 构建前端组件
+
+```bash
+cd extensions/weather-forecast-v2/frontend
+npm install && npm run build
+
+cd ../../image-analyzer-v2/frontend
+npm install && npm run build
+
+cd ../../yolo-video-v2/frontend
+npm install && npm run build
+```
+
+---
+
+## SDK V2 特性
+
+### FFI 接口
+
+```rust
+#[no_mangle]
+pub extern "C" fn neomind_extension_abi_version() -> u32 {
+    3  // ABI 版本 3
+}
+
+#[no_mangle]
+pub extern "C" fn neomind_extension_metadata() -> CExtensionMetadata {
+    // 返回扩展元数据
+}
+
+#[no_mangle]
+pub extern "C" fn neomind_extension_create(
+    config_json: *const u8,
+    config_len: usize,
+) -> *mut RwLock<Box<dyn Any>> {
+    // 创建扩展实例
+}
+
+#[no_mangle]
+pub extern "C" fn neomind_extension_destroy(ptr: *mut RwLock<Box<dyn Any>>) {
+    // 清理扩展
+}
+```
+
+---
+
+## 安全要求
+
+**关键**：所有扩展必须使用 `panic = "unwind"` 编译
+
+```toml
+# 在 Cargo.toml workspace 中
+[profile.release]
+opt-level = 3
+lto = "thin"
+panic = "unwind"  # 安全必需！
+```
+
+使用 `panic = "abort"` 会导致任何 panic 时整个 NeoMind 服务器崩溃。
+
+---
+
+## 进程隔离
+
+对于高风险扩展（如 AI 推理），启用进程隔离：
+
+```json
+// manifest.json
+{
+  "isolation": {
+    "mode": "process",
+    "timeout_seconds": 30,
+    "max_memory_mb": 512,
+    "restart_on_crash": true
+  }
+}
+```
+
+---
+
+## 仓库结构
+
+```
+NeoMind-Extension/
+├── extensions/
+│   ├── weather-forecast-v2/    # 天气扩展
+│   ├── image-analyzer-v2/      # 图像分析扩展
+│   ├── yolo-video-v2/          # 视频处理扩展
+│   └── index.json              # 市场索引
+├── Cargo.toml                  # Workspace 配置
+├── EXTENSION_GUIDE.md          # 开发者指南
+└── README.md                   # 本文件
+```
+
+---
+
+## 平台支持
+
+| 平台 | 架构 | 二进制扩展 |
+|-----|------|-----------|
+| macOS | ARM64 (Apple Silicon) | `*.dylib` |
+| macOS | x86_64 (Intel) | `*.dylib` |
+| Linux | x86_64 | `*.so` |
+| Linux | ARM64 | `*.so` |
+| Windows | x86_64 | `*.dll` |
+
+---
 
 ## 许可证
 
-此仓库采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件。
+MIT 许可证

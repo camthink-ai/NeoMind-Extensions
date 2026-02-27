@@ -1,0 +1,38 @@
+[package]
+name = "image-analyzer-v2"
+version = "2.0.0"
+edition = "2021"
+authors = ["NeoMind Team"]
+license = "Apache-2.0"
+description = "Image analysis extension using YOLOv8"
+
+[lib]
+name = "neomind_extension_image_analyzer_v2"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neomind-extension-sdk = { path = "../../../NeoMind/crates/neomind-extension-sdk" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = "1"
+async-trait = "0.1"
+chrono = "0.4"
+semver = "1"
+base64 = "0.22"
+image = "0.25"
+ndarray = "0.17"
+parking_lot = "0.12"
+tracing = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ort = { version = "2.0.0-rc.11", features = ["half"] }
+
+[features]
+default = []
+native = []
+wasm = []
+
+[profile.release]
+opt-level = 3
+lto = "thin"

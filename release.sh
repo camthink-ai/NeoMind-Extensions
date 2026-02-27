@@ -1,6 +1,6 @@
 #!/bin/bash
 # NeoMind Extensions Release Script
-# Builds extensions for multiple platforms and prepares for GitHub release
+# Builds extensions and creates .nep packages for GitHub release
 
 set -e
 
@@ -10,9 +10,7 @@ echo "======================================"
 echo ""
 
 # Version from workspace
-VERSION="0.1.0"
-REPO_NAME="NeoMind-Extensions"
-GITHUB_ORG="camthink-ai"
+VERSION="2.0.0"
 
 # Colors
 GREEN='\033[0;32m'
@@ -22,106 +20,167 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 # Detect current platform
-CURRENT_OS=$(uname -s)
-CURRENT_ARCH=$(uname -m)
+OS=$(uname -s)
+ARCH=$(uname -m)
 
-echo -e "${BLUE}Current platform: $CURRENT_OS $CURRENT_ARCH${NC}"
-echo -e "${BLUE}Target version: $VERSION${NC}"
+case "$OS" in
+    Darwin)
+        if [ "$ARCH" = "arm64" ]; then
+            PLATFORM="darwin_aarch64"
+        else
+            PLATFORM="darwin_x86_64"
+        fi
+        LIB_EXT="dylib"
+        ;;
+    Linux)
+        if [ "$ARCH" = "aarch64" ]; then
+            PLATFORM="linux_arm64"
+        else
+            PLATFORM="linux_amd64"
+        fi
+        LIB_EXT="so"
+        ;;
+    MINGW*|MSYS*|CYGWIN*)
+        PLATFORM="windows_amd64"
+        LIB_EXT="dll"
+        ;;
+    *)
+        echo -e "${RED}Unknown OS: $OS${NC}"
+        exit 1
+        ;;
+esac
+
+echo -e "${BLUE}Platform: $OS $ARCH ($PLATFORM)${NC}"
+echo -e "${BLUE}Version: $VERSION${NC}"
 echo ""
 
 # Check for required tools
 command -v cargo >/dev/null 2>&1 || { echo -e "${RED}Error: cargo not found${NC}"; exit 1; }
-command -v gh >/dev/null 2>&1 || { echo -e "${YELLOW}Warning: gh CLI not found (needed for GitHub release)${NC}"; }
+command -v gh >/dev/null 2>&1 || echo -e "${YELLOW}Warning: gh CLI not found${NC}"
+
+# V2 Extensions list
+V2_EXTENSIONS=(
+    "weather-forecast-v2"
+    "image-analyzer-v2"
+    "yolo-video-v2"
+)
 
 # Clean build artifacts
 echo -e "${BLUE}Step 1: Cleaning previous builds...${NC}"
-cargo clean
+cargo clean 2>/dev/null || true
 rm -rf dist/
 mkdir -p dist
 echo -e "${GREEN}✓ Clean completed${NC}"
 echo ""
 
-# Build for current platform
-echo -e "${BLUE}Step 2: Building extensions for $CURRENT_OS $CURRENT_ARCH...${NC}"
+# Build Rust extensions
+echo -e "${BLUE}Step 2: Building Rust extensions...${NC}"
 cargo build --release
-
-# Determine library extension
-case "$CURRENT_OS" in
-    Darwin)
-        EXT="dylib"
-        PLATFORM_NAME="darwin-$CURRENT_ARCH"
-        ;;
-    Linux)
-        EXT="so"
-        PLATFORM_NAME="linux-$CURRENT_ARCH"
-        ;;
-    MINGW*|MSYS*|CYGWIN*)
-        EXT="dll"
-        PLATFORM_NAME="windows-$CURRENT_ARCH"
-        ;;
-    *)
-        echo -e "${RED}Unknown OS: $CURRENT_OS${NC}"
-        exit 1
-        ;;
-esac
-
-# Copy built extensions to dist/
+echo -e "${GREEN}✓ Rust build completed${NC}"
 echo ""
-echo -e "${BLUE}Step 3: Organizing built files...${NC}"
-BUILT_COUNT=0
-for lib in target/release/libneomind_extension_*."$EXT"; do
-    if [ -f "$lib" ]; then
-        basename_lib=$(basename "$lib")
-        platform_lib="dist/${basename_lib%.*}-$PLATFORM_NAME.$EXT"
 
-        cp "$lib" "$platform_lib"
-
-        # Calculate SHA256
-        if command -v shasum >/dev/null 2>&1; then
-            SHA256=$(shasum -a 256 "$platform_lib" | awk '{print $1}')
-            SIZE=$(stat -f%z "$platform_lib" 2>/dev/null || stat -c%s "$platform_lib" 2>/dev/null)
-
-            echo "  ✓ $basename_lib"
-            echo "    SHA256: $SHA256"
-            echo "    Size: $SIZE bytes"
-
-            # Save checksum info
-            echo "$basename_lib|$PLATFORM_NAME|$SHA256|$SIZE" >> dist/checksums.txt
-        fi
-
-        BUILT_COUNT=$((BUILT_COUNT + 1))
+# Build frontend components
+echo -e "${BLUE}Step 3: Building frontend components...${NC}"
+for ext in "${V2_EXTENSIONS[@]}"; do
+    FRONTEND_DIR="extensions/$ext/frontend"
+    if [ -d "$FRONTEND_DIR" ] && [ -f "$FRONTEND_DIR/package.json" ]; then
+        echo -e "  ${BLUE}Building${NC} $ext frontend..."
+        cd "$FRONTEND_DIR"
+        npm install --silent 2>/dev/null || true
+        npm run build 2>/dev/null && echo -e "  ${GREEN}✓${NC} $ext frontend" || echo -e "  ${YELLOW}⚠${NC} $ext frontend failed"
+        cd - > /dev/null
     fi
+done
+echo -e "${GREEN}✓ Frontend build completed${NC}"
+echo ""
+
+# Create .nep packages
+echo -e "${BLUE}Step 4: Creating .nep packages...${NC}"
+
+BUILT_COUNT=0
+for ext in "${V2_EXTENSIONS[@]}"; do
+    EXT_DIR="extensions/$ext"
+    LIB_NAME=$(echo "$ext" | tr '-' '_')
+    LIB_FILE="target/release/libneomind_extension_${LIB_NAME}.${LIB_EXT}"
+
+    if [ ! -f "$LIB_FILE" ]; then
+        echo -e "  ${YELLOW}⚠${NC} $ext: binary not found"
+        continue
+    fi
+
+    # Create temp package directory
+    TEMP_DIR=$(mktemp -d)
+    PACKAGE_DIR="$TEMP_DIR/$ext"
+    mkdir -p "$PACKAGE_DIR/binaries/$PLATFORM"
+    mkdir -p "$PACKAGE_DIR/frontend"
+
+    # Copy binary
+    cp "$LIB_FILE" "$PACKAGE_DIR/binaries/$PLATFORM/"
+
+    # Copy frontend
+    if [ -d "$EXT_DIR/frontend/dist" ]; then
+        cp -r "$EXT_DIR/frontend/dist"/* "$PACKAGE_DIR/frontend/" 2>/dev/null || true
+    fi
+
+    # Copy frontend.json
+    if [ -f "$EXT_DIR/frontend/frontend.json" ]; then
+        cp "$EXT_DIR/frontend/frontend.json" "$PACKAGE_DIR/"
+    fi
+
+    # Create manifest.json
+    cat > "$PACKAGE_DIR/manifest.json" << EOF
+{
+  "format": "neomind-extension-package",
+  "format_version": "2.0",
+  "abi_version": 3,
+  "id": "$ext",
+  "name": "$(echo $ext | sed 's/-v2$//' | sed 's/-/ /g')",
+  "version": "$VERSION",
+  "sdk_version": "2.0.0",
+  "type": "native",
+  "binaries": {
+    "$PLATFORM": "binaries/$PLATFORM/$(basename $LIB_FILE)"
+  },
+  "frontend": "frontend/"
+}
+EOF
+
+    # Create .nep package
+    OUTPUT_FILE="dist/${ext}-${VERSION}-${PLATFORM}.nep"
+    cd "$TEMP_DIR"
+    zip -r -q "$OLDPWD/$OUTPUT_FILE" "$ext"
+    cd - > /dev/null
+
+    # Calculate checksum
+    if command -v sha256sum &> /dev/null; then
+        CHECKSUM=$(sha256sum "$OUTPUT_FILE" | cut -d' ' -f1)
+    else
+        CHECKSUM=$(shasum -a 256 "$OUTPUT_FILE" | cut -d' ' -f1)
+    fi
+    SIZE=$(stat -f%z "$OUTPUT_FILE" 2>/dev/null || stat -c%s "$OUTPUT_FILE" 2>/dev/null)
+
+    echo "$CHECKSUM  $(basename $OUTPUT_FILE)" >> dist/checksums.txt
+
+    # Cleanup
+    rm -rf "$TEMP_DIR"
+
+    echo -e "  ${GREEN}✓${NC} $ext -> ${ext}-${VERSION}-${PLATFORM}.nep"
+    echo "    SHA256: $CHECKSUM"
+    echo "    Size: $SIZE bytes"
+
+    BUILT_COUNT=$((BUILT_COUNT + 1))
 done
 
 echo ""
-echo -e "${GREEN}✓ Built $BUILT_COUNT extension(s)${NC}"
+echo -e "${GREEN}✓ Created $BUILT_COUNT .nep package(s)${NC}"
 echo ""
 
-# Show what's built
-echo -e "${BLUE}Built files:${NC}"
-ls -lh dist/
-echo ""
-
-# Instructions for multi-platform build
-echo -e "${YELLOW}======================================"
-echo "Multi-Platform Build Instructions"
+# Summary
+echo -e "${BLUE}======================================"
+echo "Release Summary"
 echo -e "======================================${NC}"
 echo ""
-echo "To build for all platforms, you need to:"
-echo ""
-echo "1. macOS (Apple Silicon):"
-echo "   Run this script on macOS ARM64"
-echo ""
-echo "2. macOS (Intel):"
-echo "   Run this script on macOS x86_64"
-echo "   or use: rustup target add x86_64-apple-darwin"
-echo ""
-echo "3. Linux (x86_64):"
-echo "   - Use Docker: docker run --rm -v \$(pwd):/work -w /work rust:latest cargo build --release"
-echo "   - Or use GitHub Actions CI/CD"
-echo ""
-echo "4. Windows (x86_64):"
-echo "   Run this script on Windows"
+ls -lh dist/
 echo ""
 
 # GitHub Release Instructions
@@ -129,38 +188,16 @@ echo -e "${YELLOW}======================================"
 echo "GitHub Release Instructions"
 echo -e "======================================${NC}"
 echo ""
-echo "After building for all platforms:"
+echo "1. Commit and tag:"
+echo "   git add . && git commit -m \"Release v$VERSION\""
+echo "   git tag v$VERSION"
+echo "   git push origin main --tags"
 echo ""
-echo "1. Update metadata.json with SHA256 checksums:"
-echo "   - Edit extensions/*/metadata.json"
-echo "   - Update builds.{platform}.sha256"
-echo "   - Update builds.{platform}.size"
-echo ""
-echo "2. Commit changes:"
-echo "   git add ."
-echo "   git commit -m \"Release v$VERSION\""
-echo "   git push origin main"
-echo ""
-echo "3. Create GitHub Release:"
+echo "2. Create GitHub Release:"
 echo "   gh release create v$VERSION \\"
 echo "     --title \"NeoMind Extensions v$VERSION\" \\"
-echo "     --notes \"See README.md for installation instructions\" \\"
-echo "     dist/*"
+echo "     --notes \"## Downloads\n\n| File | Platform |\n|------|----------|\n$(for f in dist/*.nep; do echo "| \`$(basename $f)\` | $(echo $f | grep -o 'darwin\|linux\|windows') |"; done)\" \\"
+echo "     dist/*.nep dist/checksums.txt"
 echo ""
 
-# Quick release command (if checksums.txt exists)
-if [ -f "dist/checksums.txt" ]; then
-    echo -e "${BLUE}Checksum summary for metadata.json:${NC}"
-    echo ""
-    while IFS='|' read -r file platform sha256 size; do
-        ext_id=$(echo "$file" | sed 's/libneomind_extension_//' | sed 's/\.[^.]*$//')
-        echo "  $ext_id ($platform):"
-        echo "    sha256: \"$sha256\""
-        echo "    size: $size"
-    done < dist/checksums.txt
-    echo ""
-fi
-
-echo -e "${GREEN}======================================"
-echo "Build complete!"
-echo -e "======================================${NC}"
+echo -e "${GREEN}Build complete!${NC}"

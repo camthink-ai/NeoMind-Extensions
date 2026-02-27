@@ -37,11 +37,14 @@ libneomind_extension_*.so
 libneomind_extension_*.dll
 
 # Models and data files (too large for git)
-models/
+# models/ at root level is ignored
+/models/
 *.bin
-*.onnx
 *.pt
 *.pth
+
+# Exception: Allow ONNX models in extension directories
+!extensions/*/models/*.onnx
 
 # Profiling
 *.profraw

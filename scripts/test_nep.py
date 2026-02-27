@@ -22,7 +22,18 @@ def test_nep_package(nep_path):
         # Test 2: Read and verify manifest.json
         print("\n2. Verifying manifest.json...")
         with zipfile.ZipFile(nep_path, 'r') as zf:
-            with zf.open('manifest.json') as mf:
+            # Find manifest.json (may be in a subdirectory)
+            manifest_path = None
+            for f in files:
+                if f.endswith('manifest.json'):
+                    manifest_path = f
+                    break
+
+            if not manifest_path:
+                print("   ✗ manifest.json not found")
+                return False
+
+            with zf.open(manifest_path) as mf:
                 manifest = json.load(mf)
 
         # Check required fields
@@ -42,13 +53,24 @@ def test_nep_package(nep_path):
             binaries = manifest.get('binaries', {})
             if binaries:
                 for platform, path in binaries.items():
+                    # Try both direct path and with extension directory prefix
                     try:
                         info = zf.getinfo(path)
                         size = info.file_size
                         print(f"   ✓ {platform}: {path} ({size} bytes)")
                     except KeyError:
-                        print(f"   ✗ Missing binary: {platform}")
-                        return False
+                        # Try finding by filename
+                        found = False
+                        for f in files:
+                            if f.endswith(path.split('/')[-1]):
+                                info = zf.getinfo(f)
+                                size = info.file_size
+                                print(f"   ✓ {platform}: {f} ({size} bytes)")
+                                found = True
+                                break
+                        if not found:
+                            print(f"   ✗ Missing binary: {platform}")
+                            return False
 
         # Test 4: Verify frontend components
         print("\n4. Verifying frontend components...")

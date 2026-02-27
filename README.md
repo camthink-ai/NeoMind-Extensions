@@ -4,326 +4,311 @@ Official extension repository for the NeoMind Edge AI Platform.
 
 [中文文档](README.zh.md)
 
-## Project Description
+## Overview
 
-This repository contains officially maintained extensions for the NeoMind Edge AI Platform.
+This repository contains officially maintained extensions built with the **NeoMind Extension SDK V2**.
 
-### Extension Types
+### Key Features
 
-NeoMind supports **three extension distribution formats**:
-
-| Format | File Extension | Description | Use Case |
-|--------|---------------|-------------|----------|
-| **.nep Package** | `.nep` | ZIP archive with binaries + frontend + metadata | **Recommended**: Complete extension distribution |
-| **Native Binary** | `.dylib` / `.so` / `.dll` | Platform-specific dynamic libraries | Development builds, custom extensions |
-| **WASM Module** | `.wasm` + `.json` | WebAssembly modules | Cross-platform without packaging |
-
-### Why .nep Packages?
-
-**.nep (NeoMind Extension Package)** is the recommended distribution format:
-- ✅ **Single file** - Contains binaries, frontend components, and metadata
-- ✅ **Multi-platform** - Includes binaries for all platforms in one package
-- ✅ **Frontend support** - Can bundle React components for the dashboard
-- ✅ **Checksum verification** - SHA256 validation ensures integrity
-- ✅ **Easy installation** - Drag & drop in NeoMind web UI
+- **Unified SDK**: Single SDK for both Native and WASM targets
+- **ABI Version 3**: New extension interface with improved safety
+- **Frontend Components**: React-based dashboard components
+- **CSS Variable Theming**: Light/dark mode support
+- **Process Isolation**: Optional isolation for high-risk extensions
 
 ---
 
-## Quick Start: Installing Extensions
+## Available Extensions
 
-### Method 1: Drag & Drop (Recommended)
+### Weather Forecast V2
 
-1. Download a `.nep` package from [Releases](https://github.com/camthink-ai/NeoMind-Extensions/releases)
-2. Open NeoMind Web UI → Extensions
-3. Click **Add Extension** → Switch to **File Mode**
-4. Drag & drop the `.nep` file
-5. Click **Upload & Install**
+**ID**: `weather-forecast-v2`
 
-### Method 2: NeoMind Marketplace
+Real-time weather data using Open-Meteo API.
 
-1. Open NeoMind Web UI → Extensions → Marketplace
-2. Browse available extensions
-3. Click **Install** on any extension
-4. The extension will be automatically downloaded and installed
+| Capability | Type | Description |
+|-----------|------|-------------|
+| `get_weather` | Command | Get weather for any city |
+| temperature_c | Metric | Temperature in Celsius |
+| humidity_percent | Metric | Relative humidity |
+| wind_speed_kmph | Metric | Wind speed |
 
-### Method 3: API Installation
+**Frontend Component**: WeatherCard - Beautiful weather display with dynamic icons
 
 ```bash
-curl -X POST http://your-neomind:9375/api/extensions/upload/file \
-  -H "Content-Type: application/octet-stream" \
-  --data-binary @extension-name.nep
+# Build
+cargo build --release -p neomind-weather-forecast-v2
+
+# Install
+cp target/release/libneomind_extension_weather_forecast_v2.dylib ~/.neomind/extensions/
+```
+
+---
+
+### Image Analyzer V2
+
+**ID**: `image-analyzer-v2`
+
+AI-powered image analysis using YOLOv8 object detection.
+
+| Capability | Type | Description |
+|-----------|------|-------------|
+| `analyze_image` | Command | Analyze image for objects |
+| images_processed | Metric | Total images processed |
+| total_detections | Metric | Objects detected |
+| avg_processing_time_ms | Metric | Average processing time |
+
+**Frontend Component**: ImageAnalyzer - Drag-drop image upload with detection boxes
+
+```bash
+# Build
+cargo build --release -p neomind-image-analyzer-v2
+
+# Install
+cp target/release/libneomind_extension_image_analyzer_v2.dylib ~/.neomind/extensions/
+```
+
+---
+
+### YOLO Video V2
+
+**ID**: `yolo-video-v2`
+
+Real-time video stream processing with YOLOv11 object detection.
+
+| Capability | Type | Description |
+|-----------|------|-------------|
+| `start_stream` | Command | Start video detection stream |
+| `stop_stream` | Command | Stop video stream |
+| `get_stream_stats` | Command | Get stream statistics |
+| active_streams | Metric | Number of active streams |
+| total_frames_processed | Metric | Frames processed |
+
+**Frontend Component**: YoloVideoDisplay - MJPEG stream display with live stats
+
+**Safety Note**: This extension is marked as HIGH-RISK due to AI inference workload. Process isolation is recommended for production.
+
+```bash
+# Build
+cargo build --release -p neomind-yolo-video-v2
+
+# Install
+cp target/release/libneomind_extension_yolo_video_v2.dylib ~/.neomind/extensions/
+```
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Rust 1.75+
+- NeoMind Extension SDK (located at `../../NeoMind/crates/neomind-extension-sdk`)
+
+### Building All Extensions
+
+```bash
+# Build all extensions
+cargo build --release
+
+# Output binaries
+ls target/release/libneomind_extension_*.dylib
+```
+
+### Installing Extensions
+
+```bash
+# Create extensions directory
+mkdir -p ~/.neomind/extensions
+
+# Copy native binaries
+cp target/release/libneomind_extension_*.dylib ~/.neomind/extensions/
+
+# Copy frontend components (optional)
+cp -r extensions/weather-forecast-v2/frontend/dist ~/.neomind/extensions/weather-forecast-v2/frontend/
 ```
 
 ---
 
 ## For Extension Developers
 
-### Building .nep Packages
-
-Use the provided `package.sh` script to build .nep packages:
-
-```bash
-# Build a single extension
-bash scripts/package.sh -d extensions/weather-forecast-wasm
-
-# Build with verification
-bash scripts/package.sh -d extensions/weather-forecast-wasm -v
-
-# Build for current platform only
-bash scripts/package.sh -d extensions/template -p current
-```
-
-The script will:
-1. Build the extension (Rust/Cargo or use pre-built WASM)
-2. Create proper directory structure
-3. Package binaries, frontend components, and metadata
-4. Calculate SHA256 checksum
-5. Output: `dist/{extension-id}-{version}.nep`
-
-### Extension Directory Structure
+### Extension Structure
 
 ```
 extensions/
-└── your-extension/
-    ├── manifest.json       # Extension metadata (required)
-    ├── Cargo.toml          # Rust project (if native/WASM)
-    ├── src/                # Source code
-    │   └── lib.rs
-    ├── frontend/           # React components (optional)
-    │   ├── src/
-    │   ├── package.json
-    │   └── dist/           # Built JS files
-    └── README.md           # Documentation
+└── your-extension-v2/
+├── Cargo.toml              # Rust project configuration
+├── src/
+│   └── lib.rs              # Extension implementation
+├── frontend/               # React components (optional)
+│   ├── src/
+│   │   └── index.tsx       # Component implementation
+│   ├── package.json        # npm dependencies
+│   ├── vite.config.ts      # Vite build config
+│   ├── tsconfig.json       # TypeScript config
+│   └── frontend.json       # Component manifest
+└── README.md               # Documentation
 ```
 
-### manifest.json Format
+### Using the SDK
 
-```json
-{
-  "format": "neomind-extension-package",
-  "format_version": "1.0",
-  "id": "neomind.example.extension",
-  "name": "Example Extension",
-  "version": "1.0.0",
-  "description": "An example extension",
-  "author": "Your Name",
-  "license": "MIT",
-  "type": "wasm",
-  "binaries": {
-    "wasm": "binaries/wasm/extension.wasm"
-  },
-  "permissions": [],
-  "config_parameters": [],
-  "metrics": [],
-  "commands": [],
-  "dashboard_components": []
+```rust
+use neomind_extension_sdk::{
+    Extension, ExtensionMetadata, ExtensionError,
+    MetricDefinition, CommandDefinition, ExtensionMetricValue,
+};
+
+pub struct MyExtension {
+    metadata: ExtensionMetadata,
+}
+
+impl Extension for MyExtension {
+    fn metadata(&self) -> &ExtensionMetadata {
+        &self.metadata
+    }
+
+    async fn execute_command(
+        &self,
+        command: &str,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, ExtensionError> {
+        match command {
+            "my_command" => Ok(serde_json::json!({"result": "success"})),
+            _ => Err(ExtensionError::CommandNotFound(command.to_string())),
+        }
+    }
 }
 ```
 
-See [EXTENSION_GUIDE.md](EXTENSION_GUIDE.md) for detailed documentation.
+### Frontend Components
 
----
+```tsx
+import { forwardRef, useState, useCallback } from 'react'
 
-## Available Extensions
+const getApiBase = (): string => {
+  if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+    return 'http://localhost:9375/api'
+  }
+  return '/api'
+}
 
-### Weather Forecast (WASM)
-- **ID**: `neomind.weather.forecast.wasm`
-- **Description**: Real-time weather data using Open-Meteo API
-- **Package**: [Download](https://github.com/camthink-ai/NeoMind-Extensions/releases/latest)
-- **Components**: Weather card dashboard widget
+async function executeExtensionCommand<T>(
+  extensionId: string,
+  command: string,
+  args: Record<string, any>
+): Promise<{ success: boolean; data?: T; error?: string }> {
+  const response = await fetch(`${getApiBase()}/extensions/${extensionId}/command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command, args })
+  })
+  return response.json()
+}
 
-### More extensions coming soon...
+export const MyComponent = forwardRef<HTMLDivElement, Props>(
+  function MyComponent(props, ref) {
+    const { dataSource, className = '' } = props
+    const extensionId = dataSource?.extensionId || 'my-extension-v2'
 
----
+    // Component implementation...
 
-## CI/CD
-
-This repository uses GitHub Actions for automatic building:
-
-- **On push** to `main`: Builds changed extensions
-- **Manual trigger**: Build specific extensions or all
-- **Release**: Creates GitHub releases with .nep packages
-
-See [`.github/workflows/build-nep-packages.yml`](.github/workflows/build-nep-packages.yml)
-
----
-
-## Contributing
-
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## License
-
-This repository is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-
-### Manual Installation
-
-#### Pre-built Binaries
-
-Download pre-built binaries from [Releases](https://github.com/camthink-ai/NeoMind-Extensions/releases):
-
-**Native Extensions (.dylib / .so / .dll)**:
-```bash
-# After downloading, copy to extensions directory
-mkdir -p ~/.neomind/extensions
-cp ~/Downloads/libneomind_extension_weather_forecast.dylib ~/.neomind/extensions/
-
-# Restart NeoMind
+    return (
+      <div ref={ref} className={`my-component ${className}`}>
+        {/* ... */}
+      </div>
+    )
+  }
+)
 ```
 
-**WASM Extensions (.wasm)**:
-```bash
-# Download both files:
-# - my-extension.wasm (the WebAssembly module)
-# - my-extension.json (metadata file)
+### CSS Variable Theming
 
-mkdir -p ~/.neomind/extensions
-cp ~/Downloads/my-extension.wasm ~/.neomind/extensions/
-cp ~/Downloads/my-extension.json ~/.neomind/extensions/
+```css
+.my-component {
+  --ext-bg: rgba(255, 255, 255, 0.25);
+  --ext-fg: hsl(240 10% 10%);
+  --ext-muted: hsl(240 5% 40%);
+  --ext-border: rgba(255, 255, 255, 0.5);
+  --ext-accent: hsl(221 83% 53%);
+}
 
-# Restart NeoMind
-```
-
-#### Build from Source
-
-**Native Extensions**:
-```bash
-# Clone the repository
-git clone https://github.com/camthink-ai/NeoMind-Extensions.git
-cd NeoMind-Extensions
-
-# Build all extensions
-cargo build --release
-
-# Copy to extensions directory
-mkdir -p ~/.neomind/extensions
-cp target/release/libneomind_extension_*.dylib ~/.neomind/extensions/
-```
-
-**WASM Extensions**:
-```bash
-# Clone the repository
-git clone https://github.com/camthink-ai/NeoMind-Extensions.git
-cd NeoMind-Extensions/extensions/as-hello
-
-# Install dependencies and build
-npm install
-npm run build
-
-# Copy both files to extensions directory
-mkdir -p ~/.neomind/extensions
-cp build/as-hello.wasm ~/.neomind/extensions/
-cp metadata.json ~/.neomind/extensions/as-hello.json
+.dark .my-component {
+  --ext-bg: rgba(30, 30, 30, 0.4);
+  --ext-fg: hsl(0 0% 95%);
+  --ext-muted: hsl(0 0% 65%);
+}
 ```
 
 ---
 
-## Available Extensions
+## ABI Version 3
 
-### [image-analyzer](extensions/image-analyzer/) - Stateless Streaming
+All V2 extensions use ABI version 3, which provides:
 
-Demonstrates **Stateless** streaming mode for single-chunk image processing.
+- **Improved safety**: Better panic handling
+- **Frontend support**: Built-in component registration
+- **Standardized metrics**: Unified metric types
+- **Better error handling**: Structured error responses
 
-| Capability | Type | Description |
-|-----------|------|-------------|
-| Image Analysis | Stream | Analyze JPEG/PNG/WebP images |
-| Object Detection | Metric | Detected objects with bounding boxes |
-| `reset_stats` | Command | Reset processing statistics |
+### FFI Exports
 
-**Streaming Mode**: Stateless (independent processing of each chunk)
-**Direction**: Upload (client → extension)
-**Max Chunk Size**: 10MB
+```rust
+#[no_mangle]
+pub extern "C" fn neomind_extension_abi_version() -> u32 {
+    3  // ABI Version 3
+}
 
-**Installation**:
-```bash
-cargo build --release -p neomind-image-analyzer
-cp target/release/libneomind_extension_image_analyzer.dylib ~/.neomind/extensions/
+#[no_mangle]
+pub extern "C" fn neomind_extension_metadata() -> CExtensionMetadata {
+    // Return extension metadata
+}
+
+#[no_mangle]
+pub extern "C" fn neomind_extension_create(
+    config_json: *const u8,
+    config_len: usize,
+) -> *mut RwLock<Box<dyn Any>> {
+    // Create extension instance
+}
+
+#[no_mangle]
+pub extern "C" fn neomind_extension_destroy(ptr: *mut RwLock<Box<dyn Any>>) {
+    // Cleanup extension
+}
 ```
 
-### [yolo-video](extensions/yolo-video/) - Stateful Streaming
+---
 
-Demonstrates **Stateful** streaming mode for session-based video processing.
+## Safety Requirements
 
-| Capability | Type | Description |
-|-----------|------|-------------|
-| Video Processing | Stream | Process H264/H265 video frames |
-| Object Detection | Stream | YOLO-based real-time detection |
-| `get_session_info` | Command | Get active session statistics |
+**CRITICAL**: All extensions MUST be compiled with `panic = "unwind"`
 
-**Streaming Mode**: Stateful (maintains session context)
-**Direction**: Upload (client → extension)
-**Max Chunk Size**: 5MB per frame
-**Max Concurrent Sessions**: 5
-
-**Installation**:
-```bash
-cargo build --release -p neomind-yolo-video
-cp target/release/libneomind_extension_yolo_video.dylib ~/.neomind/extensions/
+```toml
+# In Cargo.toml workspace
+[profile.release]
+opt-level = 3
+lto = "thin"
+panic = "unwind"  # REQUIRED for safety!
 ```
 
-### [as-hello](extensions/as-hello/) - WASM Example (AssemblyScript/TypeScript)
+Using `panic = "abort"` will cause the entire NeoMind server to crash on any panic.
 
-A WASM extension written in AssemblyScript (TypeScript-like language) with fast compile times and small binary size.
+---
 
-| Capability | Type | Description |
-|-----------|------|-------------|
-| `get_counter` | Command | Get the current counter value |
-| `increment_counter` | Command | Increment the counter |
-| `reset_counter` | Command | Reset counter to default value |
-| `get_temperature` | Command | Get temperature reading (simulated) |
-| `set_temperature` | Command | Set temperature value (for testing) |
-| `get_humidity` | Command | Get humidity reading (simulated) |
-| `hello` | Command | Say hello from AssemblyScript |
-| `get_all_metrics` | Command | Get all metrics with variation |
+## Process Isolation
 
-**Metrics**: counter, temperature, humidity
+For high-risk extensions (like AI inference), enable process isolation:
 
-**Installation**:
-```bash
-# Build AssemblyScript WASM extension
-cd extensions/as-hello
-npm install
-npm run build
-
-# Install (both files required)
-cp build/as-hello.wasm ~/.neomind/extensions/
-cp metadata.json ~/.neomind/extensions/as-hello.json
-```
-
-**Why AssemblyScript?**
-- TypeScript-like syntax (easy for JS/TS developers)
-- Very fast compile time (~1s vs ~5s for Rust WASM)
-- Small binary size (~15 KB vs ~50 KB for Rust WASM)
-- Single `.wasm` file for all platforms
-
-### [template](extensions/template/) - Native Template
-Template for creating native extensions.
-
-### [weather-forecast](extensions/weather-forecast/)
-Weather data and forecasts for global cities.
-
-| Capability | Type | Description |
-|-----------|------|-------------|
-| `get_weather` | Command | Get current weather for any city |
-| **Dashboard Component** | UI | Beautiful weather card with dynamic gradients |
-
-**Metrics**: temperature, humidity, wind_speed
-
-**Features**:
-- Real-time weather using Open-Meteo API (free, no API key required)
-- Beautiful dashboard component with gradient backgrounds that change based on weather
-- City search with auto-refresh capability
-- Temperature unit selection (Celsius/Fahrenheit)
-
-**Installation**:
-```bash
-# Build and install
-cargo build --release -p neomind-weather-forecast
-cp target/release/libneomind_extension_weather_forecast.dylib ~/.neomind/extensions/
-cp -r extensions/weather-forecast/frontend/dist ~/.neomind/extensions/weather-forecast/frontend/
-
-# Or via marketplace (in NeoMind UI)
+```json
+// manifest.json
+{
+  "isolation": {
+    "mode": "process",
+    "timeout_seconds": 30,
+    "max_memory_mb": 512,
+    "restart_on_crash": true
+  }
+}
 ```
 
 ---
@@ -331,224 +316,31 @@ cp -r extensions/weather-forecast/frontend/dist ~/.neomind/extensions/weather-fo
 ## Repository Structure
 
 ```
-NeoMind-Extensions/
+NeoMind-Extension/
 ├── extensions/
-│   ├── index.json              # Main marketplace index
-│   │   # Lists all available extensions with metadata URLs
-│   ├── image-analyzer/         # Stateless streaming extension
-│   │   ├── Cargo.toml          # Package configuration
-│   │   └── src/lib.rs          # Source code
-│   ├── yolo-video/             # Stateful streaming extension
-│   │   ├── Cargo.toml          # Package configuration
-│   │   └── src/lib.rs          # Source code
-│   ├── as-hello/               # WASM extension example (AssemblyScript) ⭐ Recommended
-│   │   ├── package.json        # npm dependencies
-│   │   ├── asconfig.json       # AssemblyScript compiler config
-│   │   ├── metadata.json       # Extension metadata (for marketplace)
-│   │   ├── README.md           # Extension documentation
-│   │   └── assembly/extension.ts  # Source code
-│   ├── weather-forecast/       # Native extension
-│   │   ├── metadata.json       # Extension metadata (for marketplace)
-│   │   ├── Cargo.toml          # Package configuration
-│   │   ├── README.md           # Extension documentation
-│   │   └── src/lib.rs          # Source code
-│   └── template/               # Template for native extensions
-│       ├── Cargo.toml
-│       ├── README.md
-│       └── src/lib.rs
-├── EXTENSION_GUIDE.md          # Developer guide
-├── USER_GUIDE.md               # User guide
+│   ├── weather-forecast-v2/    # Weather extension
+│   ├── image-analyzer-v2/      # Image analysis extension
+│   ├── yolo-video-v2/          # Video processing extension
+│   └── index.json              # Marketplace index
 ├── Cargo.toml                  # Workspace configuration
-├── build.sh                    # Build script
+├── EXTENSION_GUIDE.md          # Developer guide
 └── README.md                   # This file
-```
-
----
-
-## Marketplace Data Format
-
-### extensions/index.json
-
-Main index that lists all available extensions:
-
-```json
-{
-  "version": "1.0",
-  "last_updated": "2025-02-10T12:00:00Z",
-  "extensions": [
-    {
-      "id": "weather-forecast",
-      "name": "Weather Forecast",
-      "description": "Global weather data and forecasts",
-      "version": "0.1.0",
-      "author": "CamThink",
-      "license": "MIT",
-      "categories": ["weather", "data"],
-      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/weather-forecast/metadata.json"
-    }
-  ]
-}
-```
-
-### extensions/{id}/metadata.json
-
-Detailed metadata for each extension:
-
-```json
-{
-  "id": "weather-forecast",
-  "name": "Weather Forecast",
-  "description": "...",
-  "version": "0.1.0",
-  "capabilities": {
-    "tools": [...],
-    "metrics": [...],
-    "commands": [...]
-  },
-  "builds": {
-    "darwin-aarch64": {
-      "url": "https://github.com/.../download/v0.1.0/...",
-      "sha256": "...",
-      "size": 123456
-    }
-  },
-  "requirements": {
-    "min_neomind_version": "0.5.8",
-    "network": true
-  },
-  "safety": {
-    "timeout_seconds": 30,
-    "max_memory_mb": 100
-  }
-}
-```
-
----
-
-## For Developers: Creating Extensions
-
-See [EXTENSION_GUIDE.md](EXTENSION_GUIDE.md) for complete documentation.
-
-### ⚠️ Critical Safety Requirements
-
-**Extensions MUST be compiled with `panic = "unwind"` (NOT "abort")**
-
-```toml
-# In your workspace Cargo.toml
-[profile.release]
-opt-level = 3
-lto = "thin"
-panic = "unwind"  # REQUIRED for safety!
-```
-
-If your extension uses `panic = "abort"`, any panic will crash the entire NeoMind server instead of being safely caught.
-
-### Quick Start
-
-**Choose Your Extension Type:**
-
-| Goal | Recommended Type |
-|------|------------------|
-| Cross-platform without rebuilding | WASM |
-| Maximum performance | Native |
-| Learning/Development | Native (template) or WASM (as-hello for JS/TS devs) |
-| Production distribution | WASM |
-| Fast iteration/prototyping | WASM (AssemblyScript - ~1s compile) |
-
-**Native Extension (from template):**
-```bash
-cd extensions
-cp -r template my-extension
-cd my-extension
-
-# Update Cargo.toml with your extension name
-# Update src/lib.rs with your implementation
-# Create metadata.json for marketplace listing
-
-# Build
-cargo build --release
-```
-
-**WASM Extension (from as-hello - AssemblyScript/TypeScript):**
-```bash
-cd extensions
-cp -r as-hello my-as-extension
-cd my-as-extension
-
-# Install dependencies
-npm install
-
-# Update package.json with your extension name
-# Update assembly/extension.ts with your implementation
-# Update my-extension.json metadata
-# Update asconfig.json if changing output file names
-
-# Build (very fast ~1s, single binary for all platforms!)
-npm run build
-```
-
-### Submitting to Marketplace
-
-1. Fork this repository
-2. Create your extension in `extensions/your-extension/`
-3. Add metadata.json following the format above
-4. Add your extension to `extensions/index.json`
-5. Submit a pull request
-
-After your PR is merged:
-1. Build multi-platform binaries
-2. Create a GitHub Release
-3. Upload binaries to the Release
-4. Update metadata.json with SHA256 checksums
-
----
-
-## Release Process
-
-When preparing a release:
-
-```bash
-# 1. Update version numbers
-# - In each extension's Cargo.toml
-# - In each extension's metadata.json
-# - In extensions/index.json
-
-# 2. Build for all platforms
-./build.sh --all-platforms
-
-# 3. Calculate SHA256
-shasum -a 256 target/release/libneomind_extension_*
-
-# 4. Create GitHub Release
-gh release create v0.1.0 \
-  target/release/*.dylib \
-  target/release/*.so \
-  target/release/*.dll
-
-# 5. Update metadata.json with checksums
-# 6. Commit and push
-git add .
-git commit -m "Release v0.1.0"
-git push origin main
 ```
 
 ---
 
 ## Platform Support
 
-| Platform | Architecture | Native Binary | WASM Binary |
-|----------|--------------|---------------|-------------|
-| macOS | ARM64 (Apple Silicon) | `libneomind_extension_*.dylib` | `*.wasm` (universal) |
-| macOS | x86_64 (Intel) | `libneomind_extension_*.dylib` | `*.wasm` (universal) |
-| Linux | x86_64 | `libneomind_extension_*.so` | `*.wasm` (universal) |
-| Linux | ARM64 | `libneomind_extension_*.so` | `*.wasm` (universal) |
-| Windows | x86_64 | `neomind_extension_*.dll` | `*.wasm` (universal) |
-
-> **Note**: WASM extensions work on all platforms without recompilation - the same `.wasm` file runs everywhere!
+| Platform | Architecture | Binary Extension |
+|----------|--------------|------------------|
+| macOS | ARM64 (Apple Silicon) | `*.dylib` |
+| macOS | x86_64 (Intel) | `*.dylib` |
+| Linux | x86_64 | `*.so` |
+| Linux | ARM64 | `*.so` |
+| Windows | x86_64 | `*.dll` |
 
 ---
 
 ## License
 
 MIT License
----

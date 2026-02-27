@@ -1,0 +1,84 @@
+{
+  "id": "yolo-video-v2",
+  "name": "YOLO Video V2",
+  "version": "2.0.0",
+  "description": "Real-time video stream processing with YOLOv11 object detection. Built with NeoMind Extension SDK V2. Supports Camera, RTSP, HLS, and RTMP sources.",
+  "author": "NeoMind Team",
+  "license": "MIT",
+  "categories": ["video", "vision", "streaming", "detection", "ai"],
+  "type": "native",
+  "abi_version": 3,
+  "sdk_version": "2.0.0",
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/yolo-video-v2",
+  "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
+  "keywords": ["video", "streaming", "yolo", "detection", "real-time"],
+  "frontend": {
+    "components": ["YoloVideoDisplay"],
+    "entrypoint": "yolo-video-v2-components.umd.js"
+  },
+  "isolation": {
+    "mode": "optional",
+    "recommended": true,
+    "reason": "AI inference may cause memory issues under heavy load"
+  },
+  "commands": [
+    {
+      "name": "start_stream",
+      "display_name": "Start Video Stream",
+      "description": "Start a video detection stream",
+      "parameters": [
+        {
+          "name": "source_url",
+          "type": "string",
+          "required": false,
+          "default": "camera://0",
+          "description": "Video source URL or camera ID"
+        }
+      ]
+    },
+    {
+      "name": "stop_stream",
+      "display_name": "Stop Video Stream",
+      "description": "Stop a video stream",
+      "parameters": [
+        {
+          "name": "stream_id",
+          "type": "string",
+          "required": true,
+          "description": "ID of the stream to stop"
+        }
+      ]
+    },
+    {
+      "name": "get_stream_stats",
+      "display_name": "Get Stream Statistics",
+      "description": "Get stream statistics",
+      "parameters": [
+        {
+          "name": "stream_id",
+          "type": "string",
+          "required": true,
+          "description": "ID of the stream to get stats for"
+        }
+      ]
+    }
+  ],
+  "metrics": [
+    {
+      "name": "active_streams",
+      "display_name": "Active Streams",
+      "type": "integer"
+    },
+    {
+      "name": "total_frames_processed",
+      "display_name": "Total Frames Processed",
+      "type": "integer"
+    },
+    {
+      "name": "avg_fps",
+      "display_name": "Average FPS",
+      "unit": "fps",
+      "type": "float"
+    }
+  ]
+}

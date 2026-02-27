@@ -1,11 +1,11 @@
-name: Build Native Extensions
+name: Build Native Extensions V2
 
 on:
   push:
     branches: [main]
     paths:
-      - 'extensions/image-analyzer/**'
-      - 'extensions/yolo-video/**'
+      - 'extensions/image-analyzer-v2/**'
+      - 'extensions/yolo-video-v2/**'
       - '.github/workflows/build-native-extensions.yml'
   workflow_dispatch:
 
@@ -25,18 +25,24 @@ jobs:
         include:
           # macOS (Apple Silicon)
           - os: macos-latest
-            extension: image-analyzer
+            extension: image-analyzer-v2
             target: aarch64-apple-darwin
           - os: macos-latest
-            extension: yolo-video
+            extension: yolo-video-v2
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            extension: weather-forecast-v2
             target: aarch64-apple-darwin
 
           # Linux (x86_64)
           - os: ubuntu-latest
-            extension: image-analyzer
+            extension: image-analyzer-v2
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-latest
-            extension: yolo-video
+            extension: yolo-video-v2
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            extension: weather-forecast-v2
             target: x86_64-unknown-linux-gnu
 
     steps:
@@ -76,95 +82,80 @@ jobs:
           echo "Building $EXT for ${{ matrix.target }}"
           echo "======================================"
 
-          # Create symlinks for neomind-core
-          ln -sf "$(pwd)/neomind/crates/neomind-core" "neomind-core-symlink"
-
-          cd "extensions/$EXT"
-
-          # Create a temporary workspace Cargo.toml
-          cat > Cargo.toml.tmp << 'EOF'
-          [workspace]
-          resolver = "2"
-          members = ["."]
-
-          [workspace.dependencies]
-          # From neomind-core workspace
-          async-trait = "0.1"
-          chrono = "0.4"
-          semver = "1.0"
-          thiserror = "2.0"
-          tokio = { version = "1", features = ["full"] }
-          once_cell = "1.19"
-          serde = { version = "1.0", features = ["derive"] }
-          serde_json = "1.0"
-          EOF
-
-          # Create .cargo/config.toml for local dependencies
-          mkdir -p .cargo
-          cat > .cargo/config.toml << EOF
-          [patch.crates-io]
-          neomind-core = { path = "../../../neomind-core-symlink" }
-          EOF
-
-          echo "Building $EXT..."
-          cargo build --release 2>&1 | tee build.log
-
-          if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "Build failed!"
-            tail -50 build.log
-            exit 1
-          fi
-
-          # Go back to root
-          cd ../..
-
-          # Find the built library
-          LIB_NAME=$(grep -A2 '^\[lib\]' "extensions/$EXT/Cargo.toml" | grep 'name' | head -1 | cut -d'"' -f2 || true)
-          if [ -z "$LIB_NAME" ]; then
-            LIB_NAME=$(grep '^name = ' "extensions/$EXT/Cargo.toml" | cut -d'"' -f2 | tr '-' '_')
-          fi
-
-          echo "Library name: $LIB_NAME"
+          # Build using workspace
+          cargo build --release -p "${EXT//-/_}"
 
           # Determine extension based on platform
           if [[ "${{ runner.os }}" == "macOS" ]]; then
-            EXT_LIB="lib${LIB_NAME}.dylib"
+            EXT_LIB="dylib"
+            PLATFORM="darwin_aarch64"
           elif [[ "${{ runner.os }}" == "Windows" ]]; then
-            EXT_LIB="${LIB_NAME}.dll"
+            EXT_LIB="dll"
+            PLATFORM="windows_amd64"
           else
-            EXT_LIB="lib${LIB_NAME}.so"
+            EXT_LIB="so"
+            PLATFORM="linux_amd64"
           fi
 
-          echo "Looking for: $EXT_LIB"
+          # Convert extension name to library name
+          LIB_NAME=$(echo "$EXT" | tr '-' '_')
+          LIB_FILE="target/release/libneomind_extension_${LIB_NAME}.${EXT_LIB}"
 
-          # Find the built library (in target/release, not target/<triple>/release)
-          BUILT_LIB=$(find "extensions/$EXT/target/release" -name "$EXT_LIB" 2>/dev/null | head -1)
+          echo "Looking for: $LIB_FILE"
 
-          if [ -z "$BUILT_LIB" ]; then
+          if [ ! -f "$LIB_FILE" ]; then
             echo "Error: Library not found"
-            find "extensions/$EXT/target" -type f -name "*.dylib" -o -name "*.so" -o -name "*.dll" || true
+            find target -name "*.dylib" -o -name "*.so" -o -name "*.dll" || true
             exit 1
           fi
 
-          echo "Found library: $BUILT_LIB"
+          echo "Found library: $LIB_FILE"
 
-          # Create output directory
-          mkdir -p "dist/${{ matrix.extension }}"
+          # Create package directory
+          mkdir -p "dist/${EXT}/binaries/${PLATFORM}"
+          mkdir -p "dist/${EXT}/frontend"
 
-          # Copy library to output
-          cp "$BUILT_LIB" "dist/${{ matrix.extension}}/"
-
-          # Create manifest
-          cp "extensions/$EXT/manifest.json" "dist/${{ matrix.extension}}/"
+          # Copy binary
+          cp "$LIB_FILE" "dist/${EXT}/binaries/${PLATFORM}/"
 
           # Copy frontend if exists
-          if [ -d "extensions/$EXT/frontend" ]; then
-            cp -r "extensions/$EXT/frontend" "dist/${{ matrix.extension}}/"
+          if [ -d "extensions/$EXT/frontend/dist" ]; then
+            cp -r "extensions/$EXT/frontend/dist"/* "dist/${EXT}/frontend/" 2>/dev/null || true
           fi
 
+          # Copy frontend.json if exists
+          if [ -f "extensions/$EXT/frontend/frontend.json" ]; then
+            cp "extensions/$EXT/frontend/frontend.json" "dist/${EXT}/"
+          fi
+
+          # Get version from Cargo.toml
+          VERSION=$(grep -m1 'version = ' "extensions/$EXT/Cargo.toml" | sed 's/.*version = "\([^"]*\)".*/\1/' || echo "2.0.0")
+
+          # Create manifest.json
+          cat > "dist/${EXT}/manifest.json" << EOF
+          {
+            "format": "neomind-extension-package",
+            "format_version": "2.0",
+            "abi_version": 3,
+            "id": "$EXT",
+            "name": "$(echo $EXT | sed 's/-v2$//' | sed 's/-/ /g')",
+            "version": "$VERSION",
+            "sdk_version": "2.0.0",
+            "type": "native",
+            "binaries": {
+              "$PLATFORM": "binaries/${PLATFORM}/$(basename $LIB_FILE)"
+            },
+            "frontend": "frontend/",
+            "permissions": [],
+            "config_parameters": [],
+            "metrics": [],
+            "commands": []
+          }
+          EOF
+
           # Build .nep package
-          cd "dist/${{ matrix.extension }}"
-          PACKAGE_NAME="${{ matrix.extension }}-0.1.0-${{ matrix.target }}.nep"
+          cd "dist/${EXT}"
+          PACKAGE_NAME="${EXT}-${VERSION}-${PLATFORM}.nep"
           zip -qr "../../$PACKAGE_NAME" .
           cd ../..
 
@@ -173,7 +164,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: nep-native-${{ matrix.extension }}-${{ runner.os }}
+          name: nep-native-${{ matrix.extension }}-${{ matrix.target }}
           path: dist/*.nep
           retention-days: 30
           if-no-files-found: error
@@ -188,40 +179,51 @@ jobs:
         with:
           path: dist
           pattern: nep-native-*
+          merge-multiple: true
 
       - name: Create Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="0.1.0"
+          VERSION="2.0.0"
 
           cat > /tmp/release_notes.md << 'EOF'
-          NeoMind Native Extension Packages v0.1.0
+          # NeoMind Extension Packages V2
 
-          ## Native Extensions
+          ## Native Extensions (ABI Version 3)
 
           | Extension | Platform | Size |
           |-----------|----------|------|
-          | **image-analyzer** | macOS (ARM64), Linux (x64) | ~8MB |
-          | **yolo-video** | macOS (ARM64), Linux (x64) | ~8MB |
+          | **weather-forecast-v2** | macOS (ARM64), Linux (x64) | ~180KB |
+          | **image-analyzer-v2** | macOS (ARM64), Linux (x64) | ~7MB |
+          | **yolo-video-v2** | macOS (ARM64), Linux (x64) | ~7MB |
 
           ## Installation
+
           Via NeoMind Web UI or API:
+
+          ```bash
           curl -X POST http://localhost:9375/api/extensions/upload/file \
             -H 'Content-Type: application/octet-stream' \
             --data-binary @package.nep
+          ```
+
+          ## Requirements
+
+          - NeoMind >= 0.5.0
+          - ABI Version 3 support
           EOF
 
           if gh release view "v$VERSION" &>/dev/null; then
             echo "Release v$VERSION exists, uploading packages..."
           else
             gh release create "v$VERSION" \
-              --title "Native Extension Packages v$VERSION" \
+              --title "NeoMind Extensions V2" \
               --notes-file /tmp/release_notes.md
           fi
 
           # Upload packages
-          for nep in dist/**/*.nep; do
+          for nep in dist/*.nep; do
             [ -f "$nep" ] || continue
             echo "Uploading: $(basename "$nep")"
             gh release upload "v$VERSION" "$nep" --clobber

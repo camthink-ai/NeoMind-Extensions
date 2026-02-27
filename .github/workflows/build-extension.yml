@@ -1,16 +1,17 @@
-name: Build Extensions
+name: Build Extension
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'extensions/**'
   workflow_dispatch:
     inputs:
       extension:
-        description: 'Extension name (build all if empty)'
-        required: false
-        default: ''
+        description: 'Extension name'
+        required: true
+        default: 'weather-forecast-v2'
+        type: choice
+        options:
+          - weather-forecast-v2
+          - image-analyzer-v2
+          - yolo-video-v2
       release:
         description: 'Create GitHub Release'
         required: false
@@ -25,177 +26,94 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  NEOMIND_REPO: 'camthink-ai/NeoMind'
 
 jobs:
-  build-and-release:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: darwin_aarch64
+          - os: ubuntu-latest
+            platform: linux_amd64
+
     steps:
-      - name: Checkout
+      - name: Checkout extension repo
+        uses: actions/checkout@v4
+
+      - name: Checkout NeoMind core
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          repository: ${{ env.NEOMIND_REPO }}
+          path: neomind
 
-      - name: Get version
-        id: version
-        run: |
-          version=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          echo "version=$version" >> $GITHUB_OUTPUT
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zip jq
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install zip jq
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Get extensions to build
-        id: get_exts
+      - name: Build extension
         run: |
-          if [ -n "${{ inputs.extension }}" ]; then
-            echo "exts=${{ inputs.extension }}" >> $GITHUB_OUTPUT
-          else
-            if [ "${{ github.event_name }}" = "push" ]; then
-              changed=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} 2>/dev/null || echo "")
-            else
-              changed=""
-            fi
+          EXT="${{ inputs.extension }}"
+          echo "Building: $EXT"
+          chmod +x build.sh scripts/package.sh
+          bash scripts/package.sh -d "extensions/$EXT"
 
-            echo "$changed" | grep '^extensions/' 2>/dev/null | cut -d'/' -f2 | sort -u > /tmp/exts.txt || true
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nep-${{ inputs.extension }}-${{ matrix.platform }}
+          path: dist/*.nep
+          retention-days: 30
+          if-no-files-found: error
 
-            if [ ! -s /tmp/exts.txt ]; then
-              ls -1 extensions 2>/dev/null | grep -v node_modules > /tmp/exts.txt || true
-            fi
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: inputs.release == 'true'
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: nep-${{ inputs.extension }}-*
+          merge-multiple: true
 
-            exts=$(cat /tmp/exts.txt | tr '\n' ' ' | sed 's/ *$//;s/^ *//;s/ *$//')
-            echo "exts=$exts" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Build WASM extensions
-        env:
-          EXTENSIONS: ${{ steps.get_exts.outputs.exts }}
-        run: |
-          echo "Building WASM extensions: $EXTENSIONS"
-          mkdir -p release-files dist
-
-          for ext in $EXTENSIONS; do
-            [ -z "$ext" ] && continue
-
-            ext_dir="extensions/$ext"
-            [ ! -d "$ext_dir" ] && continue
-
-            # 只处理有 package.json 的 WASM 扩展
-            [ ! -f "$ext_dir/package.json" ] && echo "  Skipping $ext (no package.json)" && continue
-
-            echo "--- Building WASM: $ext"
-
-            cd "$ext_dir"
-            npm install --silent
-            npm run build
-
-            # 复制 .wasm 文件到 release-files 并生成 checksums
-            for wasm in build/*.wasm; do
-              [ ! -f "$wasm" ] && continue
-
-              name=$(basename "$wasm" .wasm)
-              sha=$(sha256sum "$wasm" | cut -d' ' -f1)
-              size=$(wc -c < "$wasm")
-
-              # 使用扩展名-版本号格式命名
-              cp "$wasm" "../../release-files/${ext}-v${{ steps.version.outputs.version }}.wasm"
-
-              echo "$ext|wasm|$sha|$size|${ext}-v${{ steps.version.outputs.version }}" >> ../../dist/checksums.txt
-              echo "  ✓ ${ext}-v${{ steps.version.outputs.version }}.wasm"
-              echo "    SHA256: $sha"
-              echo "    Size: $size bytes"
-            done
-
-            cd ../..
-          done
-
-      - name: Show build results
-        run: |
-          echo "=== Built files ==="
-          ls -lh release-files/ || echo "No files built"
-          echo ""
-          if [ -f dist/checksums.txt ]; then
-            echo "=== Checksums ==="
-            cat dist/checksums.txt
-          fi
-
-      - name: Update metadata.json
-        run: |
-          if [ ! -f dist/checksums.txt ]; then
-            echo "No checksums to process"
-            exit 0
-          fi
-
-          while IFS='|' read -r ext platform sha size name; do
-            metadata="extensions/$ext/metadata.json"
-
-            [ ! -f "$metadata" ] && echo "Skipping $ext (no metadata)" && continue
-
-            echo "Updating $metadata for $platform"
-
-            # 更新 JSON
-            if [ "$platform" = "wasm" ]; then
-              jq --arg sha "$sha" --arg size "$size" '
-                .builds.wasm.sha256 = $sha |
-                .builds.wasm.size = ($size | tonumber)
-              ' "$metadata" > tmp.json && mv tmp.json "$metadata"
-            else
-              jq --arg platform "$platform" --arg sha "$sha" --arg size "$size" '
-                .builds[$platform].sha256 = $sha |
-                .builds[$platform].size = ($size | tonumber)
-              ' "$metadata" > tmp.json && mv tmp.json "$metadata"
-            fi
-          done < dist/checksums.txt
-
-      - name: Commit metadata updates
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add extensions/*/metadata.json
-
-          if git diff --staged --quiet; then
-            echo "No metadata changes to commit"
-          else
-            git commit -m "chore: update build metadata [skip ci]"
-            git push
-          fi
-
-      - name: Create Release and upload
-        if: |
-          github.ref == 'refs/heads/main' &&
-          inputs.release == 'true'
+      - name: Create Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          echo "Creating release: v$VERSION"
+          VERSION="2.0.0"
+          EXT="${{ inputs.extension }}"
 
-          # 检查是否有文件要上传
-          if [ ! -d release-files ] || [ -z "$(ls -A release-files 2>/dev/null)" ]; then
-            echo "No files to upload!"
-            exit 1
-          fi
-
-          # 删除旧 Release (如果存在)
           if gh release view "v$VERSION" &>/dev/null; then
-            echo "Deleting old release v$VERSION"
-            gh release delete "v$VERSION" || true
-            sleep 2
+            echo "Uploading to existing release v$VERSION"
+          else
+            gh release create "v$VERSION" \
+              --title "NeoMind Extensions V2" \
+              --notes "NeoMind Extension Packages V2 (ABI Version 3)"
           fi
 
-          # 创建新 Release
-          gh release create "v$VERSION" \
-            --title "NeoMind Extensions v$VERSION" \
-            --notes "See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for installation instructions." \
-            --latest
-
-          # 上传所有文件
-          for file in release-files/*; do
-            [ ! -f "$file" ] && continue
-            echo "Uploading: $(basename "$file")"
-            gh release upload "v$VERSION" "$file" --clobber || true
+          for nep in dist/*.nep; do
+            [ -f "$nep" ] || continue
+            echo "Uploading: $(basename "$nep")"
+            gh release upload "v$VERSION" "$nep" --clobber
           done
-
-          echo "Release v$VERSION created successfully"
+          echo "✓ Done!"

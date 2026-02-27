@@ -1,0 +1,34 @@
+[package]
+name = "weather-forecast-v2"
+version = "2.0.0"
+edition = "2021"
+authors = ["NeoMind Team"]
+license = "Apache-2.0"
+description = "Weather forecast extension using unified SDK"
+
+[lib]
+name = "neomind_extension_weather_forecast_v2"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neomind-extension-sdk = { path = "../../../NeoMind/crates/neomind-extension-sdk" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+urlencoding = { workspace = true }
+async-trait = "0.1"
+chrono = "0.4"
+semver = "1"
+
+# Native-only dependencies
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+reqwest = { version = "0.12", features = ["json"] }
+
+[features]
+default = []
+native = []
+wasm = []
+
+[profile.release]
+opt-level = 3
+lto = "thin"

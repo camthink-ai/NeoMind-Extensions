@@ -1,0 +1,46 @@
+{
+  "id": "weather-forecast-v2",
+  "version": "2.0.0",
+  "entrypoint": "weather-forecast-v2-components.umd.js",
+  "components": [
+    {
+      "name": "WeatherCard",
+      "type": "card",
+      "displayName": "Weather Forecast V2",
+      "description": "Real-time weather display with temperature, humidity, wind and more. Built with NeoMind Extension SDK V2.",
+      "icon": "cloud-sun",
+      "defaultSize": { "width": 320, "height": 240 },
+      "minSize": { "width": 200, "height": 180 },
+      "maxSize": { "width": 500, "height": 400 },
+      "configSchema": {
+        "defaultCity": {
+          "type": "string",
+          "required": false,
+          "default": "Beijing",
+          "description": "Default city for weather display"
+        },
+        "refreshInterval": {
+          "type": "number",
+          "required": false,
+          "default": 300000,
+          "description": "Refresh interval in milliseconds"
+        },
+        "unit": {
+          "type": "string",
+          "required": false,
+          "default": "celsius",
+          "description": "Temperature unit (celsius or fahrenheit)"
+        }
+      },
+      "refreshable": true,
+      "refreshInterval": 300000
+    }
+  ],
+  "i18n": {
+    "defaultLanguage": "en",
+    "supportedLanguages": ["en", "zh"]
+  },
+  "dependencies": {
+    "react": ">=18.0.0"
+  }
+}

@@ -1,41 +1,63 @@
-name: Build .nep Packages
+name: Build .nep Packages V2
 
 on:
   push:
     branches: [main]
     paths:
-      - 'extensions/weather-forecast/**'
+      - 'extensions/weather-forecast-v2/**'
+      - 'extensions/image-analyzer-v2/**'
+      - 'extensions/yolo-video-v2/**'
       - 'scripts/package.sh'
-      - 'Makefile'
+      - '.github/workflows/build-nep-packages.yml'
   workflow_dispatch:
+    inputs:
+      extension:
+        description: 'Extension name (build all if empty)'
+        required: false
+        default: ''
+      release:
+        description: 'Create GitHub Release'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  NEOMIND_REPO: 'camthink-ai/NeoMind'
 
 jobs:
-  build-wasm:
+  build:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            platform: wasm
           - os: macos-latest
-            platform: wasm
+            platform: darwin_aarch64
+          - os: ubuntu-latest
+            platform: linux_amd64
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout extension repo
+        uses: actions/checkout@v4
+
+      - name: Checkout NeoMind core
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.NEOMIND_REPO }}
+          path: neomind
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           override: true
-
-      - name: Install wasm32 target
-        run: rustup target add wasm32-unknown-unknown
 
       - name: Install dependencies (Ubuntu)
         if: runner.os == 'Linux'
@@ -45,64 +67,84 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install zip jq
 
-      - name: Build WASM package
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build extensions
         run: |
-          make package-weather-forecast
+          chmod +x build.sh scripts/package.sh
+          ./build.sh --yes
+
+      - name: List built packages
+        run: |
+          echo "=== Built packages ==="
+          ls -lh dist/ || echo "No packages found"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: nep-packages-wasm-${{ runner.os }}
+          name: nep-packages-${{ matrix.platform }}
           path: dist/*.nep
           retention-days: 30
-          if-no-files-found: warn
+          if-no-files-found: error
 
   release:
-    needs: build-wasm
+    needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.release == 'true'
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Download artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
           pattern: nep-packages-*
-          merge-multiple: false
+          merge-multiple: true
 
       - name: Create Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="0.1.0"
+          VERSION="2.0.0"
 
-          # Create release notes
           cat > /tmp/release_notes.md << 'EOF'
-          NeoMind Extension Packages v0.1.0
+          # NeoMind Extension Packages V2
 
-          ## WASM Extension
-          - **weather-forecast** - Real-time weather data (cross-platform)
+          ## Extensions (ABI Version 3)
 
-          Note: Native extensions (image-analyzer, yolo-video) require local build.
+          | Extension | Platform | Description |
+          |-----------|----------|-------------|
+          | **weather-forecast-v2** | Cross-platform | Weather forecast |
+          | **image-analyzer-v2** | macOS, Linux | Image analysis with YOLOv8 |
+          | **yolo-video-v2** | macOS, Linux | Video processing with YOLOv11 |
 
           ## Installation
+
           Via NeoMind Web UI or API:
-          curl -X POST http://localhost:9375/api/extensions/upload/file -H 'Content-Type: application/octet-stream' --data-binary @package.nep
+
+          ```bash
+          curl -X POST http://localhost:9375/api/extensions/upload/file \
+            -H 'Content-Type: application/octet-stream' \
+            --data-binary @package.nep
+          ```
+
+          ## Requirements
+
+          - NeoMind >= 0.5.0
+          - ABI Version 3 support
           EOF
 
-          # Create or update release
           if gh release view "v$VERSION" &>/dev/null; then
             echo "Release v$VERSION exists, uploading packages..."
           else
-            echo "Creating release v$VERSION..."
             gh release create "v$VERSION" \
-              --title "Extension Packages v$VERSION" \
+              --title "NeoMind Extensions V2" \
               --notes-file /tmp/release_notes.md
           fi
 
           # Upload packages
-          for nep in dist/*.nep dist/**/**/*.nep; do
+          for nep in dist/*.nep; do
             [ -f "$nep" ] || continue
             echo "Uploading: $(basename "$nep")"
             gh release upload "v$VERSION" "$nep" --clobber

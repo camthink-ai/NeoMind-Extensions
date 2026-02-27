@@ -1,0 +1,57 @@
+{
+  "id": "image-analyzer-v2",
+  "name": "Image Analyzer V2",
+  "version": "2.0.0",
+  "description": "AI-powered image analysis using YOLOv8 object detection. Built with NeoMind Extension SDK V2.",
+  "author": "NeoMind Team",
+  "license": "MIT",
+  "categories": ["image", "vision", "detection", "ai"],
+  "type": "native",
+  "abi_version": 3,
+  "sdk_version": "2.0.0",
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/image-analyzer-v2",
+  "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
+  "keywords": ["image", "analysis", "yolo", "detection", "object"],
+  "frontend": {
+    "components": ["ImageAnalyzer"],
+    "entrypoint": "image-analyzer-v2-components.umd.js"
+  },
+  "commands": [
+    {
+      "name": "analyze_image",
+      "display_name": "Analyze Image",
+      "description": "Analyze an image and return detected objects",
+      "parameters": [
+        {
+          "name": "image",
+          "type": "string",
+          "required": true,
+          "description": "Base64 encoded image data"
+        }
+      ]
+    },
+    {
+      "name": "reset_stats",
+      "display_name": "Reset Statistics",
+      "description": "Reset extension statistics"
+    }
+  ],
+  "metrics": [
+    {
+      "name": "images_processed",
+      "display_name": "Images Processed",
+      "type": "integer"
+    },
+    {
+      "name": "avg_processing_time_ms",
+      "display_name": "Avg Processing Time",
+      "unit": "ms",
+      "type": "float"
+    },
+    {
+      "name": "total_detections",
+      "display_name": "Total Detections",
+      "type": "integer"
+    }
+  ]
+}
