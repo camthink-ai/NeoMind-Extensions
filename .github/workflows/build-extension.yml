@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ env.NEOMIND_REPO }}
-          path: neomind
+          path: ../NeoMind
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -73,8 +73,8 @@ jobs:
         run: |
           EXT="${{ inputs.extension }}"
           echo "Building: $EXT"
-          chmod +x build.sh scripts/package.sh
-          bash scripts/package.sh -d "extensions/$EXT"
+          chmod +x build.sh
+          ./build.sh --yes --skip-install
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
