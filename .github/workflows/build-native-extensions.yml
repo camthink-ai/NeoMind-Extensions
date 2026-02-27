@@ -53,7 +53,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ env.NEOMIND_REPO }}
-          path: ../NeoMind
+          path: NeoMind
+
+      - name: Setup workspace structure
+        run: |
+          # Move NeoMind to parent directory to match Cargo.toml paths
+          mv NeoMind ../NeoMind
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
