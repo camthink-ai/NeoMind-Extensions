@@ -150,10 +150,10 @@
         "max_h": 6,
         "preserve_aspect": false
       },
-      "has_data_source": true,
+      "has_data_source": false,
       "has_display_config": true,
       "has_actions": false,
-      "max_data_sources": 1,
+      "max_data_sources": 0,
       "config_schema": {
         "type": "object",
         "properties": {
