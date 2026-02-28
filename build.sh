@@ -180,8 +180,9 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
         mkdir -p "$PACKAGE_DIR/frontend"
         mkdir -p "$PACKAGE_DIR/models"
 
-        # Copy binary
-        cp "$LIB_FILE" "$PACKAGE_DIR/binaries/$PLATFORM/"
+        # Copy binary (rename to extension.{ext} for NeoMind loader)
+        BINARY_NAME="extension.${LIB_EXT}"
+        cp "$LIB_FILE" "$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
 
         # Copy frontend
         FRONTEND_DIST="$EXT_DIR/frontend/dist"
@@ -228,7 +229,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
   "sdk_version": "2.0.0",
   "type": "native",
   "binaries": {
-    "$PLATFORM": "binaries/$PLATFORM/$(basename $LIB_FILE)"
+    "$PLATFORM": "binaries/$PLATFORM/extension.${LIB_EXT}"
   },
   "frontend": "frontend/"$MANIFEST_EXTRA
 }
