@@ -5,15 +5,26 @@
   "description": "Real-time weather data using Open-Meteo API. Built with NeoMind Extension SDK V2.",
   "author": "NeoMind Team",
   "license": "MIT",
-  "categories": ["weather", "data", "api"],
+  "categories": [
+    "weather",
+    "data",
+    "api"
+  ],
   "type": "native",
   "abi_version": 3,
   "sdk_version": "2.0.0",
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/weather-forecast-v2",
   "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
-  "keywords": ["weather", "forecast", "temperature", "humidity"],
+  "keywords": [
+    "weather",
+    "forecast",
+    "temperature",
+    "humidity"
+  ],
   "frontend": {
-    "components": ["WeatherCard"],
+    "components": [
+      "WeatherCard"
+    ],
     "entrypoint": "weather-forecast-v2-components.umd.js"
   },
   "builds": {
@@ -67,5 +78,6 @@
       "display_name": "Request Count",
       "type": "integer"
     }
-  ]
+  ],
+  "package_url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/weather-forecast-v2-2.0.0-darwin_aarch64.nep"
 }
