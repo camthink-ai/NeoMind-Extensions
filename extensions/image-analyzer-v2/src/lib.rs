@@ -1,6 +1,6 @@
 //! NeoMind Image Analyzer Extension (V2)
 //!
-//! Image analysis using YOLOv8 object detection.
+//! Image analysis using YOLOv8 via usls library.
 //! Demonstrates the unified SDK with ABI Version 3.
 
 use async_trait::async_trait;
@@ -14,6 +14,11 @@ use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::collections::HashMap;
 use semver::Version;
+use base64::Engine;
+use parking_lot::Mutex;
+
+#[cfg(not(target_arch = "wasm32"))]
+use usls::{models::YOLO, Config, DataLoader, Model, ORTConfig, Runtime, Version as YOLOVersion};
 
 // ============================================================================
 // Types
@@ -29,10 +34,10 @@ pub struct Detection {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BoundingBox {
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
 /// Analysis result
@@ -41,12 +46,15 @@ pub struct AnalysisResult {
     pub objects: Vec<Detection>,
     pub description: String,
     pub processing_time_ms: u64,
+    pub model_loaded: bool,
+    pub model_error: Option<String>,
 }
 
 // ============================================================================
 // COCO Classes
 // ============================================================================
 
+#[cfg(not(target_arch = "wasm32"))]
 pub const COCO_CLASSES: [&str; 80] = [
     "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
     "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat",
@@ -69,7 +77,17 @@ pub struct ImageAnalyzer {
     total_processing_time_ms: AtomicU64,
     detections_found: AtomicU64,
     #[cfg(not(target_arch = "wasm32"))]
-    detector: YOLOv8Detector,
+    detector: Mutex<YOLODetector>,
+    // Configuration
+    confidence_threshold: Mutex<f32>,
+    nms_threshold: Mutex<f32>,
+    model_version: Mutex<String>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct YOLODetector {
+    model: Option<Runtime<YOLO>>,
+    load_error: Option<String>,
 }
 
 impl ImageAnalyzer {
@@ -79,7 +97,10 @@ impl ImageAnalyzer {
             total_processing_time_ms: AtomicU64::new(0),
             detections_found: AtomicU64::new(0),
             #[cfg(not(target_arch = "wasm32"))]
-            detector: YOLOv8Detector::new(),
+            detector: Mutex::new(YOLODetector::new(0.25, 0.45, "v8", "n")),
+            confidence_threshold: Mutex::new(0.25),
+            nms_threshold: Mutex::new(0.45),
+            model_version: Mutex::new("v8-n".to_string()),
         }
     }
 
@@ -88,25 +109,34 @@ impl ImageAnalyzer {
         let start = std::time::Instant::now();
 
         #[cfg(not(target_arch = "wasm32"))]
-        let (objects, description) = {
-            if self.detector.is_loaded() {
-                match self.detector.detect(data, 0.25) {
+        let (objects, description, model_loaded, model_error) = {
+            let mut detector = self.detector.lock();
+
+            if let Some(ref mut model) = detector.model {
+                match Self::run_detection(model, data) {
                     Ok(detections) => {
-                        let desc = format!("YOLOv8 detected {} objects", detections.len());
-                        (detections, desc)
+                        tracing::info!("[ImageAnalyzer] YOLO detected {} objects", detections.len());
+                        let desc = format!("YOLO detected {} objects", detections.len());
+                        (detections, desc, true, None)
                     }
                     Err(e) => {
-                        eprintln!("[ImageAnalyzer] YOLOv8 error: {}", e);
-                        self.fallback_analysis(data)
+                        tracing::error!("[ImageAnalyzer] YOLO inference error: {}", e);
+                        let (objs, desc) = self.fallback_analysis(data);
+                        (objs, desc, false, Some(e))
                     }
                 }
             } else {
-                self.fallback_analysis(data)
+                tracing::warn!("[ImageAnalyzer] Model not loaded, using fallback");
+                let (objs, desc) = self.fallback_analysis(data);
+                (objs, desc, false, detector.load_error.clone())
             }
         };
 
         #[cfg(target_arch = "wasm32")]
-        let (objects, description) = self.fallback_analysis(data);
+        let (objects, description, model_loaded, model_error) = {
+            let (objs, desc) = self.fallback_analysis(data);
+            (objs, desc, false, Some("YOLO not available in WASM".to_string()))
+        };
 
         let processing_time = start.elapsed().as_millis() as u64;
 
@@ -119,10 +149,69 @@ impl ImageAnalyzer {
             objects,
             description,
             processing_time_ms: processing_time,
+            model_loaded,
+            model_error,
         })
     }
 
-    /// Fallback analysis when YOLOv8 is not available
+    #[cfg(not(target_arch = "wasm32"))]
+    fn run_detection(model: &mut Runtime<YOLO>, image_data: &[u8]) -> std::result::Result<Vec<Detection>, String> {
+        // Create temporary file for image data
+        let temp_path = std::env::temp_dir().join(format!("neomind_img_{}.jpg", std::process::id()));
+        std::fs::write(&temp_path, image_data)
+            .map_err(|e| format!("Failed to write temp image: {}", e))?;
+
+        // Load image using usls DataLoader - create with path, then read
+        let dl = DataLoader::new(&temp_path)
+            .map_err(|e| format!("Failed to create DataLoader: {}", e))?;
+        let xs = dl.try_read()
+            .map_err(|e| format!("Failed to load image: {}", e))?;
+
+        // Run inference - forward() requires a slice of images
+        let ys = model.forward(&xs)
+            .map_err(|e| format!("Inference failed: {}", e))?;
+
+        // Clean up temp file
+        let _ = std::fs::remove_file(&temp_path);
+
+        // Convert results - new API returns Y struct with hbbs field
+        let mut detections = Vec::new();
+
+        for y in ys.iter() {
+            // Get bounding boxes from hbbs field
+            for hbb in &y.hbbs {
+                // Get class ID - hbb.id() returns Option<usize>
+                let class_id = hbb.id().unwrap_or(0);
+                let label = if class_id < COCO_CLASSES.len() {
+                    COCO_CLASSES[class_id].to_string()
+                } else {
+                    // Fallback to name() if available
+                    hbb.name().unwrap_or(&format!("class_{}", class_id)).to_string()
+                };
+
+                // New API: hbb has xmin(), ymin(), xmax(), ymax() instead of bbox()
+                let xmin = hbb.xmin();
+                let ymin = hbb.ymin();
+                let xmax = hbb.xmax();
+                let ymax = hbb.ymax();
+
+                detections.push(Detection {
+                    label,
+                    confidence: hbb.confidence().unwrap_or(0.0),
+                    bbox: Some(BoundingBox {
+                        x: xmin,
+                        y: ymin,
+                        width: xmax - xmin,
+                        height: ymax - ymin,
+                    }),
+                });
+            }
+        }
+
+        Ok(detections)
+    }
+
+    /// Fallback analysis when YOLO is not available
     pub fn fallback_analysis(&self, data: &[u8]) -> (Vec<Detection>, String) {
         let size = data.len();
         let mut objects = Vec::new();
@@ -143,7 +232,7 @@ impl ImageAnalyzer {
         }
 
         let description = format!(
-            "Fallback analysis (YOLOv8 unavailable). Size: {} bytes.",
+            "Fallback analysis (YOLO unavailable). Size: {} bytes.",
             size
         );
 
@@ -155,13 +244,169 @@ impl ImageAnalyzer {
         self.images_processed.store(0, Ordering::SeqCst);
         self.total_processing_time_ms.store(0, Ordering::SeqCst);
         self.detections_found.store(0, Ordering::SeqCst);
-        serde_json::json!({"status": "reset"})
+        json!({"status": "reset"})
+    }
+
+    /// Get model status for diagnostics
+    pub fn get_model_status(&self) -> serde_json::Value {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let detector = self.detector.lock();
+            json!({
+                "loaded": detector.model.is_some(),
+                "error": detector.load_error,
+                "confidence_threshold": *self.confidence_threshold.lock(),
+                "nms_threshold": *self.nms_threshold.lock(),
+                "model_version": self.model_version.lock().clone(),
+            })
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            json!({
+                "loaded": false,
+                "error": "YOLO not available in WASM"
+            })
+        }
+    }
+
+    /// Reload model with new configuration
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn reload_model(&self) -> std::result::Result<(), String> {
+        let conf = *self.confidence_threshold.lock();
+        let nms = *self.nms_threshold.lock();
+        let version_str = self.model_version.lock().clone();
+
+        // Parse version string (e.g., "v8-n" -> version="v8", scale="n")
+        let parts: Vec<&str> = version_str.split('-').collect();
+        let (version, scale) = if parts.len() >= 2 {
+            (parts[0], parts[1])
+        } else {
+            ("v8", "n")
+        };
+
+        let mut detector = self.detector.lock();
+        *detector = YOLODetector::new(conf, nms, version, scale);
+
+        if detector.model.is_some() {
+            Ok(())
+        } else {
+            Err(detector.load_error.clone().unwrap_or_else(|| "Unknown error".to_string()))
+        }
     }
 }
 
 impl Default for ImageAnalyzer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ============================================================================
+// YOLO Detector Implementation
+// ============================================================================
+
+#[cfg(not(target_arch = "wasm32"))]
+impl YOLODetector {
+    fn new(conf: f32, iou: f32, version: &str, scale: &str) -> Self {
+        match Self::try_load_model(conf, iou, version, scale) {
+            Ok(model) => {
+                tracing::info!("[YOLODetector] Model loaded successfully: {}-{}", version, scale);
+                Self {
+                    model: Some(model),
+                    load_error: None,
+                }
+            }
+            Err(e) => {
+                tracing::error!("[YOLODetector] Failed to load model: {}", e);
+                Self {
+                    model: None,
+                    load_error: Some(e),
+                }
+            }
+        }
+    }
+
+    fn try_load_model(conf: f32, iou: f32, version: &str, _scale: &str) -> std::result::Result<Runtime<YOLO>, String> {
+        // Parse version number from string (e.g., "v8" -> 8)
+        let version_num: u8 = version.trim_start_matches('v')
+            .parse()
+            .map_err(|_| format!("Invalid version: {}", version))?;
+
+        tracing::info!("Loading YOLO v{} model from local file...", version_num);
+
+        // Load model data from local models directory
+        let model_data = Self::load_model_data(version_num)?;
+
+        if model_data.is_none() {
+            return Err(format!("YOLOv{} model not found in models directory", version_num));
+        }
+
+        let model_bytes = model_data.unwrap();
+        let model_size = model_bytes.len();
+        tracing::info!("Loading YOLO model ({} bytes)", model_size);
+
+        // Save model to temp file (usls requires file path)
+        let temp_dir = std::env::temp_dir();
+        let model_path = temp_dir.join(format!("yolov{}n.onnx", version_num));
+        std::fs::write(&model_path, &model_bytes)
+            .map_err(|e| format!("Failed to write temp model file: {}", e))?;
+
+        // Create ORTConfig with model file path
+        let ort_config = ORTConfig::default()
+            .with_file(model_path.to_str().unwrap());
+
+        // Create config using yolo_detect() preset
+        let config = Config::yolo_detect()
+            .with_model(ort_config)
+            .with_version(YOLOVersion(version_num, 0, None))
+            .with_class_confs(&[conf])
+            .with_iou(iou);
+
+        // Create YOLO model using Model trait
+        let model = YOLO::new(config)
+            .map_err(|e| format!("Failed to create YOLO model: {:?}", e))?;
+
+        tracing::info!("✓ YOLO model loaded successfully");
+
+        // Clean up temp file
+        let _ = std::fs::remove_file(&model_path);
+
+        Ok(model)
+    }
+
+    /// Load model data from disk
+    fn load_model_data(version: u8) -> std::result::Result<Option<Vec<u8>>, String> {
+        // Try to get extension directory from environment variable (set by runner)
+        let base_paths: Vec<std::path::PathBuf> = if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
+            vec![
+                std::path::PathBuf::from(&ext_dir),
+                std::path::PathBuf::from(ext_dir).join(".."),
+            ]
+        } else {
+            // Fallback to current directory
+            vec![
+                std::path::PathBuf::from("."),
+                std::path::PathBuf::from(".."),
+                std::path::PathBuf::from("../.."),
+            ]
+        };
+
+        let model_filename = format!("yolov{}n.onnx", version);
+
+        for base in &base_paths {
+            let model_path = base.join("models").join(&model_filename);
+            if model_path.exists() {
+                tracing::info!("Loading YOLOv{} model from: {}", version, model_path.display());
+                return std::fs::read(&model_path)
+                    .map(Some)
+                    .map_err(|e| format!("Failed to read model: {}", e));
+            } else {
+                tracing::debug!("Model not found at: {}", model_path.display());
+            }
+        }
+
+        tracing::warn!("YOLOv{} model not found in any expected location", version);
+        Ok(None)
     }
 }
 
@@ -174,17 +419,68 @@ impl Extension for ImageAnalyzer {
     fn metadata(&self) -> &ExtensionMetadata {
         static META: std::sync::OnceLock<ExtensionMetadata> = std::sync::OnceLock::new();
         META.get_or_init(|| {
-            ExtensionMetadata {
-                id: "image-analyzer-v2".to_string(),
-                name: "Image Analyzer V2".to_string(),
-                version: Version::parse("2.0.0").unwrap(),
-                description: Some("Image analysis with YOLOv8".to_string()),
-                author: Some("NeoMind Team".to_string()),
-                homepage: None,
-                license: Some("Apache-2.0".to_string()),
-                file_path: None,
-                config_parameters: None,
-            }
+            ExtensionMetadata::new(
+                "image-analyzer-v2",
+                "Image Analyzer V2",
+                Version::parse("2.0.0").unwrap()
+            )
+            .with_description("Image analysis with YOLOv8 via usls")
+            .with_author("NeoMind Team")
+            .with_config_parameters(vec![
+                ParameterDefinition {
+                    name: "confidence_threshold".to_string(),
+                    display_name: "Confidence Threshold".to_string(),
+                    description: "Minimum confidence for detections (0.0-1.0)".to_string(),
+                    param_type: MetricDataType::Float,
+                    required: false,
+                    default_value: Some(ParamMetricValue::Float(0.25)),
+                    min: Some(0.0),
+                    max: Some(1.0),
+                    options: Vec::new(),
+                },
+                ParameterDefinition {
+                    name: "nms_threshold".to_string(),
+                    display_name: "NMS Threshold".to_string(),
+                    description: "IoU threshold for Non-Maximum Suppression (0.0-1.0)".to_string(),
+                    param_type: MetricDataType::Float,
+                    required: false,
+                    default_value: Some(ParamMetricValue::Float(0.45)),
+                    min: Some(0.0),
+                    max: Some(1.0),
+                    options: Vec::new(),
+                },
+                ParameterDefinition {
+                    name: "model_version".to_string(),
+                    display_name: "Model Version".to_string(),
+                    description: "YOLO model version and scale (e.g., v8-n, v8-s, v8-m)".to_string(),
+                    param_type: MetricDataType::Enum {
+                        options: vec![
+                            "v8-n".to_string(),
+                            "v8-s".to_string(),
+                            "v8-m".to_string(),
+                            "v8-l".to_string(),
+                            "v8-x".to_string(),
+                            "v11-n".to_string(),
+                            "v11-s".to_string(),
+                            "v11-m".to_string(),
+                        ],
+                    },
+                    required: false,
+                    default_value: Some(ParamMetricValue::String("v8-n".to_string())),
+                    min: None,
+                    max: None,
+                    options: vec![
+                        "v8-n".to_string(),
+                        "v8-s".to_string(),
+                        "v8-m".to_string(),
+                        "v8-l".to_string(),
+                        "v8-x".to_string(),
+                        "v11-n".to_string(),
+                        "v11-s".to_string(),
+                        "v11-m".to_string(),
+                    ],
+                },
+            ])
         })
     }
 
@@ -248,7 +544,7 @@ impl Extension for ImageAnalyzer {
                     samples: vec![
                         json!({ "image": "base64_encoded_data" }),
                     ],
-                    llm_hints: "Analyze an image and return detected objects".to_string(),
+                    llm_hints: "Analyze an image and return detected objects with bounding boxes".to_string(),
                     parameter_groups: Vec::new(),
                 },
                 ExtensionCommand {
@@ -261,37 +557,39 @@ impl Extension for ImageAnalyzer {
                     llm_hints: "Reset extension statistics".to_string(),
                     parameter_groups: Vec::new(),
                 },
+                ExtensionCommand {
+                    name: "get_status".to_string(),
+                    display_name: "Get Model Status".to_string(),
+                    payload_template: String::new(),
+                    parameters: vec![],
+                    fixed_values: HashMap::new(),
+                    samples: vec![],
+                    llm_hints: "Get current model loading status and configuration".to_string(),
+                    parameter_groups: Vec::new(),
+                },
+                ExtensionCommand {
+                    name: "reload_model".to_string(),
+                    display_name: "Reload Model".to_string(),
+                    payload_template: String::new(),
+                    parameters: vec![],
+                    fixed_values: HashMap::new(),
+                    samples: vec![],
+                    llm_hints: "Reload YOLO model with current configuration".to_string(),
+                    parameter_groups: Vec::new(),
+                },
             ]
         })
-    }
-
-    async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
-        match command {
-            "analyze_image" => {
-                let image_data = args.get("image")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing 'image' parameter".to_string()))?;
-
-                // Decode base64
-                let image_bytes = base64_decode(image_data)
-                    .map_err(|e| ExtensionError::ExecutionFailed(format!("Base64 decode error: {}", e)))?;
-
-                let result = self.analyze_image(&image_bytes)?;
-                Ok(serde_json::to_value(result)
-                    .map_err(|e| ExtensionError::ExecutionFailed(e.to_string()))?)
-            }
-            "reset_stats" => {
-                Ok(self.reset_stats())
-            }
-            _ => Err(ExtensionError::CommandNotFound(command.to_string())),
-        }
     }
 
     fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
         let now = chrono::Utc::now().timestamp_millis();
         let images = self.images_processed.load(Ordering::SeqCst);
         let total_time = self.total_processing_time_ms.load(Ordering::SeqCst);
-        let avg_time = if images > 0 { total_time as f64 / images as f64 } else { 0.0 };
+        let avg_time = if images > 0 {
+            total_time as f64 / images as f64
+        } else {
+            0.0
+        };
 
         Ok(vec![
             ExtensionMetricValue {
@@ -311,251 +609,73 @@ impl Extension for ImageAnalyzer {
             },
         ])
     }
-}
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
+    async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
+        match command {
+            "analyze_image" => {
+                let image_b64 = args.get("image")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing 'image' parameter".to_string()))?;
 
-fn base64_decode(input: &str) -> std::result::Result<Vec<u8>, String> {
-    use base64::{Engine as _, engine::general_purpose};
-    general_purpose::STANDARD
-        .decode(input)
-        .map_err(|e| format!("Base64 decode error: {}", e))
-}
+                let image_data = base64::engine::general_purpose::STANDARD.decode(image_b64)
+                    .map_err(|e| ExtensionError::InvalidArguments(format!("Invalid base64: {}", e)))?;
 
-// ============================================================================
-// Native YOLOv8 Detector
-// ============================================================================
-
-#[cfg(not(target_arch = "wasm32"))]
-mod native {
-    use super::*;
-
-    use ort::{
-        session::{Session, builder::GraphOptimizationLevel},
-        value::DynValue,
-    };
-    use ndarray::Array;
-    use std::sync::Arc;
-    use parking_lot::Mutex;
-
-    pub struct YOLOv8Detector {
-        session: Option<Arc<Mutex<Session>>>,
-        _model_path: String,
-        input_size: u32,
+                let result = self.analyze_image(&image_data)?;
+                Ok(serde_json::to_value(result)
+                    .map_err(|e| ExtensionError::ExecutionFailed(format!("Serialization error: {}", e)))?)
+            }
+            "reset_stats" => {
+                Ok(self.reset_stats())
+            }
+            "get_status" => {
+                Ok(self.get_model_status())
+            }
+            "reload_model" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.reload_model()
+                        .map_err(|e| ExtensionError::ExecutionFailed(format!("Model reload failed: {}", e)))?;
+                    Ok(json!({"status": "reloaded"}))
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    Err(ExtensionError::NotSupported("Model reload not available in WASM".to_string()))
+                }
+            }
+            _ => Err(ExtensionError::CommandNotFound(command.to_string())),
+        }
     }
 
-    impl YOLOv8Detector {
-        pub fn new() -> Self {
-            let model_path = std::env::var("YOLOV8_MODEL_PATH")
-                .unwrap_or_else(|_| "./models/yolov8n.onnx".to_string());
+    async fn configure(&mut self, config: &serde_json::Value) -> Result<()> {
+        // Update confidence threshold
+        if let Some(conf) = config.get("confidence_threshold").and_then(|v| v.as_f64()) {
+            *self.confidence_threshold.lock() = conf as f32;
+        }
 
-            let session = Self::load_model(&model_path);
+        // Update NMS threshold
+        if let Some(nms) = config.get("nms_threshold").and_then(|v| v.as_f64()) {
+            *self.nms_threshold.lock() = nms as f32;
+        }
 
-            Self {
-                session,
-                _model_path: model_path,
-                input_size: 640,
+        // Update model version
+        if let Some(version) = config.get("model_version").and_then(|v| v.as_str()) {
+            *self.model_version.lock() = version.to_string();
+        }
+
+        // Reload model with new configuration
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Err(e) = self.reload_model() {
+                tracing::warn!("[ImageAnalyzer] Failed to reload model after config change: {}", e);
             }
         }
 
-        fn load_model(path: &str) -> Option<Arc<Mutex<Session>>> {
-            let session = Session::builder()
-                .ok()?
-                .with_optimization_level(GraphOptimizationLevel::Level3)
-                .ok()?
-                .with_intra_threads(2)
-                .ok()?
-                .commit_from_file(path)
-                .ok()?;
-
-            eprintln!("[YOLOv8] Model loaded from: {}", path);
-            Some(Arc::new(Mutex::new(session)))
-        }
-
-        pub fn detect(&self, image_data: &[u8], confidence_threshold: f32) -> std::result::Result<Vec<Detection>, String> {
-            let session = match &self.session {
-                Some(s) => Arc::clone(s),
-                None => return Err("YOLOv8 model not loaded".to_string()),
-            };
-
-            // Decode image
-            let img = image::load_from_memory(image_data)
-                .map_err(|e| format!("Failed to decode image: {}", e))?;
-
-            let (orig_width, orig_height) = (img.width(), img.height());
-
-            // Preprocess and run inference
-            let (tensor_data, scale) = self.preprocess_image(&img);
-
-            // Create ndarray for input
-            let input_array = Array::from_shape_vec(
-                (1, 3, self.input_size as usize, self.input_size as usize),
-                tensor_data,
-            ).map_err(|e| format!("Failed to create input array: {}", e))?
-             .into_dyn();
-
-            // Create input tensor
-            let input_tensor = ort::value::Tensor::from_array(input_array)
-                .map_err(|e| format!("Failed to create input tensor: {}", e))?;
-
-            // Run inference
-            let mut session_guard = session.lock();
-            let input_value = ort::session::input::SessionInputValue::Owned(input_tensor.into());
-            let outputs = session_guard.run([input_value])
-                .map_err(|e| format!("YOLOv8 inference failed: {}", e))?;
-
-            // Parse output
-            if outputs.len() == 0 {
-                return Err("No output from model".to_string());
-            }
-
-            let output = &outputs[0];
-            self.postprocess(output, orig_width, orig_height, scale, confidence_threshold)
-        }
-
-        fn preprocess_image(&self, img: &image::DynamicImage) -> (Vec<f32>, f32) {
-            let resized = img.resize_exact(
-                self.input_size,
-                self.input_size,
-                image::imageops::FilterType::Triangle,
-            );
-
-            let scale = img.width() as f32 / self.input_size as f32;
-
-            let rgb = resized.to_rgb8();
-            let mut input = Vec::with_capacity((self.input_size * self.input_size * 3) as usize);
-
-            for pixel in rgb.pixels() {
-                input.push(pixel[0] as f32 / 255.0);
-                input.push(pixel[1] as f32 / 255.0);
-                input.push(pixel[2] as f32 / 255.0);
-            }
-
-            (input, scale)
-        }
-
-        fn postprocess(
-            &self,
-            output: &DynValue,
-            orig_width: u32,
-            orig_height: u32,
-            scale: f32,
-            confidence_threshold: f32,
-        ) -> std::result::Result<Vec<Detection>, String> {
-            let output_data = output.try_extract_tensor::<f32>()
-                .map_err(|e| format!("Failed to extract output: {}", e))?;
-
-            let data = output_data.1;
-            let nms_threshold = 0.45;
-
-            let mut detections = Vec::new();
-            let num_predictions = 8400;
-            let num_classes = 80;
-
-            let mut all_boxes: Vec<(usize, f32, [f32; 4])> = Vec::new();
-
-            for i in 0..num_predictions {
-                let offset = i * (4 + num_classes);
-                if offset + 4 + num_classes > data.len() {
-                    break;
-                }
-
-                // Find max class
-                let mut max_class = 0;
-                let mut max_score = 0.0f32;
-
-                for c in 0..num_classes {
-                    let score = data[offset + 4 + c];
-                    if score > max_score {
-                        max_score = score;
-                        max_class = c;
-                    }
-                }
-
-                if max_score >= confidence_threshold {
-                    let cx = data[offset] * self.input_size as f32 / scale;
-                    let cy = data[offset + 1] * self.input_size as f32 / scale;
-                    let w = data[offset + 2] * self.input_size as f32 / scale;
-                    let h = data[offset + 3] * self.input_size as f32 / scale;
-
-                    let x1 = (cx - w / 2.0).max(0.0);
-                    let y1 = (cy - h / 2.0).max(0.0);
-                    let x2 = (cx + w / 2.0).min(orig_width as f32);
-                    let y2 = (cy + h / 2.0).min(orig_height as f32);
-
-                    all_boxes.push((max_class, max_score, [x1, y1, x2, y2]));
-                }
-            }
-
-            // Apply NMS
-            for class_id in 0..num_classes {
-                let mut class_boxes: Vec<_> = all_boxes.iter()
-                    .filter(|(c, _, _)| *c == class_id)
-                    .cloned()
-                    .collect();
-
-                class_boxes.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-
-                while !class_boxes.is_empty() {
-                    let best = class_boxes.remove(0);
-
-                    let x1 = best.2[0] as u32;
-                    let y1 = best.2[1] as u32;
-                    let x2 = best.2[2] as u32;
-                    let y2 = best.2[3] as u32;
-
-                    let label = COCO_CLASSES.get(class_id).unwrap_or(&"unknown");
-
-                    detections.push(Detection {
-                        label: label.to_string(),
-                        confidence: best.1,
-                        bbox: Some(BoundingBox {
-                            x: x1,
-                            y: y1,
-                            width: x2.saturating_sub(x1),
-                            height: y2.saturating_sub(y1),
-                        }),
-                    });
-
-                    class_boxes.retain(|(_, _, box2)| {
-                        Self::compute_iou(&best.2, box2) < nms_threshold
-                    });
-                }
-            }
-
-            detections.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
-            detections.truncate(100);
-
-            Ok(detections)
-        }
-
-        fn compute_iou(box1: &[f32; 4], box2: &[f32; 4]) -> f32 {
-            let x1 = box1[0].max(box2[0]);
-            let y1 = box1[1].max(box2[1]);
-            let x2 = box1[2].min(box2[2]);
-            let y2 = box1[3].min(box2[3]);
-
-            let intersection = (x2 - x1).max(0.0) * (y2 - y1).max(0.0);
-            let area1 = (box1[2] - box1[0]) * (box1[3] - box1[1]);
-            let area2 = (box2[2] - box2[0]) * (box2[3] - box2[1]);
-            let union = area1 + area2 - intersection;
-
-            if union > 0.0 { intersection / union } else { 0.0 }
-        }
-
-        pub fn is_loaded(&self) -> bool {
-            self.session.is_some()
-        }
+        Ok(())
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-use native::YOLOv8Detector;
-
 // ============================================================================
-// Export FFI using SDK macro
+// FFI Export
 // ============================================================================
 
 neomind_extension_sdk::neomind_export!(ImageAnalyzer);
@@ -587,7 +707,7 @@ mod tests {
     fn test_extension_commands() {
         let ext = ImageAnalyzer::new();
         let commands = ext.commands();
-        assert_eq!(commands.len(), 2);
+        assert_eq!(commands.len(), 4);
         assert_eq!(commands[0].name, "analyze_image");
     }
 

@@ -7,11 +7,11 @@
       "name": "WeatherCard",
       "type": "card",
       "displayName": "Weather Forecast V2",
-      "description": "Real-time weather display with temperature, humidity, wind and more. Built with NeoMind Extension SDK V2.",
+      "description": "Real-time weather display with temperature, humidity, wind and more. Supports automatic data collection with configurable interval.",
       "icon": "cloud-sun",
-      "defaultSize": { "width": 320, "height": 240 },
-      "minSize": { "width": 200, "height": 180 },
-      "maxSize": { "width": 500, "height": 400 },
+      "defaultSize": { "width": 340, "height": 320 },
+      "minSize": { "width": 240, "height": 260 },
+      "maxSize": { "width": 480, "height": 400 },
       "configSchema": {
         "defaultCity": {
           "type": "string",
@@ -23,13 +23,14 @@
           "type": "number",
           "required": false,
           "default": 300000,
-          "description": "Refresh interval in milliseconds"
+          "description": "Refresh interval in milliseconds (default: 5 minutes)"
         },
         "unit": {
           "type": "string",
           "required": false,
           "default": "celsius",
-          "description": "Temperature unit (celsius or fahrenheit)"
+          "description": "Temperature unit",
+          "options": ["celsius", "fahrenheit"]
         }
       },
       "refreshable": true,

@@ -5,6 +5,7 @@ members = [
     "extensions/weather-forecast-v2",
     "extensions/image-analyzer-v2",
     "extensions/yolo-video-v2",
+    "extensions/wasm-demo",
 ]
 exclude = [
     "extensions/as-hello",              # AssemblyScript project (not Rust)

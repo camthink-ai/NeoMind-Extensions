@@ -1,0 +1,73 @@
+{
+  "id": "wasm-demo",
+  "name": "WASM Demo Extension",
+  "version": "1.0.0",
+  "description": "A simple counter extension demonstrating WASM support for NeoMind",
+  "author": "NeoMind Team",
+  "license": "MIT",
+  "type": "wasm",
+  "categories": ["demo", "counter", "example"],
+  "keywords": ["wasm", "demo", "counter"],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions",
+  "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
+  "capabilities": {
+    "metrics": [
+      {
+        "name": "counter",
+        "display_name": "Counter",
+        "data_type": "integer",
+        "description": "The current counter value"
+      },
+      {
+        "name": "request_count",
+        "display_name": "Request Count",
+        "data_type": "integer",
+        "description": "Total number of requests processed"
+      }
+    ],
+    "commands": [
+      {
+        "name": "increment",
+        "display_name": "Increment",
+        "description": "Increment the counter by the specified amount",
+        "parameters": [
+          {
+            "name": "amount",
+            "display_name": "Amount",
+            "description": "Amount to add to the counter",
+            "type": "integer",
+            "required": false,
+            "default": 1
+          }
+        ]
+      },
+      {
+        "name": "decrement",
+        "display_name": "Decrement",
+        "description": "Decrement the counter by the specified amount",
+        "parameters": [
+          {
+            "name": "amount",
+            "display_name": "Amount",
+            "description": "Amount to subtract from the counter",
+            "type": "integer",
+            "required": false,
+            "default": 1
+          }
+        ]
+      },
+      {
+        "name": "reset",
+        "display_name": "Reset",
+        "description": "Reset the counter to zero",
+        "parameters": []
+      },
+      {
+        "name": "get",
+        "display_name": "Get",
+        "description": "Get the current counter value",
+        "parameters": []
+      }
+    ]
+  }
+}

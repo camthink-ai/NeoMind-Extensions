@@ -127,28 +127,135 @@ for ext in "${V2_EXTENSIONS[@]}"; do
         cp "$EXT_DIR/frontend/frontend.json" "$PACKAGE_DIR/"
     fi
 
-    # Create manifest.json
-    cat > "$PACKAGE_DIR/manifest.json" << EOF
-{
-  "format": "neomind-extension-package",
-  "format_version": "2.0",
-  "abi_version": 3,
-  "id": "$ext",
-  "name": "$(echo $ext | sed 's/-v2$//' | sed 's/-/ /g')",
-  "version": "$VERSION",
-  "sdk_version": "2.0.0",
-  "type": "native",
-  "binaries": {
-    "$PLATFORM": "binaries/$PLATFORM/$(basename $LIB_FILE)"
-  },
-  "frontend": "frontend/"
-}
-EOF
+    # Check if models are included
+    HAS_MODELS="false"
+    if [ -d "$EXT_DIR/models" ] && ls "$EXT_DIR/models"/*.onnx 1> /dev/null 2>&1; then
+        HAS_MODELS="true"
+        mkdir -p "$PACKAGE_DIR/models"
+        for model_file in "$EXT_DIR/models"/*.onnx; do
+            if [ -f "$model_file" ]; then
+                cp "$model_file" "$PACKAGE_DIR/models/"
+                echo -e "    ${BLUE}→${NC} Including $(basename $model_file)"
+            fi
+        done
+    fi
 
-    # Create .nep package
+    # Generate dashboard_components from frontend.json
+    DASHBOARD_COMPONENTS="[]"
+    if [ -f "$EXT_DIR/frontend/frontend.json" ] && command -v jq &> /dev/null; then
+        FRONTEND_JSON="$EXT_DIR/frontend/frontend.json"
+
+        # Read entrypoint from frontend.json and resolve actual file
+        ENTRYPOINT=$(jq -r '.entrypoint // ""' "$FRONTEND_JSON" 2>/dev/null)
+
+        # Check if the entrypoint file exists, try alternate extensions if not
+        ACTUAL_ENTRYPOINT="$ENTRYPOINT"
+        if [ ! -f "$EXT_DIR/frontend/dist/$ENTRYPOINT" ]; then
+            # Try .umd.cjs instead of .umd.js
+            if [ -f "$EXT_DIR/frontend/dist/${ENTRYPOINT%.umd.js}.umd.cjs" ]; then
+                ACTUAL_ENTRYPOINT="${ENTRYPOINT%.umd.js}.umd.cjs"
+            fi
+        fi
+
+        # Generate component type from extension ID (e.g., weather-forecast-v2 -> weather-card)
+        COMPONENT_TYPE=$(echo "$ext" | sed 's/-v2$//' | sed 's/-.*$//')"-card"
+
+        # Convert components to dashboard_components format
+        DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" '
+            [.components[] | {
+                "type": $component_type,
+                "name": .displayName,
+                "description": .description,
+                "category": (if .type == "card" then "custom"
+                             elif .type == "widget" then "custom"
+                             elif .type == "panel" then "custom"
+                             elif .type == "chart" then "chart"
+                             elif .type == "metric" then "metric"
+                             elif .type == "table" then "table"
+                             elif .type == "control" then "control"
+                             elif .type == "media" then "media"
+                             else "other" end),
+                "icon": .icon,
+                "bundle_path": ("frontend/" + $entrypoint),
+                "export_name": .name,
+                "size_constraints": {
+                    "min_w": (.minSize.width // 200),
+                    "min_h": (.minSize.height // 150),
+                    "default_w": (.defaultSize.width // 300),
+                    "default_h": (.defaultSize.height // 200),
+                    "max_w": (.maxSize.width // 800),
+                    "max_h": (.maxSize.height // 600)
+                },
+                "has_data_source": false,
+                "has_display_config": true,
+                "has_actions": false,
+                "max_data_sources": 0,
+                "config_schema": (if .configSchema then
+                    {
+                        "type": "object",
+                        "properties": (.configSchema | to_entries | map({
+                            (.key): {
+                                "type": (if .value.type == "string" then "string"
+                                         elif .value.type == "number" then "number"
+                                         elif .value.type == "boolean" then "boolean"
+                                         else "string" end),
+                                "description": .value.description,
+                                "default": .value.default
+                            }
+                        }) | add // {})
+                    }
+                else null end),
+                "default_config": (if .configSchema then
+                    (.configSchema | to_entries | map(select(.value.default != null)) | map({
+                        (.key): .value.default
+                    }) | add // {})
+                else null end),
+                "variants": []
+            }]
+        ' "$FRONTEND_JSON" 2>/dev/null)
+
+        if [ -z "$DASHBOARD_COMPONENTS" ] || [ "$DASHBOARD_COMPONENTS" = "null" ]; then
+            DASHBOARD_COMPONENTS="[]"
+        fi
+
+        echo -e "    ${BLUE}→${NC} Generated dashboard_components"
+    fi
+
+    # Create manifest.json using jq for proper JSON generation
+    MANIFEST_JSON=$(jq -n \
+        --arg format "neomind-extension-package" \
+        --arg format_version "2.0" \
+        --argjson abi_version 3 \
+        --arg id "$ext" \
+        --arg name "$(echo $ext | sed 's/-v2$//' | sed 's/-/ /g')" \
+        --arg version "$VERSION" \
+        --arg sdk_version "2.0.0" \
+        --arg type "native" \
+        --arg platform "$PLATFORM" \
+        --arg binary_name "$(basename $LIB_FILE)" \
+        --argjson has_models "$HAS_MODELS" \
+        --argjson dashboard_components "$DASHBOARD_COMPONENTS" \
+        '{
+            format: $format,
+            format_version: $format_version,
+            abi_version: $abi_version,
+            id: $id,
+            name: $name,
+            version: $version,
+            sdk_version: $sdk_version,
+            type: $type,
+            binaries: { ($platform): ("binaries/" + $platform + "/" + $binary_name) },
+            frontend: {
+                "components": $dashboard_components
+            }
+        } | if $has_models then . + {"models": "models/"} else . end')
+
+    echo "$MANIFEST_JSON" > "$PACKAGE_DIR/manifest.json"
+
+    # Create .nep package (without top-level directory prefix)
     OUTPUT_FILE="dist/${ext}-${VERSION}-${PLATFORM}.nep"
-    cd "$TEMP_DIR"
-    zip -r -q "$OLDPWD/$OUTPUT_FILE" "$ext"
+    cd "$PACKAGE_DIR"
+    zip -r -q "$OLDPWD/$OUTPUT_FILE" .
     cd - > /dev/null
 
     # Calculate checksum

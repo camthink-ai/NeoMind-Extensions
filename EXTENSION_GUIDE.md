@@ -24,11 +24,12 @@ NeoMind Extension SDK V2 provides a unified development experience for both Nati
 
 ### Key Features
 
+- **Process Isolation Architecture**: All extensions run in isolated processes by default - crashes don't affect the main process
 - **Unified SDK**: Single codebase for Native and WASM
 - **ABI Version 3**: New extension interface with improved safety
 - **Declarative Macros**: Reduce boilerplate from 50+ lines to 5 lines
 - **Frontend Components**: React-based dashboard widgets
-- **Process Isolation**: Optional isolation for high-risk extensions
+- **Stream Processing**: Support for real-time data streams (video, sensors, etc.)
 
 ### Extension Types
 
@@ -41,24 +42,50 @@ NeoMind Extension SDK V2 provides a unified development experience for both Nati
 
 ## Architecture
 
+### V2 Process Isolation Architecture
+
+All extensions run in isolated processes by default, ensuring system stability:
+
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    NeoMind Core                         │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │               Extension Registry                     ││
-│  │  ┌────────────┐ ┌────────────┐ ┌────────────────┐   ││
-│  │  │In-Process  │ │OutOfProcess│ │WASM Sandbox    │   ││
-│  │  │Loader      │ │Loader      │ │Loader          │   ││
-│  │  └────────────┘ └────────────┘ └────────────────┘   ││
-│  └─────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────┘
-                          │
-         ┌────────────────┼────────────────┐
-         ▼                ▼                ▼
-  ┌────────────┐   ┌────────────┐   ┌────────────────┐
-  │Native Ext  │   │Subprocess  │   │WASM Runtime    │
-  │(shared mem)│   │(isolated)  │   │(sandboxed)     │
-  └────────────┘   └────────────┘   └────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                   NeoMind Main Process                       │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │             UnifiedExtensionService                      ││
+│  │  - IPC communication via stdin/stdout                    ││
+│  │  - Manages lifecycle of all extensions                   ││
+│  └─────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  Extension Runner Process                    │
+│  - Your extension runs here in isolation                    │
+│  - Native: loaded via FFI                                   │
+│  - WASM: executed via wasmtime                              │
+│  - Crashes don't affect main process                        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Benefits of Process Isolation
+
+- **Crash Safety**: Extension crashes don't affect the main NeoMind process
+- **Memory Isolation**: Each extension has its own memory space
+- **Resource Limits**: CPU and memory can be limited per extension
+- **Independent Lifecycle**: Extensions can be restarted without affecting others
+
+### IPC Communication Protocol
+
+The main process communicates with extension processes via JSON messages:
+
+```json
+// Execute command
+{ "ExecuteCommand": { "command": "analyze", "args": {...}, "request_id": 1 } }
+
+// Get metrics
+{ "ProduceMetrics": { "request_id": 2 } }
+
+// Stream processing
+{ "InitStreamSession": { "session_id": "xxx", "config": {...} } }
 ```
 
 ---
@@ -445,37 +472,64 @@ cp -r extensions/my-extension/frontend/dist ~/.neomind/extensions/my-extension/f
 
 ## Safety Requirements
 
-### CRITICAL: Panic Handling
+### Process Isolation (V2 Architecture)
 
-**All extensions MUST be compiled with `panic = "unwind"`**
+**In V2, all extensions run in isolated processes by default** - no additional configuration needed. Benefits include:
 
-```toml
-# Cargo.toml (workspace)
-[profile.release]
-opt-level = 3
-lto = "thin"
-panic = "unwind"  # REQUIRED!
+- Crash isolation: Extension panics don't affect the NeoMind main process
+- Memory isolation: Each extension has its own memory space
+- Resource management: Monitor and limit resource usage per extension
 
-[profile.dev]
-opt-level = 1
-lto = false
-panic = "unwind"  # REQUIRED!
+### Panic Handling
+
+With process isolation, extension panics won't crash the main process. However, follow these best practices:
+
+```rust
+// Recommended: Use ? operator for error propagation
+fn process_data(&self) -> Result<Data> {
+    let value = self.get_value()?;  // Instead of unwrap()
+    Ok(Data::new(value))
+}
+
+// Recommended: Use unwrap_or for default values
+let count = args.get("count").and_then(|v| v.as_i64()).unwrap_or(1);
+
+// Avoid: Direct unwrap may cause extension process to exit
+let value = some_option.unwrap();  // Not recommended
 ```
 
-Using `panic = "abort"` will crash the entire NeoMind server on any panic.
+### Async Runtime Considerations
 
-### Process Isolation
+- `produce_metrics()` is a **synchronous method** - do NOT use `.await` inside
+- `execute_command()` is an **async method** - can use `.await`
 
-For high-risk extensions (AI inference, heavy processing):
+```rust
+// ❌ Wrong: Using async in produce_metrics
+fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
+    let data = block_on(async_fetch());  // Don't do this!
+    // ...
+}
+
+// ✅ Correct: Cache data, return synchronously
+fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
+    let data = self.cached_data.lock().unwrap().clone();
+    Ok(vec![/* ... */])
+}
+```
+
+### Resource Configuration (Optional)
+
+To customize resource limits for extension processes, configure in `metadata.json`:
 
 ```json
-// manifest.json
 {
-  "isolation": {
-    "mode": "process",
-    "timeout_seconds": 30,
-    "max_memory_mb": 512,
-    "restart_on_crash": true
+  "id": "yolo-video-v2",
+  "version": "2.0.0",
+  "process_config": {
+    "timeout_seconds": 60,
+    "max_memory_mb": 1024,
+    "restart_on_crash": true,
+    "restart_delay_ms": 1000
   }
 }
 ```
@@ -491,6 +545,7 @@ For high-risk extensions (AI inference, heavy processing):
 | Linux | x86_64 | `*.so` |
 | Linux | ARM64 | `*.so` |
 | Windows | x86_64 | `*.dll` |
+| **Cross-platform** | Any | `*.wasm` |
 
 ---
 
@@ -499,8 +554,14 @@ For high-risk extensions (AI inference, heavy processing):
 ### Extension Not Loading
 
 1. Check ABI version: `neomind_extension_abi_version()` must return 3
-2. Verify panic setting: `panic = "unwind"` in Cargo.toml
-3. Check binary format: Must match platform (.dylib for macOS, .so for Linux)
+2. Verify binary format: Must match platform (.dylib for macOS, .so for Linux)
+3. Check extension runner logs for IPC errors
+
+### Extension Process Crashes
+
+1. Check for `unwrap()` or `expect()` calls that may panic
+2. Review error handling in command execution
+3. Monitor memory usage if processing large data
 
 ### Frontend Not Displaying
 
@@ -510,9 +571,9 @@ For high-risk extensions (AI inference, heavy processing):
 
 ### Performance Issues
 
-1. Enable process isolation for AI extensions
-2. Consider native over WASM for compute-intensive tasks
-3. Use appropriate max_memory_mb in isolation config
+1. Use appropriate timeout values in process_config
+2. Consider data chunking for large payloads
+3. Cache results in produce_metrics() instead of async operations
 
 ---
 

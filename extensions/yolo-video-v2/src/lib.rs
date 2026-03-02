@@ -9,6 +9,12 @@
 //! - Heavy image processing workloads
 //!
 //! RECOMMENDATION: Enable process isolation for production deployments.
+//!
+//! # Push Mode Streaming
+//!
+//! This extension supports Push mode streaming for real-time video output.
+//! When a client connects via WebSocket and sends an `init` message, the
+//! extension starts pushing video frames with detection overlays.
 
 pub mod detector;
 pub mod video_source;
@@ -22,6 +28,11 @@ use neomind_extension_sdk::{
     Extension, ExtensionMetadata, ExtensionError, ExtensionMetricValue,
     MetricDescriptor, ExtensionCommand, MetricDataType, ParameterDefinition,
     ParamMetricValue, Result,
+};
+use neomind_extension_sdk::prelude::{
+    StreamCapability, StreamMode, StreamDirection, StreamDataType,
+    StreamSession, SessionStats, StreamError, StreamResult,
+    PushOutputMessage, mpsc,
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -144,6 +155,9 @@ struct ActiveStream {
     fps: f32,
     running: bool,
     detected_objects: HashMap<String, u32>,
+    push_task: Option<tokio::task::JoinHandle<()>>,
+    last_process_time: Option<Instant>,  // Track last processing time
+    dropped_frames: u64,  // Track dropped frames
 }
 
 /// Color palette for drawing boxes
@@ -210,8 +224,36 @@ fn generate_fallback_detections(frame_count: u64, max_objects: u32) -> Vec<Objec
 
 /// Draw detections on an image
 pub fn draw_detections(image: &mut image::RgbImage, detections: &[ObjectDetection]) {
-    use imageproc::drawing::{draw_hollow_rect_mut, draw_filled_rect_mut};
+    use imageproc::drawing::{draw_hollow_rect_mut, draw_filled_rect_mut, draw_text_mut};
     use imageproc::rect::Rect;
+    use ab_glyph::{FontRef, PxScale};
+
+    eprintln!("[YOLO] draw_detections called with {} detections, image size: {}x{}",
+        detections.len(), image.width(), image.height());
+
+    // Use embedded Noto Sans font
+    let font = match FontRef::try_from_slice(include_bytes!("../fonts/NotoSans-Regular.ttf")) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("[YOLO] Warning: Could not load font: {:?}, drawing boxes only", e);
+            // Draw boxes without labels
+            for (i, det) in detections.iter().enumerate() {
+                let color = BOX_COLORS[i % BOX_COLORS.len()];
+                let image_color = image::Rgb([color.0, color.1, color.2]);
+
+                let x = det.bbox.x.max(0.0).min(image.width() as f32 - 2.0) as i32;
+                let y = det.bbox.y.max(0.0).min(image.height() as f32 - 2.0) as i32;
+                let w = det.bbox.width.min(image.width() as f32 - x as f32 - 1.0) as u32;
+                let h = det.bbox.height.min(image.height() as f32 - y as f32 - 1.0) as u32;
+
+                if w >= 2 && h >= 2 {
+                    draw_hollow_rect_mut(image, Rect::at(x, y).of_size(w, h), image_color);
+                    draw_hollow_rect_mut(image, Rect::at(x + 1, y + 1).of_size(w.saturating_sub(2), h.saturating_sub(2)), image_color);
+                }
+            }
+            return;
+        }
+    };
 
     for (i, det) in detections.iter().enumerate() {
         let color = BOX_COLORS[i % BOX_COLORS.len()];
@@ -222,36 +264,73 @@ pub fn draw_detections(image: &mut image::RgbImage, detections: &[ObjectDetectio
         let w = det.bbox.width as u32;
         let h = det.bbox.height as u32;
 
+        eprintln!("[YOLO]   Drawing box {}: [{}, {}, {}x{}] color: {:?}",
+            i, x, y, w, h, color);
+
         let x = x.max(0).min(image.width() as i32 - 2);
         let y = y.max(0).min(image.height() as i32 - 2);
         let w = w.min(image.width() - x as u32 - 1);
         let h = h.min(image.height() - y as u32 - 1);
 
         if w < 2 || h < 2 {
+            eprintln!("[YOLO]   Box {} too small after clipping: {}x{}, skipping", i, w, h);
             continue;
         }
 
+        eprintln!("[YOLO]   Drawing box {} after clipping: [{}, {}, {}x{}]", i, x, y, w, h);
+
+        // Draw bounding box (2px thick)
         draw_hollow_rect_mut(image, Rect::at(x, y).of_size(w, h), image_color);
         draw_hollow_rect_mut(image, Rect::at(x + 1, y + 1).of_size(w.saturating_sub(2), h.saturating_sub(2)), image_color);
 
-        let label_height = 18u32;
-        if y >= 0 && (y as u32) + label_height <= image.height() && w >= 30 {
-            let label_width = ((det.label.len() * 7) + 25).min(w as usize) as u32;
+        // Draw label background and text at top-left corner
+        let label_text = format!("{} {:.0}%", det.label, det.confidence * 100.0);
+        let scale = PxScale::from(14.0);
+        let label_height = 20u32;
+        let label_width = ((label_text.len() * 8) + 8).min(w as usize) as u32;
+
+        // Position label above the box if possible, otherwise inside
+        let label_y = if y >= label_height as i32 {
+            y - label_height as i32
+        } else {
+            y
+        };
+
+        if label_width >= 20 && label_y >= 0 && (label_y as u32) + label_height <= image.height() {
+            // Draw filled background for label
             draw_filled_rect_mut(
                 image,
-                Rect::at(x, y).of_size(label_width, label_height),
+                Rect::at(x, label_y).of_size(label_width, label_height),
                 image_color,
+            );
+
+            // Draw white text on colored background
+            draw_text_mut(
+                image,
+                image::Rgb([255, 255, 255]),
+                x + 4,
+                label_y + 3,
+                scale,
+                &font,
+                &label_text,
             );
         }
     }
+
+    eprintln!("[YOLO] draw_detections completed");
 }
 
 /// Encode image to JPEG
 pub fn encode_jpeg(image: &image::RgbImage, quality: u8) -> Vec<u8> {
     let mut buffer = Vec::new();
-    let dynamic = image::DynamicImage::ImageRgb8(image.clone());
-    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality);
-    let _ = dynamic.write_with_encoder(encoder);
+    // Use direct encoding to avoid cloning the entire image
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality);
+    let _ = encoder.encode(
+        image.as_raw(),
+        image.width(),
+        image.height(),
+        image::ExtendedColorType::Rgb8
+    );
     buffer
 }
 
@@ -291,7 +370,10 @@ pub struct StreamProcessor {
 
 impl StreamProcessor {
     pub fn new() -> Self {
-        let detector = YoloDetector::default();
+        let detector = YoloDetector::new().unwrap_or_else(|e| {
+            tracing::error!("Failed to load YOLO detector: {}", e);
+            panic!("Failed to initialize YOLO detector: {}", e);
+        });
         Self {
             detector: Arc::new(Mutex::new(detector)),
         }
@@ -325,6 +407,9 @@ impl StreamProcessor {
             fps: 0.0,
             running: true,
             detected_objects: HashMap::new(),
+            push_task: None,
+            last_process_time: None,
+            dropped_frames: 0,
         }));
 
         {
@@ -399,7 +484,7 @@ impl StreamProcessor {
             }
 
             // Run inference
-            let detector_lock = detector.lock();
+            let mut detector_lock = detector.lock();
             let detections = if detector_lock.is_loaded() {
                 tracing::debug!("[Stream {}] Running real inference", stream_id);
                 let raw_detections = detector_lock.detect(
@@ -653,6 +738,28 @@ impl Extension for YoloVideoProcessorV2 {
                     llm_hints: "Get stream statistics".to_string(),
                     parameter_groups: Vec::new(),
                 },
+                ExtensionCommand {
+                    name: "get_frame".to_string(),
+                    display_name: "Get Current Frame".to_string(),
+                    payload_template: r#"{"stream_id": ""}"#.to_string(),
+                    parameters: vec![
+                        ParameterDefinition {
+                            name: "stream_id".to_string(),
+                            display_name: "Stream ID".to_string(),
+                            description: "ID of the stream to get frame from".to_string(),
+                            param_type: MetricDataType::String,
+                            required: true,
+                            default_value: None,
+                            min: None,
+                            max: None,
+                            options: Vec::new(),
+                        },
+                    ],
+                    fixed_values: HashMap::new(),
+                    samples: vec![],
+                    llm_hints: "Get current frame as base64 JPEG".to_string(),
+                    parameter_groups: Vec::new(),
+                },
             ]
         })
     }
@@ -733,7 +840,523 @@ impl Extension for YoloVideoProcessorV2 {
             },
         ])
     }
+
+    // ========================================================================
+    // Streaming Support - Hybrid Mode (Stateful + Push)
+    // ========================================================================
+
+    fn stream_capability(&self) -> Option<StreamCapability> {
+        // Support both modes:
+        // - Bidirectional (Stateful): for local camera, client sends frames
+        // - Download (Push): for RTSP/RTMP/HLS, server pushes frames
+        Some(StreamCapability {
+            direction: StreamDirection::Bidirectional,
+            mode: StreamMode::Stateful,
+            supported_data_types: vec![
+                StreamDataType::Image { format: "jpeg".to_string() },
+            ],
+            max_chunk_size: 524288,
+            preferred_chunk_size: 32768,
+            max_concurrent_sessions: 4,
+            ..Default::default()
+        })
+    }
+
+    async fn init_session(&self, session: &StreamSession) -> Result<()> {
+        eprintln!("[YOLO] init_session called for session: {}", session.id);
+
+        let config: StreamConfig = serde_json::from_value(session.config.clone())
+            .unwrap_or_default();
+
+        let stream_id = session.id.clone();
+        let source_url = config.source_url.clone();
+
+        eprintln!("[YOLO] Session config: source_url={}, confidence={}, max_objects={}",
+            source_url, config.confidence_threshold, config.max_objects);
+
+        // Determine if this is a network stream (RTSP/RTMP/HLS) or local camera
+        let is_network_stream = source_url.starts_with("rtsp://")
+            || source_url.starts_with("rtmp://")
+            || source_url.starts_with("hls://")
+            || source_url.contains(".m3u8");
+
+        let stream = ActiveStream {
+            _id: stream_id.clone(),
+            _config: config.clone(),
+            started_at: Instant::now(),
+            frame_count: 0,
+            total_detections: 0,
+            last_frame: None,
+            last_detections: Vec::new(),
+            last_frame_time: None,
+            fps: 0.0,
+            running: true,
+            detected_objects: HashMap::new(),
+            push_task: None,
+            last_process_time: None,
+            dropped_frames: 0,
+        };
+
+        {
+            let mut registry = get_registry().lock();
+            registry.streams.insert(stream_id.clone(), Arc::new(Mutex::new(stream)));
+            eprintln!("[YOLO] Session registered, total sessions: {}", registry.streams.len());
+        }
+
+        if is_network_stream {
+            tracing::info!("Network stream session initialized: {} ({})", stream_id, source_url);
+            eprintln!("[YOLO] Network stream session initialized: {} ({})", stream_id, source_url);
+        } else {
+            tracing::info!("Local camera session initialized: {}", stream_id);
+            eprintln!("[YOLO] Local camera session initialized: {}", stream_id);
+        }
+
+        Ok(())
+    }
+
+    fn set_output_sender(&self, sender: Arc<mpsc::Sender<PushOutputMessage>>) {
+        let _ = PUSH_SENDER.set(sender);
+    }
+
+    async fn start_push(&self, session_id: &str) -> Result<()> {
+        // Check if push task already running
+        {
+            let registry = get_registry().lock();
+            if let Some(stream) = registry.streams.get(session_id) {
+                let s = stream.lock();
+                if s.push_task.is_some() {
+                    tracing::warn!("Push task already running for session: {}", session_id);
+                    return Ok(());
+                }
+            }
+        }
+
+        let config = {
+            let registry = get_registry().lock();
+            registry.streams.get(session_id)
+                .map(|s| s.lock()._config.clone())
+        };
+
+        let config = match config {
+            Some(c) => c,
+            None => return Err(ExtensionError::SessionNotFound(session_id.to_string())),
+        };
+
+        let source_url = config.source_url.clone();
+
+        // Only start push for network streams
+        let is_network_stream = source_url.starts_with("rtsp://")
+            || source_url.starts_with("rtmp://")
+            || source_url.starts_with("hls://")
+            || source_url.contains(".m3u8");
+
+        if !is_network_stream {
+            tracing::info!("Not a network stream, skipping push mode for: {}", session_id);
+            return Ok(());
+        }
+
+        let sender: Arc<mpsc::Sender<PushOutputMessage>> = match PUSH_SENDER.get().cloned() {
+            Some(s) => s,
+            None => {
+                tracing::warn!("Push sender not configured");
+                return Ok(());
+            }
+        };
+
+        let sid = session_id.to_string();
+        let processor = self.processor.clone();
+        let confidence = config.confidence_threshold;
+        let max_obj = config.max_objects;
+
+        tracing::info!("Starting network stream push for: {} ({})", sid, source_url);
+
+        // Spawn network stream processing task
+        let task_handle = tokio::spawn(async move {
+            let mut sequence = 0u64;
+            let frame_duration = Duration::from_millis(67); // ~15 FPS
+
+            loop {
+                // Check if stream is still running
+                let should_continue = {
+                    let registry = get_registry().lock();
+                    if let Some(stream) = registry.streams.get(&sid) {
+                        stream.lock().running
+                    } else {
+                        false
+                    }
+                };
+
+                if !should_continue {
+                    break;
+                }
+
+                // Step 1: Increment frame count (quick lock)
+                let frame_count = {
+                    let registry = get_registry().lock();
+                    if let Some(stream) = registry.streams.get(&sid) {
+                        let mut s = stream.lock();
+                        s.frame_count += 1;
+                        s.frame_count
+                    } else {
+                        break;
+                    }
+                };
+
+                // Step 2: Generate simulated video frame (no lock needed)
+                let mut image = image::RgbImage::new(640, 480);
+                let time = chrono::Utc::now();
+
+                // Create a more realistic test pattern with gradients
+                for y in 0..480 {
+                    for x in 0..640 {
+                        let noise = ((x as f32 / 640.0 + y as f32 / 480.0
+                            + time.timestamp_millis() as f32 / 1000.0) * 30.0) as u8;
+                        let r = ((x as f32 / 640.0) * 255.0) as u8;
+                        let g = ((y as f32 / 480.0) * 255.0) as u8;
+                        let b = noise;
+                        image.put_pixel(x, y, image::Rgb([r, g, b]));
+                    }
+                }
+
+                // Step 3: Run YOLO detection (no stream lock, only detector lock)
+                let detections = {
+                    let mut detector = processor.detector.lock();
+                    let yolo_dets = detector.detect(&image, confidence, max_obj);
+
+                    if !yolo_dets.is_empty() {
+                        tracing::debug!("YOLO detected {} objects in frame {}", yolo_dets.len(), frame_count);
+                        detections_to_object_detection(yolo_dets)
+                    } else {
+                        generate_fallback_detections(frame_count, max_obj)
+                    }
+                };
+
+                // Step 4: Draw detection boxes (no lock needed)
+                draw_detections(&mut image, &detections);
+
+                // Step 5: Encode frame to JPEG (no lock needed)
+                let jpeg_data = encode_jpeg(&image, 75);
+
+                // Step 6: Update stream statistics (quick lock)
+                {
+                    let registry = get_registry().lock();
+                    if let Some(stream) = registry.streams.get(&sid) {
+                        let mut s = stream.lock();
+                        s.last_detections = detections.clone();
+                        s.total_detections += detections.len() as u64;
+
+                        // Update detected object counts
+                        for det in &detections {
+                            *s.detected_objects.entry(det.label.clone()).or_insert(0) += 1;
+                        }
+
+                        // Update FPS calculation
+                        if s.last_frame_time.is_some() {
+                            let elapsed = s.started_at.elapsed().as_secs_f32();
+                            if elapsed > 0.0 {
+                                s.fps = s.frame_count as f32 / elapsed;
+                            }
+                        }
+                        s.last_frame_time = Some(Instant::now());
+                        s.last_frame = Some(jpeg_data.clone());
+                    }
+                }
+
+                let frame_data = Some((jpeg_data, detections));
+
+                if let Some((data, detections)) = frame_data {
+                    // Step 5: Push frame to client via WebSocket with detections metadata
+                    let output = PushOutputMessage::image_jpeg(&sid, sequence, data)
+                        .with_metadata(serde_json::json!({
+                            "detections": detections
+                        }));
+
+                    // Use try_send to avoid blocking - drop frame if channel is full
+                    match sender.try_send(output) {
+                        Ok(_) => {
+                            sequence += 1;
+                        }
+                        Err(mpsc::error::TrySendError::Full(_)) => {
+                            tracing::debug!("Push channel full, dropping frame {} for session: {}", sequence, sid);
+                            // Skip this frame, continue with next
+                        }
+                        Err(mpsc::error::TrySendError::Closed(_)) => {
+                            tracing::warn!("Push channel closed for session: {}", sid);
+                            break;
+                        }
+                    }
+                }
+
+                tokio::time::sleep(frame_duration).await;
+            }
+
+            tracing::info!("Network stream push ended for: {}", sid);
+        });
+
+        // Store task handle
+        {
+            let registry = get_registry().lock();
+            if let Some(stream) = registry.streams.get(session_id) {
+                stream.lock().push_task = Some(task_handle);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn stop_push(&self, session_id: &str) -> Result<()> {
+        let task_handle = {
+            let registry = get_registry().lock();
+            if let Some(stream) = registry.streams.get(session_id) {
+                let mut s = stream.lock();
+                s.running = false;
+                s.push_task.take()
+            } else {
+                None
+            }
+        };
+
+        // Abort the task if it exists
+        if let Some(handle) = task_handle {
+            handle.abort();
+            tracing::info!("Push task aborted for session: {}", session_id);
+        }
+
+        tracing::info!("Push stopped for session: {}", session_id);
+        Ok(())
+    }
+
+    /// Process frame from local camera (Stateful mode)
+    async fn process_session_chunk(
+        &self,
+        session_id: &str,
+        chunk: neomind_extension_sdk::DataChunk,
+    ) -> Result<StreamResult> {
+        let start = Instant::now();
+
+        eprintln!("[YOLO] Processing chunk for session {}, sequence {}, data size: {}",
+            session_id, chunk.sequence, chunk.data.len());
+
+        // Get stream state
+        let stream = {
+            let registry = get_registry().lock();
+            registry.streams.get(session_id).cloned()
+        };
+
+        let stream = match stream {
+            Some(s) => s,
+            None => {
+                eprintln!("[YOLO] Session not found: {}", session_id);
+                return Ok(StreamResult::error(
+                    Some(chunk.sequence),
+                    StreamError {
+                        code: "SESSION_NOT_FOUND".to_string(),
+                        message: format!("Session {} not found", session_id),
+                        retryable: false,
+                    },
+                ));
+            }
+        };
+
+        // CRITICAL: Frame throttling to prevent memory overflow
+        // If last frame was processed less than 100ms ago, drop this frame
+        {
+            let mut s = stream.lock();
+            if let Some(last_time) = s.last_process_time {
+                let elapsed = start.duration_since(last_time);
+                if elapsed.as_millis() < 100 {  // Minimum 100ms between frames (max 10 FPS)
+                    s.dropped_frames += 1;
+                    eprintln!("[YOLO] Frame {} dropped (too fast: {}ms), total dropped: {}",
+                        chunk.sequence, elapsed.as_millis(), s.dropped_frames);
+
+                    // Return last frame if available
+                    if let Some(ref last_frame) = s.last_frame {
+                        return Ok(StreamResult::success(
+                            Some(chunk.sequence),
+                            chunk.sequence,
+                            last_frame.clone(),
+                            StreamDataType::Image { format: "jpeg".to_string() },
+                            0.0,  // Cached frame, no processing time
+                        ));
+                    }
+                }
+            }
+            s.last_process_time = Some(start);
+        }
+
+        // Decode JPEG frame
+        eprintln!("[YOLO] Decoding image, data size: {}", chunk.data.len());
+        let img_result = image::load_from_memory(&chunk.data);
+        let original_image = match img_result {
+            Ok(img) => {
+                eprintln!("[YOLO] Decoded image: {}x{}", img.width(), img.height());
+                img.to_rgb8()
+            }
+            Err(e) => {
+                eprintln!("[YOLO] Failed to decode image: {}", e);
+                // Return error result
+                let error_result = json!({
+                    "error": format!("Failed to decode image: {}", e),
+                    "detections": []
+                });
+                return Ok(StreamResult::json(
+                    Some(chunk.sequence),
+                    chunk.sequence,
+                    error_result,
+                    start.elapsed().as_secs_f32() * 1000.0,
+                ).unwrap());
+            }
+        };
+
+        // Store original dimensions for high-quality output
+        let (orig_width, orig_height) = (original_image.width(), original_image.height());
+
+        // Resize to 640x640 for YOLO inference (better performance)
+        let inference_image = image::imageops::resize(
+            &original_image,
+            640,
+            640,
+            image::imageops::FilterType::CatmullRom
+        );
+
+        // Get configuration from stream
+        let (confidence_threshold, max_objects) = {
+            let s = stream.lock();
+            (s._config.confidence_threshold, s._config.max_objects)
+        };
+
+        eprintln!("[YOLO] Running YOLO detection on 640x640, confidence={}, max_objects={}",
+            confidence_threshold, max_objects);
+
+        // Run YOLO detection on resized image
+        let detections = {
+            let mut detector = self.processor.detector.lock();
+
+            eprintln!("[YOLO] Detector loaded: {}, inference size: 640x640",
+                detector.is_loaded());
+
+            // Run detection on 640x640 image
+            let dets = detector.detect(&inference_image, confidence_threshold, max_objects);
+
+            if !dets.is_empty() {
+                eprintln!("[YOLO] YOLO detected {} objects", dets.len());
+
+                // Scale detection coordinates back to original size
+                let scale_x = orig_width as f32 / 640.0;
+                let scale_y = orig_height as f32 / 640.0;
+
+                let scaled_dets: Vec<_> = dets.into_iter().map(|mut det| {
+                    det.bbox.x *= scale_x;
+                    det.bbox.y *= scale_y;
+                    det.bbox.width *= scale_x;
+                    det.bbox.height *= scale_y;
+                    det
+                }).collect();
+
+                for (i, det) in scaled_dets.iter().enumerate() {
+                    eprintln!("[YOLO]   Detection {}: {} ({:.2}%) at [{:.1}, {:.1}, {:.1}x{:.1}]",
+                        i, det.class_name, det.confidence * 100.0,
+                        det.bbox.x, det.bbox.y, det.bbox.width, det.bbox.height);
+                }
+                detections_to_object_detection(scaled_dets)
+            } else {
+                // Fallback to simulated detections for demo
+                eprintln!("[YOLO] No YOLO detections, using fallback");
+                let s = stream.lock();
+                generate_fallback_detections(s.frame_count, max_objects)
+            }
+        };
+
+        eprintln!("[YOLO] Total detections: {}", detections.len());
+
+        // Draw detections on ORIGINAL high-resolution image
+        let mut output_image = original_image;
+        eprintln!("[YOLO] Drawing detections on original {}x{} image", orig_width, orig_height);
+        draw_detections(&mut output_image, &detections);
+
+        // Update stream stats
+        {
+            let mut s = stream.lock();
+            s.frame_count += 1;
+            s.total_detections += detections.len() as u64;
+            s.last_detections = detections.clone();
+
+            // Update object counts (limit HashMap size to prevent unbounded growth)
+            for det in &detections {
+                *s.detected_objects.entry(det.label.clone()).or_insert(0) += 1;
+            }
+
+            // Clear detection history every 30 frames (~2 seconds at 15 FPS)
+            // This prevents memory from growing indefinitely
+            if s.frame_count % 30 == 0 {
+                s.detected_objects.clear();
+            }
+        }
+
+        eprintln!("[YOLO] Encoding image to JPEG (quality=85)");
+        // Encode result as JPEG with high quality for better display
+        let output_jpeg = encode_jpeg(&output_image, 85);
+        eprintln!("[YOLO] Encoded JPEG size: {} bytes, detections: {}", output_jpeg.len(), detections.len());
+
+        // Cache last frame for reuse
+        {
+            let mut s = stream.lock();
+            s.last_frame = Some(output_jpeg.clone());
+        }
+
+        // Return the processed frame with detections in metadata
+        let result = StreamResult::success(
+            Some(chunk.sequence),
+            chunk.sequence,
+            output_jpeg,
+            StreamDataType::Image { format: "jpeg".to_string() },
+            start.elapsed().as_secs_f32() * 1000.0,
+        ).with_metadata(serde_json::json!({
+            "detections": detections
+        }));
+
+        eprintln!("[YOLO] Returning result for sequence {}, data size: {}, detections: {}",
+            chunk.sequence, result.data.len(), detections.len());
+        Ok(result)
+    }
+
+    async fn close_session(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionStats> {
+        eprintln!("[YOLO] close_session called for session: {}", session_id);
+
+        // Stop push if running
+        self.stop_push(session_id).await?;
+
+        // Get stats and remove stream
+        let stats = {
+            let mut registry = get_registry().lock();
+            if let Some(stream) = registry.streams.remove(session_id) {
+                let s = stream.lock();
+                eprintln!("[YOLO] Session removed from registry, processed {} frames", s.frame_count);
+                SessionStats {
+                    input_chunks: s.frame_count,
+                    output_chunks: s.frame_count,
+                    input_bytes: 0,
+                    output_bytes: 0,
+                    errors: 0,
+                    last_activity: chrono::Utc::now().timestamp_millis(),
+                }
+            } else {
+                eprintln!("[YOLO] Session not found in registry when closing");
+                SessionStats::default()
+            }
+        };
+
+        tracing::info!("YOLO session closed: {}", session_id);
+        eprintln!("[YOLO] Session closed: {}", session_id);
+        Ok(stats)
+    }
 }
+
+// Global push sender for network stream mode
+static PUSH_SENDER: std::sync::OnceLock<Arc<mpsc::Sender<PushOutputMessage>>> = std::sync::OnceLock::new();
 
 // ============================================================================
 // Public API for HTTP handlers

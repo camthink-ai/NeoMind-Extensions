@@ -2,19 +2,16 @@
   "id": "weather-forecast-v2",
   "name": "Weather Forecast V2",
   "version": "2.0.0",
-  "description": "Real-time weather data using Open-Meteo API. Built with NeoMind Extension SDK V2.",
+  "description": "Real-time weather data using Open-Meteo API with sync HTTP client for stability.",
   "author": "NeoMind Team",
   "license": "MIT",
   "categories": [
-    "weather",
-    "data",
-    "api"
+    "weather"
   ],
   "type": "native",
   "abi_version": 3,
   "sdk_version": "2.0.0",
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/weather-forecast-v2",
-  "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
   "keywords": [
     "weather",
     "forecast",
@@ -27,18 +24,6 @@
     ],
     "entrypoint": "weather-forecast-v2-components.umd.js"
   },
-  "builds": {
-    "darwin-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/weather-forecast-v2-2.0.0-darwin_aarch64.nep",
-      "sha256": "",
-      "size": 1388586
-    },
-    "linux-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/weather-forecast-v2-2.0.0-linux_amd64.nep",
-      "sha256": "",
-      "size": 1788014
-    }
-  },
   "commands": [
     {
       "name": "get_weather",
@@ -50,6 +35,24 @@
           "type": "string",
           "required": true,
           "description": "City name to get weather for"
+        }
+      ]
+    },
+    {
+      "name": "refresh",
+      "display_name": "Refresh Weather",
+      "description": "Refresh weather data for default city"
+    },
+    {
+      "name": "set_default_city",
+      "display_name": "Set Default City",
+      "description": "Set the default city for weather queries",
+      "parameters": [
+        {
+          "name": "city",
+          "type": "string",
+          "required": true,
+          "description": "City name to set as default"
         }
       ]
     }
@@ -78,6 +81,5 @@
       "display_name": "Request Count",
       "type": "integer"
     }
-  ],
-  "package_url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/weather-forecast-v2-2.0.0-darwin_aarch64.nep"
+  ]
 }

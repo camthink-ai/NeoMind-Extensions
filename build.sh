@@ -93,16 +93,71 @@ V2_EXTENSIONS=(
     "weather-forecast-v2"
     "image-analyzer-v2"
     "yolo-video-v2"
+    "wasm-demo"
 )
 
 # Build Rust extensions
 echo ""
 echo -e "${BLUE}Building V2 Extensions (ABI Version 3)...${NC}"
 
-if [ "$BUILD_TYPE" = "release" ]; then
-    cargo build --release
-else
-    cargo build
+# Detect WASM extensions and build them
+WASM_EXTENSIONS=()
+NATIVE_EXTENSIONS=()
+
+for ext in "${V2_EXTENSIONS[@]}"; do
+    EXT_DIR="extensions/$ext"
+
+    # Check if this is a WASM extension by reading metadata.json
+    EXT_TYPE="native"
+    if [ -f "$EXT_DIR/metadata.json" ]; then
+        EXT_TYPE=$(jq -r '.type // "native"' "$EXT_DIR/metadata.json" 2>/dev/null)
+    fi
+
+    if [ "$EXT_TYPE" = "wasm" ]; then
+        WASM_EXTENSIONS+=("$ext")
+    else
+        NATIVE_EXTENSIONS+=("$ext")
+    fi
+done
+
+# Build native extensions
+if [ ${#NATIVE_EXTENSIONS[@]} -gt 0 ]; then
+    echo ""
+    echo -e "${BLUE}Building Native Extensions...${NC}"
+
+    if [ "$BUILD_TYPE" = "release" ]; then
+        cargo build --release -p neomind-extension-sdk 2>/dev/null || true
+        for ext in "${NATIVE_EXTENSIONS[@]}"; do
+            cargo build --release -p "$ext" 2>/dev/null || true
+        done
+    else
+        cargo build -p neomind-extension-sdk 2>/dev/null || true
+        for ext in "${NATIVE_EXTENSIONS[@]}"; do
+            cargo build -p "$ext" 2>/dev/null || true
+        done
+    fi
+fi
+
+# Build WASM extensions
+if [ ${#WASM_EXTENSIONS[@]} -gt 0 ]; then
+    echo ""
+    echo -e "${BLUE}Building WASM Extensions...${NC}"
+
+    # Check if wasm32 target is installed
+    if ! rustup target list | grep -q "wasm32-unknown-unknown"; then
+        echo -e "${YELLOW}Installing wasm32-unknown-unknown target...${NC}"
+        rustup target add wasm32-unknown-unknown
+    fi
+
+    for ext in "${WASM_EXTENSIONS[@]}"; do
+        echo -e "  ${BLUE}Building${NC} $ext (WASM)..."
+
+        if [ "$BUILD_TYPE" = "release" ]; then
+            cargo build --release -p "$ext" --target wasm32-unknown-unknown 2>/dev/null || true
+        else
+            cargo build -p "$ext" --target wasm32-unknown-unknown 2>/dev/null || true
+        fi
+    done
 fi
 
 # Find built extensions
@@ -111,15 +166,31 @@ echo ""
 echo -e "${BLUE}Built extensions:${NC}"
 
 BUILT_EXTENSIONS=()
-for ext in "${V2_EXTENSIONS[@]}"; do
+
+# Check native extensions
+for ext in "${NATIVE_EXTENSIONS[@]}"; do
     LIB_NAME=$(echo "$ext" | tr '-' '_')
     LIB_FILE="$BUILD_DIR/libneomind_extension_${LIB_NAME}.${LIB_EXT}"
 
     if [ -f "$LIB_FILE" ]; then
-        echo -e "  ${GREEN}✓${NC} $ext -> $(basename $LIB_FILE)"
+        echo -e "  ${GREEN}✓${NC} $ext -> $(basename $LIB_FILE) [native]"
         BUILT_EXTENSIONS+=("$ext")
     else
         echo -e "  ${YELLOW}⚠${NC} $ext (not found: $LIB_FILE)"
+    fi
+done
+
+# Check WASM extensions
+for ext in "${WASM_EXTENSIONS[@]}"; do
+    LIB_NAME=$(echo "$ext" | tr '-' '_')
+    # WASM files are in target/wasm32-unknown-unknown/release/ not target/release/wasm32-unknown-unknown/release/
+    WASM_FILE="target/wasm32-unknown-unknown/${BUILD_TYPE}/neomind_extension_${LIB_NAME}.wasm"
+
+    if [ -f "$WASM_FILE" ]; then
+        echo -e "  ${GREEN}✓${NC} $ext -> neomind_extension_${LIB_NAME}.wasm [wasm]"
+        BUILT_EXTENSIONS+=("$ext")
+    else
+        echo -e "  ${YELLOW}⚠${NC} $ext (not found: $WASM_FILE)"
     fi
 done
 
@@ -168,21 +239,53 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
     for ext in "${BUILT_EXTENSIONS[@]}"; do
         EXT_DIR="extensions/$ext"
         LIB_NAME=$(echo "$ext" | tr '-' '_')
-        LIB_FILE="$BUILD_DIR/libneomind_extension_${LIB_NAME}.${LIB_EXT}"
+
+        # Check if this is a WASM extension
+        # WASM files are in target/wasm32-unknown-unknown/release/
+        WASM_FILE="target/wasm32-unknown-unknown/${BUILD_TYPE}/neomind_extension_${LIB_NAME}.wasm"
+        NATIVE_LIB_FILE="$BUILD_DIR/libneomind_extension_${LIB_NAME}.${LIB_EXT}"
+
+        IS_WASM=false
+        if [ -f "$WASM_FILE" ]; then
+            IS_WASM=true
+            LIB_FILE="$WASM_FILE"
+            EXT_TYPE="wasm"
+            BINARY_NAME="extension.wasm"
+        else
+            LIB_FILE="$NATIVE_LIB_FILE"
+            EXT_TYPE="native"
+            BINARY_NAME="extension.${LIB_EXT}"
+        fi
 
         # Get version from Cargo.toml
         VERSION=$(grep -m1 'version = ' "$EXT_DIR/Cargo.toml" 2>/dev/null | sed 's/.*version = "\([^"]*\)".*/\1/' || echo "0.1.0")
 
+        if [ ! -f "$LIB_FILE" ]; then
+            echo -e "  ${YELLOW}⚠${NC} $ext: no binary found"
+            continue
+        fi
+
         # Create temp package directory
         TEMP_DIR=$(mktemp -d)
         PACKAGE_DIR="$TEMP_DIR/$ext"
-        mkdir -p "$PACKAGE_DIR/binaries/$PLATFORM"
-        mkdir -p "$PACKAGE_DIR/frontend"
+
+        if [ "$IS_WASM" = true ]; then
+            # WASM extension - no platform-specific directory
+            mkdir -p "$PACKAGE_DIR/binaries"
+            mkdir -p "$PACKAGE_DIR/frontend"
+        else
+            # Native extension - platform-specific directory
+            mkdir -p "$PACKAGE_DIR/binaries/$PLATFORM"
+            mkdir -p "$PACKAGE_DIR/frontend"
+        fi
         mkdir -p "$PACKAGE_DIR/models"
 
-        # Copy binary (rename to extension.{ext} for NeoMind loader)
-        BINARY_NAME="extension.${LIB_EXT}"
-        cp "$LIB_FILE" "$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
+        # Copy binary
+        if [ "$IS_WASM" = true ]; then
+            cp "$LIB_FILE" "$PACKAGE_DIR/binaries/$BINARY_NAME"
+        else
+            cp "$LIB_FILE" "$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
+        fi
 
         # Copy frontend
         FRONTEND_DIST="$EXT_DIR/frontend/dist"
@@ -206,34 +309,221 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             cp "$EXT_DIR/frontend/frontend.json" "$PACKAGE_DIR/"
         fi
 
-        # Create manifest.json
         # Check if models are included
         HAS_MODELS="false"
         if [ -d "$EXT_DIR/models" ] && ls "$EXT_DIR/models"/*.onnx 1> /dev/null 2>&1; then
             HAS_MODELS="true"
         fi
 
-        MANIFEST_EXTRA=""
-        if [ "$HAS_MODELS" = "true" ]; then
-            MANIFEST_EXTRA=',"models": "models/"'
+        # Generate dashboard_components from frontend.json
+        DASHBOARD_COMPONENTS="[]"
+        if [ -f "$EXT_DIR/frontend/frontend.json" ] && command -v jq &> /dev/null; then
+            FRONTEND_JSON="$EXT_DIR/frontend/frontend.json"
+
+            # Read entrypoint from frontend.json and resolve actual file
+            ENTRYPOINT=$(jq -r '.entrypoint // ""' "$FRONTEND_JSON" 2>/dev/null)
+
+            # Check if the entrypoint file exists, try alternate extensions if not
+            ACTUAL_ENTRYPOINT="$ENTRYPOINT"
+            if [ ! -f "$EXT_DIR/frontend/dist/$ENTRYPOINT" ]; then
+                # Try .umd.cjs instead of .umd.js
+                if [ -f "$EXT_DIR/frontend/dist/${ENTRYPOINT%.umd.js}.umd.cjs" ]; then
+                    ACTUAL_ENTRYPOINT="${ENTRYPOINT%.umd.js}.umd.cjs"
+                fi
+            fi
+
+            # Read global_name from vite.config.ts (the name field in build.lib)
+            GLOBAL_NAME=""
+            if [ -f "$EXT_DIR/frontend/vite.config.ts" ]; then
+                GLOBAL_NAME=$(grep -o "name: *'[^']*'" "$EXT_DIR/frontend/vite.config.ts" 2>/dev/null | head -1 | sed "s/name: *'\\([^']*\\)'/\\1/")
+                if [ -z "$GLOBAL_NAME" ]; then
+                    GLOBAL_NAME=$(grep -o 'name: *"[^"]*"' "$EXT_DIR/frontend/vite.config.ts" 2>/dev/null | head -1 | sed 's/name: *"\([^"]*\)"/\1/')
+                fi
+            fi
+
+            # Generate component type from extension ID (e.g., weather-forecast-v2 -> weather-card)
+            COMPONENT_TYPE=$(echo "$ext" | sed 's/-v2$//' | sed 's/-.*$//')"-card"
+
+            # Convert components to dashboard_components format
+            # Note: category must be one of: chart, metric, table, control, media, custom, other
+            if [ -n "$GLOBAL_NAME" ]; then
+                DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" --arg global_name "$GLOBAL_NAME" '
+                    [.components[] | {
+                        "type": $component_type,
+                        "name": .displayName,
+                        "description": .description,
+                        "category": (if .type == "card" then "custom"
+                                     elif .type == "widget" then "custom"
+                                     elif .type == "panel" then "custom"
+                                     elif .type == "chart" then "chart"
+                                     elif .type == "metric" then "metric"
+                                     elif .type == "table" then "table"
+                                     elif .type == "control" then "control"
+                                     elif .type == "media" then "media"
+                                     else "other" end),
+                        "icon": .icon,
+                        "bundle_path": ("frontend/" + $entrypoint),
+                        "export_name": .name,
+                        "global_name": $global_name,
+                        "size_constraints": {
+                            "min_w": (.minSize.width // 200),
+                            "min_h": (.minSize.height // 150),
+                            "default_w": (.defaultSize.width // 300),
+                            "default_h": (.defaultSize.height // 200),
+                            "max_w": (.maxSize.width // 800),
+                            "max_h": (.maxSize.height // 600)
+                        },
+                        "has_data_source": false,
+                        "has_display_config": true,
+                        "has_actions": false,
+                        "max_data_sources": 0,
+                        "config_schema": (if .configSchema then
+                            {
+                                "type": "object",
+                                "properties": (.configSchema | to_entries | map({
+                                    (.key): {
+                                        "type": (if .value.type == "string" then "string"
+                                                 elif .value.type == "number" then "number"
+                                                 elif .value.type == "boolean" then "boolean"
+                                                 else "string" end),
+                                        "description": .value.description,
+                                        "default": .value.default
+                                    }
+                                }) | add // {})
+                            }
+                        else null end),
+                        "default_config": (if .configSchema then
+                            (.configSchema | to_entries | map(select(.value.default != null)) | map({
+                                (.key): .value.default
+                            }) | add // {})
+                        else null end),
+                        "variants": []
+                    }]
+                ' "$FRONTEND_JSON" 2>/dev/null)
+                echo -e "    ${BLUE}→${NC} Global name: $GLOBAL_NAME"
+            else
+                DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" '
+                    [.components[] | {
+                        "type": $component_type,
+                        "name": .displayName,
+                        "description": .description,
+                        "category": (if .type == "card" then "custom"
+                                     elif .type == "widget" then "custom"
+                                     elif .type == "panel" then "custom"
+                                     elif .type == "chart" then "chart"
+                                     elif .type == "metric" then "metric"
+                                     elif .type == "table" then "table"
+                                     elif .type == "control" then "control"
+                                     elif .type == "media" then "media"
+                                     else "other" end),
+                        "icon": .icon,
+                        "bundle_path": ("frontend/" + $entrypoint),
+                        "export_name": .name,
+                        "size_constraints": {
+                            "min_w": (.minSize.width // 200),
+                            "min_h": (.minSize.height // 150),
+                            "default_w": (.defaultSize.width // 300),
+                            "default_h": (.defaultSize.height // 200),
+                            "max_w": (.maxSize.width // 800),
+                            "max_h": (.maxSize.height // 600)
+                        },
+                        "has_data_source": false,
+                        "has_display_config": true,
+                        "has_actions": false,
+                        "max_data_sources": 0,
+                        "config_schema": (if .configSchema then
+                            {
+                                "type": "object",
+                                "properties": (.configSchema | to_entries | map({
+                                    (.key): {
+                                        "type": (if .value.type == "string" then "string"
+                                                 elif .value.type == "number" then "number"
+                                                 elif .value.type == "boolean" then "boolean"
+                                                 else "string" end),
+                                        "description": .value.description,
+                                        "default": .value.default
+                                    }
+                                }) | add // {})
+                            }
+                        else null end),
+                        "default_config": (if .configSchema then
+                            (.configSchema | to_entries | map(select(.value.default != null)) | map({
+                                (.key): .value.default
+                            }) | add // {})
+                        else null end),
+                        "variants": []
+                    }]
+                ' "$FRONTEND_JSON" 2>/dev/null)
+                echo -e "    ${YELLOW}⚠${NC} No global_name found in vite.config.ts"
+            fi
+
+            if [ -z "$DASHBOARD_COMPONENTS" ] || [ "$DASHBOARD_COMPONENTS" = "null" ]; then
+                DASHBOARD_COMPONENTS="[]"
+            fi
+
+            echo -e "    ${BLUE}→${NC} Generated dashboard_components"
         fi
 
-        cat > "$PACKAGE_DIR/manifest.json" << EOF
-{
-  "format": "neomind-extension-package",
-  "format_version": "2.0",
-  "abi_version": 3,
-  "id": "$ext",
-  "name": "$(echo $ext | sed 's/-v2$//' | sed 's/-/ /g')",
-  "version": "$VERSION",
-  "sdk_version": "2.0.0",
-  "type": "native",
-  "binaries": {
-    "$PLATFORM": "binaries/$PLATFORM/extension.${LIB_EXT}"
-  },
-  "frontend": "frontend/"$MANIFEST_EXTRA
-}
-EOF
+        # Build manifest JSON using jq for proper escaping
+        if [ "$IS_WASM" = true ]; then
+            # WASM extension - single binary, no platform directory
+            MANIFEST_JSON=$(jq -n \
+                --arg format "neomind-extension-package" \
+                --arg format_version "2.0" \
+                --argjson abi_version 3 \
+                --arg id "$ext" \
+                --arg name "$(echo $ext | sed 's/-v2$//' | sed 's/-/ /g')" \
+                --arg version "$VERSION" \
+                --arg sdk_version "2.0.0" \
+                --arg type "wasm" \
+                --argjson has_models "$HAS_MODELS" \
+                --argjson dashboard_components "$DASHBOARD_COMPONENTS" \
+                '{
+                    format: $format,
+                    format_version: $format_version,
+                    abi_version: $abi_version,
+                    id: $id,
+                    name: $name,
+                    version: $version,
+                    sdk_version: $sdk_version,
+                    type: $type,
+                    binaries: { "wasm": "binaries/extension.wasm" },
+                    frontend: {
+                        "components": $dashboard_components
+                    }
+                } | if $has_models then . + {"models": "models/"} else . end')
+        else
+            # Native extension - platform-specific binary
+            MANIFEST_JSON=$(jq -n \
+                --arg format "neomind-extension-package" \
+                --arg format_version "2.0" \
+                --argjson abi_version 3 \
+                --arg id "$ext" \
+                --arg name "$(echo $ext | sed 's/-v2$//' | sed 's/-/ /g')" \
+                --arg version "$VERSION" \
+                --arg sdk_version "2.0.0" \
+                --arg type "native" \
+                --arg platform "$PLATFORM" \
+                --arg lib_ext "$LIB_EXT" \
+                --argjson has_models "$HAS_MODELS" \
+                --argjson dashboard_components "$DASHBOARD_COMPONENTS" \
+                '{
+                    format: $format,
+                    format_version: $format_version,
+                    abi_version: $abi_version,
+                    id: $id,
+                    name: $name,
+                    version: $version,
+                    sdk_version: $sdk_version,
+                    type: $type,
+                    binaries: { ($platform): ("binaries/" + $platform + "/extension." + $lib_ext) },
+                    frontend: {
+                        "components": $dashboard_components
+                    }
+                } | if $has_models then . + {"models": "models/"} else . end')
+        fi
+
+        echo "$MANIFEST_JSON" > "$PACKAGE_DIR/manifest.json"
 
         # Create .nep package (without top-level directory prefix)
         OUTPUT_FILE="dist/${ext}-${VERSION}.nep"

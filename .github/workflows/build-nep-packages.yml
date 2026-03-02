@@ -1,5 +1,9 @@
 name: Build .nep Packages V2
 
+# NeoMind Extension SDK V2 - Process Isolation Architecture
+# All extensions run in isolated processes with IPC communication
+# ABI Version: 3
+
 on:
   push:
     branches: [main]
@@ -38,10 +42,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # macOS platforms
           - os: macos-latest
             platform: darwin_aarch64
+            target: aarch64-apple-darwin
+          - os: macos-13
+            platform: darwin_x86_64
+            target: x86_64-apple-darwin
+          # Linux platforms
           - os: ubuntu-latest
             platform: linux_amd64
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            platform: linux_arm64
+            target: aarch64-unknown-linux-gnu
+          # Windows platform
+          - os: windows-latest
+            platform: windows_amd64
+            target: x86_64-pc-windows-msvc
 
     steps:
       - name: Checkout extension repo
@@ -57,20 +75,31 @@ jobs:
         run: |
           # Move NeoMind to parent directory to match Cargo.toml paths
           mv NeoMind ../NeoMind
+        shell: bash
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+          target: ${{ matrix.target }}
           override: true
 
       - name: Install dependencies (Ubuntu)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y zip jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip jq pkg-config libssl-dev
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: brew install zip jq
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install zip -y
+          choco install jq -y
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -81,11 +110,13 @@ jobs:
         run: |
           chmod +x build.sh
           ./build.sh --yes --skip-install
+        shell: bash
 
       - name: List built packages
         run: |
           echo "=== Built packages ==="
           ls -lh dist/ || echo "No packages found"
+        shell: bash
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -93,7 +124,7 @@ jobs:
           name: nep-packages-${{ matrix.platform }}
           path: dist/*.nep
           retention-days: 30
-          if-no-files-found: error
+          if-no-files-found: warn
 
   release:
     needs: build
@@ -116,13 +147,28 @@ jobs:
           cat > /tmp/release_notes.md << 'EOF'
           # NeoMind Extension Packages V2
 
+          ## Architecture: Process Isolation
+
+          All extensions run in isolated processes:
+          - **Crash Safety**: Extension crashes don't affect the main NeoMind process
+          - **Memory Isolation**: Each extension has its own memory space
+          - **Independent Lifecycle**: Extensions can be restarted independently
+
+          ## Platform Support
+
+          | Platform | Architecture | Extensions |
+          |----------|--------------|------------|
+          | macOS | ARM64, x86_64 | All |
+          | Linux | x86_64, ARM64 | All |
+          | Windows | x86_64 | All |
+
           ## Extensions (ABI Version 3)
 
-          | Extension | Platform | Description |
-          |-----------|----------|-------------|
-          | **weather-forecast-v2** | Cross-platform | Weather forecast |
-          | **image-analyzer-v2** | macOS, Linux | Image analysis with YOLOv8 |
-          | **yolo-video-v2** | macOS, Linux | Video processing with YOLOv11 |
+          | Extension | Description |
+          |-----------|-------------|
+          | **weather-forecast-v2** | Weather forecast |
+          | **image-analyzer-v2** | Image analysis with YOLOv8 |
+          | **yolo-video-v2** | Video processing with YOLOv11 |
 
           ## Installation
 

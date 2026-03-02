@@ -1,0 +1,34 @@
+[package]
+name = "wasm-demo"
+version = "1.0.0"
+edition = "2021"
+authors = ["NeoMind Team"]
+license = "MIT"
+description = "Demo WASM extension for NeoMind (ABI Version 3)"
+
+[lib]
+name = "neomind_extension_wasm_demo"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# SDK - provides Extension trait and export macro
+neomind-extension-sdk = { path = "../../../NeoMind/crates/neomind-extension-sdk" }
+
+# Core dependencies
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1"
+futures = "0.3"
+
+# Native-only dependencies (for testing)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[features]
+default = []
+
+# WASM requires panic = abort
+[profile.release]
+panic = "abort"
+opt-level = "s"
+lto = true

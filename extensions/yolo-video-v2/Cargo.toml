@@ -21,15 +21,18 @@ semver = "1"
 base64 = "0.22"
 image = "0.25"
 imageproc = "0.24"
-ndarray = "0.17"
+ab_glyph = "0.2"
 uuid = { version = "1.0", features = ["v4"] }
 parking_lot = "0.12"
 tracing = "0.1"
+once_cell = "1.19"
 
 # Native-only dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-ort = { version = "2.0.0-rc.11", features = ["half"] }
-tokio = { version = "1", features = ["rt-multi-thread"] }
+usls = { version = "0.2.0-alpha.3", default-features = false, features = ["vision", "annotator", "ort-download-binaries"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+nokhwa = { version = "0.10", features = ["input-native"] }
+crossbeam-channel = "0.5"
 
 [features]
 default = []

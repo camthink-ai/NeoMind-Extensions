@@ -1,20 +1,12 @@
 /**
- * YOLO Video V2 Dashboard Component
- * Built with NeoMind Extension SDK V2
- *
- * Features:
- * - Real-time video stream display
- * - Detection statistics panel
- * - Responsive and adaptive UI
- * - CSS variable-based theming
- * - ABI version 3 compatible
- * - YOLOv11 real-time detection
+ * YOLO Video V2 - Dashboard Edition
+ * Matches NeoMind dashboard design system with compact, elegant layout
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 
 // ============================================================================
-// SDK Types
+// Types
 // ============================================================================
 
 export interface ExtensionComponentProps {
@@ -30,542 +22,798 @@ export interface DataSource {
   [key: string]: any
 }
 
-interface ExtensionCommandResult<T> {
-  success: boolean
-  data?: T
-  error?: string
+interface Detection {
+  id: number
+  label: string
+  confidence: number
+  bbox: { x: number; y: number; width: number; height: number }
+  class_id: number
 }
 
+type StreamMode = 'camera' | 'network'
+
 // ============================================================================
-// API Helpers
+// Constants & Styles
 // ============================================================================
 
 const EXTENSION_ID = 'yolo-video-v2'
+const CSS_ID = 'yolo-styles-v2'
 
-const getAuthToken = (): string | null => {
-  return localStorage.getItem('neomind_token') ||
-         sessionStorage.getItem('neomind_token_session') ||
-         localStorage.getItem('token') ||
-         null
+const STYLES = `
+.yolo {
+  --yolo-fg: hsl(240 10% 10%);
+  --yolo-muted: hsl(240 5% 45%);
+  --yolo-accent: hsl(221 83% 53%);
+  --yolo-success: #22c55e;
+  --yolo-warning: #f59e0b;
+  --yolo-card: rgba(255,255,255,0.5);
+  --yolo-border: rgba(0,0,0,0.06);
+  width: 100%;
+  height: 100%;
+  font-size: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.dark .yolo {
+  --yolo-fg: hsl(0 0% 95%);
+  --yolo-muted: hsl(0 0% 60%);
+  --yolo-card: rgba(30,30,30,0.5);
+  --yolo-border: rgba(255,255,255,0.08);
 }
 
-const getApiBase = (): string => {
-  if (typeof window !== 'undefined' && (window as any).__TAURI__) {
-    return 'http://localhost:9375/api'
-  }
-  return '/api'
+.yolo-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--yolo-card);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--yolo-border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
-async function executeExtensionCommand<T>(
-  extensionId: string,
-  command: string,
-  args: Record<string, any>
-): Promise<ExtensionCommandResult<T>> {
-  const token = getAuthToken()
-  const apiBase = getApiBase()
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (token) headers['Authorization'] = `Bearer ${token}`
-
-  try {
-    const response = await fetch(`${apiBase}/extensions/${extensionId}/command`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ command, args })
-    })
-
-    if (!response.ok) {
-      return {
-        success: false,
-        error: response.status === 401 ? 'Authentication required' : `HTTP ${response.status}`
-      }
-    }
-
-    const data = await response.json()
-    return data
-  } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : 'Network error'
-    }
-  }
+/* Header */
+.yolo-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--yolo-border);
+}
+.yolo-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--yolo-fg);
+  font-size: 12px;
+  font-weight: 600;
+}
+.yolo-title-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--yolo-accent);
+}
+.yolo-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.yolo-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--yolo-muted);
+}
+.yolo-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--yolo-success);
+  animation: yolo-pulse 2s ease-in-out infinite;
+}
+@keyframes yolo-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.yolo-btn {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: white;
+  background: var(--yolo-accent);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.yolo-btn:hover { opacity: 0.9; }
+.yolo-btn-stop {
+  background: #ef4444;
 }
 
-// ============================================================================
-// Types
-// ============================================================================
-
-interface StreamInfo {
-  stream_id: string
-  stream_url: string
-  status: string
-  width: number
-  height: number
+/* Video Display */
+.yolo-video-wrap {
+  position: relative;
+  flex: 1;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  min-height: 200px;
+}
+.yolo-video-frame {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.yolo-video-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255,255,255,0.4);
+  gap: 8px;
+  padding: 20px;
+  text-align: center;
+}
+.yolo-video-icon {
+  width: 48px;
+  height: 48px;
+  opacity: 0.3;
+}
+.yolo-video-text {
+  font-size: 11px;
+  line-height: 1.5;
+}
+.yolo-video-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.7);
+  color: white;
+  gap: 8px;
+}
+.yolo-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(255,255,255,0.2);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: yolo-spin 0.7s linear infinite;
+}
+@keyframes yolo-spin {
+  to { transform: rotate(360deg); }
 }
 
-interface StreamStats {
-  stream_id: string
-  frame_count: number
-  fps: number
-  total_detections: number
-  detected_objects: Record<string, number>
+/* Stats Bar */
+.yolo-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-top: 1px solid var(--yolo-border);
+  gap: 8px;
+  font-size: 10px;
+}
+.yolo-stat-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.yolo-stat {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--yolo-muted);
+}
+.yolo-stat-icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+.yolo-stat-val {
+  font-weight: 600;
+  color: var(--yolo-fg);
 }
 
-// ============================================================================
-// Constants
-// ============================================================================
+/* Detections */
+.yolo-detections {
+  padding: 6px 10px;
+  border-top: 1px solid var(--yolo-border);
+  max-height: 60px;
+  overflow-y: auto;
+}
+.yolo-detections-title {
+  font-size: 9px;
+  color: var(--yolo-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 4px;
+}
+.yolo-detections-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.yolo-detection-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: 3px;
+  white-space: nowrap;
+}
 
-const DETECTION_COLORS = [
-  '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4',
-  '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e', '#84cc16'
-]
+/* Error */
+.yolo-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.8);
+  color: #ef4444;
+  padding: 20px;
+  text-align: center;
+  z-index: 10;
+}
+.yolo-error-icon {
+  width: 32px;
+  height: 32px;
+  margin-bottom: 8px;
+}
+.yolo-error-text {
+  font-size: 11px;
+  line-height: 1.5;
+  max-width: 300px;
+}
+
+/* Scrollbar */
+.yolo-detections::-webkit-scrollbar {
+  width: 4px;
+}
+.yolo-detections::-webkit-scrollbar-track {
+  background: transparent;
+}
+.yolo-detections::-webkit-scrollbar-thumb {
+  background: var(--yolo-border);
+  border-radius: 2px;
+}
+.dark .yolo-detections::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.1);
+}
+`
+
+function injectStyles() {
+  if (typeof document === 'undefined' || document.getElementById(CSS_ID)) return
+  const style = document.createElement('style')
+  style.id = CSS_ID
+  style.textContent = STYLES
+  document.head.appendChild(style)
+}
 
 // ============================================================================
 // Icons
 // ============================================================================
 
-const VideoIcon = () => (
-  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
-  </svg>
-)
-
-const PlayIcon = () => (
-  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
-  </svg>
-)
-
-const StopIcon = () => (
-  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 7.5A2.25 2.25 0 017.5 5.25h9a2.25 2.25 0 012.25 2.25v9a2.25 2.25 0 01-2.25 2.25h-9a2.25 2.25 0 01-2.25-2.25v-9z" />
-  </svg>
-)
-
-const TargetIcon = () => (
-  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
-    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
-  </svg>
-)
-
-const SpeedIcon = () => (
-  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
-  </svg>
-)
-
-const ClockIcon = () => (
-  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-  </svg>
-)
-
-const ChartIcon = () => (
-  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
-  </svg>
-)
-
-const SettingsIcon = () => (
-  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
-    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-  </svg>
-)
-
-// ============================================================================
-// YOLO Video Display Component
-// ============================================================================
-
-export interface YoloVideoDisplayProps extends ExtensionComponentProps {
-  sourceUrl?: string
-  videoSource?: 'camera' | 'rtsp' | 'file' | 'hls'
-  confidenceThreshold?: number
-  maxObjects?: number
-  targetFps?: number
-  drawBoxes?: boolean
-  showStats?: boolean
+const ICONS: Record<string, string> = {
+  video: '<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>',
+  play: '<polygon points="5 3 19 12 5 21 5 3"/>',
+  stop: '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>',
+  camera: '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
+  activity: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+  layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+  alert: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
 }
 
+const Icon = ({ name, className = '', style }: { name: string; className?: string; style?: React.CSSProperties }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+    strokeLinecap="round" strokeLinejoin="round" className={className} style={style}
+    dangerouslySetInnerHTML={{ __html: ICONS[name] || ICONS.video }} />
+)
+
+// ============================================================================
+// Detection Colors
+// ============================================================================
+
+const DETECTION_COLORS = [
+  { bg: 'rgba(239, 68, 68, 0.15)', fg: '#ef4444', border: '#ef4444' },   // red
+  { bg: 'rgba(34, 197, 94, 0.15)', fg: '#22c55e', border: '#22c55e' },   // green
+  { bg: 'rgba(59, 130, 246, 0.15)', fg: '#3b82f6', border: '#3b82f6' },  // blue
+  { bg: 'rgba(249, 115, 22, 0.15)', fg: '#f97316', border: '#f97316' },  // orange
+  { bg: 'rgba(168, 85, 247, 0.15)', fg: '#a855f7', border: '#a855f7' },  // purple
+  { bg: 'rgba(6, 182, 212, 0.15)', fg: '#06b6d4', border: '#06b6d4' },   // cyan
+  { bg: 'rgba(236, 72, 153, 0.15)', fg: '#ec4899', border: '#ec4899' },  // pink
+  { bg: 'rgba(234, 179, 8, 0.15)', fg: '#eab308', border: '#eab308' },   // yellow
+  { bg: 'rgba(20, 184, 166, 0.15)', fg: '#14b8a6', border: '#14b8a6' },  // teal
+  { bg: 'rgba(244, 63, 94, 0.15)', fg: '#f43f5e', border: '#f43f5e' },   // rose
+]
+
+// ============================================================================
+// Component
+// ============================================================================
+
 export const YoloVideoDisplay = function YoloVideoDisplay({
-  title = 'YOLO Video',
+  title = 'YOLO Detection',
   dataSource,
   className = '',
-  sourceUrl,
-  videoSource = 'camera',
   confidenceThreshold = 0.5,
   maxObjects = 20,
-  targetFps = 15,
-  drawBoxes = true,
-  showStats = true
-}: YoloVideoDisplayProps) {
-  const [isRunning, setIsRunning] = useState(false)
-  const [streamInfo, setStreamInfo] = useState<StreamInfo | null>(null)
-  const [stats, setStats] = useState<StreamStats | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [currentSource, setCurrentSource] = useState(videoSource)
-  const [sourceUrlInput, setSourceUrlInput] = useState(sourceUrl || 'camera://0')
-  const [sessionTime, setSessionTime] = useState(0)
-  const [showSettings, setShowSettings] = useState(false)
-  const [settings, setSettings] = useState({
-    confidence: confidenceThreshold,
-    maxObjects: maxObjects,
-    targetFps: targetFps,
-    drawBoxes: drawBoxes
-  })
+  sourceUrl = 'camera://0'
+}: ExtensionComponentProps & {
+  sourceUrl?: string
+  confidenceThreshold?: number
+  maxObjects?: number
+}) {
+  // Setup
+  useEffect(() => { injectStyles() }, [])
 
-  const statsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Determine mode
+  const isNetworkStream = sourceUrl.startsWith('rtsp://')
+    || sourceUrl.startsWith('rtmp://')
+    || sourceUrl.startsWith('hls://')
+    || sourceUrl.includes('.m3u8')
+  const mode: StreamMode = isNetworkStream ? 'network' : 'camera'
+
+  // State
+  const [isRunning, setIsRunning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [sessionTime, setSessionTime] = useState(0)
+  const [fps, setFps] = useState(0)
+  const [frameCount, setFrameCount] = useState(0)
+  const [detections, setDetections] = useState<Detection[]>([])
+  const [frameData, setFrameData] = useState<string | null>(null)
+  const [cameraPermission, setCameraPermission] = useState<'pending' | 'granted' | 'denied'>('pending')
+
+  // Refs
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const wsRef = useRef<WebSocket | null>(null)
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const frameTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const fpsCounterRef = useRef({ frames: 0, lastTime: Date.now() })
+  const sequenceRef = useRef(0)
+  const sessionIdRef = useRef<string | null>(null)
+  const sendingRef = useRef(false)
 
   const extensionId = dataSource?.extensionId || EXTENSION_ID
 
-  const fetchStats = useCallback(async (streamId: string) => {
-    const result = await executeExtensionCommand<StreamStats>(
-      extensionId,
-      'get_stream_stats',
-      { stream_id: streamId }
-    )
-    if (result.success && result.data) {
-      setStats(result.data)
-    }
+  // WebSocket URL
+  const getWebSocketUrl = useCallback(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const host = window.location.host
+    return `${protocol}//${host}/api/extensions/${extensionId}/stream`
   }, [extensionId])
 
-  const startStream = useCallback(async () => {
-    setError(null)
-    setStats(null)
+  // Capture and send frame (camera mode)
+  const captureAndSendFrame = useCallback(() => {
+    if (!sendingRef.current) return
 
-    const result = await executeExtensionCommand<StreamInfo>(
-      extensionId,
-      'start_stream',
-      {
-        source_url: sourceUrlInput,
-        confidence_threshold: settings.confidence,
-        max_objects: settings.maxObjects,
-        target_fps: settings.targetFps,
-        draw_boxes: settings.drawBoxes
-      }
-    )
+    const video = videoRef.current
+    const canvas = canvasRef.current
+    if (!video || !canvas || video.paused || video.ended) return
 
-    if (result.success && result.data) {
-      setStreamInfo(result.data)
-      setIsRunning(true)
-      setSessionTime(0)
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
 
-      sessionTimerRef.current = setInterval(() => {
-        setSessionTime(t => t + 1)
-      }, 1000)
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
-      if (showStats) {
-        statsIntervalRef.current = setInterval(() => {
-          fetchStats(result.data!.stream_id)
-        }, 2000)
-      }
-    } else {
-      setError(result.error || 'Failed to start stream')
+    if (wsRef.current?.readyState === WebSocket.OPEN && sessionIdRef.current) {
+      canvas.toBlob((blob) => {
+        if (blob && wsRef.current?.readyState === WebSocket.OPEN && sendingRef.current) {
+          blob.arrayBuffer().then(buffer => {
+            const sequence = sequenceRef.current++
+            const header = new ArrayBuffer(8)
+            new DataView(header).setBigUint64(0, BigInt(sequence), false)
+
+            const frame = new Uint8Array(8 + buffer.byteLength)
+            frame.set(new Uint8Array(header), 0)
+            frame.set(new Uint8Array(buffer), 8)
+
+            wsRef.current?.send(frame)
+          })
+        }
+      }, 'image/jpeg', 0.8)
     }
-  }, [extensionId, sourceUrlInput, settings, showStats, fetchStats])
+  }, [])
 
-  const stopStream = useCallback(async () => {
-    if (!streamInfo) return
+  // Start camera
+  const startCamera = useCallback(async () => {
+    try {
+      setCameraPermission('pending')
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+        audio: false
+      })
 
-    await executeExtensionCommand(
-      extensionId,
-      'stop_stream',
-      { stream_id: streamInfo.stream_id }
-    )
+      setCameraPermission('granted')
+      streamRef.current = stream
 
-    setIsRunning(false)
-    setStreamInfo(null)
-    setStats(null)
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        await videoRef.current.play()
+      }
 
-    if (statsIntervalRef.current) {
-      clearInterval(statsIntervalRef.current)
-      statsIntervalRef.current = null
+      return true
+    } catch (e) {
+      setCameraPermission('denied')
+      if (e instanceof Error) {
+        if (e.name === 'NotAllowedError') {
+          setError('Camera permission denied')
+        } else if (e.name === 'NotFoundError') {
+          setError('No camera found')
+        } else {
+          setError(`Camera error: ${e.message}`)
+        }
+      }
+      return false
     }
+  }, [])
+
+  // Stop camera
+  const stopCamera = useCallback(() => {
+    sendingRef.current = false
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop())
+      streamRef.current = null
+    }
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
+  }, [])
+
+  // Connect WebSocket
+  const connectWebSocket = useCallback(() => {
+    const url = getWebSocketUrl()
+    const ws = new WebSocket(url)
+    ws.binaryType = 'arraybuffer'
+
+    ws.onopen = () => {
+      const initMsg = {
+        type: 'init',
+        config: {
+          source_url: sourceUrl,
+          confidence_threshold: confidenceThreshold,
+          max_objects: maxObjects
+        }
+      }
+      ws.send(JSON.stringify(initMsg))
+    }
+
+    ws.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        // Binary response
+        try {
+          const data = new Uint8Array(event.data)
+          if (data.length > 8) {
+            const jpegData = data.slice(8)
+            const base64 = btoa(String.fromCharCode(...jpegData))
+            setFrameData(base64)
+            updateFps()
+          }
+        } catch (e) {
+          console.error('[YOLO] Failed to parse binary response:', e)
+        }
+      } else {
+        // Text message
+        try {
+          const msg = JSON.parse(event.data)
+
+          switch (msg.type) {
+            case 'session_created':
+              sessionIdRef.current = msg.session_id
+              setIsRunning(true)
+              setSessionTime(0)
+              sessionTimerRef.current = setInterval(() => setSessionTime(t => t + 1), 1000)
+
+              // For camera mode, start capture loop
+              if (mode === 'camera') {
+                sendingRef.current = true
+                frameTimerRef.current = setInterval(captureAndSendFrame, 100)
+              }
+              break
+
+            case 'push_output':
+              // Network stream push mode
+              if (msg.data && msg.data_type === 'image/jpeg') {
+                setFrameData(msg.data)
+                updateFps()
+                if (msg.metadata?.detections) {
+                  setDetections(msg.metadata.detections)
+                }
+              }
+              break
+
+            case 'result':
+              // Processing result from server
+              if (msg.data) {
+                setFrameData(msg.data)
+                updateFps()
+                setFrameCount(prev => prev + 1)
+
+                if (msg.metadata?.detections) {
+                  setDetections(msg.metadata.detections)
+                }
+              }
+              break
+
+            case 'error':
+              setError(`${msg.code}: ${msg.message}`)
+              break
+
+            case 'session_closed':
+              setIsRunning(false)
+              sessionIdRef.current = null
+              break
+          }
+        } catch (e) {
+          console.error('[YOLO] Failed to parse message:', e)
+        }
+      }
+    }
+
+    ws.onerror = (e) => {
+      console.error('[YOLO] WebSocket error:', e)
+      setError('WebSocket connection error')
+    }
+
+    ws.onclose = () => {
+      wsRef.current = null
+      setIsRunning(false)
+      sessionIdRef.current = null
+      sendingRef.current = false
+
+      if (sessionTimerRef.current) {
+        clearInterval(sessionTimerRef.current)
+        sessionTimerRef.current = null
+      }
+
+      if (frameTimerRef.current) {
+        clearInterval(frameTimerRef.current)
+        frameTimerRef.current = null
+      }
+    }
+
+    wsRef.current = ws
+  }, [getWebSocketUrl, sourceUrl, confidenceThreshold, maxObjects, mode, captureAndSendFrame])
+
+  // Update FPS
+  const updateFps = () => {
+    fpsCounterRef.current.frames++
+    const now = Date.now()
+    const elapsed = now - fpsCounterRef.current.lastTime
+    if (elapsed >= 1000) {
+      setFps(Math.round(fpsCounterRef.current.frames * 1000 / elapsed))
+      fpsCounterRef.current.frames = 0
+      fpsCounterRef.current.lastTime = now
+    }
+  }
+
+  // Disconnect WebSocket
+  const disconnectWebSocket = useCallback(() => {
+    if (wsRef.current) {
+      if (wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'close' }))
+      }
+      wsRef.current.close()
+      wsRef.current = null
+    }
+
     if (sessionTimerRef.current) {
       clearInterval(sessionTimerRef.current)
       sessionTimerRef.current = null
     }
-  }, [extensionId, streamInfo])
 
+    if (frameTimerRef.current) {
+      clearInterval(frameTimerRef.current)
+      frameTimerRef.current = null
+    }
+
+    setIsRunning(false)
+    sessionIdRef.current = null
+    setDetections([])
+  }, [])
+
+  // Start stream
+  const startStream = useCallback(async () => {
+    setError(null)
+    setFrameData(null)
+    setFps(0)
+    setFrameCount(0)
+    fpsCounterRef.current = { frames: 0, lastTime: Date.now() }
+
+    if (mode === 'camera') {
+      const cameraOk = await startCamera()
+      if (!cameraOk) return
+    }
+
+    connectWebSocket()
+  }, [mode, startCamera, connectWebSocket])
+
+  // Stop stream
+  const stopStream = useCallback(() => {
+    if (mode === 'camera') {
+      stopCamera()
+    }
+    disconnectWebSocket()
+    setDetections([])
+    setFps(0)
+    setFrameCount(0)
+    setSessionTime(0)
+    setFrameData(null)
+  }, [mode, stopCamera, disconnectWebSocket])
+
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (isRunning) stopStream()
+      stopStream()
     }
-  }, [isRunning, stopStream])
+  }, [stopStream])
 
+  // Format time
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
     const secs = seconds % 60
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
   }
 
-  const getStreamUrl = () => {
-    if (!streamInfo) return ''
-    return streamInfo.stream_url.startsWith('/') ? streamInfo.stream_url : `/${streamInfo.stream_url}`
+  // Get mode label
+  const getModeLabel = () => {
+    if (mode === 'network') {
+      if (sourceUrl.startsWith('rtsp://')) return 'RTSP'
+      if (sourceUrl.startsWith('rtmp://')) return 'RTMP'
+      if (sourceUrl.startsWith('hls://') || sourceUrl.includes('.m3u8')) return 'HLS'
+      return 'Network'
+    }
+    return 'CAM'
   }
 
-  // Sort detected objects by count
-  const sortedObjects = useMemo(() => {
-    if (!stats?.detected_objects) return []
-    return Object.entries(stats.detected_objects)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 8)
-  }, [stats?.detected_objects])
-
-  // Source presets
-  const sourcePresets = [
-    { key: 'camera', label: 'Camera', url: 'camera://0' },
-    { key: 'rtsp', label: 'RTSP', url: 'rtsp://' },
-    { key: 'hls', label: 'HLS', url: 'https://' },
-    { key: 'file', label: 'File', url: 'file://' }
-  ]
-
+  // Render
   return (
-    <div className={`yvd relative overflow-hidden rounded-xl shadow-lg ${className}`}>
-      <style>{`
-        .yvd { --ext-bg: rgba(15, 23, 42, 0.95); --ext-fg: #f8fafc; --ext-muted: rgba(248, 250, 252, 0.5); --ext-border: rgba(255, 255, 255, 0.1); --ext-accent: #10b981; --ext-glass: rgba(255, 255, 255, 0.05); font-size: 14px; }
-        .yvd * { box-sizing: border-box; }
-        .yvd-card { background: linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(30, 41, 59, 0.95)); backdrop-filter: blur(20px); border: 1px solid var(--ext-border); border-radius: 12px; }
-        .yvd-btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 500; transition: all 0.2s; cursor: pointer; border: none; }
-        .yvd-btn-primary { background: var(--ext-accent); color: white; }
-        .yvd-btn-primary:hover { filter: brightness(1.1); }
-        .yvd-btn-danger { background: #ef4444; color: white; }
-        .yvd-btn-danger:hover { filter: brightness(1.1); }
-        .yvd-btn-ghost { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.8); }
-        .yvd-btn-ghost:hover { background: rgba(255,255,255,0.15); }
-        .yvd-input { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; padding: 6px 10px; font-size: 12px; color: white; outline: none; transition: border-color 0.2s; }
-        .yvd-input:focus { border-color: var(--ext-accent); }
-        .yvd-input::placeholder { color: rgba(255,255,255,0.4); }
-        .yvd-stat-card { background: rgba(255,255,255,0.05); border-radius: 8px; padding: 8px 12px; text-align: center; }
-      `}</style>
-
-      <div className="yvd-card p-3 flex flex-col gap-3" style={{ minHeight: '380px' }}>
+    <div className={`yolo ${className}`}>
+      <div className="yolo-card">
         {/* Header */}
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            <div className="bg-emerald-500/20 rounded-lg p-1.5">
-              <VideoIcon />
-            </div>
-            <div>
-              <h3 className="font-semibold text-white text-sm">{title}</h3>
-              <p className="text-white/40 text-[10px]">Real-time YOLOv11 Detection</p>
-            </div>
+        <div className="yolo-header">
+          <div className="yolo-title">
+            <Icon name="camera" className="yolo-title-icon" />
+            {title}
           </div>
-
-          {/* Live Stats */}
-          <div className="flex items-center gap-2">
+          <div className="yolo-controls">
             {isRunning && (
-              <div className="flex items-center gap-1.5 bg-emerald-500/20 rounded-lg px-2 py-1 border border-emerald-500/30">
-                <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-                <span className="text-emerald-300 text-xs font-mono">{formatTime(sessionTime)}</span>
+              <div className="yolo-status">
+                <span className="yolo-status-dot" />
+                {getModeLabel()}
               </div>
             )}
-            <div className="flex items-center gap-1.5 bg-white/5 rounded-lg px-2 py-1 border border-white/10">
-              <TargetIcon />
-              <span className="font-medium text-white text-sm">{stats?.total_detections || 0}</span>
-            </div>
-            {!isRunning && (
-              <button onClick={() => setShowSettings(!showSettings)} className="yvd-btn yvd-btn-ghost p-1.5">
-                <SettingsIcon />
+            {!isRunning ? (
+              <button onClick={startStream} className="yolo-btn">
+                <Icon name="play" style={{ width: 12, height: 12, display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />
+                Start
+              </button>
+            ) : (
+              <button onClick={stopStream} className="yolo-btn yolo-btn-stop">
+                <Icon name="stop" style={{ width: 12, height: 12, display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />
+                Stop
               </button>
             )}
           </div>
         </div>
 
-        {/* Settings Panel */}
-        {showSettings && !isRunning && (
-          <div className="bg-white/5 rounded-xl p-3 border border-white/10">
-            <div className="flex items-center gap-2 mb-3">
-              <SettingsIcon />
-              <span className="text-white/70 text-xs font-medium">Stream Settings</span>
+        {/* Video Display */}
+        <div className="yolo-video-wrap">
+          {/* Hidden elements for camera capture */}
+          {mode === 'camera' && (
+            <>
+              <video ref={videoRef} className="hidden" playsInline muted />
+              <canvas ref={canvasRef} width={640} height={480} className="hidden" />
+            </>
+          )}
+
+          {/* Display processed frame */}
+          {frameData && (
+            <img
+              src={`data:image/jpeg;base64,${frameData}`}
+              alt="Detection Frame"
+              className="yolo-video-frame"
+            />
+          )}
+
+          {/* Error overlay */}
+          {error && (
+            <div className="yolo-error">
+              <Icon name="alert" className="yolo-error-icon" />
+              <div className="yolo-error-text">{error}</div>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div>
-                <label className="text-white/50 text-[10px] block mb-1">Confidence</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0.1"
-                  max="1"
-                  value={settings.confidence}
-                  onChange={(e) => setSettings(s => ({ ...s, confidence: parseFloat(e.target.value) || 0.5 }))}
-                  className="yvd-input w-full"
-                />
+          )}
+
+          {/* Placeholder */}
+          {!isRunning && !error && !frameData && (
+            <div className="yolo-video-placeholder">
+              <Icon name="video" className="yolo-video-icon" />
+              <div className="yolo-video-text">
+                {mode === 'camera'
+                  ? 'Click Start to begin detection'
+                  : `Click Start to connect to ${sourceUrl}`}
               </div>
-              <div>
-                <label className="text-white/50 text-[10px] block mb-1">Max Objects</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={settings.maxObjects}
-                  onChange={(e) => setSettings(s => ({ ...s, maxObjects: parseInt(e.target.value) || 20 }))}
-                  className="yvd-input w-full"
-                />
+            </div>
+          )}
+
+          {/* Loading */}
+          {isRunning && !frameData && !error && (
+            <div className="yolo-video-loading">
+              <div className="yolo-spinner" />
+              <div className="yolo-video-text">
+                {mode === 'camera' ? 'Starting camera...' : 'Connecting...'}
               </div>
-              <div>
-                <label className="text-white/50 text-[10px] block mb-1">Target FPS</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="60"
-                  value={settings.targetFps}
-                  onChange={(e) => setSettings(s => ({ ...s, targetFps: parseInt(e.target.value) || 15 }))}
-                  className="yvd-input w-full"
-                />
+            </div>
+          )}
+        </div>
+
+        {/* Stats Bar */}
+        {isRunning && (
+          <div className="yolo-stats">
+            <div className="yolo-stat-group">
+              <div className="yolo-stat">
+                <Icon name="clock" className="yolo-stat-icon" />
+                <span className="yolo-stat-val">{formatTime(sessionTime)}</span>
               </div>
-              <div>
-                <label className="text-white/50 text-[10px] block mb-1">Draw Boxes</label>
-                <select
-                  value={settings.drawBoxes ? 'yes' : 'no'}
-                  onChange={(e) => setSettings(s => ({ ...s, drawBoxes: e.target.value === 'yes' }))}
-                  className="yvd-input w-full"
-                >
-                  <option value="yes">Yes</option>
-                  <option value="no">No</option>
-                </select>
+              <div className="yolo-stat">
+                <Icon name="activity" className="yolo-stat-icon" />
+                <span className="yolo-stat-val">{fps}</span>
+                <span>FPS</span>
               </div>
+              <div className="yolo-stat">
+                <Icon name="layers" className="yolo-stat-icon" />
+                <span className="yolo-stat-val">{frameCount}</span>
+                <span>frames</span>
+              </div>
+            </div>
+            <div className="yolo-stat">
+              <Icon name="eye" className="yolo-stat-icon" />
+              <span className="yolo-stat-val">{detections.length}</span>
+              <span>objects</span>
             </div>
           </div>
         )}
 
-        {/* Video Display */}
-        <div className="relative aspect-video bg-black/50 rounded-xl overflow-hidden border border-white/10">
-          {isRunning && streamInfo ? (
-            <img
-              src={getStreamUrl()}
-              alt="YOLO Detection Stream"
-              className="w-full h-full object-contain"
-              onError={() => setError('Stream connection lost')}
-            />
-          ) : (
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center">
-              <div className="text-center">
-                <VideoIcon />
-                <p className="text-white/50 text-sm mt-2">Click Start to begin detection</p>
-              </div>
-            </div>
-          )}
-
-          {/* Live Indicator */}
-          {isRunning && (
-            <div className="absolute top-2 right-2 bg-red-500/80 backdrop-blur-sm rounded-full px-2 py-0.5">
-              <div className="flex items-center gap-1">
-                <div className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
-                <span className="text-white text-[10px] font-medium">LIVE</span>
-              </div>
-            </div>
-          )}
-
-          {/* FPS Badge */}
-          {isRunning && stats && (
-            <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-sm rounded px-2 py-0.5">
-              <span className="text-white/80 text-[10px] font-mono">{Math.round(stats.fps)} FPS</span>
-            </div>
-          )}
-        </div>
-
-        {/* Controls */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Source Presets */}
-          <div className="flex gap-1">
-            {sourcePresets.map(({ key, label, url }) => (
-              <button
-                key={key}
-                onClick={() => {
-                  if (isRunning) stopStream()
-                  setCurrentSource(key as any)
-                  setSourceUrlInput(url)
-                }}
-                className={`yvd-btn text-xs px-2.5 py-1 ${
-                  currentSource === key ? 'yvd-btn-primary' : 'yvd-btn-ghost'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {/* URL Input */}
-          <input
-            type="text"
-            value={sourceUrlInput}
-            onChange={(e) => setSourceUrlInput(e.target.value)}
-            placeholder="camera://0"
-            className="yvd-input flex-1 min-w-[120px]"
-          />
-
-          {/* Error Display */}
-          {error && (
-            <span className="text-red-400 text-[10px] truncate max-w-[100px]">{error}</span>
-          )}
-
-          {/* Start/Stop Button */}
-          <button
-            onClick={isRunning ? stopStream : startStream}
-            className={`yvd-btn text-xs px-4 ${isRunning ? 'yvd-btn-danger' : 'yvd-btn-primary'}`}
-          >
-            {isRunning ? (
-              <>
-                <StopIcon />
-                Stop
-              </>
-            ) : (
-              <>
-                <PlayIcon />
-                Start
-              </>
-            )}
-          </button>
-        </div>
-
-        {/* Stats Panel */}
-        {showStats && stats && (
-          <div className="bg-white/5 rounded-xl p-3 border border-white/10">
-            <div className="flex items-center gap-2 mb-3">
-              <ChartIcon />
-              <span className="text-white/50 text-[10px] font-medium uppercase tracking-wider">Detection Statistics</span>
-            </div>
-
-            {/* Stats Grid */}
-            <div className="grid grid-cols-4 gap-2 mb-3">
-              <div className="yvd-stat-card">
-                <div className="text-lg font-bold text-white">{stats.frame_count.toLocaleString()}</div>
-                <div className="text-[10px] text-white/50">Frames</div>
-              </div>
-              <div className="yvd-stat-card">
-                <div className="text-lg font-bold text-white">{Math.round(stats.fps)}</div>
-                <div className="text-[10px] text-white/50">FPS</div>
-              </div>
-              <div className="yvd-stat-card">
-                <div className="text-lg font-bold text-white">{stats.total_detections}</div>
-                <div className="text-[10px] text-white/50">Detections</div>
-              </div>
-              <div className="yvd-stat-card">
-                <div className="text-lg font-bold text-white">{sortedObjects.length}</div>
-                <div className="text-[10px] text-white/50">Classes</div>
-              </div>
-            </div>
-
-            {/* Detected Objects */}
-            {sortedObjects.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {sortedObjects.map(([label, count], i) => (
+        {/* Detections */}
+        {isRunning && detections.length > 0 && (
+          <div className="yolo-detections">
+            <div className="yolo-detections-title">Detected Objects</div>
+            <div className="yolo-detections-list">
+              {detections.slice(0, 8).map((det, i) => {
+                const color = DETECTION_COLORS[i % DETECTION_COLORS.length]
+                return (
                   <span
-                    key={label}
-                    className="px-2 py-1 rounded-md text-[11px] font-medium transition-all hover:scale-105"
+                    key={det.id || i}
+                    className="yolo-detection-tag"
                     style={{
-                      backgroundColor: `${DETECTION_COLORS[i % DETECTION_COLORS.length]}20`,
-                      color: DETECTION_COLORS[i % DETECTION_COLORS.length],
-                      border: `1px solid ${DETECTION_COLORS[i % DETECTION_COLORS.length]}40`
+                      backgroundColor: color.bg,
+                      color: color.fg,
+                      border: `1px solid ${color.border}33`
                     }}
                   >
-                    {label} ×{count}
+                    {det.label}
+                    <span style={{ opacity: 0.7 }}>
+                      {Math.round(det.confidence * 100)}%
+                    </span>
                   </span>
-                ))}
-              </div>
-            )}
+                )
+              })}
+            </div>
           </div>
         )}
       </div>
@@ -573,5 +821,30 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
   )
 }
 
-YoloVideoDisplay.displayName = 'YoloVideoDisplay'
-export default { YoloVideoDisplay }
+// ============================================================================
+// Export variants
+// ============================================================================
+
+export const YoloVideoCard = (props: ExtensionComponentProps) => (
+  <div style={{ height: '100%', minHeight: 300 }}>
+    <YoloVideoDisplay {...props} title={props.title || 'YOLO Detection'} />
+  </div>
+)
+
+export const YoloVideoWidget = (props: ExtensionComponentProps) => (
+  <div style={{ height: 280 }}>
+    <YoloVideoDisplay {...props} title={props.title || 'YOLO'} />
+  </div>
+)
+
+export const YoloVideoPanel = (props: ExtensionComponentProps) => (
+  <div style={{ height: '100%', minHeight: 500 }}>
+    <YoloVideoDisplay {...props} title={props.title || 'YOLO Video Detection'} />
+  </div>
+)
+
+export default YoloVideoDisplay
+export const Component = YoloVideoDisplay
+export const Card = YoloVideoCard
+export const Widget = YoloVideoWidget
+export const Panel = YoloVideoPanel
