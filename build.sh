@@ -170,7 +170,13 @@ BUILT_EXTENSIONS=()
 # Check native extensions
 for ext in "${NATIVE_EXTENSIONS[@]}"; do
     LIB_NAME=$(echo "$ext" | tr '-' '_')
-    LIB_FILE="$BUILD_DIR/libneomind_extension_${LIB_NAME}.${LIB_EXT}"
+    
+    # On Windows, DLL files don't have 'lib' prefix
+    if [ "$LIB_EXT" = "dll" ]; then
+        LIB_FILE="$BUILD_DIR/neomind_extension_${LIB_NAME}.${LIB_EXT}"
+    else
+        LIB_FILE="$BUILD_DIR/libneomind_extension_${LIB_NAME}.${LIB_EXT}"
+    fi
 
     if [ -f "$LIB_FILE" ]; then
         echo -e "  ${GREEN}✓${NC} $ext -> $(basename $LIB_FILE) [native]"
@@ -243,7 +249,13 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
         # Check if this is a WASM extension
         # WASM files are in target/wasm32-unknown-unknown/release/
         WASM_FILE="target/wasm32-unknown-unknown/${BUILD_TYPE}/neomind_extension_${LIB_NAME}.wasm"
-        NATIVE_LIB_FILE="$BUILD_DIR/libneomind_extension_${LIB_NAME}.${LIB_EXT}"
+        
+        # On Windows, DLL files don't have 'lib' prefix
+        if [ "$LIB_EXT" = "dll" ]; then
+            NATIVE_LIB_FILE="$BUILD_DIR/neomind_extension_${LIB_NAME}.${LIB_EXT}"
+        else
+            NATIVE_LIB_FILE="$BUILD_DIR/libneomind_extension_${LIB_NAME}.${LIB_EXT}"
+        fi
 
         IS_WASM=false
         if [ -f "$WASM_FILE" ]; then
@@ -583,7 +595,12 @@ if [ "$AUTO_INSTALL" = true ]; then
         # Fallback: copy raw binaries
         for ext in "${BUILT_EXTENSIONS[@]}"; do
             LIB_NAME=$(echo "$ext" | tr '-' '_')
-            LIB_FILE="$BUILD_DIR/libneomind_extension_${LIB_NAME}.${LIB_EXT}"
+            # On Windows, DLL files don't have 'lib' prefix
+            if [ "$LIB_EXT" = "dll" ]; then
+                LIB_FILE="$BUILD_DIR/neomind_extension_${LIB_NAME}.${LIB_EXT}"
+            else
+                LIB_FILE="$BUILD_DIR/libneomind_extension_${LIB_NAME}.${LIB_EXT}"
+            fi
             cp "$LIB_FILE" "$INSTALL_DIR/"
             echo -e "  ${GREEN}✓${NC} Installed $(basename $LIB_FILE)"
         done
