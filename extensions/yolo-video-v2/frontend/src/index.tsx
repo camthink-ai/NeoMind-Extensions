@@ -386,6 +386,8 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
   const sequenceRef = useRef(0)
   const sessionIdRef = useRef<string | null>(null)
   const sendingRef = useRef(false)
+  const isFrameSendingRef = useRef(false)  // Lock for frame sending
+  const lastFrameTimeRef = useRef(0)  // Last frame send time for throttling
 
   const extensionId = dataSource?.extensionId || EXTENSION_ID
 
@@ -399,6 +401,17 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
   // Capture and send frame (camera mode)
   const captureAndSendFrame = useCallback(() => {
     if (!sendingRef.current) return
+    
+    // Skip if previous frame is still being processed
+    if (isFrameSendingRef.current) {
+      return
+    }
+
+    // Throttle to max 10 FPS to prevent overwhelming the backend
+    const now = Date.now()
+    if (now - lastFrameTimeRef.current < 100) {
+      return
+    }
 
     const video = videoRef.current
     const canvas = canvasRef.current
@@ -410,6 +423,9 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
     if (wsRef.current?.readyState === WebSocket.OPEN && sessionIdRef.current) {
+      isFrameSendingRef.current = true  // Acquire lock
+      lastFrameTimeRef.current = now
+
       canvas.toBlob((blob) => {
         if (blob && wsRef.current?.readyState === WebSocket.OPEN && sendingRef.current) {
           blob.arrayBuffer().then(buffer => {
@@ -422,7 +438,12 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
             frame.set(new Uint8Array(buffer), 8)
 
             wsRef.current?.send(frame)
+            isFrameSendingRef.current = false  // Release lock
+          }).catch(() => {
+            isFrameSendingRef.current = false  // Release lock on error
           })
+        } else {
+          isFrameSendingRef.current = false  // Release lock if not sending
         }
       }, 'image/jpeg', 0.8)
     }
@@ -464,6 +485,8 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
   // Stop camera
   const stopCamera = useCallback(() => {
     sendingRef.current = false
+    isFrameSendingRef.current = false  // Reset frame sending lock
+    lastFrameTimeRef.current = 0  // Reset throttle timer
 
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop())
@@ -519,10 +542,10 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
               setSessionTime(0)
               sessionTimerRef.current = setInterval(() => setSessionTime(t => t + 1), 1000)
 
-              // For camera mode, start capture loop
+              // For camera mode, start capture loop (120ms interval for ~8 FPS)
               if (mode === 'camera') {
                 sendingRef.current = true
-                frameTimerRef.current = setInterval(captureAndSendFrame, 100)
+                frameTimerRef.current = setInterval(captureAndSendFrame, 120)
               }
               break
 
