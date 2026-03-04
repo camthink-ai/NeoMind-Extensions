@@ -523,7 +523,7 @@ impl Extension for WeatherExtension {
         Ok(metrics)
     }
 
-    async fn configure(&self, config: &serde_json::Value) -> Result<()> {
+    async fn configure(&mut self, config: &serde_json::Value) -> Result<()> {
         // Apply configuration parameters
         if let Some(default_city) = config.get("defaultCity").and_then(|v| v.as_str()) {
             self.set_default_city(default_city);

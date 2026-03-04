@@ -30,6 +30,7 @@ use neomind_extension_sdk::{
     MetricDescriptor, ExtensionCommand, MetricDataType, ParameterDefinition,
     ParamMetricValue, Result,
 };
+use neomind_extension_sdk::prelude::Version;
 
 // ============================================================================
 // Extension Implementation
@@ -67,7 +68,7 @@ impl Extension for WasmDemoExtension {
             ExtensionMetadata::new(
                 "wasm-demo",
                 "WASM Demo Extension",
-                "1.0.0",  // Use string version for WASM compatibility
+                Version::parse("1.0.0").unwrap(),
             )
             .with_description("A simple counter extension demonstrating WASM support")
             .with_author("NeoMind Team")
@@ -108,7 +109,6 @@ impl Extension for WasmDemoExtension {
                     name: "increment".to_string(),
                     display_name: "Increment".to_string(),
                     payload_template: String::new(),
-                    description: "Increment the counter by the specified amount".to_string(),
                     parameters: vec![
                         ParameterDefinition {
                             name: "amount".to_string(),
@@ -131,7 +131,6 @@ impl Extension for WasmDemoExtension {
                     name: "decrement".to_string(),
                     display_name: "Decrement".to_string(),
                     payload_template: String::new(),
-                    description: "Decrement the counter by the specified amount".to_string(),
                     parameters: vec![
                         ParameterDefinition {
                             name: "amount".to_string(),
@@ -154,7 +153,6 @@ impl Extension for WasmDemoExtension {
                     name: "reset".to_string(),
                     display_name: "Reset".to_string(),
                     payload_template: String::new(),
-                    description: "Reset the counter to zero".to_string(),
                     parameters: Vec::new(),
                     fixed_values: std::collections::HashMap::new(),
                     samples: vec![json!({})],
@@ -165,7 +163,6 @@ impl Extension for WasmDemoExtension {
                     name: "get".to_string(),
                     display_name: "Get".to_string(),
                     payload_template: String::new(),
-                    description: "Get the current counter value".to_string(),
                     parameters: Vec::new(),
                     fixed_values: std::collections::HashMap::new(),
                     samples: vec![json!({})],
