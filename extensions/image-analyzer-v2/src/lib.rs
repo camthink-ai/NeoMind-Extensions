@@ -376,36 +376,63 @@ impl YOLODetector {
 
     /// Load model data from disk
     fn load_model_data(version: u8) -> std::result::Result<Option<Vec<u8>>, String> {
-        // Try to get extension directory from environment variable (set by runner)
-        let base_paths: Vec<std::path::PathBuf> = if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
-            vec![
-                std::path::PathBuf::from(&ext_dir),
-                std::path::PathBuf::from(ext_dir).join(".."),
-            ]
-        } else {
-            // Fallback to current directory
-            vec![
-                std::path::PathBuf::from("."),
-                std::path::PathBuf::from(".."),
-                std::path::PathBuf::from("../.."),
-            ]
-        };
-
         let model_filename = format!("yolov{}n.onnx", version);
 
-        for base in &base_paths {
-            let model_path = base.join("models").join(&model_filename);
+        // Try to get extension directory from environment variable (set by runner)
+        if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
+            tracing::info!("[ImageAnalyzer] NEOMIND_EXTENSION_DIR = {}", ext_dir);
+            
+            // Primary path: <extension_dir>/models/yolov8n.onnx
+            let model_path = std::path::PathBuf::from(&ext_dir).join("models").join(&model_filename);
+            tracing::info!("[ImageAnalyzer] Checking primary path: {}", model_path.display());
+            
             if model_path.exists() {
-                tracing::info!("Loading YOLOv{} model from: {}", version, model_path.display());
+                tracing::info!("[ImageAnalyzer] ✓ Found model at: {}", model_path.display());
                 return std::fs::read(&model_path)
                     .map(Some)
                     .map_err(|e| format!("Failed to read model: {}", e));
             } else {
-                tracing::debug!("Model not found at: {}", model_path.display());
+                tracing::warn!("[ImageAnalyzer] ✗ Model not found at primary path");
+            }
+        } else {
+            tracing::warn!("[ImageAnalyzer] NEOMIND_EXTENSION_DIR not set");
+        }
+
+        // Fallback: Try to find model relative to current working directory
+        // When running in isolated process, the working directory should be the extension root
+        tracing::info!("[ImageAnalyzer] Checking current working directory...");
+        if let Ok(cwd) = std::env::current_dir() {
+            tracing::info!("[ImageAnalyzer] Current working directory: {}", cwd.display());
+            
+            let model_path = cwd.join("models").join(&model_filename);
+            tracing::info!("[ImageAnalyzer] Checking: {}", model_path.display());
+            
+            if model_path.exists() {
+                tracing::info!("[ImageAnalyzer] ✓ Found model at: {}", model_path.display());
+                return std::fs::read(&model_path)
+                    .map(Some)
+                    .map_err(|e| format!("Failed to read model: {}", e));
             }
         }
 
-        tracing::warn!("YOLOv{} model not found in any expected location", version);
+        // Additional fallback paths
+        let fallback_paths = vec![
+            std::path::PathBuf::from("models").join(&model_filename),
+            std::path::PathBuf::from("../models").join(&model_filename),
+            std::path::PathBuf::from("../../models").join(&model_filename),
+        ];
+
+        for path in &fallback_paths {
+            tracing::info!("[ImageAnalyzer] Checking fallback path: {}", path.display());
+            if path.exists() {
+                tracing::info!("[ImageAnalyzer] ✓ Found model at: {}", path.display());
+                return std::fs::read(path)
+                    .map(Some)
+                    .map_err(|e| format!("Failed to read model: {}", e));
+            }
+        }
+
+        tracing::error!("[ImageAnalyzer] ❌ Model not found in any location");
         Ok(None)
     }
 }
@@ -484,101 +511,99 @@ impl Extension for ImageAnalyzer {
         })
     }
 
-    fn metrics(&self) -> &[MetricDescriptor] {
-        static METRICS: std::sync::OnceLock<Vec<MetricDescriptor>> = std::sync::OnceLock::new();
-        METRICS.get_or_init(|| {
-            vec![
-                MetricDescriptor {
-                    name: "images_processed".to_string(),
-                    display_name: "Images Processed".to_string(),
-                    data_type: MetricDataType::Integer,
-                    unit: "count".to_string(),
-                    min: Some(0.0),
-                    max: None,
-                    required: false,
-                },
-                MetricDescriptor {
-                    name: "avg_processing_time_ms".to_string(),
-                    display_name: "Avg Processing Time".to_string(),
-                    data_type: MetricDataType::Float,
-                    unit: "ms".to_string(),
-                    min: Some(0.0),
-                    max: None,
-                    required: false,
-                },
-                MetricDescriptor {
-                    name: "total_detections".to_string(),
-                    display_name: "Total Detections".to_string(),
-                    data_type: MetricDataType::Integer,
-                    unit: "count".to_string(),
-                    min: Some(0.0),
-                    max: None,
-                    required: false,
-                },
-            ]
-        })
+    fn metrics(&self) -> Vec<MetricDescriptor> {
+        vec![
+            MetricDescriptor {
+                name: "images_processed".to_string(),
+                display_name: "Images Processed".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "count".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "avg_processing_time_ms".to_string(),
+                display_name: "Avg Processing Time".to_string(),
+                data_type: MetricDataType::Float,
+                unit: "ms".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "total_detections".to_string(),
+                display_name: "Total Detections".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "count".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+        ]
     }
 
-    fn commands(&self) -> &[ExtensionCommand] {
-        static COMMANDS: std::sync::OnceLock<Vec<ExtensionCommand>> = std::sync::OnceLock::new();
-        COMMANDS.get_or_init(|| {
-            vec![
-                ExtensionCommand {
-                    name: "analyze_image".to_string(),
-                    display_name: "Analyze Image".to_string(),
-                    payload_template: String::new(),
-                    parameters: vec![
-                        ParameterDefinition {
-                            name: "image".to_string(),
-                            display_name: "Image".to_string(),
-                            description: "Base64 encoded image data".to_string(),
-                            param_type: MetricDataType::String,
-                            required: true,
-                            default_value: None,
-                            min: None,
-                            max: None,
-                            options: Vec::new(),
-                        },
-                    ],
-                    fixed_values: HashMap::new(),
-                    samples: vec![
-                        json!({ "image": "base64_encoded_data" }),
-                    ],
-                    llm_hints: "Analyze an image and return detected objects with bounding boxes".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-                ExtensionCommand {
-                    name: "reset_stats".to_string(),
-                    display_name: "Reset Statistics".to_string(),
-                    payload_template: String::new(),
-                    parameters: vec![],
-                    fixed_values: HashMap::new(),
-                    samples: vec![],
-                    llm_hints: "Reset extension statistics".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-                ExtensionCommand {
-                    name: "get_status".to_string(),
-                    display_name: "Get Model Status".to_string(),
-                    payload_template: String::new(),
-                    parameters: vec![],
-                    fixed_values: HashMap::new(),
-                    samples: vec![],
-                    llm_hints: "Get current model loading status and configuration".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-                ExtensionCommand {
-                    name: "reload_model".to_string(),
-                    display_name: "Reload Model".to_string(),
-                    payload_template: String::new(),
-                    parameters: vec![],
-                    fixed_values: HashMap::new(),
-                    samples: vec![],
-                    llm_hints: "Reload YOLO model with current configuration".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-            ]
-        })
+    fn commands(&self) -> Vec<ExtensionCommand> {
+        vec![
+            ExtensionCommand {
+                name: "analyze_image".to_string(),
+                display_name: "Analyze Image".to_string(),
+                description: "Analyze an image and return detected objects with bounding boxes".to_string(),
+                payload_template: String::new(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "image".to_string(),
+                        display_name: "Image".to_string(),
+                        description: "Base64 encoded image data".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: HashMap::new(),
+                samples: vec![
+                    serde_json::json!({ "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" }),
+                ],
+                llm_hints: "Analyze an image and return detected objects with bounding boxes".to_string(),
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "reset_stats".to_string(),
+                display_name: "Reset Statistics".to_string(),
+                description: "Reset extension statistics".to_string(),
+                payload_template: String::new(),
+                parameters: vec![],
+                fixed_values: HashMap::new(),
+                samples: Vec::new(),
+                llm_hints: "Reset extension statistics".to_string(),
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "get_status".to_string(),
+                display_name: "Get Model Status".to_string(),
+                description: "Get current model loading status and configuration".to_string(),
+                payload_template: String::new(),
+                parameters: vec![],
+                fixed_values: HashMap::new(),
+                samples: Vec::new(),
+                llm_hints: "Get current model loading status and configuration".to_string(),
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "reload_model".to_string(),
+                display_name: "Reload Model".to_string(),
+                description: "Reload YOLO model with current configuration".to_string(),
+                payload_template: String::new(),
+                parameters: vec![],
+                fixed_values: HashMap::new(),
+                samples: Vec::new(),
+                llm_hints: "Reload YOLO model with current configuration".to_string(),
+                parameter_groups: Vec::new(),
+            },
+        ]
     }
 
     fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
@@ -671,6 +696,10 @@ impl Extension for ImageAnalyzer {
         }
 
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

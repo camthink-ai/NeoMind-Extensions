@@ -171,7 +171,7 @@ const BOX_COLORS: [(u8, u8, u8); 10] = [
 // ============================================================================
 
 /// Convert detector results to extension format
-fn detections_to_object_detection(detections: Vec<Detection>) -> Vec<ObjectDetection> {
+pub fn detections_to_object_detection(detections: Vec<Detection>) -> Vec<ObjectDetection> {
     detections
         .into_iter()
         .enumerate()
@@ -431,28 +431,39 @@ pub fn remove_frame_queue(session_id: &str) {
 // ============================================================================
 
 pub struct StreamProcessor {
-    detector: Arc<Mutex<YoloDetector>>,
+    detector: Arc<parking_lot::Mutex<Option<YoloDetector>>>,
 }
 
 impl StreamProcessor {
     pub fn new() -> Self {
-        let detector = YoloDetector::new().unwrap_or_else(|e| {
-            tracing::error!("Failed to load YOLO detector: {}", e);
-            panic!("Failed to initialize YOLO detector: {}", e);
-        });
         Self {
-            detector: Arc::new(Mutex::new(detector)),
+            detector: Arc::new(parking_lot::Mutex::new(None)),
         }
+    }
+
+    /// Get or initialize the YOLO detector (lazy loading)
+    fn get_or_init_detector(&self) -> Option<parking_lot::MappedMutexGuard<'_, YoloDetector>> {
+        let mut lock = self.detector.lock();
+        if lock.is_none() {
+            match YoloDetector::new() {
+                Ok(detector) => *lock = Some(detector),
+                Err(e) => {
+                    tracing::error!("Failed to load YOLO detector: {}", e);
+                    return None;
+                }
+            }
+        }
+        Some(parking_lot::MutexGuard::map(lock, |opt| opt.as_mut().unwrap()))
     }
 
     #[allow(dead_code)]
     fn has_model(&self) -> bool {
-        self.detector.lock().is_loaded()
+        self.detector.lock().as_ref().map_or(false, |d| d.is_loaded())
     }
 
     /// Start a new stream
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn start_stream(&self, config: StreamConfig) -> Result<StreamInfo> {
+    pub async fn start_stream(self: &Arc<Self>, config: StreamConfig) -> Result<StreamInfo> {
         let stream_id = Uuid::new_v4().to_string();
 
         let (width, height) = if config.source_url.contains("1920") || config.source_url.contains("rtsp") {
@@ -486,10 +497,10 @@ impl StreamProcessor {
         // Spawn processing on dedicated OS thread
         let stream_id_clone = stream_id.clone();
         let config_clone = config.clone();
-        let detector_clone = Arc::clone(&self.detector);
+        let processor_clone = Arc::clone(self);
 
         std::thread::spawn(move || {
-            Self::processing_loop(active_stream, stream_id_clone, config_clone, detector_clone);
+            Self::processing_loop(active_stream, stream_id_clone, config_clone, processor_clone);
         });
 
         tracing::info!("[Stream {}] Started", stream_id);
@@ -508,7 +519,7 @@ impl StreamProcessor {
         stream: Arc<Mutex<ActiveStream>>,
         stream_id: String,
         config: StreamConfig,
-        detector: Arc<Mutex<YoloDetector>>,
+        processor: Arc<StreamProcessor>,
     ) {
         tracing::info!("[Stream {}] Processing loop started", stream_id);
 
@@ -550,20 +561,21 @@ impl StreamProcessor {
             }
 
             // Run inference
-            let mut detector_lock = detector.lock();
-            let detections = if detector_lock.is_loaded() {
-                tracing::debug!("[Stream {}] Running real inference", stream_id);
-                let raw_detections = detector_lock.detect(
-                    &demo_frame,
-                    config.confidence_threshold,
-                    config.max_objects,
-                );
-                detections_to_object_detection(raw_detections)
-            } else {
-                tracing::debug!("[Stream {}] Using fallback detections", stream_id);
-                generate_fallback_detections(frame_num, config.max_objects)
+            let detections = match processor.get_or_init_detector() {
+                Some(mut detector) if detector.is_loaded() => {
+                    tracing::debug!("[Stream {}] Running real inference", stream_id);
+                    let raw_detections = detector.detect(
+                        &demo_frame,
+                        config.confidence_threshold,
+                        config.max_objects,
+                    );
+                    detections_to_object_detection(raw_detections)
+                }
+                _ => {
+                    tracing::debug!("[Stream {}] Using fallback detections", stream_id);
+                    generate_fallback_detections(frame_num, config.max_objects)
+                }
             };
-            drop(detector_lock);
 
             // Draw boxes if enabled
             let mut output_img = demo_frame;
@@ -696,138 +708,136 @@ impl Extension for YoloVideoProcessorV2 {
         })
     }
 
-    fn metrics(&self) -> &[MetricDescriptor] {
-        static METRICS: std::sync::OnceLock<Vec<MetricDescriptor>> = std::sync::OnceLock::new();
-        METRICS.get_or_init(|| {
-            vec![
-                MetricDescriptor {
-                    name: "active_streams".to_string(),
-                    display_name: "Active Streams".to_string(),
-                    data_type: MetricDataType::Integer,
-                    unit: "count".to_string(),
-                    min: Some(0.0),
-                    max: None,
-                    required: false,
-                },
-                MetricDescriptor {
-                    name: "total_frames_processed".to_string(),
-                    display_name: "Total Frames Processed".to_string(),
-                    data_type: MetricDataType::Integer,
-                    unit: "frames".to_string(),
-                    min: Some(0.0),
-                    max: None,
-                    required: false,
-                },
-                MetricDescriptor {
-                    name: "avg_fps".to_string(),
-                    display_name: "Average FPS".to_string(),
-                    data_type: MetricDataType::Float,
-                    unit: "fps".to_string(),
-                    min: Some(0.0),
-                    max: None,
-                    required: false,
-                },
-            ]
-        })
+    fn metrics(&self) -> Vec<MetricDescriptor> {
+        vec![
+            MetricDescriptor {
+                name: "active_streams".to_string(),
+                display_name: "Active Streams".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "count".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "total_frames_processed".to_string(),
+                display_name: "Total Frames Processed".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "frames".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "avg_fps".to_string(),
+                display_name: "Average FPS".to_string(),
+                data_type: MetricDataType::Float,
+                unit: "fps".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+        ]
     }
 
-    fn commands(&self) -> &[ExtensionCommand] {
-        static COMMANDS: std::sync::OnceLock<Vec<ExtensionCommand>> = std::sync::OnceLock::new();
-        COMMANDS.get_or_init(|| {
-            vec![
-                ExtensionCommand {
-                    name: "start_stream".to_string(),
-                    display_name: "Start Video Stream".to_string(),
-                    payload_template: r#"{"source_url": "camera://0"}"#.to_string(),
-                    parameters: vec![
-                        ParameterDefinition {
-                            name: "source_url".to_string(),
-                            display_name: "Source URL".to_string(),
-                            description: "Video source URL or camera ID".to_string(),
-                            param_type: MetricDataType::String,
-                            required: false,
-                            default_value: Some(ParamMetricValue::String("camera://0".to_string())),
-                            min: None,
-                            max: None,
-                            options: Vec::new(),
-                        },
-                    ],
-                    fixed_values: HashMap::new(),
-                    samples: vec![
-                        json!({ "source_url": "camera://0" }),
-                        json!({ "source_url": "rtsp://example.com/stream" }),
-                    ],
-                    llm_hints: "Start a video detection stream".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-                ExtensionCommand {
-                    name: "stop_stream".to_string(),
-                    display_name: "Stop Video Stream".to_string(),
-                    payload_template: r#"{"stream_id": ""}"#.to_string(),
-                    parameters: vec![
-                        ParameterDefinition {
-                            name: "stream_id".to_string(),
-                            display_name: "Stream ID".to_string(),
-                            description: "ID of the stream to stop".to_string(),
-                            param_type: MetricDataType::String,
-                            required: true,
-                            default_value: None,
-                            min: None,
-                            max: None,
-                            options: Vec::new(),
-                        },
-                    ],
-                    fixed_values: HashMap::new(),
-                    samples: vec![],
-                    llm_hints: "Stop a video stream".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-                ExtensionCommand {
-                    name: "get_stream_stats".to_string(),
-                    display_name: "Get Stream Statistics".to_string(),
-                    payload_template: r#"{"stream_id": ""}"#.to_string(),
-                    parameters: vec![
-                        ParameterDefinition {
-                            name: "stream_id".to_string(),
-                            display_name: "Stream ID".to_string(),
-                            description: "ID of the stream to get stats for".to_string(),
-                            param_type: MetricDataType::String,
-                            required: true,
-                            default_value: None,
-                            min: None,
-                            max: None,
-                            options: Vec::new(),
-                        },
-                    ],
-                    fixed_values: HashMap::new(),
-                    samples: vec![],
-                    llm_hints: "Get stream statistics".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-                ExtensionCommand {
-                    name: "get_frame".to_string(),
-                    display_name: "Get Current Frame".to_string(),
-                    payload_template: r#"{"stream_id": ""}"#.to_string(),
-                    parameters: vec![
-                        ParameterDefinition {
-                            name: "stream_id".to_string(),
-                            display_name: "Stream ID".to_string(),
-                            description: "ID of the stream to get frame from".to_string(),
-                            param_type: MetricDataType::String,
-                            required: true,
-                            default_value: None,
-                            min: None,
-                            max: None,
-                            options: Vec::new(),
-                        },
-                    ],
-                    fixed_values: HashMap::new(),
-                    samples: vec![],
-                    llm_hints: "Get current frame as base64 JPEG".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-            ]
-        })
+    fn commands(&self) -> Vec<ExtensionCommand> {
+        vec![
+            ExtensionCommand {
+                name: "start_stream".to_string(),
+                display_name: "Start Video Stream".to_string(),
+                description: "Start a new video detection stream".to_string(),
+                payload_template: r#"{"source_url": "camera://0"}"#.to_string(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "source_url".to_string(),
+                        display_name: "Source URL".to_string(),
+                        description: "Video source URL or camera ID".to_string(),
+                        param_type: MetricDataType::String,
+                        required: false,
+                        default_value: Some(ParamMetricValue::String("camera://0".to_string())),
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: HashMap::new(),
+                samples: vec![
+                    json!({ "source_url": "camera://0" }),
+                    json!({ "source_url": "rtsp://example.com/stream" }),
+                ],
+                llm_hints: "Start a video detection stream".to_string(),
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "stop_stream".to_string(),
+                display_name: "Stop Video Stream".to_string(),
+                description: "Stop an active video stream".to_string(),
+                payload_template: r#"{"stream_id": ""}"#.to_string(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "stream_id".to_string(),
+                        display_name: "Stream ID".to_string(),
+                        description: "ID of the stream to stop".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                llm_hints: "Stop a video stream".to_string(),
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "get_stream_stats".to_string(),
+                display_name: "Get Stream Statistics".to_string(),
+                description: "Get statistics for an active stream".to_string(),
+                payload_template: r#"{"stream_id": ""}"#.to_string(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "stream_id".to_string(),
+                        display_name: "Stream ID".to_string(),
+                        description: "ID of the stream to get stats for".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                llm_hints: "Get stream statistics".to_string(),
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "get_frame".to_string(),
+                display_name: "Get Current Frame".to_string(),
+                description: "Get the current frame from a stream as base64 JPEG".to_string(),
+                payload_template: r#"{"stream_id": ""}"#.to_string(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "stream_id".to_string(),
+                        display_name: "Stream ID".to_string(),
+                        description: "ID of the stream to get frame from".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                llm_hints: "Get current frame as base64 JPEG".to_string(),
+                parameter_groups: Vec::new(),
+            },
+        ]
     }
 
     async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
@@ -1086,14 +1096,17 @@ impl Extension for YoloVideoProcessorV2 {
 
                 // Step 3: Run YOLO detection (no stream lock, only detector lock)
                 let detections = {
-                    let mut detector = processor.detector.lock();
-                    let yolo_dets = detector.detect(&image, confidence, max_obj);
-
-                    if !yolo_dets.is_empty() {
-                        tracing::debug!("YOLO detected {} objects in frame {}", yolo_dets.len(), frame_count);
-                        detections_to_object_detection(yolo_dets)
-                    } else {
-                        generate_fallback_detections(frame_count, max_obj)
+                    match processor.get_or_init_detector() {
+                        Some(mut detector) if detector.is_loaded() => {
+                            let yolo_dets = detector.detect(&image, confidence, max_obj);
+                            if !yolo_dets.is_empty() {
+                                tracing::debug!("YOLO detected {} objects in frame {}", yolo_dets.len(), frame_count);
+                                detections_to_object_detection(yolo_dets)
+                            } else {
+                                generate_fallback_detections(frame_count, max_obj)
+                            }
+                        }
+                        _ => generate_fallback_detections(frame_count, max_obj),
                     }
                 };
 
@@ -1292,40 +1305,53 @@ impl Extension for YoloVideoProcessorV2 {
 
         // Run YOLO detection on resized image
         let detections = {
-            let mut detector = self.processor.detector.lock();
+            match self.processor.get_or_init_detector() {
+                Some(mut detector) => {
+                    if detector.is_loaded() {
+                        eprintln!("[YOLO] Detector loaded: {}, inference size: 640x640",
+                            detector.is_loaded());
 
-            eprintln!("[YOLO] Detector loaded: {}, inference size: 640x640",
-                detector.is_loaded());
+                        // Run detection on 640x640 image
+                        let dets = detector.detect(&inference_image, confidence_threshold, max_objects);
 
-            // Run detection on 640x640 image
-            let dets = detector.detect(&inference_image, confidence_threshold, max_objects);
+                        if !dets.is_empty() {
+                            eprintln!("[YOLO] YOLO detected {} objects", dets.len());
 
-            if !dets.is_empty() {
-                eprintln!("[YOLO] YOLO detected {} objects", dets.len());
+                            // Scale detection coordinates back to original size
+                            let scale_x = orig_width as f32 / 640.0;
+                            let scale_y = orig_height as f32 / 640.0;
 
-                // Scale detection coordinates back to original size
-                let scale_x = orig_width as f32 / 640.0;
-                let scale_y = orig_height as f32 / 640.0;
+                            let scaled_dets: Vec<_> = dets.into_iter().map(|mut det| {
+                                det.bbox.x *= scale_x;
+                                det.bbox.y *= scale_y;
+                                det.bbox.width *= scale_x;
+                                det.bbox.height *= scale_y;
+                                det
+                            }).collect();
 
-                let scaled_dets: Vec<_> = dets.into_iter().map(|mut det| {
-                    det.bbox.x *= scale_x;
-                    det.bbox.y *= scale_y;
-                    det.bbox.width *= scale_x;
-                    det.bbox.height *= scale_y;
-                    det
-                }).collect();
-
-                for (i, det) in scaled_dets.iter().enumerate() {
-                    eprintln!("[YOLO]   Detection {}: {} ({:.2}%) at [{:.1}, {:.1}, {:.1}x{:.1}]",
-                        i, det.class_name, det.confidence * 100.0,
-                        det.bbox.x, det.bbox.y, det.bbox.width, det.bbox.height);
+                            for (i, det) in scaled_dets.iter().enumerate() {
+                                eprintln!("[YOLO]   Detection {}: {} ({:.2}%) at [{:.1}, {:.1}, {:.1}x{:.1}]",
+                                    i, det.class_name, det.confidence * 100.0,
+                                    det.bbox.x, det.bbox.y, det.bbox.width, det.bbox.height);
+                            }
+                            detections_to_object_detection(scaled_dets)
+                        } else {
+                            // Fallback to simulated detections for demo
+                            eprintln!("[YOLO] No YOLO detections, using fallback");
+                            let s = stream.lock();
+                            generate_fallback_detections(s.frame_count, max_objects)
+                        }
+                    } else {
+                        eprintln!("[YOLO] Detector not loaded, using fallback");
+                        let s = stream.lock();
+                        generate_fallback_detections(s.frame_count, max_objects)
+                    }
                 }
-                detections_to_object_detection(scaled_dets)
-            } else {
-                // Fallback to simulated detections for demo
-                eprintln!("[YOLO] No YOLO detections, using fallback");
-                let s = stream.lock();
-                generate_fallback_detections(s.frame_count, max_objects)
+                None => {
+                    eprintln!("[YOLO] Detector init failed, using fallback");
+                    let s = stream.lock();
+                    generate_fallback_detections(s.frame_count, max_objects)
+                }
             }
         };
 
@@ -1425,6 +1451,10 @@ impl Extension for YoloVideoProcessorV2 {
         eprintln!("[YOLO] Session closed: {}", session_id);
         Ok(stats)
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // Global push sender for network stream mode
@@ -1523,7 +1553,7 @@ mod tests {
     fn test_extension_commands() {
         let ext = YoloVideoProcessorV2::new();
         let commands = ext.commands();
-        assert_eq!(commands.len(), 3);
+        assert_eq!(commands.len(), 4);
         assert_eq!(commands[0].name, "start_stream");
     }
 

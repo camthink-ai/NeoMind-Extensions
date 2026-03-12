@@ -68,113 +68,107 @@ impl Extension for WasmDemoExtension {
             ExtensionMetadata::new(
                 "wasm-demo",
                 "WASM Demo Extension",
-                "1.0.0",
+                Version::parse("1.0.0").unwrap(),
             )
             .with_description("A simple counter extension demonstrating WASM support")
             .with_author("NeoMind Team")
         })
     }
 
-    fn metrics(&self) -> &[MetricDescriptor] {
-        static METRICS: std::sync::OnceLock<Vec<MetricDescriptor>> = std::sync::OnceLock::new();
-        METRICS.get_or_init(|| {
-            vec![
-                MetricDescriptor {
-                    name: "counter".to_string(),
-                    display_name: "Counter".to_string(),
-                    data_type: MetricDataType::Integer,
-                    unit: String::new(),
-                    min: None,
-                    max: None,
-                    required: false,
-                },
-                MetricDescriptor {
-                    name: "request_count".to_string(),
-                    display_name: "Request Count".to_string(),
-                    data_type: MetricDataType::Integer,
-                    unit: String::new(),
-                    min: None,
-                    max: None,
-                    required: false,
-                },
-            ]
-        })
+    fn metrics(&self) -> Vec<MetricDescriptor> {
+        vec![
+            MetricDescriptor {
+                name: "counter".to_string(),
+                display_name: "Counter".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: String::new(),
+                min: None,
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "request_count".to_string(),
+                display_name: "Request Count".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: String::new(),
+                min: None,
+                max: None,
+                required: false,
+            },
+        ]
     }
 
-    fn commands(&self) -> &[ExtensionCommand] {
-        static COMMANDS: std::sync::OnceLock<Vec<ExtensionCommand>> = std::sync::OnceLock::new();
-        COMMANDS.get_or_init(|| {
-            vec![
-                ExtensionCommand {
-                    name: "increment".to_string(),
-                    display_name: "Increment".to_string(),
-                    description: "Increment the counter by the specified amount".to_string(),
-                    payload_template: String::new(),
-                    parameters: vec![
-                        ParameterDefinition {
-                            name: "amount".to_string(),
-                            display_name: "Amount".to_string(),
-                            description: "Amount to add to the counter".to_string(),
-                            param_type: MetricDataType::Integer,
-                            required: false,
-                            default_value: Some(ParamMetricValue::Integer(1)),
-                            min: None,
-                            max: None,
-                            options: Vec::new(),
-                        },
-                    ],
-                    fixed_values: std::collections::HashMap::new(),
-                    samples: vec![json!({ "amount": 1 })],
-                    llm_hints: "Increment the counter by the specified amount".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-                ExtensionCommand {
-                    name: "decrement".to_string(),
-                    display_name: "Decrement".to_string(),
-                    description: "Decrement the counter by the specified amount".to_string(),
-                    payload_template: String::new(),
-                    parameters: vec![
-                        ParameterDefinition {
-                            name: "amount".to_string(),
-                            display_name: "Amount".to_string(),
-                            description: "Amount to subtract from the counter".to_string(),
-                            param_type: MetricDataType::Integer,
-                            required: false,
-                            default_value: Some(ParamMetricValue::Integer(1)),
-                            min: None,
-                            max: None,
-                            options: Vec::new(),
-                        },
-                    ],
-                    fixed_values: std::collections::HashMap::new(),
-                    samples: vec![json!({ "amount": 1 })],
-                    llm_hints: "Decrement the counter by the specified amount".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-                ExtensionCommand {
-                    name: "reset".to_string(),
-                    display_name: "Reset".to_string(),
-                    description: "Reset the counter to zero".to_string(),
-                    payload_template: String::new(),
-                    parameters: Vec::new(),
-                    fixed_values: std::collections::HashMap::new(),
-                    samples: vec![json!({})],
-                    llm_hints: "Reset the counter to zero".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-                ExtensionCommand {
-                    name: "get".to_string(),
-                    display_name: "Get".to_string(),
-                    description: "Get the current counter value".to_string(),
-                    payload_template: String::new(),
-                    parameters: Vec::new(),
-                    fixed_values: std::collections::HashMap::new(),
-                    samples: vec![json!({})],
-                    llm_hints: "Get the current counter value".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-            ]
-        })
+    fn commands(&self) -> Vec<ExtensionCommand> {
+        vec![
+            ExtensionCommand {
+                name: "increment".to_string(),
+                display_name: "Increment".to_string(),
+                description: "Increment the counter by the specified amount".to_string(),
+                payload_template: String::new(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "amount".to_string(),
+                        display_name: "Amount".to_string(),
+                        description: "Amount to add to the counter".to_string(),
+                        param_type: MetricDataType::Integer,
+                        required: false,
+                        default_value: Some(ParamMetricValue::Integer(1)),
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: std::collections::HashMap::new(),
+                samples: vec![json!({ "amount": 1 })],
+                llm_hints: "Increment the counter by the specified amount".to_string(),
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "decrement".to_string(),
+                display_name: "Decrement".to_string(),
+                description: "Decrement the counter by the specified amount".to_string(),
+                payload_template: String::new(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "amount".to_string(),
+                        display_name: "Amount".to_string(),
+                        description: "Amount to subtract from the counter".to_string(),
+                        param_type: MetricDataType::Integer,
+                        required: false,
+                        default_value: Some(ParamMetricValue::Integer(1)),
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: std::collections::HashMap::new(),
+                samples: vec![json!({ "amount": 1 })],
+                llm_hints: "Decrement the counter by the specified amount".to_string(),
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "reset".to_string(),
+                display_name: "Reset".to_string(),
+                description: "Reset the counter to zero".to_string(),
+                payload_template: String::new(),
+                parameters: Vec::new(),
+                fixed_values: std::collections::HashMap::new(),
+                samples: vec![json!({})],
+                llm_hints: "Reset the counter to zero".to_string(),
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "get".to_string(),
+                display_name: "Get".to_string(),
+                description: "Get the current counter value".to_string(),
+                payload_template: String::new(),
+                parameters: Vec::new(),
+                fixed_values: std::collections::HashMap::new(),
+                samples: vec![json!({})],
+                llm_hints: "Get the current counter value".to_string(),
+                parameter_groups: Vec::new(),
+            },
+        ]
     }
 
     async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
@@ -234,6 +228,10 @@ impl Extension for WasmDemoExtension {
                 timestamp: now,
             },
         ])
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

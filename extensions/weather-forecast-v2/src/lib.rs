@@ -273,158 +273,155 @@ impl Extension for WeatherExtension {
         })
     }
 
-    fn metrics(&self) -> &[MetricDescriptor] {
-        static METRICS: std::sync::OnceLock<Vec<MetricDescriptor>> = std::sync::OnceLock::new();
-        METRICS.get_or_init(|| {
-            vec![
-                MetricDescriptor {
-                    name: "temperature_c".to_string(),
-                    display_name: "Temperature".to_string(),
-                    data_type: MetricDataType::Float,
-                    unit: "°C".to_string(),
-                    min: Some(-100.0),
-                    max: Some(100.0),
-                    required: false,
-                },
-                MetricDescriptor {
-                    name: "feels_like_c".to_string(),
-                    display_name: "Feels Like".to_string(),
-                    data_type: MetricDataType::Float,
-                    unit: "°C".to_string(),
-                    min: Some(-100.0),
-                    max: Some(100.0),
-                    required: false,
-                },
-                MetricDescriptor {
-                    name: "humidity_percent".to_string(),
-                    display_name: "Humidity".to_string(),
-                    data_type: MetricDataType::Integer,
-                    unit: "%".to_string(),
-                    min: Some(0.0),
-                    max: Some(100.0),
-                    required: false,
-                },
-                MetricDescriptor {
-                    name: "wind_speed_kmph".to_string(),
-                    display_name: "Wind Speed".to_string(),
-                    data_type: MetricDataType::Float,
-                    unit: "km/h".to_string(),
-                    min: Some(0.0),
-                    max: Some(500.0),
-                    required: false,
-                },
-                MetricDescriptor {
-                    name: "wind_direction_deg".to_string(),
-                    display_name: "Wind Direction".to_string(),
-                    data_type: MetricDataType::Integer,
-                    unit: "°".to_string(),
-                    min: Some(0.0),
-                    max: Some(360.0),
-                    required: false,
-                },
-                MetricDescriptor {
-                    name: "cloud_cover_percent".to_string(),
-                    display_name: "Cloud Cover".to_string(),
-                    data_type: MetricDataType::Integer,
-                    unit: "%".to_string(),
-                    min: Some(0.0),
-                    max: Some(100.0),
-                    required: false,
-                },
-                MetricDescriptor {
-                    name: "pressure_hpa".to_string(),
-                    display_name: "Pressure".to_string(),
-                    data_type: MetricDataType::Float,
-                    unit: "hPa".to_string(),
-                    min: Some(800.0),
-                    max: Some(1200.0),
-                    required: false,
-                },
-                MetricDescriptor {
-                    name: "request_count".to_string(),
-                    display_name: "Request Count".to_string(),
-                    data_type: MetricDataType::Integer,
-                    unit: String::new(),
-                    min: None,
-                    max: None,
-                    required: false,
-                },
-                MetricDescriptor {
-                    name: "last_update_ts".to_string(),
-                    display_name: "Last Update Timestamp".to_string(),
-                    data_type: MetricDataType::Integer,
-                    unit: "ms".to_string(),
-                    min: None,
-                    max: None,
-                    required: false,
-                },
-            ]
-        })
+    fn metrics(&self) -> Vec<MetricDescriptor> {
+        vec![
+            MetricDescriptor {
+                name: "temperature_c".to_string(),
+                display_name: "Temperature".to_string(),
+                data_type: MetricDataType::Float,
+                unit: "°C".to_string(),
+                min: Some(-100.0),
+                max: Some(100.0),
+                required: false,
+            },
+            MetricDescriptor {
+                name: "feels_like_c".to_string(),
+                display_name: "Feels Like".to_string(),
+                data_type: MetricDataType::Float,
+                unit: "°C".to_string(),
+                min: Some(-100.0),
+                max: Some(100.0),
+                required: false,
+            },
+            MetricDescriptor {
+                name: "humidity_percent".to_string(),
+                display_name: "Humidity".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "%".to_string(),
+                min: Some(0.0),
+                max: Some(100.0),
+                required: false,
+            },
+            MetricDescriptor {
+                name: "wind_speed_kmph".to_string(),
+                display_name: "Wind Speed".to_string(),
+                data_type: MetricDataType::Float,
+                unit: "km/h".to_string(),
+                min: Some(0.0),
+                max: Some(500.0),
+                required: false,
+            },
+            MetricDescriptor {
+                name: "wind_direction_deg".to_string(),
+                display_name: "Wind Direction".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "°".to_string(),
+                min: Some(0.0),
+                max: Some(360.0),
+                required: false,
+            },
+            MetricDescriptor {
+                name: "cloud_cover_percent".to_string(),
+                display_name: "Cloud Cover".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "%".to_string(),
+                min: Some(0.0),
+                max: Some(100.0),
+                required: false,
+            },
+            MetricDescriptor {
+                name: "pressure_hpa".to_string(),
+                display_name: "Pressure".to_string(),
+                data_type: MetricDataType::Float,
+                unit: "hPa".to_string(),
+                min: Some(800.0),
+                max: Some(1200.0),
+                required: false,
+            },
+            MetricDescriptor {
+                name: "request_count".to_string(),
+                display_name: "Request Count".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: String::new(),
+                min: None,
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "last_update_ts".to_string(),
+                display_name: "Last Update Timestamp".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "ms".to_string(),
+                min: None,
+                max: None,
+                required: false,
+            },
+        ]
     }
 
-    fn commands(&self) -> &[ExtensionCommand] {
-        static COMMANDS: std::sync::OnceLock<Vec<ExtensionCommand>> = std::sync::OnceLock::new();
-        COMMANDS.get_or_init(|| {
-            vec![
-                ExtensionCommand {
-                    name: "get_weather".to_string(),
-                    display_name: "Get Weather".to_string(),
-                    payload_template: String::new(),
-                    parameters: vec![
-                        ParameterDefinition {
-                            name: "city".to_string(),
-                            display_name: "City".to_string(),
-                            description: "City name to get weather for".to_string(),
-                            param_type: MetricDataType::String,
-                            required: true,
-                            default_value: None,
-                            min: None,
-                            max: None,
-                            options: vec!["Beijing".to_string(), "Shanghai".to_string(), "New York".to_string()],
-                        },
-                    ],
-                    fixed_values: Default::default(),
-                    samples: vec![
-                        json!({ "city": "Beijing" }),
-                        json!({ "city": "Shanghai" }),
-                    ],
-                    llm_hints: "Get current weather for a city. Use when user asks about weather, temperature, humidity, or wind.".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-                ExtensionCommand {
-                    name: "refresh".to_string(),
-                    display_name: "Refresh Weather".to_string(),
-                    payload_template: String::new(),
-                    parameters: Vec::new(),
-                    fixed_values: Default::default(),
-                    samples: vec![json!({})],
-                    llm_hints: "Refresh weather data for the default city.".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-                ExtensionCommand {
-                    name: "set_default_city".to_string(),
-                    display_name: "Set Default City".to_string(),
-                    payload_template: String::new(),
-                    parameters: vec![
-                        ParameterDefinition {
-                            name: "city".to_string(),
-                            display_name: "City".to_string(),
-                            description: "City name to set as default".to_string(),
-                            param_type: MetricDataType::String,
-                            required: true,
-                            default_value: None,
-                            min: None,
-                            max: None,
-                            options: Vec::new(),
-                        },
-                    ],
-                    fixed_values: Default::default(),
-                    samples: vec![json!({ "city": "Shanghai" })],
-                    llm_hints: "Set the default city for weather queries.".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-            ]
-        })
+    fn commands(&self) -> Vec<ExtensionCommand> {
+        vec![
+            ExtensionCommand {
+                name: "get_weather".to_string(),
+                display_name: "Get Weather".to_string(),
+                description: "Get current weather for a city".to_string(),
+                payload_template: String::new(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "city".to_string(),
+                        display_name: "City".to_string(),
+                        description: "City name to get weather for".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: vec!["Beijing".to_string(), "Shanghai".to_string(), "New York".to_string()],
+                    },
+                ],
+                fixed_values: Default::default(),
+                samples: vec![
+                    json!({ "city": "Beijing" }),
+                    json!({ "city": "Shanghai" }),
+                ],
+                llm_hints: "Get current weather for a city. Use when user asks about weather, temperature, humidity, or wind.".to_string(),
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "refresh".to_string(),
+                display_name: "Refresh Weather".to_string(),
+                description: "Refresh weather data for the default city".to_string(),
+                payload_template: String::new(),
+                parameters: Vec::new(),
+                fixed_values: Default::default(),
+                samples: vec![json!({})],
+                llm_hints: "Refresh weather data for the default city.".to_string(),
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "set_default_city".to_string(),
+                display_name: "Set Default City".to_string(),
+                description: "Set the default city for weather queries".to_string(),
+                payload_template: String::new(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "city".to_string(),
+                        display_name: "City".to_string(),
+                        description: "City name to set as default".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: Default::default(),
+                samples: vec![json!({ "city": "Shanghai" })],
+                llm_hints: "Set the default city for weather queries.".to_string(),
+                parameter_groups: Vec::new(),
+            },
+        ]
     }
 
     async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
@@ -533,6 +530,10 @@ impl Extension for WeatherExtension {
         // The extension itself doesn't need to handle these directly
 
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

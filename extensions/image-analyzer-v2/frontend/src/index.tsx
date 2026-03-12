@@ -105,6 +105,7 @@ const STYLES = `
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
   margin-bottom: 8px;
 }
 .ia-title {
@@ -130,7 +131,8 @@ const STYLES = `
   display: flex;
   flex-direction: column;
   gap: 8px;
-  overflow-y: auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .ia-upload {
@@ -166,71 +168,128 @@ const STYLES = `
   margin-top: 2px;
 }
 
-.ia-preview {
-  position: relative;
+/* Image preview area - takes most of the space */
+.ia-preview-wrapper {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 6px;
   overflow: hidden;
-  background: rgba(0,0,0,0.1);
+  position: relative;
+  background: rgba(0,0,0,0.05);
 }
-.dark .ia-preview {
-  background: rgba(0,0,0,0.3);
+.dark .ia-preview-wrapper {
+  background: rgba(0,0,0,0.2);
+}
+.ia-preview {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .ia-canvas {
-  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
   height: auto;
-  display: block;
+  object-fit: contain;
 }
 .ia-image {
-  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
   height: auto;
-  display: block;
-  border-radius: 6px;
+  object-fit: contain;
 }
 
-.ia-stats {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+/* Results overlay - floating on top of image */
+.ia-results-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
   gap: 6px;
+  padding: 8px;
+  background: linear-gradient(to top, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.5) 70%, transparent 100%);
+  border-radius: 0 0 6px 6px;
+  max-height: 50%;
+  overflow-y: auto;
 }
-.ia-stat {
-  padding: 6px;
-  background: var(--ia-hover);
-  border: 1px solid var(--ia-border);
-  border-radius: 6px;
+.ia-results-overlay::-webkit-scrollbar {
+  width: 4px;
 }
-.ia-stat-label {
-  font-size: 9px;
-  color: var(--ia-muted);
+.ia-results-overlay::-webkit-scrollbar-track {
+  background: transparent;
+}
+.ia-results-overlay::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.3);
+  border-radius: 2px;
+}
+
+/* Stats in overlay style */
+.ia-stats-overlay {
+  display: flex;
+  gap: 12px;
+}
+.ia-stat-overlay {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.ia-stat-label-overlay {
+  font-size: 10px;
+  color: rgba(255,255,255,0.7);
   text-transform: uppercase;
   letter-spacing: 0.3px;
-  margin-bottom: 2px;
 }
-.ia-stat-value {
-  font-size: 16px;
+.ia-stat-value-overlay {
+  font-size: 14px;
   font-weight: 700;
-  color: var(--ia-fg);
+  color: #fff;
 }
 
-.ia-objects {
+/* Object tags in overlay style */
+.ia-objects-overlay {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
 }
-.ia-object-tag {
+.ia-object-tag-overlay {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 6px;
-  background: rgba(142, 70, 65, 0.1);
-  border: 1px solid rgba(142, 70, 65, 0.2);
+  gap: 3px;
+  padding: 2px 6px;
+  background: rgba(255,255,255,0.15);
+  backdrop-filter: blur(4px);
   border-radius: 4px;
   font-size: 10px;
-  color: var(--ia-accent);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.2);
+}
+
+/* Error in overlay style */
+.ia-error-overlay {
+  padding: 6px 8px;
+  background: rgba(239, 68, 68, 0.3);
+  backdrop-filter: blur(4px);
+  border-radius: 4px;
+  color: #fff;
+  font-size: 10px;
 }
 
 .ia-actions {
   display: flex;
   gap: 6px;
+  flex-shrink: 0;
+  margin-top: auto;
+  padding-top: 4px;
+  border-top: 1px solid var(--ia-border);
 }
 .ia-btn {
   flex: 1;
@@ -268,6 +327,7 @@ const STYLES = `
   border-radius: 6px;
   color: #ef4444;
   font-size: 10px;
+  flex-shrink: 0;
 }
 
 .ia-loading {
@@ -468,58 +528,63 @@ export const ImageAnalyzer = forwardRef<HTMLDivElement, ExtensionComponentProps>
             ) : (
               /* Results */
               <>
-                {/* Preview - show original image or canvas with detections */}
-                <div className="ia-preview">
-                  {result ? (
-                    <canvas ref={canvasRef} className="ia-canvas" />
-                  ) : (
-                    <img
-                      src={`data:image/jpeg;base64,${image}`}
-                      alt="Uploaded"
-                      className="ia-image"
-                    />
+                {/* Preview with overlay results */}
+                <div className="ia-preview-wrapper">
+                  <div className="ia-preview">
+                    {result ? (
+                      <canvas ref={canvasRef} className="ia-canvas" />
+                    ) : (
+                      <img
+                        src={`data:image/jpeg;base64,${image}`}
+                        alt="Uploaded"
+                        className="ia-image"
+                      />
+                    )}
+                  </div>
+
+                  {/* Results overlay - floating on top of image */}
+                  {result && (
+                    <div className="ia-results-overlay">
+                      {/* Stats */}
+                      <div className="ia-stats-overlay">
+                        <div className="ia-stat-overlay">
+                          <span className="ia-stat-label-overlay">Objects</span>
+                          <span className="ia-stat-value-overlay">{result.objects.length}</span>
+                        </div>
+                        <div className="ia-stat-overlay">
+                          <span className="ia-stat-label-overlay">Time</span>
+                          <span className="ia-stat-value-overlay">{result.processing_time_ms}ms</span>
+                        </div>
+                      </div>
+
+                      {/* Object tags */}
+                      {Object.keys(objectCounts).length > 0 && (
+                        <div className="ia-objects-overlay">
+                          {Object.entries(objectCounts).map(([label, count]) => (
+                            <div key={label} className="ia-object-tag-overlay">
+                              <Icon name="box" style={{ width: '10px', height: '10px' }} />
+                              <span>{label} ×{count}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Model error */}
+                      {!result.model_loaded && (
+                        <div className="ia-error-overlay">
+                          Model not loaded: {result.model_error || 'Unknown error'}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Error */}
+                  {error && (
+                    <div className="ia-results-overlay">
+                      <div className="ia-error-overlay">{error}</div>
+                    </div>
                   )}
                 </div>
-
-                {/* Stats */}
-                {result && (
-                  <>
-                    <div className="ia-stats">
-                      <div className="ia-stat">
-                        <div className="ia-stat-label">Objects</div>
-                        <div className="ia-stat-value">{result.objects.length}</div>
-                      </div>
-                      <div className="ia-stat">
-                        <div className="ia-stat-label">Time</div>
-                        <div className="ia-stat-value">{result.processing_time_ms}ms</div>
-                      </div>
-                    </div>
-
-                    {/* Object tags */}
-                    {Object.keys(objectCounts).length > 0 && (
-                      <div className="ia-objects">
-                        {Object.entries(objectCounts).map(([label, count]) => (
-                          <div key={label} className="ia-object-tag">
-                            <Icon name="box" style={{ width: '12px', height: '12px' }} />
-                            <span>{label} ×{count}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Model error */}
-                    {!result.model_loaded && (
-                      <div className="ia-error">
-                        Model not loaded: {result.model_error || 'Unknown error'}
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {/* Error */}
-                {error && (
-                  <div className="ia-error">{error}</div>
-                )}
 
                 {/* Actions */}
                 <div className="ia-actions">

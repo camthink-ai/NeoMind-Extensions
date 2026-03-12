@@ -1,0 +1,7 @@
+{
+  "id": "yolo-video-v2",
+  "name": "YOLO Video Processor V2",
+  "version": "2.0.0",
+  "description": "Real-time video stream processing with YOLOv11 object detection",
+  "author": "NeoMind Team"
+}

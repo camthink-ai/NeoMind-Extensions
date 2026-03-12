@@ -93,6 +93,7 @@ V2_EXTENSIONS=(
     "weather-forecast-v2"
     "image-analyzer-v2"
     "yolo-video-v2"
+    "yolo-device-inference"
     "wasm-demo"
 )
 
@@ -353,8 +354,11 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                 fi
             fi
 
-            # Generate component type from extension ID (e.g., weather-forecast-v2 -> weather-card)
-            COMPONENT_TYPE=$(echo "$ext" | sed 's/-v2$//' | sed 's/-.*$//')"-card"
+            # Generate component type from extension ID
+            # Use full extension ID (with hyphens converted) to ensure uniqueness
+            # e.g., yolo-device-inference -> yolo-device-inference-card
+            # e.g., yolo-video-v2 -> yolo-video-card (remove -v2 suffix for cleaner names)
+            COMPONENT_TYPE=$(echo "$ext" | sed 's/-v2$//' | sed 's/-v1$//')"-card"
 
             # Convert components to dashboard_components format
             # Note: category must be one of: chart, metric, table, control, media, custom, other

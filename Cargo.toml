@@ -13,6 +13,7 @@ exclude = [
     "extensions/weather-forecast",      # Legacy (pre-SDK)
     "extensions/image-analyzer",        # Legacy (pre-SDK)
     "extensions/yolo-video",            # Legacy (pre-SDK)
+    "extensions/yolo-device-inference", # Native-only extension with YOLO model
 ]
 
 [workspace.package]

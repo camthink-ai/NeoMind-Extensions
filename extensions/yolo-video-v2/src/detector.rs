@@ -35,14 +35,14 @@ pub struct YoloDetector {
 impl YoloDetector {
     /// Create a new detector by loading the model
     pub fn new() -> Result<Self, String> {
-        tracing::info!("Initializing YOLO detector with usls library");
+        eprintln!("[YOLO-Detector] Creating YoloDetector...");
 
         #[cfg(not(target_arch = "wasm32"))]
         {
             let model_data = Self::load_model_data()?;
 
             if model_data.is_none() {
-                tracing::warn!("YOLOv11n model not found, running in demo mode");
+                eprintln!("[YOLO-Detector] ⚠️ Model not found, running in fallback mode");
                 return Ok(Self {
                     model: None,
                     model_size: 0,
@@ -51,17 +51,20 @@ impl YoloDetector {
 
             let model_bytes = model_data.unwrap();
             let model_size = model_bytes.len();
+            eprintln!("[YOLO-Detector] Model data loaded: {} bytes", model_size);
 
-            tracing::info!("Loading YOLO model ({} bytes) with usls", model_size);
-
-            // Save model to temp file (usls requires file path)
+            // Save model to temp file with unique name (usls requires file path)
+            // Use unique filename to avoid race conditions in concurrent tests
             let temp_dir = std::env::temp_dir();
-            let model_path = temp_dir.join("yolo11n.onnx");
+            let unique_id = uuid::Uuid::new_v4();
+            let model_path = temp_dir.join(format!("yolo11n_{}.onnx", unique_id));
+            eprintln!("[YOLO-Detector] Writing model to temp file: {}", model_path.display());
+
             std::fs::write(&model_path, &model_bytes)
                 .map_err(|e| format!("Failed to write temp model file: {}", e))?;
 
             // Create Config for YOLO detection
-            tracing::info!("Configuring YOLO model with usls Config...");
+            eprintln!("[YOLO-Detector] Configuring YOLO model with usls...");
 
             // Create ORTConfig with model file path
             let ort_config = ORTConfig::default()
@@ -74,11 +77,15 @@ impl YoloDetector {
                 .with_class_confs(&[0.25]);  // Confidence threshold 0.25
 
             // Create YOLO model from config using Model::new()
+            eprintln!("[YOLO-Detector] Creating YOLO runtime...");
             let model = YOLO::new(config)
-                .map_err(|e| format!("Failed to create YOLO model: {:?}", e))?;
+                .map_err(|e| {
+                    eprintln!("[YOLO-Detector] ❌ Failed to create YOLO model: {:?}", e);
+                    format!("Failed to create YOLO model: {:?}", e)
+                })?;
 
-            tracing::info!("✓ YOLO model loaded successfully with usls");
-            tracing::info!("Model: YOLOv11n, Confidence: 0.25");
+            eprintln!("[YOLO-Detector] ✓ YOLO model loaded successfully!");
+            eprintln!("[YOLO-Detector] Model: YOLOv11n, Confidence: 0.25");
 
             // Clean up temp file
             let _ = std::fs::remove_file(&model_path);
@@ -91,7 +98,7 @@ impl YoloDetector {
 
         #[cfg(target_arch = "wasm32")]
         {
-            tracing::warn!("YOLO not available in WASM, running in demo mode");
+            eprintln!("[YOLO-Detector] ⚠️ WASM target, running in fallback mode");
             Ok(Self {
                 model_loaded: false,
                 model_size: 0,
@@ -101,34 +108,65 @@ impl YoloDetector {
 
     /// Load model data from disk
     fn load_model_data() -> Result<Option<Vec<u8>>, String> {
-        // Try to get extension directory from environment variable (set by runner)
-        let base_paths: Vec<std::path::PathBuf> = if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
-            vec![
-                std::path::PathBuf::from(&ext_dir),
-                std::path::PathBuf::from(ext_dir).join(".."),
-            ]
-        } else {
-            // Fallback to current directory
-            vec![
-                std::path::PathBuf::from("."),
-                std::path::PathBuf::from(".."),
-                std::path::PathBuf::from("../.."),
-            ]
-        };
+        eprintln!("[YOLO-Detector] Starting model search...");
 
-        for base in &base_paths {
-            let model_path = base.join("models").join("yolo11n.onnx");
+        // Try to get extension directory from environment variable (set by runner)
+        if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
+            eprintln!("[YOLO-Detector] NEOMIND_EXTENSION_DIR = {}", ext_dir);
+
+            // Primary path: <extension_dir>/models/yolo11n.onnx
+            let model_path = std::path::PathBuf::from(&ext_dir).join("models").join("yolo11n.onnx");
+            eprintln!("[YOLO-Detector] Checking primary path: {}", model_path.display());
+
             if model_path.exists() {
-                tracing::info!("Loading YOLOv11n model from: {}", model_path.display());
+                eprintln!("[YOLO-Detector] ✓ Found model at: {}", model_path.display());
                 return std::fs::read(&model_path)
                     .map(Some)
                     .map_err(|e| format!("Failed to read model: {}", e));
             } else {
-                tracing::debug!("Model not found at: {}", model_path.display());
+                eprintln!("[YOLO-Detector] ✗ Model not found at primary path");
+            }
+        } else {
+            eprintln!("[YOLO-Detector] NEOMIND_EXTENSION_DIR not set");
+        }
+
+        // Fallback: Try to find model relative to current working directory
+        // When running in isolated process, the working directory should be the extension root
+        eprintln!("[YOLO-Detector] Checking current working directory...");
+        if let Ok(cwd) = std::env::current_dir() {
+            eprintln!("[YOLO-Detector] Current working directory: {}", cwd.display());
+            
+            let model_path = cwd.join("models").join("yolo11n.onnx");
+            eprintln!("[YOLO-Detector] Checking: {}", model_path.display());
+            
+            if model_path.exists() {
+                eprintln!("[YOLO-Detector] ✓ Found model at: {}", model_path.display());
+                return std::fs::read(&model_path)
+                    .map(Some)
+                    .map_err(|e| format!("Failed to read model: {}", e));
             }
         }
 
-        tracing::warn!("YOLOv11n model not found in any expected location");
+        // Fallback: Try relative paths from current directory
+        let fallback_paths = vec![
+            std::path::PathBuf::from("models/yolo11n.onnx"),
+            std::path::PathBuf::from("../models/yolo11n.onnx"),
+            std::path::PathBuf::from("../../models/yolo11n.onnx"),
+            std::path::PathBuf::from("extensions/yolo-video-v2/models/yolo11n.onnx"),
+            std::path::PathBuf::from("../extensions/yolo-video-v2/models/yolo11n.onnx"),
+        ];
+
+        for path in &fallback_paths {
+            eprintln!("[YOLO-Detector] Checking fallback path: {}", path.display());
+            if path.exists() {
+                eprintln!("[YOLO-Detector] ✓ Found model at: {}", path.display());
+                return std::fs::read(path)
+                    .map(Some)
+                    .map_err(|e| format!("Failed to read model: {}", e));
+            }
+        }
+
+        eprintln!("[YOLO-Detector] ❌ Model not found in any location");
         Ok(None)
     }
 

@@ -63,6 +63,7 @@ V2_EXTENSIONS=(
     "weather-forecast-v2"
     "image-analyzer-v2"
     "yolo-video-v2"
+    "yolo-device-inference"
 )
 
 # Clean build artifacts
