@@ -415,7 +415,7 @@ fn get_frame_queues() -> &'static Mutex<FrameQueues> {
 pub fn get_or_create_frame_queue(session_id: &str) -> Arc<Mutex<FrameQueue>> {
     let mut queues = get_frame_queues().lock();
     queues.entry(session_id.to_string())
-        .or_insert_with(|| Arc::new(Mutex::new(FrameQueue::new(3))))
+        .or_insert_with(|| Arc::new(Mutex::new(FrameQueue::new(2))))
         .clone()
 }
 
@@ -1379,11 +1379,17 @@ impl Extension for YoloVideoProcessorV2 {
             if s.frame_count % 30 == 0 {
                 s.detected_objects.clear();
             }
+            
+            // Clear last_frame cache every 60 frames to save memory
+            // The frame is already in MJPEG queue, so we don't need to cache it
+            if s.frame_count % 60 == 0 {
+                s.last_frame = None;
+            }
         }
 
-        eprintln!("[YOLO] Encoding image to JPEG (quality=85)");
-        // Encode result as JPEG with high quality for better display
-        let output_jpeg = encode_jpeg(&output_image, 85);
+        eprintln!("[YOLO] Encoding image to JPEG (quality=75)");
+        // Encode result as JPEG with quality=75 to save memory
+        let output_jpeg = encode_jpeg(&output_image, 75);
         eprintln!("[YOLO] Encoded JPEG size: {} bytes, detections: {}", output_jpeg.len(), detections.len());
 
         // Cache last frame for reuse

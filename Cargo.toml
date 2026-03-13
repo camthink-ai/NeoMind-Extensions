@@ -5,6 +5,7 @@ members = [
     "extensions/weather-forecast-v2",
     "extensions/image-analyzer-v2",
     "extensions/yolo-video-v2",
+    "extensions/yolo-device-inference",
     "extensions/wasm-demo",
 ]
 exclude = [
@@ -13,7 +14,6 @@ exclude = [
     "extensions/weather-forecast",      # Legacy (pre-SDK)
     "extensions/image-analyzer",        # Legacy (pre-SDK)
     "extensions/yolo-video",            # Legacy (pre-SDK)
-    "extensions/yolo-device-inference", # Native-only extension with YOLO model
 ]
 
 [workspace.package]
