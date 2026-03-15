@@ -300,6 +300,88 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             cp "$LIB_FILE" "$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
         fi
 
+        # Fix the binary's LC_ID_DYLIB to use @executable_path instead of absolute path
+        # This is critical for Rust cdylib which sets LC_ID_DYLIB to absolute build path
+        if [ "$IS_WASM" = false ] && [ "$OS" = "Darwin" ]; then
+            echo -e "    ${BLUE}→${NC} Fixing library ID for macOS..."
+            
+            # Get the binary path
+            BINARY_PATH="$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
+            
+            # Get the current library ID
+            CURRENT_ID=$(otool -D "$BINARY_PATH" 2>/dev/null | tail -n 1)
+            
+            # Check if it's an absolute path (starts with /)
+            if [[ "$CURRENT_ID" == /* ]]; then
+                # Extract library name from absolute path
+                LIB_BASENAME=$(basename "$CURRENT_ID")
+                NEW_ID="@rpath/extension.dylib"
+                
+                # Change the library ID
+                install_name_tool -id "$NEW_ID" "$BINARY_PATH" 2>/dev/null
+                
+                # Re-sign the library with ad-hoc signature
+                codesign --force --sign - "$BINARY_PATH" 2>/dev/null
+                
+                echo -e "    ${GREEN}✓${NC} Changed LC_ID_DYLIB: $CURRENT_ID"
+                echo -e "    ${GREEN}✓${NC} To: $NEW_ID"
+                echo -e "    ${GREEN}✓${NC} Re-signed library with ad-hoc signature"
+            else
+                echo -e "    ${YELLOW}⚠${NC} Library ID already uses relative path: $CURRENT_ID"
+            fi
+        fi
+
+
+        # Fix dynamic library dependencies for portability (native only)
+        # Solution: Copy self-referenced dependency libraries to the package
+        if [ "$IS_WASM" = false ] && [ "$OS" = "Darwin" ]; then
+            echo -e "    ${BLUE}→${NC} Fixing dynamic library dependencies..."
+            
+            # Get the binary path
+            if [ "$IS_WASM" = true ]; then
+                BINARY_PATH="$PACKAGE_DIR/binaries/$BINARY_NAME"
+                BINARY_DIR="$PACKAGE_DIR/binaries"
+            else
+                BINARY_PATH="$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
+                BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
+            fi
+            
+            # Get all dependent dylibs with absolute paths
+            DEPS=$(otool -L "$BINARY_PATH" 2>/dev/null | \
+                   grep -oE "/Users/[^ ]+\.dylib" || true)
+            
+            if [ -n "$DEPS" ]; then
+                # Add @executable_path to rpath
+                install_name_tool -add_rpath "@executable_path" \
+                    "$BINARY_PATH" 2>/dev/null || true
+                
+                # Calculate hash of source library
+                SOURCE_HASH=$(shasum -a 256 "$LIB_FILE" | cut -d' ' -f1)
+                
+                echo "$DEPS" | while read -r dep; do
+                    if [ -f "$dep" ]; then
+                        LIB_NAME=$(basename "$dep")
+                        DEP_HASH=$(shasum -a 256 "$dep" | cut -d' ' -f1)
+                        
+                        if [ "$SOURCE_HASH" == "$DEP_HASH" ]; then
+                            # Self-reference - copy to package and fix reference
+                            cp "$dep" "$BINARY_DIR/$LIB_NAME"
+                            install_name_tool -change "$dep" "@executable_path/$LIB_NAME" \
+                                "$BINARY_PATH" 2>/dev/null && \
+                                echo -e "    ${GREEN}→${NC} Copied and fixed: $LIB_NAME"
+                        else
+                            # Different library - copy to package
+                            cp "$dep" "$BINARY_DIR/$LIB_NAME"
+                            install_name_tool -change "$dep" "@executable_path/$LIB_NAME" \
+                                "$BINARY_PATH" 2>/dev/null && \
+                                echo -e "    ${GREEN}→${NC} Copied dependency: $LIB_NAME"
+                        fi
+                    fi
+                done
+            fi
+        fi
+
+
         # Copy frontend
         FRONTEND_DIST="$EXT_DIR/frontend/dist"
         if [ -d "$FRONTEND_DIST" ]; then

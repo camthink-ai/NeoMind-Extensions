@@ -579,13 +579,13 @@ impl YoloDeviceInference {
                         last_detections: None,
                         last_annotated_image: None,
                     });
-                stats.last_image = Some(image_b64.to_string());
+                stats.last_image = Some(format!("data:image/jpeg;base64,{}", image_b64));
                 stats.last_detections = Some(result.detections.clone());
                 stats.last_inference = Some(result.timestamp);
                 stats.total_inferences += 1;
                 stats.total_detections += result.detections.len() as u64;
                 if let Some(annotated_b64) = &result.annotated_image_base64 {
-                    stats.last_annotated_image = Some(annotated_b64.to_string());
+                    stats.last_annotated_image = Some(format!("data:image/jpeg;base64,{}", annotated_b64));
                 }
             }
 
@@ -783,12 +783,12 @@ impl YoloDeviceInference {
     ) {
         // Update binding stats
         if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
-            stats.last_image = Some(image_b64.to_string());
+            stats.last_image = Some(format!("data:image/jpeg;base64,{}", image_b64));
             stats.last_detections = Some(result.detections.clone());
             stats.last_inference = Some(result.timestamp);
             // Update annotated image if available
             if let Some(annotated_b64) = &result.annotated_image_base64 {
-                stats.last_annotated_image = Some(annotated_b64.to_string());
+                stats.last_annotated_image = Some(format!("data:image/jpeg;base64,{}", annotated_b64));
             }
         }
 

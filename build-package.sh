@@ -96,9 +96,33 @@ echo "Assembling extension package..."
 echo "----------------------------------------"
 
 # Copy binary
+
 mkdir -p "$PACKAGE_DIR/binaries"
 cp "$SOURCE_LIB" "$PACKAGE_DIR/binaries/extension.$LIB_EXT"
 echo "✓ Copied binary file"
+
+# Fix Rust cdylib self-reference dependency
+# Copy the self-referenced dependency file to the package
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "✓ Fixing self-reference dependency..."
+    
+    # Find self-reference dependency (points to build directory)
+    SELF_REF=$(otool -L "$PACKAGE_DIR/binaries/extension.$LIB_EXT" 2>/dev/null | \
+               grep -oE "/Users/[^ ]+\.dylib" | head -1 || true)
+    
+    if [ -n "$SELF_REF" ] && [ -f "$SELF_REF" ]; then
+        SELF_REF_NAME=$(basename "$SELF_REF")
+        cp "$SELF_REF" "$PACKAGE_DIR/binaries/$SELF_REF_NAME"
+        
+        # Add @executable_path to RPATH
+        install_name_tool -add_rpath "@executable_path" \
+            "$PACKAGE_DIR/binaries/extension.$LIB_EXT" 2>/dev/null || true
+        
+        echo "  → Copied dependency: $SELF_REF_NAME"
+        echo "  → Added @executable_path to RPATH"
+    fi
+fi
+
 
 # Copy model files (if exist)
 if [ -d "extensions/$EXTENSION_NAME/models" ]; then
