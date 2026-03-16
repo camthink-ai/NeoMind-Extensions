@@ -58,10 +58,13 @@ jobs:
           - os: ubuntu-22.04-arm
             platform: linux_arm64
             target: aarch64-unknown-linux-gnu
-          # Windows platform
+          # Windows platforms
           - os: windows-latest
             platform: windows_amd64
             target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            platform: windows_x86
+            target: i686-pc-windows-msvc
 
     steps:
       - name: Checkout extension repo
@@ -165,7 +168,7 @@ jobs:
           |----------|--------------|------------|
           | macOS | ARM64, x86_64 | All |
           | Linux | x86_64, ARM64 | All |
-          | Windows | x86_64 | All |
+          | Windows | x86_64, x86 | All |
 
           ## Extensions (ABI Version 3)
 

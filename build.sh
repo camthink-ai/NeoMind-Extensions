@@ -79,7 +79,11 @@ case "$OS" in
         LIB_EXT="so"
         ;;
     MINGW*|MSYS*|CYGWIN*)
-        PLATFORM="windows_amd64"
+        if [ "$ARCH" = "i686" ] || [ "$ARCH" = "i386" ]; then
+            PLATFORM="windows_x86"
+        else
+            PLATFORM="windows_amd64"
+        fi
         LIB_EXT="dll"
         ;;
     *)

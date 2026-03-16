@@ -54,6 +54,9 @@ jobs:
           - os: windows-latest
             platform: windows_amd64
             target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            platform: windows_x86
+            target: i686-pc-windows-msvc
 
     steps:
       - name: Checkout extension repo
