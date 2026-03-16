@@ -1,0 +1,41 @@
+# Backup files
+*.bak
+*.bak2
+*.bak3
+*.bak4
+*.bak5
+*.backup
+*.backup2
+
+# Build artifacts
+target/
+dist/
+*.dylib
+*.so
+*.dll
+*.wasm
+
+# Node
+node_modules/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Models (large files)
+models/
+*.gguf
+*.onnx
+*.engine
+
+# Test coverage
+*.profraw
+*.profdata
