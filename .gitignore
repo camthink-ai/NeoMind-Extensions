@@ -103,3 +103,15 @@ coverage/
 release-files/
 releases/
 /NeoMind
+
+# Temporary files
+*.tmp
+*.tmp*
+*.temp
+*.bak
+*.bak2
+*.bak3
+*.bak4
+*.bak5
+*.backup
+*.backup2
