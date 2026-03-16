@@ -1603,19 +1603,11 @@ impl Extension for YoloVideoProcessorV2 {
         
         let session_id_owned = session_id.to_string();
         
-        // ✨ CRITICAL: Do NOT call detector.shutdown()
-        // The model was already leaked when StreamProcessor was dropped,
-        // so calling shutdown() here would be redundant and potentially unsafe.
-        //
-        // The Extension Runner will terminate the process after close_session,
-        // and the OS will reclaim all leaked memory at that time.
-        eprintln!("[YOLO] Skipping detector shutdown (model already leaked, OS will clean up)");
-        if let Some(_detector) = self.processor.detector.lock().take() {
-            // Just take the detector out of the Option and drop it
-            // The internal model was already leaked, so dropping Detector is safe
-            std::mem::drop(_detector);
-        }
-        eprintln!("[YOLO] Detector reference removed (leaked memory will be reclaimed by OS)");
+        // ✨ FIX: Do NOT remove detector when closing session
+        // The detector should remain loaded for the lifetime of the extension
+        // Taking it out (as before) caused all subsequent inferences to fail
+        eprintln!("[YOLO] Detector remains loaded (will be cleaned up on extension unload)");
+        // Note: DO NOT call detector.lock().take() - this removes the detector permanently!
 
         // Stop push if running
         self.stop_push(session_id).await?;
