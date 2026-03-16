@@ -178,6 +178,50 @@ neomind extension validate my-extension-1.0.0.nep
 
 ---
 
+
+## 🚀 NeoMind Extension CLI
+
+为了加速扩展开发，我们提供了一个专门的 CLI 工具 `neomind-ext`。
+
+### 快速开始
+
+```bash
+# 安装工具
+cargo install --path neomind-ext
+
+# 创建新扩展
+neomind-ext new my-extension --with-frontend
+
+# 构建和打包
+cd my-extension
+neomind-ext build --release
+neomind-ext package --with-frontend
+```
+
+### 核心功能
+
+| 命令 | 说明 |
+|------|------|
+| `neomind-ext new` | 创建新扩展项目 |
+| `neomind-ext build` | 构建扩展 |
+| `neomind-ext package` | 打包为 .nep 文件 |
+| `neomind-ext validate` | 验证扩展规范 |
+| `neomind-ext test` | 运行测试 |
+| `neomind-ext watch` | 监视文件变化并自动重建 |
+| `neomind-ext clean` | 清理构建产物 |
+
+### 优势
+
+- ⚡ **3 分钟快速启动** - 从零到运行
+- 📦 **自动化打包** - 一键生成 .nep 文件
+- ✅ **规范验证** - 自动检查扩展规范
+- 🧪 **内置测试** - 快速验证功能
+- 📝 **模板系统** - 包含最佳实践
+
+**文档**: [neomind-ext/README.md](neomind-ext/README.md) | [neomind-ext/QUICKSTART.md](neomind-ext/QUICKSTART.md)
+
+---
+
 ## 快速开始
 
 ### 前置条件
