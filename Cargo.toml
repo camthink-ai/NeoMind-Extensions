@@ -7,6 +7,8 @@ members = [
     "extensions/yolo-video-v2",
     "extensions/yolo-device-inference",
     "extensions/wasm-demo",
+    "extensions/final-test",
+    "extensions/cli-test-ext",
 ]
 exclude = [
     "extensions/as-hello",              # AssemblyScript project (not Rust)

@@ -1,19 +1,23 @@
 [package]
-name = "neomind_extension_{{EXTENSION_NAME}}"
+name = "neomind_extension_{{EXTENSION_NAME_UNDERSCORED}}"
 version = "1.0.0"
 edition = "2021"
+authors = ["{{EXTENSION_AUTHOR}}"]
+license = "MIT"
+description = "{{EXTENSION_DESCRIPTION}}"
 
 [lib]
-name = "neomind_extension_{{EXTENSION_NAME}}"
+name = "neomind_extension_{{EXTENSION_NAME_UNDERSCORED}}"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 neomind-extension-sdk = { path = "../../../NeoMind/crates/neomind-extension-sdk" }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
 async-trait = "0.1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 semver = "1"
+chrono = "0.4"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [profile.release]
 panic = "unwind"  # Required for safety!
