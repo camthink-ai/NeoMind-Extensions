@@ -425,19 +425,29 @@ pub struct StreamProcessor {
 
 impl StreamProcessor {
     pub fn new() -> Self {
-        // Load model immediately like Image Analyzer V2
-        tracing::info!("[YOLO-Video] Loading YOLO detector during extension initialization");
+        // Only load model in Extension Runner process (where NEOMIND_EXTENSION_DIR is set)
+        // In main process, we only need metadata, not the actual model
+        let has_extension_dir = std::env::var("NEOMIND_EXTENSION_DIR").is_ok();
         
-        let detector = match YoloDetector::new() {
-            Ok(d) => {
-                tracing::info!("[YOLO-Video] ✓ YOLO detector loaded successfully");
-                Some(d)
+        let detector = if has_extension_dir {
+            // In Extension Runner process - load the model
+            tracing::info!("[YOLO-Video] Extension Runner detected, loading YOLO detector");
+            
+            match YoloDetector::new() {
+                Ok(d) => {
+                    tracing::info!("[YOLO-Video] ✓ YOLO detector loaded successfully");
+                    Some(d)
+                }
+                Err(e) => {
+                    tracing::error!("[YOLO-Video] Failed to load detector: {}", e);
+                    tracing::error!("[YOLO-Video] Extension will not function without YOLO model");
+                    None
+                }
             }
-            Err(e) => {
-                tracing::error!("[YOLO-Video] Failed to load detector: {}", e);
-                tracing::error!("[YOLO-Video] Extension will not function without YOLO model");
-                None
-            }
+        } else {
+            // In main process - do not load the model, just skip it
+            tracing::info!("[YOLO-Video] Main process detected, skipping YOLO detector load");
+            None
         };
         
         Self {

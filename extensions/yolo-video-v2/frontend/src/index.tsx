@@ -589,14 +589,33 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
               break
 
             case 'result':
-              // Processing result from server
+              // Processing result from server - data is already base64 encoded
               if (msg.data) {
-                setFrameData(msg.data)
-                updateFps()
-                setFrameCount(prev => prev + 1)
+                // ✨ FIX: Check if frame was skipped before setting image data
+                // Skipped frames return JSON metadata instead of image data
+                const isSkipped = msg.skipped === true || 
+                                  (typeof msg.data === 'string' && 
+                                   (msg.data.startsWith('{') || 
+                                    msg.metadata?.skipped === true));
+                
+                if (isSkipped) {
+                  // Frame was skipped (rate limiting), keep displaying last frame
+                  console.debug('[YOLO] Frame skipped by backend, keeping previous frame')
+                  // Don't update frameData - keep showing the last valid frame
+                  if (msg.metadata?.detections) {
+                    setDetections(msg.metadata.detections)
+                  }
+                } else if (typeof msg.data === 'string' && msg.data.length > 0) {
+                  // Valid image data (base64 string)
+                  setFrameData(msg.data)
+                  updateFps()
+                  setFrameCount(prev => prev + 1)
 
-                if (msg.metadata?.detections) {
-                  setDetections(msg.metadata.detections)
+                  if (msg.metadata?.detections) {
+                    setDetections(msg.metadata.detections)
+                  }
+                } else {
+                  console.warn('[YOLO] Received invalid frame data:', typeof msg.data, msg.data?.substring(0, 100))
                 }
               }
               break
