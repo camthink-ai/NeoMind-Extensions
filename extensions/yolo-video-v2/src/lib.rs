@@ -1603,19 +1603,19 @@ impl Extension for YoloVideoProcessorV2 {
         
         let session_id_owned = session_id.to_string();
         
-        // ✨ CRITICAL: Call detector.shutdown() to properly leak the model
-        // The updated shutdown() method now leaks the model using Box::into_raw
-        // instead of dropping it, which prevents the Tokio runtime panic.
+        // ✨ CRITICAL: Do NOT call detector.shutdown()
+        // The model was already leaked when StreamProcessor was dropped,
+        // so calling shutdown() here would be redundant and potentially unsafe.
         //
-        // This approach is safe because:
-        // 1. The model is leaked (not dropped), avoiding Tokio runtime conflict
-        // 2. The OS will reclaim all memory when the extension process exits
-        // 3. The Extension Runner will terminate the process after close_session
-        eprintln!("[YOLO] Shutting down detector (leaking model to avoid panic)");
-        if let Some(mut detector) = self.processor.detector.lock().take() {
-            detector.shutdown();
+        // The Extension Runner will terminate the process after close_session,
+        // and the OS will reclaim all leaked memory at that time.
+        eprintln!("[YOLO] Skipping detector shutdown (model already leaked, OS will clean up)");
+        if let Some(_detector) = self.processor.detector.lock().take() {
+            // Just take the detector out of the Option and drop it
+            // The internal model was already leaked, so dropping Detector is safe
+            std::mem::drop(_detector);
         }
-        eprintln!("[YOLO] Detector shutdown complete");
+        eprintln!("[YOLO] Detector reference removed (leaked memory will be reclaimed by OS)");
 
         // Stop push if running
         self.stop_push(session_id).await?;

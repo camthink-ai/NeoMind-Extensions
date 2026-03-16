@@ -388,3 +388,30 @@ impl YoloDetector {
             .to_string()
     }
 }
+
+/// ✨ CRITICAL: Drop implementation that leaks the model
+///
+/// When YoloDetector is dropped, we intentionally leak the internal model
+/// to prevent usls::Runtime from being dropped in an async context,
+/// which would cause "Cannot drop a runtime in a context where blocking is not allowed" panic.
+///
+/// This is safe because:
+/// 1. The extension process will be terminated by Extension Runner
+/// 2. The OS will reclaim all leaked memory on process exit
+/// 3. Leaking is intentional to avoid Tokio runtime conflict
+impl Drop for YoloDetector {
+    fn drop(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(model) = self.model.take() {
+                // Leak the model to prevent usls::Runtime from being dropped
+                let leaked: *const Arc<std::sync::Mutex<Runtime<YOLO>>> =
+                    Box::into_raw(Box::new(model));
+                std::mem::forget(leaked);
+                
+                tracing::debug!("YoloDetector dropped (model leaked to prevent Tokio panic)");
+            }
+        }
+    }
+}
+
