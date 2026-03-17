@@ -158,46 +158,46 @@ neomind logs --level error
 # Follow logs in real-time
 neomind logs --follow
 
-## 🚀 NeoMind Extension CLI
+## Extension Development CLI
 
-为了加速扩展开发，我们提供了一个专门的 CLI 工具 `neomind-ext`。
+To accelerate extension development, a specialized CLI tool `neomind-ext` is provided.
 
-### 快速开始
+### Quick Start
 
 ```bash
-# 安装工具
+# Install tool
 cargo install --path neomind-ext
 
-# 创建新扩展
+# Create new extension
 neomind-ext new my-extension --with-frontend
 
-# 构建和打包
+# Build and package
 cd my-extension
 neomind-ext build --release
 neomind-ext package --with-frontend
 ```
 
-### 核心功能
+### Core Features
 
-| 命令 | 说明 |
-|------|------|
-| `neomind-ext new` | 创建新扩展项目 |
-| `neomind-ext build` | 构建扩展 |
-| `neomind-ext package` | 打包为 .nep 文件 |
-| `neomind-ext validate` | 验证扩展规范 |
-| `neomind-ext test` | 运行测试 |
-| `neomind-ext watch` | 监视文件变化并自动重建 |
-| `neomind-ext clean` | 清理构建产物 |
+| Command | Description |
+|---------|-------------|
+| `neomind-ext new` | Create new extension project |
+| `neomind-ext build` | Build extension |
+| `neomind-ext package` | Package as .nep file |
+| `neomind-ext validate` | Validate extension spec |
+| `neomind-ext test` | Run tests |
+| `neomind-ext watch` | Watch files and rebuild |
+| `neomind-ext clean` | Clean build artifacts |
 
-### 优势
+### Benefits
 
-- ⚡ **3 分钟快速启动** - 从零到运行
-- 📦 **自动化打包** - 一键生成 .nep 文件
-- ✅ **规范验证** - 自动检查扩展规范
-- 🧪 **内置测试** - 快速验证功能
-- 📝 **模板系统** - 包含最佳实践
+- ⚡ **3-Minute Quick Start** - From zero to running
+- 📦 **Automated Packaging** - One-click .nep generation
+- ✅ **Spec Validation** - Auto-check extension specs
+- 🧪 **Built-in Testing** - Quick feature verification
+- 📝 **Template System** - Best practices included
 
-**文档**: [neomind-ext/README.md](neomind-ext/README.md) | [neomind-ext/QUICKSTART.md](neomind-ext/QUICKSTART.md)
+**Documentation**: [neomind-ext/README.md](neomind-ext/README.md) | [neomind-ext/QUICKSTART.md](neomind-ext/QUICKSTART.md)
 
 ---
 
