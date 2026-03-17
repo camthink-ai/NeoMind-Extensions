@@ -8,196 +8,165 @@
   "type": "native",
   "abi_version": 3,
   "sdk_version": "2.0.0",
-  "categories": ["ai", "computer-vision", "inference", "device-integration"],
-  "keywords": ["yolo", "object-detection", "image", "device", "inference", "real-time"],
+  "categories": [
+    "ai",
+    "computer-vision",
+    "inference",
+    "device-integration"
+  ],
+  "keywords": [
+    "yolo",
+    "object-detection",
+    "image",
+    "device",
+    "inference",
+    "real-time"
+  ],
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions",
   "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
   "frontend": {
     "components": [
-      {
-        "type": "device-inference-card",
-        "name": "Device Inference Card",
-        "description": "Single device YOLO inference card - binds to one device via data source",
-        "category": "ai",
-        "icon": "camera",
-        "minSize": { "w": 2, "h": 2 },
-        "maxSize": { "w": 6, "h": 6 },
-        "defaultSize": { "w": 3, "h": 3 },
-        "dataSourceTypes": ["device-metric"],
-        "dataSourceConfig": {
-          "deviceRequired": true,
-          "metricRequired": true,
-          "metricFilter": ["image", "frame", "snapshot"],
-          "metricDescription": "Select the image/frame metric from the device"
-        },
-        "defaultConfig": {
-          "confidence": 0.25,
-          "drawBoxes": true,
-          "showPreview": true
-        },
-        "configSchema": [
-          {
-            "name": "confidence",
-            "type": "float",
-            "displayName": "Confidence Threshold",
-            "description": "Minimum confidence for detections (0.0-1.0)",
-            "default": 0.25,
-            "min": 0,
-            "max": 1
-          },
-          {
-            "name": "drawBoxes",
-            "type": "boolean",
-            "displayName": "Draw Detection Boxes",
-            "description": "Draw bounding boxes on detected objects",
-            "default": true
-          },
-          {
-            "name": "showPreview",
-            "type": "boolean",
-            "displayName": "Show Preview",
-            "description": "Show the detection preview image",
-            "default": true
-          }
-        ]
-      },
-      {
-        "type": "device-inference-manager",
-        "name": "Device Inference Manager",
-        "description": "Overview card showing all device bindings and inference statistics",
-        "category": "ai",
-        "icon": "settings",
-        "minSize": { "w": 3, "h": 2 },
-        "maxSize": { "w": 8, "h": 6 },
-        "defaultSize": { "w": 4, "h": 3 },
-        "dataSourceTypes": [],
-        "dataSourceConfig": {},
-        "defaultConfig": {},
-        "configSchema": []
-      }
+      "Device Inference Card",
+      "Device Inference Manager"
     ],
     "entrypoint": "yolo-device-inference-components.umd.js",
     "global_name": "YoloDeviceInferenceComponents"
   },
-  "capabilities": {
-    "commands": [
-      {
-        "name": "bind_device",
-        "display_name": "Bind Device",
-        "description": "Bind a device for automatic YOLO inference on image updates",
-        "parameters": [
-          {
-            "name": "device_id",
-            "display_name": "Device ID",
-            "description": "ID of the device to bind",
-            "type": "string",
-            "required": true
-          },
-          {
-            "name": "image_metric",
-            "display_name": "Image Metric",
-            "description": "Name of the image data source metric",
-            "type": "string",
-            "required": false,
-            "default": "image"
-          },
-          {
-            "name": "confidence_threshold",
-            "display_name": "Confidence Threshold",
-            "description": "Minimum confidence for detections (0.0-1.0)",
-            "type": "float",
-            "required": false,
-            "default": 0.25
-          }
-        ]
-      },
-      {
-        "name": "unbind_device",
-        "display_name": "Unbind Device",
-        "description": "Unbind a device from automatic inference",
-        "parameters": [
-          {
-            "name": "device_id",
-            "display_name": "Device ID",
-            "description": "ID of the device to unbind",
-            "type": "string",
-            "required": true
-          }
-        ]
-      },
-      {
-        "name": "get_bindings",
-        "display_name": "Get Bindings",
-        "description": "Get all device bindings and their status",
-        "parameters": []
-      },
-      {
-        "name": "analyze_image",
-        "display_name": "Analyze Image",
-        "description": "Analyze an image and return detected objects",
-        "parameters": [
-          {
-            "name": "image",
-            "display_name": "Image",
-            "description": "Base64 encoded image data",
-            "type": "string",
-            "required": true
-          }
-        ]
-      },
-      {
-        "name": "get_status",
-        "display_name": "Get Status",
-        "description": "Get extension status including model info and statistics",
-        "parameters": []
-      },
-      {
-        "name": "toggle_binding",
-        "display_name": "Toggle Binding",
-        "description": "Toggle a device binding active state",
-        "parameters": [
-          {
-            "name": "device_id",
-            "display_name": "Device ID",
-            "description": "ID of the device",
-            "type": "string",
-            "required": true
-          },
-          {
-            "name": "active",
-            "display_name": "Active",
-            "description": "Whether the binding should be active",
-            "type": "boolean",
-            "required": true
-          }
-        ]
-      }
-    ],
-    "metrics": [
-      {
-        "name": "bound_devices",
-        "display_name": "Bound Devices",
-        "description": "Number of devices bound for inference",
-        "data_type": "integer"
-      },
-      {
-        "name": "total_inferences",
-        "display_name": "Total Inferences",
-        "description": "Total number of inferences performed",
-        "data_type": "integer"
-      },
-      {
-        "name": "total_detections",
-        "display_name": "Total Detections",
-        "description": "Total number of objects detected",
-        "data_type": "integer"
-      },
-      {
-        "name": "total_errors",
-        "display_name": "Total Errors",
-        "description": "Total number of errors encountered",
-        "data_type": "integer"
-      }
-    ]
-  }
+  "builds": {
+    "darwin-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-darwin_aarch64.nep"
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-darwin_x86_64.nep"
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-linux_amd64.nep"
+    },
+    "linux-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-linux_arm64.nep"
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-windows_amd64.nep"
+    }
+  },
+  "package_url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-darwin_aarch64.nep",
+  "commands": [
+    {
+      "name": "bind_device",
+      "display_name": "Bind Device",
+      "description": "Bind a device for automatic YOLO inference on image updates",
+      "parameters": [
+        {
+          "name": "device_id",
+          "display_name": "Device ID",
+          "description": "ID of the device to bind",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "image_metric",
+          "display_name": "Image Metric",
+          "description": "Name of the image data source metric",
+          "type": "string",
+          "required": false,
+          "default": "image"
+        },
+        {
+          "name": "confidence_threshold",
+          "display_name": "Confidence Threshold",
+          "description": "Minimum confidence for detections (0.0-1.0)",
+          "type": "float",
+          "required": false,
+          "default": 0.25
+        }
+      ]
+    },
+    {
+      "name": "unbind_device",
+      "display_name": "Unbind Device",
+      "description": "Unbind a device from automatic inference",
+      "parameters": [
+        {
+          "name": "device_id",
+          "display_name": "Device ID",
+          "description": "ID of the device to unbind",
+          "type": "string",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "get_bindings",
+      "display_name": "Get Bindings",
+      "description": "Get all device bindings and their status",
+      "parameters": []
+    },
+    {
+      "name": "analyze_image",
+      "display_name": "Analyze Image",
+      "description": "Analyze an image and return detected objects",
+      "parameters": [
+        {
+          "name": "image",
+          "display_name": "Image",
+          "description": "Base64 encoded image data",
+          "type": "string",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "get_status",
+      "display_name": "Get Status",
+      "description": "Get extension status including model info and statistics",
+      "parameters": []
+    },
+    {
+      "name": "toggle_binding",
+      "display_name": "Toggle Binding",
+      "description": "Toggle a device binding active state",
+      "parameters": [
+        {
+          "name": "device_id",
+          "display_name": "Device ID",
+          "description": "ID of the device",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "active",
+          "display_name": "Active",
+          "description": "Whether the binding should be active",
+          "type": "boolean",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "metrics": [
+    {
+      "name": "bound_devices",
+      "display_name": "Bound Devices",
+      "description": "Number of devices bound for inference",
+      "data_type": "integer"
+    },
+    {
+      "name": "total_inferences",
+      "display_name": "Total Inferences",
+      "description": "Total number of inferences performed",
+      "data_type": "integer"
+    },
+    {
+      "name": "total_detections",
+      "display_name": "Total Detections",
+      "description": "Total number of objects detected",
+      "data_type": "integer"
+    },
+    {
+      "name": "total_errors",
+      "display_name": "Total Errors",
+      "description": "Total number of errors encountered",
+      "data_type": "integer"
+    }
+  ]
 }
