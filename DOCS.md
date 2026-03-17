@@ -73,7 +73,7 @@ This file provides an overview of all documentation available in this repository
 
 **When to use**:
 - Setting up development environment
-- Understanding deployment流程
+- Understanding deployment workflow
 - Troubleshooting path issues
 
 ---

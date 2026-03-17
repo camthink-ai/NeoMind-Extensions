@@ -1,85 +1,75 @@
 ---
 name: neomind-extension
-description: Guide for creating NeoMind Edge AI Platform extensions using SDK V2 with ABI Version 3. Use when creating extensions, implementing commands, adding frontend components, or building NeoMind extensions. Helps with Rust backend implementation, React frontend components, and extension deployment.
-argument-hint: [extension-name]
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep
+description: |
+  Comprehensive guide for creating NeoMind Edge AI Platform extensions using SDK V2 with ABI Version 3.
+
+  Use this skill when:
+  - Creating new NeoMind extensions from scratch
+  - Implementing extension commands and metrics
+  - Adding React frontend components
+  - Building cross-platform extension packages
+  - Implementing ML/AI extensions with YOLO models
+  - Setting up video streaming extensions
+  - Creating device inference extensions
+
+  This skill teaches:
+  - SDK V2 patterns based on real extension implementations
+  - ExtensionMetadata::new() builder pattern
+  - FFI exports using neomind_export!() macro
+  - ML model lifecycle management (lazy loading, keep loaded across sessions)
+  - Process isolation architecture
+  - Cross-platform building for 6 platforms
+  - React frontend development with Vite
+
+  Based on actual extensions: weather-forecast-v2, image-analyzer-v2, yolo-video-v2, yolo-device-inference
+
+version: 2.0.0
+argument-hint: "[extension-name]"
+allowed-tools: [Read, Write, Edit, Bash, Glob, Grep, mcp__serena_serena__find_symbol, mcp__serena_serena__get_symbols_overview]
 ---
 
-# NeoMind Extension Development Skill
+# NeoMind Extension Development Guide
 
-Guide for creating extensions for the NeoMind Edge AI Platform using the Extension SDK V2.
+Learn to create production-ready extensions for the NeoMind Edge AI Platform using SDK V2 with ABI Version 3.
 
-## Quick Commands
+## Quick Start
 
-**Create new extension:**
+**Create a new extension:**
 ```bash
-# Copy from template
-cp -r extensions/weather-forecast-v2 extensions/$ARGUMENTS
-cd extensions/$ARGUMENTS
-sed -i '' "s/weather-forecast-v2/$ARGUMENTS/g" Cargo.toml
+cd NeoMind-Extension
+cp -r extensions/weather-forecast-v2 extensions/my-extension-v2
+cd extensions/my-extension-v2
 ```
 
-**Build extension:**
+**Build and test:**
 ```bash
-cargo build --release -p neomind-$ARGUMENTS
-```
-
-**Install extension:**
-```bash
+cargo build --release
 mkdir -p ~/.neomind/extensions
-cp target/release/libneomind_extension_$ARGUMENTS.dylib ~/.neomind/extensions/
+cp target/release/libneomind_extension_my_extension_v2.dylib ~/.neomind/extensions/
 ```
 
 ---
 
-## Extension Structure
+## Essential Extension Structure
 
 ```
 extensions/your-extension-v2/
-├── Cargo.toml              # Rust project configuration
+├── Cargo.toml              # Project configuration
 ├── src/
 │   └── lib.rs              # Extension implementation
-├── frontend/               # React components (optional)
-│   ├── src/
-│   │   └── index.tsx       # Component implementation
-│   ├── package.json        # npm dependencies
-│   ├── vite.config.ts      # Vite build config
-│   └── frontend.json       # Component manifest
-├── metadata.json           # Extension metadata
-└── README.md               # Documentation
+├── frontend/               # Optional React components
+│   ├── src/index.tsx
+│   ├── package.json
+│   ├── vite.config.ts
+│   └── frontend.json
+└── README.md
 ```
 
 ---
 
-## Step-by-Step Workflow
+## Step 1: Configure Cargo.toml
 
-### 1. Create Extension Project
-
-**Choose the right template:**
-- Simple data fetching: `weather-forecast-v2`
-- Image processing: `image-analyzer-v2`
-- Video processing: `yolo-video-v2`
-- Device inference: `yolo-device-inference`
-
-**Steps:**
-1. Copy template: `cp -r extensions/weather-forecast-v2 extensions/your-extension-v2`
-2. Rename directory to match your extension ID
-3. Update all references in `Cargo.toml`, `src/lib.rs`, and `frontend/`
-
-**Extension ID Convention:**
-```
-{category}-{feature}-v{major}
-
-Examples:
-- weather-forecast-v2 (weather data)
-- image-analyzer-v2 (image AI)
-- yolo-video-v2 (video AI)
-- yolo-device-inference (device AI)
-```
-
-### 2. Configure Cargo.toml
-
-**Required configuration:**
+**Required setup:**
 
 ```toml
 [package]
@@ -92,12 +82,13 @@ name = "neomind_extension_your_extension_v2"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-neomind-extension-sdk = { path = "../../../NeoMind/crates/neomind-extension-sdk" }
+neomind-extension-sdk = { path = "../../path/to/NeoMind/crates/neomind-extension-sdk" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt", "sync"] }
 semver = "1"
+parking_lot = "0.12"  # For efficient locks
 
 [profile.release]
 panic = "unwind"  # CRITICAL: Required for safety!
@@ -105,17 +96,31 @@ opt-level = 3
 lto = "thin"
 ```
 
-### 3. Implement Extension (src/lib.rs)
+**CRITICAL SAFETY REQUIREMENT:**
+- `panic = "unwind"` is **mandatory** - using `panic = "abort"` will crash the entire NeoMind server on any panic
 
-**Minimal template:**
+---
+
+## Step 2: Basic Extension Template
+
+**File: `src/lib.rs`**
 
 ```rust
 use async_trait::async_trait;
-use neomind_extension_sdk::prelude::*;
+use neomind_extension_sdk::{
+    Extension, ExtensionMetadata, ExtensionError, ExtensionMetricValue,
+    MetricDescriptor, ExtensionCommand, MetricDataType, ParameterDefinition,
+    ParamMetricValue, Result,
+};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::sync::atomic::{AtomicI64, Ordering};
+use semver::Version;
 
-// Extension struct
+// ============================================================================
+// Extension Struct
+// ============================================================================
+
 pub struct YourExtension {
     counter: AtomicI64,
 }
@@ -128,73 +133,96 @@ impl YourExtension {
     }
 }
 
-// Implement Extension trait
+impl Default for YourExtension {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
+// Extension Trait Implementation
+// ============================================================================
+
 #[async_trait]
 impl Extension for YourExtension {
     fn metadata(&self) -> &ExtensionMetadata {
         static META: std::sync::OnceLock<ExtensionMetadata> = std::sync::OnceLock::new();
         META.get_or_init(|| {
-            ExtensionMetadata {
-                id: "your-extension-v2".to_string(),
-                name: "Your Extension".to_string(),
-                version: Version::parse("2.0.0").unwrap(),
-                description: Some("Your extension description".to_string()),
-                author: Some("Your Name".to_string()),
-                homepage: None,
-                license: Some("MIT".to_string()),
-                file_path: None,
-                config_parameters: None,
-            }
+            ExtensionMetadata::new(
+                "your-extension-v2",
+                "Your Extension",
+                Version::parse("2.0.0").unwrap()
+            )
+            .with_description("Description of what your extension does")
+            .with_author("Your Name")
         })
     }
 
-    fn metrics(&self) -> &[MetricDescriptor] {
-        static METRICS: std::sync::OnceLock<Vec<MetricDescriptor>> = std::sync::OnceLock::new();
-        METRICS.get_or_init(|| {
-            vec![
-                MetricDescriptor {
-                    name: "counter".to_string(),
-                    display_name: "Counter".to_string(),
-                    data_type: MetricDataType::Integer,
-                    unit: String::new(),
-                    min: None,
-                    max: None,
-                    required: false,
-                },
-            ]
-        })
+    fn metrics(&self) -> Vec<MetricDescriptor> {
+        vec![
+            MetricDescriptor {
+                name: "counter".to_string(),
+                display_name: "Counter".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "count".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+        ]
     }
 
-    fn commands(&self) -> &[ExtensionCommand] {
-        static COMMANDS: std::sync::OnceLock<Vec<ExtensionCommand>> = std::sync::OnceLock::new();
-        COMMANDS.get_or_init(|| {
-            vec![
-                ExtensionCommand {
-                    name: "your_command".to_string(),
-                    display_name: "Your Command".to_string(),
-                    payload_template: String::new(),
-                    parameters: vec![],
-                    fixed_values: std::collections::HashMap::new(),
-                    samples: vec![json!({})],
-                    llm_hints: "Execute your command".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-            ]
-        })
+    fn commands(&self) -> Vec<ExtensionCommand> {
+        vec![
+            ExtensionCommand {
+                name: "your_command".to_string(),
+                display_name: "Your Command".to_string(),
+                description: "What this command does".to_string(),
+                payload_template: String::new(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "param1".to_string(),
+                        display_name: "Parameter 1".to_string(),
+                        description: "Description of parameter".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: vec![],
+                    },
+                ],
+                fixed_values: Default::default(),
+                samples: vec![json!({"param1": "example"})],
+                parameter_groups: vec![],
+            },
+        ]
     }
 
     async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
         match command {
             "your_command" => {
-                // Implement your command logic
-                Ok(json!({ "result": "success" }))
+                let param1 = args.get("param1")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing param1".to_string()))?;
+
+                // Your logic here
+                self.counter.fetch_add(1, Ordering::SeqCst);
+
+                Ok(json!({
+                    "result": "success",
+                    "param1": param1,
+                    "count": self.counter.load(Ordering::SeqCst),
+                }))
             }
             _ => Err(ExtensionError::CommandNotFound(command.to_string())),
         }
     }
 
     fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
+        // NOTE: This is SYNCHRONOUS - NO .await allowed!
         let now = chrono::Utc::now().timestamp_millis();
+
         Ok(vec![
             ExtensionMetricValue {
                 name: "counter".to_string(),
@@ -203,45 +231,459 @@ impl Extension for YourExtension {
             },
         ])
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
-// Export FFI - Just one line!
+// ============================================================================
+// FFI Export
+// ============================================================================
+
+// This single macro generates all required FFI exports
 neomind_extension_sdk::neomind_export!(YourExtension);
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extension_metadata() {
+        let ext = YourExtension::new();
+        let meta = ext.metadata();
+        assert_eq!(meta.id, "your-extension-v2");
+        assert_eq!(meta.name, "Your Extension");
+    }
+
+    #[test]
+    fn test_extension_commands() {
+        let ext = YourExtension::new();
+        let commands = ext.commands();
+        assert!(!commands.is_empty());
+        assert_eq!(commands[0].name, "your_command");
+    }
+}
 ```
 
-### 4. Build & Test
+**Key Points:**
+- ExtensionMetadata uses builder pattern: `ExtensionMetadata::new().with_description().with_author()`
+- `metrics()` and `commands()` return `Vec<>`, not slices
+- `produce_metrics()` is **synchronous** - no `.await` allowed
+- `execute_command()` is `async` - can use `.await`
+- FFI export is just one line: `neomind_export!(YourExtension)`
 
-```bash
-# Build
-cargo build --release
+---
 
-# Check output
-ls -lh target/release/libneomind_extension_*.dylib
+## Step 3: Extension ID Convention
 
-# Install
-mkdir -p ~/.neomind/extensions
-cp target/release/libneomind_extension_your_extension_v2.dylib ~/.neomind/extensions/
+Follow this pattern:
+```
+{category}-{feature}-v{major}
+
+Examples:
+✅ weather-forecast-v2
+✅ image-analyzer-v2
+✅ yolo-video-v2
+✅ yolo-device-inference
+
+❌ weather_forecast (use hyphens, not underscores)
+❌ weather-forecast (missing version suffix)
 ```
 
-### 5. Create Frontend Component (Optional)
+**Why `-v2` suffix?**
+- Indicates SDK V2 usage (ABI Version 3)
+- Distinguishes from legacy extensions
+- Prevents conflicts with old extensions
 
-**Component structure:**
+---
+
+## Step 4: Implementing Commands
+
+### Simple Command (No Parameters)
+
+```rust
+ExtensionCommand {
+    name: "refresh".to_string(),
+    display_name: "Refresh Data".to_string(),
+    description: "Refresh cached data".to_string(),
+    payload_template: String::new(),
+    parameters: vec![],
+    fixed_values: Default::default(),
+    samples: vec![json!({})],
+    parameter_groups: vec![],
+}
+```
+
+### Command with Required Parameters
+
+```rust
+ExtensionCommand {
+    name: "get_weather".to_string(),
+    display_name: "Get Weather".to_string(),
+    description: "Get current weather for a city".to_string(),
+    payload_template: String::new(),
+    parameters: vec![
+        ParameterDefinition {
+            name: "city".to_string(),
+            display_name: "City".to_string(),
+            description: "City name".to_string(),
+            param_type: MetricDataType::String,
+            required: true,
+            default_value: None,
+            min: None,
+            max: None,
+            options: vec![
+                "Beijing".to_string(),
+                "Shanghai".to_string(),
+                "New York".to_string(),
+            ],
+        },
+    ],
+    fixed_values: Default::default(),
+    samples: vec![json!({"city": "Beijing"})],
+    parameter_groups: vec![],
+}
+```
+
+### Command with Optional Parameters
+
+```rust
+ParameterDefinition {
+    name: "threshold".to_string(),
+    display_name: "Confidence Threshold".to_string(),
+    description: "Minimum confidence for detections".to_string(),
+    param_type: MetricDataType::Float,
+    required: false,
+    default_value: Some(ParamMetricValue::Float(0.5)),
+    min: Some(0.0),
+    max: Some(1.0),
+    options: vec![],
+},
+```
+
+---
+
+## Step 5: Error Handling
+
+**Use the `?` operator for clean error propagation:**
+
+```rust
+async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
+    match command {
+        "process_data" => {
+            let data = self.fetch_data()
+                .await
+                .map_err(|e| ExtensionError::ExecutionFailed(format!("Fetch failed: {}", e)))?;
+
+            let result = self.parse_data(&data)
+                .map_err(|e| ExtensionError::ExecutionFailed(format!("Parse failed: {}", e)))?;
+
+            Ok(json!({"result": result}))
+        }
+        _ => Err(ExtensionError::CommandNotFound(command.to_string())),
+    }
+}
+```
+
+**Error types:**
+- `ExtensionError::CommandNotFound(name)` - Command doesn't exist
+- `ExtensionError::InvalidArguments(msg)` - Bad parameters
+- `ExtensionError::ExecutionFailed(msg)` - Command execution failed
+- `ExtensionError::NotSupported(msg)` - Feature not supported
+
+---
+
+## Step 6: Metrics Production
+
+**Synchronous metrics (cached data):**
+
+```rust
+fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
+    // NO .await allowed - must be synchronous
+    let now = chrono::Utc::now().timestamp_millis();
+
+    Ok(vec![
+        ExtensionMetricValue {
+            name: "temperature_c".to_string(),
+            value: ParamMetricValue::Float(self.last_temp_c.load(Ordering::SeqCst) as f64 / 100.0),
+            timestamp: now,
+        },
+        ExtensionMetricValue {
+            name: "humidity_percent".to_string(),
+            value: ParamMetricValue::Integer(self.last_humidity.load(Ordering::SeqCst)),
+            timestamp: now,
+        },
+    ])
+}
+```
+
+**Pattern: Cache async results in atomic types for synchronous access**
+
+From weather-forecast-v2:
+```rust
+pub struct WeatherExtension {
+    last_temperature_c: AtomicI64,  // Store temperature * 100
+    last_humidity_percent: AtomicI64,
+    last_update_ts: AtomicI64,
+}
+
+// In async command, update the cache
+async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
+    match command {
+        "get_weather" => {
+            let weather = self.fetch_weather_sync(city)?;
+
+            // Update cache
+            self.last_temperature_c.store((weather.temperature_c * 100.0) as i64, Ordering::SeqCst);
+            self.last_humidity_percent.store(weather.humidity_percent as i64, Ordering::SeqCst);
+
+            Ok(json!(weather))
+        }
+        // ...
+    }
+}
+
+// In produce_metrics, read from cache
+fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
+    let now = chrono::Utc::now().timestamp_millis();
+    Ok(vec![
+        ExtensionMetricValue {
+            name: "temperature_c".to_string(),
+            value: ParamMetricValue::Float(self.last_temperature_c.load(Ordering::SeqCst) as f64 / 100.0),
+            timestamp: now,
+        },
+    ])
+}
+```
+
+---
+
+## Step 7: ML Model Extensions (YOLO)
+
+### Model Lifecycle Management
+
+**CRITICAL: Keep models loaded across sessions**
+
+From yolo-video-v2 (fixed version):
+
+```rust
+pub struct YoloVideoExtension {
+    detector: Arc<Mutex<Option<YoloDetector>>>,  // Lazy loading
+    sessions: Arc<Mutex<HashMap<String, SessionData>>>,
+}
+
+impl YoloVideoExtension {
+    pub fn new() -> Self {
+        Self {
+            detector: Arc::new(Mutex::new(None)),  // Don't load yet
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    // Load on first use
+    async fn ensure_detector_loaded(&self) -> Result<()> {
+        let mut detector = self.detector.lock().await;
+        if detector.is_none() {
+            *detector = Some(YoloDetector::new()?);
+            eprintln!("[YOLO] Model loaded successfully");
+        }
+        Ok(())
+    }
+}
+
+// ✅ CORRECT: Keep detector when closing session
+async fn close_session(&self, session_id: &str) -> Result<()> {
+    self.sessions.remove(session_id);
+    // DO NOT remove detector - keep it loaded!
+    eprintln!("[YOLO] Detector remains loaded for reuse");
+    Ok(())
+}
+
+// ❌ WRONG: Don't do this!
+async fn close_session(&self, session_id: &str) -> Result<()> {
+    self.detector.lock().take();  // This removes the model!
+    Ok(())
+}
+```
+
+**Why keep models loaded?**
+- Models are 200MB+ and take time to load
+- Loading once and reusing is much more efficient
+- Extension runner handles cleanup on process termination
+- OS reclaims all resources when extension process exits
+
+### Model Loading Pattern
+
+From image-analyzer-v2:
+
+```rust
+struct YOLODetector {
+    model: Option<Runtime<YOLO>>,
+    load_error: Option<String>,
+}
+
+impl YOLODetector {
+    fn new(conf: f32, iou: f32, version: &str, scale: &str) -> Self {
+        match Self::try_load_model(conf, iou, version, scale) {
+            Ok(model) => {
+                tracing::info!("[YOLO] Model loaded");
+                Self {
+                    model: Some(model),
+                    load_error: None,
+                }
+            }
+            Err(e) => {
+                tracing::error!("[YOLO] Failed to load: {}", e);
+                Self {
+                    model: None,
+                    load_error: Some(e),
+                }
+            }
+        }
+    }
+
+    fn try_load_model(conf: f32, iou: f32, version: &str, scale: &str) -> std::result::Result<Runtime<YOLO>, String> {
+        // Load model from disk
+        let model_path = std::path::PathBuf::from("models").join("yolov8n.onnx");
+
+        let model_data = std::fs::read(&model_path)
+            .map_err(|e| format!("Failed to read model: {}", e))?;
+
+        // Create YOLO model
+        let config = Config::yolo_detect()
+            .with_class_confs(&[conf])
+            .with_iou(iou);
+
+        let model = YOLO::new(config)
+            .map_err(|e| format!("Failed to create YOLO: {:?}", e))?;
+
+        Ok(model)
+    }
+}
+```
+
+---
+
+## Step 8: Video Streaming Extensions
+
+### Stream Capability Implementation
+
+From yolo-video-v2:
+
+```rust
+use neomind_extension_sdk::prelude::{
+    StreamCapability, StreamMode, StreamDirection, StreamDataType,
+    StreamSession, SessionStats, PushOutputMessage,
+};
+
+impl StreamCapability for YoloVideoExtension {
+    fn supported_modes(&self) -> Vec<StreamMode> {
+        vec![
+            StreamMode::Push(StreamDirection::Output),  // Push frames to client
+        ]
+    }
+
+    fn supported_data_types(&self) -> Vec<StreamDataType> {
+        vec![
+            StreamDataType::MJPEG,  // Motion JPEG video
+        ]
+    }
+
+    async fn create_session(&self, session_id: String, config: &serde_json::Value) -> Result<Box<dyn StreamSession>> {
+        // Ensure detector is loaded
+        self.ensure_detector_loaded().await?;
+
+        // Create session
+        let session = VideoSession::new(
+            session_id.clone(),
+            self.detector.clone(),
+            config,
+        )?;
+
+        // Store session
+        self.sessions.lock().insert(session_id.clone(), session.get_stats());
+
+        Ok(Box::new(session))
+    }
+
+    async fn close_session(&self, session_id: &str) -> Result<()> {
+        // Remove session but keep detector!
+        self.sessions.remove(session_id);
+        eprintln!("[YOLO] Session {} closed, detector remains loaded", session_id);
+        Ok(())
+    }
+
+    fn get_session_stats(&self) -> Result<Vec<SessionStats>> {
+        let sessions = self.sessions.lock();
+        Ok(sessions.values().cloned().collect())
+    }
+}
+```
+
+---
+
+## Step 9: Device Integration Extensions
+
+### Event Handling Pattern
+
+From yolo-device-inference:
+
+```rust
+use neomind_extension_sdk::capabilities::device;
+
+#[async_trait]
+impl Extension for YoloDeviceInference {
+    // ... standard methods ...
+
+    fn event_subscriptions(&self) -> Vec<device::EventSubscription> {
+        vec![
+            device::EventSubscription {
+                device_id: None,  // All devices
+                event_type: device::EventType::DataUpdated,
+            },
+        ]
+    }
+
+    async fn handle_event(&self, event: &device::DeviceEvent) -> Result<()> {
+        match &event.event_type {
+            device::EventType::DataUpdated => {
+                // Run inference on device image data
+                if let Some(image_data) = event.data.get("image") {
+                    let detections = self.run_inference(image_data).await?;
+                    self.store_detection_results(event.device_id.clone(), detections).await?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+```
+
+---
+
+## Step 10: Frontend Components (Optional)
+
+### Component Structure
+
+**File: `frontend/src/index.tsx`**
 
 ```tsx
-// frontend/src/index.tsx
-import { forwardRef, useState } from 'react'
+import { forwardRef, useState, useEffect } from 'react'
 
 export interface ExtensionComponentProps {
   title?: string
-  dataSource?: DataSource
+  dataSource?: {
+    type: string
+    extensionId?: string
+    config?: Record<string, any>
+  }
   className?: string
-  config?: Record<string, any>
-}
-
-export interface DataSource {
-  type: string
-  extensionId?: string
-  [key: string]: any
 }
 
 const getApiBase = (): string => {
@@ -264,377 +706,33 @@ async function executeExtensionCommand<T>(
   return response.json()
 }
 
-export const YourCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
-  function YourCard(props, ref) {
-    const { title = 'Your Extension', dataSource, className = '' } = props
-    const extensionId = dataSource?.extensionId || 'your-extension-v2'
-
-    return (
-      <div ref={ref} className={`your-card ${className}`}>
-        <style>{`
-          .your-card {
-            --ext-bg: rgba(255, 255, 255, 0.25);
-            --ext-fg: hsl(240 10% 10%);
-            --ext-border: rgba(255, 255, 255, 0.5);
-            --ext-accent: hsl(221 83% 53%);
-          }
-          .dark .your-card {
-            --ext-bg: rgba(30, 30, 30, 0.4);
-            --ext-fg: hsl(0 0% 95%);
-          }
-        `}</style>
-        <h3>{title}</h3>
-        {/* Your component content */}
-      </div>
-    )
-  }
-)
-
-export default { YourCard }
-```
-
-**Frontend manifest (frontend/frontend.json):**
-
-```json
-{
-  "id": "your-extension-v2",
-  "version": "2.0.0",
-  "entrypoint": "your-extension-v2-components.umd.js",
-  "components": [
-    {
-      "name": "YourCard",
-      "type": "card",
-      "displayName": "Your Extension Card",
-      "description": "Displays data from your extension",
-      "defaultSize": { "width": 300, "height": 200 },
-      "refreshable": true,
-      "refreshInterval": 5000
-    }
-  ],
-  "dependencies": {
-    "react": ">=18.0.0"
-  }
-}
-```
-
----
-
-## Key Concepts
-
-### Process Isolation Architecture
-
-All V2 extensions run in isolated processes by default:
-
-- **Crash Safety**: Extension crashes don't affect main process
-- **Memory Isolation**: Each extension has its own memory space
-- **Resource Limits**: CPU and memory can be limited per extension
-
-### ABI Version 3
-
-New interface providing:
-- Improved panic handling
-- Frontend component support
-- Standardized metric types
-- Better error handling
-
-### Extension ID Convention
-
-```
-{category}-{name}-v{major}
-
-Examples:
-- weather-forecast-v2
-- image-analyzer-v2
-- yolo-video-v2
-```
-
----
-
-## Common Patterns
-
-### Async Command Execution
-
-```rust
-async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
-    match command {
-        "fetch_data" => {
-            // Can use .await here
-            let data = self.fetch_from_api().await?;
-            Ok(json!({ "data": data }))
-        }
-        _ => Err(ExtensionError::CommandNotFound(command.to_string())),
-    }
-}
-```
-
-### Synchronous Metrics Production
-
-```rust
-fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
-    // NO .await allowed here - must be synchronous
-    let cached_data = self.cached_data.lock().unwrap().clone();
-    let now = chrono::Utc::now().timestamp_millis();
-
-    Ok(vec![
-        ExtensionMetricValue {
-            name: "metric_name".to_string(),
-            value: ParamMetricValue::Integer(cached_data),
-            timestamp: now,
-        },
-    ])
-}
-```
-
-### Error Handling Best Practices
-
-```rust
-// ✅ Good: Use ? operator
-fn process_data(&self) -> Result<Data> {
-    let value = self.get_value()?;
-    Ok(Data::new(value))
-}
-
-// ✅ Good: Use unwrap_or for defaults
-let count = args.get("count")
-    .and_then(|v| v.as_i64())
-    .unwrap_or(1);
-
-// ❌ Avoid: Direct unwrap may cause process exit
-let value = some_option.unwrap();  // Not recommended
-```
-
----
-
-## Safety Requirements
-
-### CRITICAL: Panic Configuration
-
-**Always set `panic = "unwind"` in Cargo.toml:**
-
-```toml
-[profile.release]
-panic = "unwind"  # REQUIRED!
-opt-level = 3
-lto = "thin"
-```
-
-Using `panic = "abort"` will cause process crashes to affect the extension runner.
-
-### Async Runtime Rules
-
-- `produce_metrics()`: **Synchronous** - NO `.await`
-- `execute_command()`: **Async** - CAN use `.await`
-
----
-
-## AI/ML Extension Special Considerations
-
-### Model Lifecycle Management
-
-**CRITICAL for YOLO and other ML models:**
-
-When creating extensions that load heavy ML models:
-
-```rust
-pub struct YourMLExtension {
-    detector: Arc<Mutex<Option<Detector>>>,  // Use Arc<Mutex<Option<T>> for lazy loading
-}
-
-impl YourMLExtension {
-    pub fn new() -> Self {
-        Self {
-            detector: Arc::new(Mutex::new(None)),  // Don't load model in new()
-        }
-    }
-    
-    // Load model on first use
-    async fn ensure_detector_loaded(&self) -> Result<()> {
-        let mut detector_guard = self.detector.lock().await;
-        if detector_guard.is_none() {
-            // Load model here
-            *detector_guard = Some(Detector::new()?);
-        }
-        Ok(())
-    }
-}
-
-// ⚠️ IMPORTANT: Do NOT call detector.shutdown() in close_session
-// The model should remain loaded for the extension's lifetime
-```
-
-**Why this matters:**
-- Models can be 200MB+ and take time to load
-- Loading once and reusing is more efficient
-- Extension runner handles cleanup on process termination
-- OS reclaims all resources when extension process exits
-
-### Session Management
-
-For video/streaming extensions:
-
-```rust
-// ✅ Good: Keep detector across sessions
-async fn close_session(&self, session_id: &str) -> Result<()> {
-    // Stop the session processing
-    self.sessions.remove(session_id);
-    
-    // DO NOT remove detector - keep it loaded!
-    eprintln!("[Extension] Detector remains loaded for reuse");
-    Ok(())
-}
-
-// ❌ Bad: Removing detector causes all future inferences to fail
-async fn close_session(&self, session_id: &str) -> Result<()> {
-    self.detector.lock().take();  // Don't do this!
-    Ok(())
-}
-```
-
----
-
-
-
-## Reference Files
-
-For detailed information, see:
-- [Extension Architecture](reference/architecture.md) - Process isolation details
-- [SDK API Reference](reference/sdk-api.md) - Complete SDK documentation
-- [Frontend Guide](reference/frontend.md) - React component development
-- [Examples](examples/) - Working extension examples
-
----
-
-## Building & Packaging
-
-### Local Build
-
-```bash
-# Build all extensions
-./build.sh --yes
-
-# Build without installing
-./build.sh --skip-install
-
-# Debug build
-./build.sh --debug
-
-# Build single extension
-cargo build --release -p your-extension-v2
-```
-
-### Creating .nep Package
-
-```bash
-# Package all extensions
-./build.sh --yes --skip-install
-
-# Packages are created in dist/
-ls -lh dist/*.nep
-```
-
-**Package structure:**
-```
-extension-name-version-platform.nep
-├── manifest.json           # Metadata
-├── binaries/
-│   └── darwin_aarch64/
-│       └── extension.dylib
-└── frontend/               # Optional
-    └── *.umd.cjs
-```
-
-### Cross-Platform Building
-
-**Supported platforms:**
-- macOS ARM64 (aarch64-apple-darwin)
-- macOS x86_64 (x86_64-apple-darwin) - Cross-compile on ARM
-- Linux AMD64 (x86_64-unknown-linux-gnu)
-- Linux ARM64 (aarch64-unknown-linux-gnu)
-- Windows x86_64 (x86_64-pc-windows-msvc)
-- Windows x86 (i686-pc-windows-msvc)
-
-**Using GitHub Actions:**
-
-```yaml
-# .github/workflows/build-extension.yml
-strategy:
-  matrix:
-    include:
-      - os: macos-latest
-        platform: darwin_aarch64
-        target: aarch64-apple-darwin
-      - os: macos-latest
-        platform: darwin_x86_64
-        target: x86_64-apple-darwin
-      - os: ubuntu-latest
-        platform: linux_amd64
-        target: x86_64-unknown-linux-gnu
-      - os: ubuntu-22.04-arm
-        platform: linux_arm64
-        target: aarch64-unknown-linux-gnu
-      - os: windows-latest
-        platform: windows_amd64
-        target: x86_64-pc-windows-msvc
-      - os: windows-latest
-        platform: windows_x86
-        target: i686-pc-windows-msvc
-```
-
-**Platform Identifiers:**
-- `darwin_aarch64` - macOS ARM64 (Apple Silicon)
-- `darwin_x86_64` - macOS Intel
-- `linux_amd64` - Linux x86_64
-- `linux_arm64` - Linux ARM64
-- `windows_amd64` - Windows 64-bit
-- `windows_x86` - Windows 32-bit
-
----
-
-## Frontend Development Guide
-
-### Component Template
-
-**File: frontend/src/index.tsx**
-
-```tsx
-import { forwardRef, useState, useEffect } from 'react'
-import { executeExtensionCommand } from './api'
-
-export interface ExtensionComponentProps {
-  title?: string
-  dataSource?: {
-    type: string
-    extensionId?: string
-    config?: Record<string, any>
-  }
-  className?: string
-}
-
 export const YourExtensionCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
   function YourExtensionCard(props, ref) {
     const { title = 'Your Extension', dataSource, className = '' } = props
     const [data, setData] = useState<any>(null)
     const [loading, setLoading] = useState(false)
+    const [error, setError] = useState<string | null>(null)
     const extensionId = dataSource?.extensionId || 'your-extension-v2'
 
-    // Fetch data on mount
-    useEffect(() => {
-      const fetchData = async () => {
-        setLoading(true)
-        const result = await executeExtensionCommand(
-          extensionId,
-          'your_command',
-          {}
-        )
-        if (result.success) {
-          setData(result.data)
-        }
-        setLoading(false)
+    const fetchData = async () => {
+      setLoading(true)
+      setError(null)
+      const result = await executeExtensionCommand(
+        extensionId,
+        'your_command',
+        { param1: 'value' }
+      )
+      if (result.success) {
+        setData(result.data)
+      } else {
+        setError(result.error || 'Unknown error')
       }
+      setLoading(false)
+    }
+
+    useEffect(() => {
       fetchData()
     }, [extensionId])
-
-    if (loading) return <div>Loading...</div>
 
     return (
       <div ref={ref} className={`extension-card ${className}`}>
@@ -642,58 +740,35 @@ export const YourExtensionCard = forwardRef<HTMLDivElement, ExtensionComponentPr
           .extension-card {
             --ext-bg: rgba(255, 255, 255, 0.25);
             --ext-fg: hsl(240 10% 10%);
+            --ext-muted: hsl(240 5% 40%);
             --ext-border: rgba(255, 255, 255, 0.5);
             --ext-accent: hsl(221 83% 53%);
             padding: 16px;
             border-radius: 8px;
+            background: var(--ext-bg);
+            color: var(--ext-fg);
           }
           .dark .extension-card {
             --ext-bg: rgba(30, 30, 30, 0.4);
             --ext-fg: hsl(0 0% 95%);
+            --ext-muted: hsl(0 0% 65%);
           }
         `}</style>
         <h3>{title}</h3>
+        {loading && <div>Loading...</div>}
+        {error && <div>Error: {error}</div>}
         {data && <div>{JSON.stringify(data, null, 2)}</div>}
       </div>
     )
   }
 )
-```
 
-**File: frontend/src/api.ts**
-
-```typescript
-const getApiBase = (): string => {
-  if (typeof window !== 'undefined' && (window as any).__TAURI__) {
-    return 'http://localhost:9375/api'
-  }
-  return '/api'
-}
-
-export async function executeExtensionCommand<T>(
-  extensionId: string,
-  command: string,
-  args: Record<string, any>
-): Promise<{ success: boolean; data?: T; error?: string }> {
-  const response = await fetch(`${getApiBase()}/extensions/${extensionId}/command`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ command, args })
-  })
-  return response.json()
-}
-
-export async function getExtensionMetrics(
-  extensionId: string
-): Promise<{ success: boolean; data?: any[]; error?: string }> {
-  const response = await fetch(`${getApiBase()}/extensions/${extensionId}/metrics`)
-  return response.json()
-}
+export default { YourExtensionCard }
 ```
 
 ### Frontend Manifest
 
-**File: frontend/frontend.json**
+**File: `frontend/frontend.json`**
 
 ```json
 {
@@ -704,8 +779,8 @@ export async function getExtensionMetrics(
     {
       "name": "YourExtensionCard",
       "type": "card",
-      "displayName": "Your Extension",
-      "description": "Display data from your extension",
+      "displayName": "Your Extension Card",
+      "description": "Displays data from your extension",
       "defaultSize": { "width": 300, "height": 200 },
       "minSize": { "width": 200, "height": 150 },
       "maxSize": { "width": 800, "height": 600 },
@@ -729,7 +804,7 @@ export async function getExtensionMetrics(
 
 ### Vite Build Config
 
-**File: frontend/vite.config.ts**
+**File: `frontend/vite.config.ts`**
 
 ```typescript
 import { defineConfig } from 'vite'
@@ -759,47 +834,354 @@ export default defineConfig({
 
 ---
 
+## Building & Packaging
+
+### Local Build
+
+```bash
+# Build all extensions
+./build.sh --yes
+
+# Build single extension
+cargo build --release -p your-extension-v2
+
+# Build without installing
+./build.sh --skip-install
+
+# Debug build
+./build.sh --debug
+```
+
+### Creating .nep Package
+
+```bash
+# Package all extensions
+./build.sh --yes --skip-install
+
+# Packages created in dist/
+ls -lh dist/*.nep
+```
+
+**Package structure:**
+```
+your-extension-v2-2.0.0.nep  (ZIP archive)
+├── manifest.json           # Extension metadata
+├── binaries/
+│   ├── darwin_aarch64/    # macOS ARM64
+│   │   └── libneomind_extension_your_extension_v2.dylib
+│   ├── darwin_x86_64/     # macOS Intel
+│   ├── linux_amd64/       # Linux x86_64
+│   ├── linux_arm64/       # Linux ARM64
+│   ├── windows_amd64/     # Windows 64-bit
+│   └── windows_x86/       # Windows 32-bit
+└── frontend/              # Optional
+    └── your-extension-v2-components.umd.cjs
+```
+
+### Cross-Platform Building
+
+**Supported platforms:**
+- `darwin_aarch64` - macOS ARM64 (Apple Silicon)
+- `darwin_x86_64` - macOS Intel
+- `linux_amd64` - Linux x86_64
+- `linux_arm64` - Linux ARM64
+- `windows_amd64` - Windows 64-bit
+- `windows_x86` - Windows 32-bit
+
+**Using GitHub Actions:**
+
+The workflow `.github/workflows/build-nep-packages.yml` builds all 6 platforms automatically.
+
+```yaml
+strategy:
+  matrix:
+    include:
+      - os: macos-latest
+        platform: darwin_aarch64
+        target: aarch64-apple-darwin
+      - os: macos-latest
+        platform: darwin_x86_64
+        target: x86_64-apple-darwin
+      - os: ubuntu-latest
+        platform: linux_amd64
+        target: x86_64-unknown-linux-gnu
+      - os: ubuntu-22.04-arm
+        platform: linux_arm64
+        target: aarch64-unknown-linux-gnu
+      - os: windows-latest
+        platform: windows_amd64
+        target: x86_64-pc-windows-msvc
+      - os: windows-latest
+        platform: windows_x86
+        target: i686-pc-windows-msvc
+```
+
+---
+
+## Key Concepts
+
+### ABI Version 3
+
+All V2 extensions use ABI version 3:
+- **Improved safety**: Better panic handling with `panic = "unwind"`
+- **Frontend support**: Built-in React component integration
+- **Standardized metrics**: Unified metric types across extensions
+- **Better error handling**: Structured error responses
+
+### Process Isolation Architecture
+
+All V2 extensions run in isolated processes:
+- **Crash Safety**: Extension crashes don't affect the main process
+- **Memory Isolation**: Each extension has its own memory space
+- **Resource Limits**: CPU and memory can be limited per extension
+- **Automatic Restart**: Extensions can be restarted on failure
+
+### Sync vs Async Methods
+
+**Synchronous (NO `.await`):**
+- `metadata()` - Returns extension metadata
+- `metrics()` - Returns metric descriptors
+- `produce_metrics()` - Produces metric values
+- `commands()` - Returns command descriptors
+
+**Asynchronous (CAN use `.await`):**
+- `execute_command()` - Executes extension commands
+- `configure()` - Applies configuration changes
+- Event handlers - Process device events
+
+**Pattern:** Cache async results in atomic types for synchronous `produce_metrics()` access.
+
+---
+
+## Common Patterns
+
+### Command with File Processing
+
+```rust
+async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
+    match command {
+        "process_file" => {
+            let file_data = args.get("data")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| ExtensionError::InvalidArguments("Missing data".to_string()))?;
+
+            let decoded = base64::engine::general_purpose::STANDARD.decode(file_data)
+                .map_err(|e| ExtensionError::InvalidArguments(format!("Invalid base64: {}", e)))?;
+
+            let result = self.process_bytes(&decoded)?;
+            Ok(json!({"result": result}))
+        }
+        _ => Err(ExtensionError::CommandNotFound(command.to_string())),
+    }
+}
+```
+
+### Metrics with Conditional Values
+
+```rust
+fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut metrics = Vec::new();
+
+    // Always include count
+    metrics.push(ExtensionMetricValue {
+        name: "request_count".to_string(),
+        value: ParamMetricValue::Integer(self.count.load(Ordering::SeqCst)),
+        timestamp: now,
+    });
+
+    // Include data only if available
+    if self.has_data.load(Ordering::SeqCst) {
+        metrics.push(ExtensionMetricValue {
+            name: "temperature".to_string(),
+            value: ParamMetricValue::Float(self.last_temp.load(Ordering::SeqCst) as f64 / 100.0),
+            timestamp: now,
+        });
+    }
+
+    Ok(metrics)
+}
+```
+
+---
+
+## Safety Requirements
+
+### CRITICAL: Panic Configuration
+
+**Always set `panic = "unwind"` in Cargo.toml:**
+
+```toml
+[profile.release]
+panic = "unwind"  # REQUIRED!
+opt-level = 3
+lto = "thin"
+```
+
+Using `panic = "abort"` will cause extension panics to crash the entire NeoMind server.
+
+### Avoid Blocking Operations
+
+**Don't block in async functions:**
+```rust
+// ❌ Bad: Blocks executor
+async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
+    std::thread::sleep(std::time::Duration::from_secs(5));  // Don't do this!
+    Ok(json!({}))
+}
+
+// ✅ Good: Uses async sleep
+async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
+    tokio::time::sleep(Duration::from_secs(5)).await;  // OK
+    Ok(json!({}))
+}
+```
+
+### Thread Safety
+
+Use `Arc` for shared state across async tasks:
+
+```rust
+pub struct MyExtension {
+    shared_state: Arc<Mutex<SharedState>>,
+}
+
+async fn process_concurrent(&self) -> Result<()> {
+    let state = self.shared_state.clone();
+
+    // Spawn multiple tasks sharing state
+    let handles: Vec<_> = (0..10)
+        .map(|_| {
+            let state = state.clone();
+            tokio::spawn(async move {
+                let mut data = state.lock().await;
+                // Process data
+            })
+        })
+        .collect();
+
+    // Wait for all tasks
+    for handle in handles {
+        handle.await?;
+    }
+
+    Ok(())
+}
+```
+
+---
+
 ## Troubleshooting
 
-**Extension not loading:**
-1. Check ABI version returns 3
-2. Verify binary format matches platform
-3. Check extension runner logs
+### Extension Not Loading
 
-**Process crashes:**
-1. Check for `unwrap()` or `expect()` calls
+1. Check ABI version returns 3:
+   ```rust
+   #[no_mangle]
+   pub extern "C" fn neomind_extension_abi_version() -> u32 {
+       3
+   }
+   ```
+
+2. Verify binary format matches platform
+3. Check extension runner logs: `neomind logs --extension your-extension`
+
+### Process Crashes
+
+1. Check for `unwrap()` or `expect()` calls that could panic
 2. Review error handling in commands
 3. Monitor memory usage
+4. Ensure `panic = "unwind"` is set
 
-**Frontend not displaying:**
-1. Verify `frontend.json` exists
-2. Check component name matches
+### Frontend Not Displaying
+
+1. Verify `frontend.json` exists and is valid
+2. Check component name matches manifest
 3. Verify UMD build output exists
+4. Check browser console for errors
+
+### Model Loading Issues
+
+1. Check model files exist in `models/` directory
+2. Verify model path is correct
+3. Check NEOMIND_EXTENSION_DIR environment variable
+4. Review error logs for model loading failures
 
 ---
 
-## Platform Support
+## Real Extension Examples
 
-| Platform | Architecture | Binary Extension |
-|----------|--------------|------------------|
-| macOS    | ARM64        | `*.dylib`        |
-| macOS    | x86_64       | `*.dylib`        |
-| Linux    | x86_64       | `*.so`           |
-| Linux    | ARM64        | `*.so`           |
-| Windows  | x86_64, x86 (32-bit) | `*.dll`          |
-| Cross-platform | Any    | `*.wasm`         |
+### Weather Extension (Simple API Client)
+- **Path:** `extensions/weather-forecast-v2/src/lib.rs`
+- **Features:** Sync HTTP client, metric caching, configuration
+- **Key Patterns:**
+  - `ExtensionMetadata::new().with_config_parameters()`
+  - Atomic metrics for cached data
+  - Sync HTTP with ureq
 
-**Latest Release (v2.0.0)**: 6 platforms, 27 extension packages
+### Image Analyzer (ML Inference)
+- **Path:** `extensions/image-analyzer-v2/src/lib.rs`
+- **Features:** YOLOv8 object detection, base64 image handling
+- **Key Patterns:**
+  - Lazy model loading with `Arc<Mutex<Option<Detector>>>`
+  - Fallback analysis when model unavailable
+  - Model status diagnostics
+
+### YOLO Video (Streaming)
+- **Path:** `extensions/yolo-video-v2/src/lib.rs`
+- **Features:** Real-time video streaming, session management
+- **Key Patterns:**
+  - `StreamCapability` trait implementation
+  - Keep model loaded across sessions (CRITICAL)
+  - MJPEG push streaming
+
+### YOLO Device Inference (Event-Driven)
+- **Path:** `extensions/yolo-device-inference/src/lib.rs`
+- **Features:** Device event handling, virtual metrics
+- **Key Patterns:**
+  - `event_subscriptions()` and `handle_event()`
+  - Device binding/unbinding
+  - Automatic inference on data updates
 
 ---
 
-## Quick Reference: File Locations
+## Quick Reference
 
-- **NeoMind repo**: `~/NeoMindProject/NeoMind`
-- **Extension SDK**: `~/NeoMindProject/NeoMind/crates/neomind-extension-sdk`
-- **Extensions repo**: `~/NeoMindProject/NeoMind-Extension`
-- **Extension templates**: `~/NeoMindProject/NeoMind-Extension/extensions/`
+### File Locations
+
+- **Extensions**: `NeoMind-Extension/extensions/`
+- **SDK**: `NeoMind/crates/neomind-extension-sdk`
 - **Install location**: `~/.neomind/extensions/`
+
+### Essential Commands
+
+```bash
+# Build extension
+cargo build --release -p your-extension-v2
+
+# Install extension
+cp target/release/libneomind_extension_your_extension_v2.dylib ~/.neomind/extensions/
+
+# View logs
+neomind logs --extension your-extension-v2
+
+# List extensions
+neomind extension list
+
+# Create package
+bash scripts/package.sh -d extensions/your-extension-v2
+```
+
+### Platform Matrix
+
+| Platform | Architecture | Binary | Target |
+|----------|--------------|--------|--------|
+| macOS | ARM64 | `*.dylib` | `aarch64-apple-darwin` |
+| macOS | x86_64 | `*.dylib` | `x86_64-apple-darwin` |
+| Linux | x86_64 | `*.so` | `x86_64-unknown-linux-gnu` |
+| Linux | ARM64 | `*.so` | `aarch64-unknown-linux-gnu` |
+| Windows | x86_64 | `*.dll` | `x86_64-pc-windows-msvc` |
+| Windows | x86 | `*.dll` | `i686-pc-windows-msvc` |
 
 ---
 
