@@ -20,6 +20,10 @@ NeoMind 边缘 AI 平台的官方扩展仓库。
 
 ## 可用扩展
 
+> **最新版本 (v2.0.0)**：6 个平台，27 个扩展包  
+> **ABI 版本**：3（进程隔离架构）  
+> **发布地址**：[GitHub Release](https://github.com/camthink-ai/NeoMind-Extensions/releases/tag/v2.0.0)
+
 ### 天气预报 V2
 
 **ID**: `weather-forecast-v2`
@@ -92,6 +96,34 @@ cargo build --release -p neomind-yolo-video-v2
 
 # 安装
 cp target/release/libneomind_extension_yolo_video_v2.dylib ~/.neomind/extensions/
+```
+
+---
+
+### YOLO 设备推理
+
+**ID**: `yolo-device-inference`
+
+基于 YOLOv8 的高性能目标检测，用于设备摄像头推理。
+
+| 能力 | 类型 | 描述 |
+|-----|------|------|
+| `start_inference` | 命令 | 启动摄像头推理 |
+| `stop_inference` | 命令 | 停止推理 |
+| `get_inference_stats` | 命令 | 获取推理统计 |
+| active_sessions | 指标 | 活跃会话数 |
+| total_detections | 指标 | 检测到的物体总数 |
+
+**前端组件**：YoloDeviceInference - 实时摄像头显示，带检测框
+
+**安全提示**：此扩展使用 AI 推理并启用了进程隔离。YOLOv8 模型加载一次后在会话间重用。
+
+```bash
+# 构建
+cargo build --release -p neomind-yolo-device-inference
+
+# 安装
+cp target/release/libneomind_extension_yolo_device_inference.dylib ~/.neomind/extensions/
 ```
 
 ---
@@ -367,6 +399,7 @@ NeoMind-Extension/
 │   ├── weather-forecast-v2/    # 天气扩展
 │   ├── image-analyzer-v2/      # 图像分析扩展
 │   ├── yolo-video-v2/          # 视频处理扩展
+│   ├── yolo-device-inference/  # 设备推理扩展
 │   └── index.json              # 市场索引
 ├── skill/                      # Claude Code 技能（AI 辅助开发）
 │   ├── install.sh              # 技能安装脚本
@@ -393,7 +426,10 @@ NeoMind-Extension/
 | macOS | x86_64 (Intel) | `*.dylib` |
 | Linux | x86_64 | `*.so` |
 | Linux | ARM64 | `*.so` |
-| Windows | x86_64 | `*.dll` |
+| Windows | x86_64 (64-bit) | `*.dll` |
+| Windows | x86 (32-bit) | `*.dll` |
+
+**总计：6 个平台，27 个扩展包 (v2.0.0)**
 
 ---
 

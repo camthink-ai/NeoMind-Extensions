@@ -55,9 +55,27 @@ extensions/your-extension-v2/
 
 ### 1. Create Extension Project
 
-1. Copy from an existing extension template (e.g., `weather-forecast-v2`)
-2. Rename the directory to match your extension name
-3. Update `Cargo.toml` with your extension details
+**Choose the right template:**
+- Simple data fetching: `weather-forecast-v2`
+- Image processing: `image-analyzer-v2`
+- Video processing: `yolo-video-v2`
+- Device inference: `yolo-device-inference`
+
+**Steps:**
+1. Copy template: `cp -r extensions/weather-forecast-v2 extensions/your-extension-v2`
+2. Rename directory to match your extension ID
+3. Update all references in `Cargo.toml`, `src/lib.rs`, and `frontend/`
+
+**Extension ID Convention:**
+```
+{category}-{feature}-v{major}
+
+Examples:
+- weather-forecast-v2 (weather data)
+- image-analyzer-v2 (image AI)
+- yolo-video-v2 (video AI)
+- yolo-device-inference (device AI)
+```
 
 ### 2. Configure Cargo.toml
 
@@ -409,6 +427,73 @@ Using `panic = "abort"` will cause process crashes to affect the extension runne
 
 ---
 
+## AI/ML Extension Special Considerations
+
+### Model Lifecycle Management
+
+**CRITICAL for YOLO and other ML models:**
+
+When creating extensions that load heavy ML models:
+
+```rust
+pub struct YourMLExtension {
+    detector: Arc<Mutex<Option<Detector>>>,  // Use Arc<Mutex<Option<T>> for lazy loading
+}
+
+impl YourMLExtension {
+    pub fn new() -> Self {
+        Self {
+            detector: Arc::new(Mutex::new(None)),  // Don't load model in new()
+        }
+    }
+    
+    // Load model on first use
+    async fn ensure_detector_loaded(&self) -> Result<()> {
+        let mut detector_guard = self.detector.lock().await;
+        if detector_guard.is_none() {
+            // Load model here
+            *detector_guard = Some(Detector::new()?);
+        }
+        Ok(())
+    }
+}
+
+// ⚠️ IMPORTANT: Do NOT call detector.shutdown() in close_session
+// The model should remain loaded for the extension's lifetime
+```
+
+**Why this matters:**
+- Models can be 200MB+ and take time to load
+- Loading once and reusing is more efficient
+- Extension runner handles cleanup on process termination
+- OS reclaims all resources when extension process exits
+
+### Session Management
+
+For video/streaming extensions:
+
+```rust
+// ✅ Good: Keep detector across sessions
+async fn close_session(&self, session_id: &str) -> Result<()> {
+    // Stop the session processing
+    self.sessions.remove(session_id);
+    
+    // DO NOT remove detector - keep it loaded!
+    eprintln!("[Extension] Detector remains loaded for reuse");
+    Ok(())
+}
+
+// ❌ Bad: Removing detector causes all future inferences to fail
+async fn close_session(&self, session_id: &str) -> Result<()> {
+    self.detector.lock().take();  // Don't do this!
+    Ok(())
+}
+```
+
+---
+
+
+
 ## Reference Files
 
 For detailed information, see:
@@ -416,6 +501,261 @@ For detailed information, see:
 - [SDK API Reference](reference/sdk-api.md) - Complete SDK documentation
 - [Frontend Guide](reference/frontend.md) - React component development
 - [Examples](examples/) - Working extension examples
+
+---
+
+## Building & Packaging
+
+### Local Build
+
+```bash
+# Build all extensions
+./build.sh --yes
+
+# Build without installing
+./build.sh --skip-install
+
+# Debug build
+./build.sh --debug
+
+# Build single extension
+cargo build --release -p your-extension-v2
+```
+
+### Creating .nep Package
+
+```bash
+# Package all extensions
+./build.sh --yes --skip-install
+
+# Packages are created in dist/
+ls -lh dist/*.nep
+```
+
+**Package structure:**
+```
+extension-name-version-platform.nep
+├── manifest.json           # Metadata
+├── binaries/
+│   └── darwin_aarch64/
+│       └── extension.dylib
+└── frontend/               # Optional
+    └── *.umd.cjs
+```
+
+### Cross-Platform Building
+
+**Supported platforms:**
+- macOS ARM64 (aarch64-apple-darwin)
+- macOS x86_64 (x86_64-apple-darwin) - Cross-compile on ARM
+- Linux AMD64 (x86_64-unknown-linux-gnu)
+- Linux ARM64 (aarch64-unknown-linux-gnu)
+- Windows x86_64 (x86_64-pc-windows-msvc)
+- Windows x86 (i686-pc-windows-msvc)
+
+**Using GitHub Actions:**
+
+```yaml
+# .github/workflows/build-extension.yml
+strategy:
+  matrix:
+    include:
+      - os: macos-latest
+        platform: darwin_aarch64
+        target: aarch64-apple-darwin
+      - os: macos-latest
+        platform: darwin_x86_64
+        target: x86_64-apple-darwin
+      - os: ubuntu-latest
+        platform: linux_amd64
+        target: x86_64-unknown-linux-gnu
+      - os: ubuntu-22.04-arm
+        platform: linux_arm64
+        target: aarch64-unknown-linux-gnu
+      - os: windows-latest
+        platform: windows_amd64
+        target: x86_64-pc-windows-msvc
+      - os: windows-latest
+        platform: windows_x86
+        target: i686-pc-windows-msvc
+```
+
+**Platform Identifiers:**
+- `darwin_aarch64` - macOS ARM64 (Apple Silicon)
+- `darwin_x86_64` - macOS Intel
+- `linux_amd64` - Linux x86_64
+- `linux_arm64` - Linux ARM64
+- `windows_amd64` - Windows 64-bit
+- `windows_x86` - Windows 32-bit
+
+---
+
+## Frontend Development Guide
+
+### Component Template
+
+**File: frontend/src/index.tsx**
+
+```tsx
+import { forwardRef, useState, useEffect } from 'react'
+import { executeExtensionCommand } from './api'
+
+export interface ExtensionComponentProps {
+  title?: string
+  dataSource?: {
+    type: string
+    extensionId?: string
+    config?: Record<string, any>
+  }
+  className?: string
+}
+
+export const YourExtensionCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
+  function YourExtensionCard(props, ref) {
+    const { title = 'Your Extension', dataSource, className = '' } = props
+    const [data, setData] = useState<any>(null)
+    const [loading, setLoading] = useState(false)
+    const extensionId = dataSource?.extensionId || 'your-extension-v2'
+
+    // Fetch data on mount
+    useEffect(() => {
+      const fetchData = async () => {
+        setLoading(true)
+        const result = await executeExtensionCommand(
+          extensionId,
+          'your_command',
+          {}
+        )
+        if (result.success) {
+          setData(result.data)
+        }
+        setLoading(false)
+      }
+      fetchData()
+    }, [extensionId])
+
+    if (loading) return <div>Loading...</div>
+
+    return (
+      <div ref={ref} className={`extension-card ${className}`}>
+        <style>{`
+          .extension-card {
+            --ext-bg: rgba(255, 255, 255, 0.25);
+            --ext-fg: hsl(240 10% 10%);
+            --ext-border: rgba(255, 255, 255, 0.5);
+            --ext-accent: hsl(221 83% 53%);
+            padding: 16px;
+            border-radius: 8px;
+          }
+          .dark .extension-card {
+            --ext-bg: rgba(30, 30, 30, 0.4);
+            --ext-fg: hsl(0 0% 95%);
+          }
+        `}</style>
+        <h3>{title}</h3>
+        {data && <div>{JSON.stringify(data, null, 2)}</div>}
+      </div>
+    )
+  }
+)
+```
+
+**File: frontend/src/api.ts**
+
+```typescript
+const getApiBase = (): string => {
+  if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+    return 'http://localhost:9375/api'
+  }
+  return '/api'
+}
+
+export async function executeExtensionCommand<T>(
+  extensionId: string,
+  command: string,
+  args: Record<string, any>
+): Promise<{ success: boolean; data?: T; error?: string }> {
+  const response = await fetch(`${getApiBase()}/extensions/${extensionId}/command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command, args })
+  })
+  return response.json()
+}
+
+export async function getExtensionMetrics(
+  extensionId: string
+): Promise<{ success: boolean; data?: any[]; error?: string }> {
+  const response = await fetch(`${getApiBase()}/extensions/${extensionId}/metrics`)
+  return response.json()
+}
+```
+
+### Frontend Manifest
+
+**File: frontend/frontend.json**
+
+```json
+{
+  "id": "your-extension-v2",
+  "version": "2.0.0",
+  "entrypoint": "your-extension-v2-components.umd.js",
+  "components": [
+    {
+      "name": "YourExtensionCard",
+      "type": "card",
+      "displayName": "Your Extension",
+      "description": "Display data from your extension",
+      "defaultSize": { "width": 300, "height": 200 },
+      "minSize": { "width": 200, "height": 150 },
+      "maxSize": { "width": 800, "height": 600 },
+      "refreshable": true,
+      "refreshInterval": 5000,
+      "icon": "cpu",
+      "configSchema": {
+        "updateInterval": {
+          "type": "number",
+          "description": "Update interval in milliseconds",
+          "default": 5000
+        }
+      }
+    }
+  ],
+  "dependencies": {
+    "react": ">=18.0.0"
+  }
+}
+```
+
+### Vite Build Config
+
+**File: frontend/vite.config.ts**
+
+```typescript
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  build: {
+    lib: {
+      entry: 'src/index.tsx',
+      name: 'YourExtensionV2Components',
+      formats: ['umd', 'cjs'],
+      fileName: (format) => `your-extension-v2-components.${format === 'umd' ? 'umd.js' : 'umd.cjs'}`
+    },
+    rollupOptions: {
+      external: ['react', 'react-dom'],
+      output: {
+        globals: {
+          react: 'React',
+          'react-dom': 'ReactDOM'
+        }
+      }
+    }
+  }
+})
+```
 
 ---
 
@@ -446,8 +786,10 @@ For detailed information, see:
 | macOS    | x86_64       | `*.dylib`        |
 | Linux    | x86_64       | `*.so`           |
 | Linux    | ARM64        | `*.so`           |
-| Windows  | x86_64       | `*.dll`          |
+| Windows  | x86_64, x86 (32-bit) | `*.dll`          |
 | Cross-platform | Any    | `*.wasm`         |
+
+**Latest Release (v2.0.0)**: 6 platforms, 27 extension packages
 
 ---
 

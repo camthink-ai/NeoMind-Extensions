@@ -20,6 +20,10 @@ This repository contains officially maintained extensions built with the **NeoMi
 
 ## Available Extensions
 
+> **Latest Release (v2.0.0)**: 27 extension packages across 6 platforms  
+> **ABI Version**: 3 (Process Isolation Architecture)  
+> **Release**: [View on GitHub](https://github.com/camthink-ai/NeoMind-Extensions/releases/tag/v2.0.0)
+
 ### Weather Forecast V2
 
 **ID**: `weather-forecast-v2`
@@ -86,7 +90,7 @@ Real-time video stream processing with YOLOv11 object detection.
 
 **Frontend Component**: YoloVideoDisplay - MJPEG stream display with live stats
 
-**Safety Note**: This extension is marked as HIGH-RISK due to AI inference workload. Process isolation is recommended for production.
+**Safety Note**: This extension uses AI inference with process isolation enabled by default. The YOLOv11 model remains loaded across video sessions for optimal performance.
 
 ```bash
 # Build
@@ -94,6 +98,34 @@ cargo build --release -p neomind-yolo-video-v2
 
 # Install
 cp target/release/libneomind_extension_yolo_video_v2.dylib ~/.neomind/extensions/
+```
+
+---
+
+### YOLO Device Inference
+
+**ID**: `yolo-device-inference`
+
+High-performance YOLOv8-based object detection for device camera feeds.
+
+| Capability | Type | Description |
+|-----------|------|-------------|
+| `start_inference` | Command | Start camera inference |
+| `stop_inference` | Command | Stop inference |
+| `get_inference_stats` | Command | Get inference statistics |
+| active_sessions | Metric | Number of active sessions |
+| total_detections | Metric | Total objects detected |
+
+**Frontend Component**: YoloDeviceInference - Real-time camera feed with detection overlay
+
+**Safety Note**: This extension uses AI inference with process isolation. The YOLOv8 model is loaded once and reused across sessions.
+
+```bash
+# Build
+cargo build --release -p neomind-yolo-device-inference
+
+# Install
+cp target/release/libneomind_extension_yolo_device_inference.dylib ~/.neomind/extensions/
 ```
 
 ---
@@ -537,7 +569,10 @@ NeoMind-Extension/
 | macOS | x86_64 (Intel) | `*.dylib` |
 | Linux | x86_64 | `*.so` |
 | Linux | ARM64 | `*.so` |
-| Windows | x86_64 | `*.dll` |
+| Windows | x86_64 (64-bit) | `*.dll` |
+| Windows | x86 (32-bit) | `*.dll` |
+
+**Total: 6 platforms, 27 extension packages (v2.0.0)**
 
 ---
 

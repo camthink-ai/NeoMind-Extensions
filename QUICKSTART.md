@@ -11,6 +11,8 @@
 | `weather-forecast-v2` | Native | 天气预报扩展 |
 | `image-analyzer-v2` | Native | 图像分析扩展 (YOLOv8) |
 | `yolo-video-v2` | Native | 视频处理扩展 (YOLOv11) |
+| `yolo-device-inference` | Native | 设备推理扩展 (YOLOv8) |
+| `wasm-demo` | WASM | WebAssembly 演示扩展 |
 
 ## .nep 包格式
 
@@ -20,7 +22,7 @@
 extension-name-version.nep  (ZIP archive)
 ├── manifest.json           # 扩展元数据
 ├── binaries/               # 二进制文件
-│   └── darwin_aarch64/    # 或 linux_amd64/, windows_amd64/
+│   └── darwin_aarch64/    # 或 linux_amd64/, windows_amd64/, windows_x86/ 等
 │       └── libneomind_extension_*.dylib
 └── frontend/              # 可选：前端组件
     └── *-components.umd.cjs
@@ -39,7 +41,12 @@ extension-name-version.nep  (ZIP archive)
   "sdk_version": "2.0.0",
   "type": "native",
   "binaries": {
-    "darwin_aarch64": "binaries/darwin_aarch64/libneomind_extension_weather_forecast_v2.dylib"
+    "darwin_aarch64": "binaries/darwin_aarch64/libneomind_extension_weather_forecast_v2.dylib",
+    "darwin_x86_64": "binaries/darwin_x86_64/libneomind_extension_weather_forecast_v2.dylib",
+    "linux_amd64": "binaries/linux_amd64/libneomind_extension_weather_forecast_v2.so",
+    "linux_arm64": "binaries/linux_arm64/libneomind_extension_weather_forecast_v2.so",
+    "windows_amd64": "binaries/windows_amd64/libneomind_extension_weather_forecast_v2.dll",
+    "windows_x86": "binaries/windows_x86/libneomind_extension_weather_forecast_v2.dll"
   },
   "frontend": "frontend/",
   "permissions": [],
@@ -61,6 +68,7 @@ extension-name-version.nep  (ZIP archive)
 bash scripts/package.sh -d extensions/weather-forecast-v2
 bash scripts/package.sh -d extensions/image-analyzer-v2
 bash scripts/package.sh -d extensions/yolo-video-v2
+bash scripts/package.sh -d extensions/yolo-device-inference
 ```
 
 ### 其他命令
