@@ -113,6 +113,38 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v1.0.0/wasm-demo-1.0.0.nep"
         }
       }
+    },
+    {
+      "id": "yolo-device-inference",
+      "name": "YOLO Device Inference",
+      "description": "Automatic YOLOv8 inference on device image data sources. Bind devices with image data and get automatic object detection results.",
+      "version": "1.0.0",
+      "author": "NeoMind Team",
+      "license": "MIT",
+      "categories": ["ai", "computer-vision", "inference", "device-integration"],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/yolo-device-inference",
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/yolo-device-inference/metadata.json",
+      "frontend": {
+        "components": ["Device Inference Card", "Device Inference Manager"],
+        "entrypoint": "yolo-device-inference-components.umd.js"
+      },
+      "builds": {
+        "darwin-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-darwin_aarch64.nep"
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-darwin_x86_64.nep"
+        },
+        "linux-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-linux_amd64.nep"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-linux_arm64.nep"
+        },
+        "windows-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-windows_amd64.nep"
+        }
+      }
     }
   ]
 }
