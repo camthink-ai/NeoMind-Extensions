@@ -261,8 +261,8 @@ mod tests {
         // Should have samples
         assert!(!cmd.samples.is_empty());
 
-        // Should have LLM hints
-        assert!(!cmd.llm_hints.is_empty());
+        // Should have description (replaces llm_hints)
+        assert!(!cmd.description.is_empty());
     }
 
     // ========================================================================

@@ -200,8 +200,8 @@ mod tests {
         assert!(device_param.is_some());
         assert!(device_param.unwrap().required);
 
-        // Should have LLM hints
-        assert!(!cmd.llm_hints.is_empty());
+        // Should have description (replaces llm_hints)
+        assert!(!cmd.description.is_empty());
     }
 
     #[test]
