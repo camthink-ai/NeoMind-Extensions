@@ -207,11 +207,13 @@ CHECKSUM=$(shasum -a 256 "$SOURCE_LIB" | cut -d' ' -f1)
 echo "Binary SHA256: $CHECKSUM"
 
 # Package into .nep file (actually zip)
+# NOTE: The ZIP must have files at root level, not inside a subdirectory
+# NeoMind expects: manifest.json, binaries/, frontend/ at the root of the archive
 NEP_FILE="$OUTPUT_DIR/${EXTENSION_NAME}.nep"
 echo ""
 echo "Creating .nep package..."
-cd "$TEMP_DIR"
-if zip -r "$NEP_FILE" "$EXTENSION_NAME" > /dev/null 2>&1; then
+cd "$PACKAGE_DIR"
+if zip -r "$NEP_FILE" . > /dev/null 2>&1; then
     echo "✓ Created .nep package"
 else
     echo "Error: Failed to create .nep package"
