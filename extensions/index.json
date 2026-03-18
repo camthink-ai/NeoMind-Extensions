@@ -1,11 +1,11 @@
 {
-  "version": "2.0.0",
+  "version": "2.1.0",
   "extensions": [
     {
       "id": "weather-forecast-v2",
       "name": "Weather Forecast V2",
       "description": "Real-time weather data using Open-Meteo API. Cross-platform support for macOS, Linux, and Windows.",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "author": "NeoMind Team",
       "license": "MIT",
       "categories": ["weather", "utilities"],
@@ -17,19 +17,19 @@
       },
       "builds": {
         "darwin-aarch64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/weather-forecast-v2-2.0.0-darwin_aarch64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/weather-forecast-v2-2.1.0-darwin_aarch64.nep"
         },
         "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/weather-forecast-v2-2.0.0-darwin_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/weather-forecast-v2-2.1.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/weather-forecast-v2-2.0.0-linux_amd64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/weather-forecast-v2-2.1.0-linux_amd64.nep"
         },
         "linux-aarch64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/weather-forecast-v2-2.0.0-linux_arm64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/weather-forecast-v2-2.1.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/weather-forecast-v2-2.0.0-windows_amd64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/weather-forecast-v2-2.1.0-windows_amd64.nep"
         }
       }
     },
@@ -37,7 +37,7 @@
       "id": "image-analyzer-v2",
       "name": "Image Analyzer V2",
       "description": "AI-powered image analysis using YOLOv8 object detection. Supports macOS, Linux, and Windows.",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "author": "NeoMind Team",
       "license": "MIT",
       "categories": ["image", "vision", "ai", "detection"],
@@ -49,19 +49,19 @@
       },
       "builds": {
         "darwin-aarch64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/image-analyzer-v2-2.0.0-darwin_aarch64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/image-analyzer-v2-2.1.0-darwin_aarch64.nep"
         },
         "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/image-analyzer-v2-2.0.0-darwin_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/image-analyzer-v2-2.1.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/image-analyzer-v2-2.0.0-linux_amd64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/image-analyzer-v2-2.1.0-linux_amd64.nep"
         },
         "linux-aarch64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/image-analyzer-v2-2.0.0-linux_arm64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/image-analyzer-v2-2.1.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/image-analyzer-v2-2.0.0-windows_amd64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/image-analyzer-v2-2.1.0-windows_amd64.nep"
         }
       }
     },
@@ -69,7 +69,7 @@
       "id": "yolo-video-v2",
       "name": "YOLO Video V2",
       "description": "Real-time video stream processing with YOLOv11. Supports Camera, RTSP, HLS, and RTMP sources. Available on macOS, Linux, and Windows.",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "author": "NeoMind Team",
       "license": "MIT",
       "categories": ["video", "vision", "ai", "streaming", "detection"],
@@ -81,19 +81,19 @@
       },
       "builds": {
         "darwin-aarch64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-video-v2-2.0.0-darwin_aarch64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/yolo-video-v2-2.1.0-darwin_aarch64.nep"
         },
         "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-video-v2-2.0.0-darwin_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/yolo-video-v2-2.1.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-video-v2-2.0.0-linux_amd64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/yolo-video-v2-2.1.0-linux_amd64.nep"
         },
         "linux-aarch64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-video-v2-2.0.0-linux_arm64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/yolo-video-v2-2.1.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-video-v2-2.0.0-windows_amd64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/yolo-video-v2-2.1.0-windows_amd64.nep"
         }
       }
     },
@@ -118,7 +118,7 @@
       "id": "yolo-device-inference",
       "name": "YOLO Device Inference",
       "description": "Automatic YOLOv8 inference on device image data sources. Bind devices with image data and get automatic object detection results.",
-      "version": "1.0.0",
+      "version": "2.1.0",
       "author": "NeoMind Team",
       "license": "MIT",
       "categories": ["ai", "computer-vision", "inference", "device-integration"],
@@ -130,19 +130,19 @@
       },
       "builds": {
         "darwin-aarch64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-darwin_aarch64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/yolo-device-inference-2.1.0-darwin_aarch64.nep"
         },
         "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-darwin_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/yolo-device-inference-2.1.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-linux_amd64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/yolo-device-inference-2.1.0-linux_amd64.nep"
         },
         "linux-aarch64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-linux_arm64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/yolo-device-inference-2.1.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-windows_amd64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/yolo-device-inference-2.1.0-windows_amd64.nep"
         }
       }
     }
