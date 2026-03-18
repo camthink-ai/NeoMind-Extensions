@@ -1,7 +1,7 @@
 {
   "id": "image-analyzer-v2",
   "name": "Image Analyzer V2",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "AI-powered image analysis using YOLOv8 object detection. Built with NeoMind Extension SDK V2.",
   "author": "NeoMind Team",
   "license": "MIT",
@@ -13,7 +13,7 @@
   ],
   "type": "native",
   "abi_version": 3,
-  "sdk_version": "2.0.0",
+  "sdk_version": "2.1.0",
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/image-analyzer-v2",
   "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
   "keywords": [
@@ -31,19 +31,19 @@
   },
   "builds": {
     "darwin-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/image-analyzer-v2-2.0.0-darwin_aarch64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/image-analyzer-v2.nep"
     },
     "darwin-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/image-analyzer-v2-2.0.0-darwin_x86_64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/image-analyzer-v2.nep"
     },
     "linux-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/image-analyzer-v2-2.0.0-linux_amd64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/image-analyzer-v2.nep"
     },
     "linux-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/image-analyzer-v2-2.0.0-linux_arm64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/image-analyzer-v2.nep"
     },
     "windows-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/image-analyzer-v2-2.0.0-windows_amd64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/image-analyzer-v2.nep"
     }
   },
   "commands": [
@@ -84,5 +84,5 @@
       "type": "integer"
     }
   ],
-  "package_url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/image-analyzer-v2-2.0.0-darwin_aarch64.nep"
+  "package_url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/image-analyzer-v2.nep"
 }
