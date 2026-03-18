@@ -66,17 +66,17 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     LIB_EXT="dylib"
     PLATFORM="darwin"
     if [[ "$(uname -m)" == "arm64" ]]; then
-        PLATFORM_ARCH="darwin-aarch64"
+        PLATFORM_ARCH="darwin_aarch64"
     else
-        PLATFORM_ARCH="darwin-x86_64"
+        PLATFORM_ARCH="darwin_x86_64"
     fi
 elif [[ "$OSTYPE" == "linux"* ]]; then
     LIB_EXT="so"
     PLATFORM="linux"
     if [[ "$(uname -m)" == "aarch64" ]]; then
-        PLATFORM_ARCH="linux-aarch64"
+        PLATFORM_ARCH="linux_aarch64"
     else
-        PLATFORM_ARCH="linux-x86_64"
+        PLATFORM_ARCH="linux_x86_64"
     fi
 else
     echo "Error: Unsupported operating system"
@@ -95,10 +95,9 @@ fi
 echo "Assembling extension package..."
 echo "----------------------------------------"
 
-# Copy binary
-
-mkdir -p "$PACKAGE_DIR/binaries"
-cp "$SOURCE_LIB" "$PACKAGE_DIR/binaries/extension.$LIB_EXT"
+# Copy binary - use platform-specific subdirectory
+mkdir -p "$PACKAGE_DIR/binaries/$PLATFORM_ARCH"
+cp "$SOURCE_LIB" "$PACKAGE_DIR/binaries/$PLATFORM_ARCH/extension.$LIB_EXT"
 echo "✓ Copied binary file"
 
 # Fix Rust cdylib self-reference dependency
@@ -107,7 +106,7 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     echo "✓ Fixing self-reference dependency..."
     
     # Find self-reference dependency (points to build directory)
-    SELF_REF=$(otool -L "$PACKAGE_DIR/binaries/extension.$LIB_EXT" 2>/dev/null | \
+    SELF_REF=$(otool -L "$PACKAGE_DIR/binaries/$PLATFORM_ARCH/extension.$LIB_EXT" 2>/dev/null | \
                grep -oE "/Users/[^ ]+\.dylib" | head -1 || true)
     
     if [ -n "$SELF_REF" ] && [ -f "$SELF_REF" ]; then
@@ -116,7 +115,7 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
         
         # Add @executable_path to RPATH
         install_name_tool -add_rpath "@executable_path" \
-            "$PACKAGE_DIR/binaries/extension.$LIB_EXT" 2>/dev/null || true
+            "$PACKAGE_DIR/binaries/$PLATFORM_ARCH/extension.$LIB_EXT" 2>/dev/null || true
         
         echo "  → Copied dependency: $SELF_REF_NAME"
         echo "  → Added @executable_path to RPATH"
@@ -167,14 +166,14 @@ if [ -f "extensions/$EXTENSION_NAME/metadata.json" ]; then
     # Add binaries field to manifest.json
     # Use jq if available, otherwise use sed
     if command -v jq &> /dev/null; then
-        jq --arg platform "$PLATFORM_ARCH" --arg binary "binaries/extension.$LIB_EXT" \
+        jq --arg platform "$PLATFORM_ARCH" --arg binary "binaries/$PLATFORM_ARCH/extension.$LIB_EXT" \
             '.binaries = {($platform): $binary}' \
             "$PACKAGE_DIR/manifest.json" > "$PACKAGE_DIR/manifest.json.tmp" && \
             mv "$PACKAGE_DIR/manifest.json.tmp" "$PACKAGE_DIR/manifest.json"
         echo "✓ Added binaries field to manifest.json"
     else
         # Fallback: use sed to add binaries field before the closing brace
-        sed -i.bak "s/}$/\"binaries\": {\"$PLATFORM_ARCH\": \"binaries\/extension.$LIB_EXT\"},\n}/" "$PACKAGE_DIR/manifest.json"
+        sed -i.bak "s/}$/\"binaries\": {\"$PLATFORM_ARCH\": \"binaries\/$PLATFORM_ARCH\/extension.$LIB_EXT\"},\n}/" "$PACKAGE_DIR/manifest.json"
         rm -f "$PACKAGE_DIR/manifest.json.bak"
         echo "✓ Added binaries field to manifest.json (using sed)"
     fi
