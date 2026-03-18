@@ -8,16 +8,11 @@
       "version": "2.1.0",
       "author": "NeoMind Team",
       "license": "MIT",
-      "categories": [
-        "weather",
-        "utilities"
-      ],
+      "categories": ["weather", "utilities"],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/weather-forecast-v2",
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/weather-forecast-v2/metadata.json",
       "frontend": {
-        "components": [
-          "WeatherCard"
-        ],
+        "components": ["WeatherCard"],
         "entrypoint": "weather-forecast-v2-components.umd.js"
       },
       "builds": {
@@ -45,18 +40,11 @@
       "version": "2.1.0",
       "author": "NeoMind Team",
       "license": "MIT",
-      "categories": [
-        "image",
-        "vision",
-        "ai",
-        "detection"
-      ],
+      "categories": ["image", "vision", "ai", "detection"],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/image-analyzer-v2",
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/image-analyzer-v2/metadata.json",
       "frontend": {
-        "components": [
-          "ImageAnalyzer"
-        ],
+        "components": ["ImageAnalyzer"],
         "entrypoint": "image-analyzer-v2-components.umd.js"
       },
       "builds": {
@@ -84,19 +72,11 @@
       "version": "2.1.0",
       "author": "NeoMind Team",
       "license": "MIT",
-      "categories": [
-        "video",
-        "vision",
-        "ai",
-        "streaming",
-        "detection"
-      ],
+      "categories": ["video", "vision", "ai", "streaming", "detection"],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/yolo-video-v2",
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/yolo-video-v2/metadata.json",
       "frontend": {
-        "components": [
-          "YoloVideoDisplay"
-        ],
+        "components": ["YoloVideoDisplay"],
         "entrypoint": "yolo-video-v2-components.umd.js"
       },
       "builds": {
@@ -124,10 +104,7 @@
       "version": "1.0.0",
       "author": "NeoMind Team",
       "license": "MIT",
-      "categories": [
-        "demo",
-        "wasm"
-      ],
+      "categories": ["demo", "wasm"],
       "type": "wasm",
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/wasm-demo",
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/wasm-demo/metadata.json",
@@ -144,19 +121,11 @@
       "version": "2.1.0",
       "author": "NeoMind Team",
       "license": "MIT",
-      "categories": [
-        "ai",
-        "computer-vision",
-        "inference",
-        "device-integration"
-      ],
+      "categories": ["ai", "computer-vision", "inference", "device-integration"],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/yolo-device-inference",
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/yolo-device-inference/metadata.json",
       "frontend": {
-        "components": [
-          "Device Inference Card",
-          "Device Inference Manager"
-        ],
+        "components": ["Device Inference Card", "Device Inference Manager"],
         "entrypoint": "yolo-device-inference-components.umd.js"
       },
       "builds": {
