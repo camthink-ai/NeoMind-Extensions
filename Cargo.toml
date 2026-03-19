@@ -27,7 +27,10 @@ license = "MIT"
 [workspace.dependencies]
 # Minimal dependencies for WASM extensions
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# IMPORTANT: preserve_order feature is required for ABI compatibility between
+# extension-runner and extension binaries. This ensures serde_json::Value uses
+# IndexMap instead of HashMap, which has a stable memory layout across versions.
+serde_json = { version = "1.0", features = ["preserve_order"] }
 urlencoding = "2.1"
 neomind-extension-sdk = { path = "../../NeoMind/crates/neomind-extension-sdk" }
 
