@@ -33,23 +33,26 @@
     "global_name": "YoloDeviceInferenceComponents"
   },
   "builds": {
-    "darwin-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference.nep"
+    "darwin_aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-darwin_aarch64.nep"
     },
-    "darwin-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference.nep"
+    "darwin_x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-darwin_x86_64.nep"
     },
-    "linux-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference.nep"
+    "linux_amd64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-linux_amd64.nep"
     },
-    "linux-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference.nep"
+    "linux_arm64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-linux_arm64.nep"
     },
-    "windows-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference.nep"
+    "windows_amd64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-windows_amd64.nep"
+    },
+    "windows_x86": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0-windows_x86.nep"
     }
   },
-  "package_url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference.nep",
+  "package_url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-device-inference-1.0.0.nep",
   "commands": [
     {
       "name": "bind_device",
