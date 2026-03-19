@@ -25,23 +25,20 @@
     "entrypoint": "weather-forecast-v2-components.umd.js"
   },
   "builds": {
-    "darwin_aarch64": {
+    "darwin-aarch64": {
       "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/weather-forecast-v2-2.0.0-darwin_aarch64.nep"
     },
-    "darwin_x86_64": {
+    "darwin-x86_64": {
       "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/weather-forecast-v2-2.0.0-darwin_x86_64.nep"
     },
-    "linux_amd64": {
+    "linux-x86_64": {
       "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/weather-forecast-v2-2.0.0-linux_amd64.nep"
     },
-    "linux_arm64": {
+    "linux-aarch64": {
       "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/weather-forecast-v2-2.0.0-linux_arm64.nep"
     },
-    "windows_amd64": {
+    "windows-x86_64": {
       "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/weather-forecast-v2-2.0.0-windows_amd64.nep"
-    },
-    "windows_x86": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/weather-forecast-v2-2.0.0-windows_x86.nep"
     }
   },
   "package_url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/weather-forecast-v2-2.0.0.nep",
