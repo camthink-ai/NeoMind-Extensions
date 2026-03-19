@@ -32,19 +32,19 @@
   },
   "builds": {
     "darwin-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/yolo-video-v2.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-video-v2.nep"
     },
     "darwin-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/yolo-video-v2.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-video-v2.nep"
     },
     "linux-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/yolo-video-v2.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-video-v2.nep"
     },
     "linux-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/yolo-video-v2.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-video-v2.nep"
     },
     "windows-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/yolo-video-v2.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-video-v2.nep"
     }
   },
   "isolation": {
@@ -112,5 +112,5 @@
       "type": "float"
     }
   ],
-  "package_url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/yolo-video-v2.nep"
+  "package_url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/yolo-video-v2.nep"
 }
