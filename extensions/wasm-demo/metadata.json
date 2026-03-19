@@ -12,10 +12,10 @@
   "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
   "builds": {
     "wasm": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/wasm-demo-1.0.0.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/wasm-demo-1.0.0.nep"
     }
   },
-  "package_url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.0.0/wasm-demo-1.0.0.nep",
+  "package_url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/wasm-demo-1.0.0.nep",
   "capabilities": {
     "metrics": [
       {
