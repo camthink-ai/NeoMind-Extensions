@@ -17,7 +17,7 @@ mod tests {
         Extension, ExtensionError,
         MetricDataType, ParamMetricValue,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     // Import the extension from the library
     use neomind_extension_wasm_demo::WasmDemoExtension;
@@ -63,6 +63,22 @@ mod tests {
 
         assert!(meta.author.is_some());
         assert_eq!(meta.author.as_ref().unwrap(), "NeoMind Team");
+    }
+
+    #[test]
+    fn test_metadata_json_matches_runtime_metadata() {
+        let ext = create_extension();
+        let meta = ext.metadata();
+        let metadata_json: Value = serde_json::from_str(include_str!("../metadata.json")).unwrap();
+
+        assert_eq!(metadata_json["id"], meta.id);
+        assert_eq!(metadata_json["name"], meta.name);
+        assert_eq!(metadata_json["description"].as_str(), meta.description.as_deref());
+        assert_eq!(metadata_json["license"], "MIT");
+        assert_eq!(
+            metadata_json["homepage"],
+            "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/wasm-demo"
+        );
     }
 
     // ========================================================================

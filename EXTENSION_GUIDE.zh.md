@@ -1,6 +1,6 @@
-# NeoMind 扩展开发指南 V2
+# NeoMind 扩展开发指南
 
-使用 **NeoMind Extension SDK V2**（ABI 版本 3）开发扩展的完整指南。
+面向 **NeoMind 扩展运行时** 开发扩展的完整指南。
 
 [English Guide](EXTENSION_GUIDE.md)
 
@@ -20,13 +20,13 @@
 
 ## 概述
 
-NeoMind Extension SDK V2 为 Native 和 WASM 目标提供统一的开发体验。
+NeoMind 扩展在 Native 和 WASM 目标上共享一套运行时模型。
 
 ### 核心特性
 
 - **进程隔离架构**：所有扩展默认在独立进程中运行，崩溃不影响主进程
-- **统一 SDK**：Native 和 WASM 单一代码库
-- **ABI 版本 3**：新的扩展接口，改进安全性
+- **统一运行时模型**：Native 和 WASM 共用一套开发与运行模型
+- **运行时协议 v3**：更稳定的隔离扩展协议与安全边界
 - **声明式宏**：样板代码从 50+ 行减少到 5 行
 - **前端组件**：基于 React 的仪表板小部件
 - **流式处理**：支持实时数据流处理（视频、传感器等）
@@ -123,12 +123,9 @@ serde_json = "1.0"
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 semver = "1"
-
-[profile.release]
-panic = "unwind"  # 安全性必需！
-opt-level = 3
-lto = "thin"
 ```
+
+如果扩展是在 Cargo workspace 里构建，发布配置应放在 workspace 根 `Cargo.toml`。成员包里的 `[profile.release]` 会被 Cargo 忽略。
 
 ### 3. 实现扩展
 

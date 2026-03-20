@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    # V2 extensions using unified SDK (ABI Version 3)
+    # Extensions targeting the isolated NeoMind runtime protocol
     "extensions/weather-forecast-v2",
     "extensions/image-analyzer-v2",
     "extensions/yolo-video-v2",
@@ -32,10 +32,13 @@ serde = { version = "1.0", features = ["derive"] }
 # IndexMap instead of HashMap, which has a stable memory layout across versions.
 serde_json = { version = "1.0", features = ["preserve_order"] }
 urlencoding = "2.1"
-neomind-extension-sdk = { path = "../../NeoMind/crates/neomind-extension-sdk" }
 
-# Note: Native extensions (image-analyzer, yolo-video) require
-# the full NeoMind workspace and are built locally.
+# Use crates.io version for ABI isolation
+# When SDK is published, extensions don't need to recompile when main project updates
+neomind-extension-sdk = "0.6"
+
+# Note: For local development, you can temporarily use path dependency:
+# neomind-extension-sdk = { path = "../NeoMind/crates/neomind-extension-sdk" }
 
 [profile.release]
 opt-level = 3

@@ -26,10 +26,12 @@
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use neomind_extension_sdk::{
-    async_trait, json, Extension, ExtensionMetadata, ExtensionError, ExtensionMetricValue,
-    MetricDescriptor, ExtensionCommand, MetricDataType, ParameterDefinition,
-    ParamMetricValue, Result,
+    async_trait, json, Extension, ExtensionCommand, ExtensionError, ExtensionMetadata,
+    ExtensionMetricValue, MetricDataType, MetricDescriptor, ParamMetricValue,
+    ParameterDefinition, Result,
 };
+
+#[cfg(not(target_arch = "wasm32"))]
 
 // ============================================================================
 // Extension Implementation
@@ -64,13 +66,22 @@ impl Extension for WasmDemoExtension {
     fn metadata(&self) -> &ExtensionMetadata {
         static META: std::sync::OnceLock<ExtensionMetadata> = std::sync::OnceLock::new();
         META.get_or_init(|| {
-            ExtensionMetadata::new(
-                "wasm-demo",
-                "WASM Demo Extension",
-                "1.0.0",
-            )
-            .with_description("A simple counter extension demonstrating WASM support")
-            .with_author("NeoMind Team")
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                ExtensionMetadata::new(
+                    "wasm-demo",
+                    "WASM Demo Extension",
+                    "2.0.0",
+                )
+                .with_description("A simple counter extension demonstrating WASM support")
+                .with_author("NeoMind Team")
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                ExtensionMetadata::new("wasm-demo", "WASM Demo Extension", "1.0.0")
+                    .with_description("A simple counter extension demonstrating WASM support")
+                    .with_author("NeoMind Team")
+            }
         })
     }
 
@@ -104,19 +115,17 @@ impl Extension for WasmDemoExtension {
                 display_name: "Increment".to_string(),
                 description: "Increment the counter by the specified amount".to_string(),
                 payload_template: String::new(),
-                parameters: vec![
-                    ParameterDefinition {
-                        name: "amount".to_string(),
-                        display_name: "Amount".to_string(),
-                        description: "Amount to add to the counter".to_string(),
-                        param_type: MetricDataType::Integer,
-                        required: false,
-                        default_value: Some(ParamMetricValue::Integer(1)),
-                        min: None,
-                        max: None,
-                        options: Vec::new(),
-                    },
-                ],
+                parameters: vec![ParameterDefinition {
+                    name: "amount".to_string(),
+                    display_name: "Amount".to_string(),
+                    description: "Amount to add to the counter".to_string(),
+                    param_type: MetricDataType::Integer,
+                    required: false,
+                    default_value: Some(ParamMetricValue::Integer(1)),
+                    min: None,
+                    max: None,
+                    options: Vec::new(),
+                }],
                 fixed_values: std::collections::HashMap::new(),
                 samples: vec![json!({ "amount": 1 })],
                 parameter_groups: Vec::new(),
@@ -126,19 +135,17 @@ impl Extension for WasmDemoExtension {
                 display_name: "Decrement".to_string(),
                 description: "Decrement the counter by the specified amount".to_string(),
                 payload_template: String::new(),
-                parameters: vec![
-                    ParameterDefinition {
-                        name: "amount".to_string(),
-                        display_name: "Amount".to_string(),
-                        description: "Amount to subtract from the counter".to_string(),
-                        param_type: MetricDataType::Integer,
-                        required: false,
-                        default_value: Some(ParamMetricValue::Integer(1)),
-                        min: None,
-                        max: None,
-                        options: Vec::new(),
-                    },
-                ],
+                parameters: vec![ParameterDefinition {
+                    name: "amount".to_string(),
+                    display_name: "Amount".to_string(),
+                    description: "Amount to subtract from the counter".to_string(),
+                    param_type: MetricDataType::Integer,
+                    required: false,
+                    default_value: Some(ParamMetricValue::Integer(1)),
+                    min: None,
+                    max: None,
+                    options: Vec::new(),
+                }],
                 fixed_values: std::collections::HashMap::new(),
                 samples: vec![json!({ "amount": 1 })],
                 parameter_groups: Vec::new(),
@@ -171,9 +178,7 @@ impl Extension for WasmDemoExtension {
 
         match command {
             "increment" => {
-                let amount = args.get("amount")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(1);
+                let amount = args.get("amount").and_then(|v| v.as_i64()).unwrap_or(1);
                 let new_value = self.counter.fetch_add(amount, Ordering::SeqCst) + amount;
                 Ok(json!({
                     "counter": new_value,
@@ -181,9 +186,7 @@ impl Extension for WasmDemoExtension {
                 }))
             }
             "decrement" => {
-                let amount = args.get("amount")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(1);
+                let amount = args.get("amount").and_then(|v| v.as_i64()).unwrap_or(1);
                 let new_value = self.counter.fetch_sub(amount, Ordering::SeqCst) - amount;
                 Ok(json!({
                     "counter": new_value,
@@ -209,7 +212,6 @@ impl Extension for WasmDemoExtension {
     }
 
     fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
-        // For WASM, use timestamp 0 (host can provide actual timestamp)
         let now = 0i64;
         Ok(vec![
             ExtensionMetricValue {
@@ -224,11 +226,14 @@ impl Extension for WasmDemoExtension {
             },
         ])
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // ============================================================================
 // Export FFI Functions
 // ============================================================================
 
-// This single macro exports all necessary FFI functions for both Native and WASM
 neomind_extension_sdk::neomind_export!(WasmDemoExtension);

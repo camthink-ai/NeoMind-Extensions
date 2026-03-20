@@ -44,12 +44,9 @@ tokio = { version = "1", features = ["rt", "sync"] }
 semver = "1"
 chrono = "0.4"
 sysinfo = "0.30"  # For reading CPU temperature
-
-[profile.release]
-panic = "unwind"
-opt-level = 3
-lto = "thin"
 ```
+
+If this extension lives inside a Cargo workspace, define `[profile.release]` only in the workspace root `Cargo.toml`.
 
 3. **Complete Rust Implementation**
 ```rust
@@ -273,9 +270,9 @@ neomind_extension_sdk::neomind_export!(MinimalExtension);
 
 ✅ **Automatic Context**: Claude knows about:
 - NeoMind architecture
-- Extension SDK V2 API
+- extension runtime API
 - Process isolation model
-- ABI Version 3 requirements
+- runtime protocol v3 requirements
 - Best practices and patterns
 
 ✅ **Code Generation**:

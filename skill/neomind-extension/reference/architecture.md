@@ -97,7 +97,7 @@ Configure resource limits in `metadata.json`:
 }
 ```
 
-## ABI Version 3
+## Runtime Protocol v3
 
 ### Required FFI Exports
 
@@ -106,7 +106,7 @@ Every extension must export these C-compatible functions:
 ```rust
 #[no_mangle]
 pub extern "C" fn neomind_extension_abi_version() -> u32 {
-    3  // Must return 3 for V2 extensions
+    3  // Must return 3 for runtime protocol v3
 }
 
 #[no_mangle]

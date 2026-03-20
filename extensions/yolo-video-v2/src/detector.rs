@@ -269,7 +269,7 @@ impl YoloDetector {
                         Box::into_raw(Box::new(model));
 
                     // Intentionally leak the pointer - never dereference it
-                    std::mem::forget(leaked);
+                    let _ = leaked;
                 }
 
                 tracing::info!("YoloDetector shutdown complete (model leaked, will be cleaned up by OS on process exit)");
@@ -407,7 +407,7 @@ impl Drop for YoloDetector {
                 // Leak the model to prevent usls::Runtime from being dropped
                 let leaked: *const Arc<std::sync::Mutex<Runtime<YOLO>>> =
                     Box::into_raw(Box::new(model));
-                std::mem::forget(leaked);
+                let _ = leaked;
                 
                 tracing::debug!("YoloDetector dropped (model leaked to prevent Tokio panic)");
             }

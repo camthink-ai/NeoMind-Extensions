@@ -4,7 +4,7 @@ version = "2.0.0"
 edition = "2021"
 authors = ["NeoMind Team"]
 license = "Apache-2.0"
-description = "Real-time video processing with YOLOv11 (SDK V2 with process isolation support)"
+description = "Real-time video processing with YOLOv11 for the NeoMind isolated runtime"
 
 [lib]
 name = "neomind_extension_yolo_video_v2"
@@ -41,7 +41,3 @@ native = []
 wasm = []
 # Process isolation feature for high-risk extensions
 process-isolated = []
-
-[profile.release]
-opt-level = 3
-lto = "thin"

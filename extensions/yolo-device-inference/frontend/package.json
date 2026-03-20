@@ -1,7 +1,7 @@
 {
   "name": "@neomind/yolo-device-inference-frontend",
   "version": "1.0.0",
-  "description": "YOLO Device Inference Frontend Component - NeoMind Extension SDK V2",
+  "description": "YOLO Device Inference frontend component for the NeoMind extension runtime",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -10,7 +10,6 @@ use neomind_extension_sdk::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use semver::Version;
 
 // ============================================================================
 // Extension Struct
@@ -36,7 +35,7 @@ impl Extension for {{EXTENSION_STRUCT_NAME}} {
             ExtensionMetadata {
                 id: "{{EXTENSION_ID}}".to_string(),
                 name: "{{EXTENSION_DISPLAY_NAME}}".to_string(),
-                version: Version::parse("1.0.0").unwrap(),
+                version: "2.0.0",
                 description: Some("{{EXTENSION_DESCRIPTION}}".to_string()),
                 author: Some("{{EXTENSION_AUTHOR}}".to_string()),
                 homepage: None,

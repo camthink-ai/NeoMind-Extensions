@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2021"
 authors = ["NeoMind Team"]
 license = "MIT"
-description = "Demo WASM extension for NeoMind (ABI Version 3)"
+description = "Demo WASM extension for the NeoMind extension runtime"
 
 [lib]
 name = "neomind_extension_wasm_demo"
@@ -19,6 +19,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 async-trait = "0.1"
 futures = "0.3"
+semver = "1"
 
 # Native-only dependencies (for testing)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -28,7 +29,3 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 default = []
 
 # WASM requires panic = abort
-[profile.release]
-panic = "abort"
-opt-level = "s"
-lto = true

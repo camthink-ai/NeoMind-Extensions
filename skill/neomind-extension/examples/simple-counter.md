@@ -31,12 +31,9 @@ async-trait = "0.1"
 tokio = { version = "1", features = ["rt", "sync"] }
 semver = "1"
 chrono = "0.4"
-
-[profile.release]
-panic = "unwind"
-opt-level = 3
-lto = "thin"
 ```
+
+If this extension is part of a Cargo workspace, keep `[profile.release]` in the workspace root `Cargo.toml`.
 
 ### src/lib.rs
 

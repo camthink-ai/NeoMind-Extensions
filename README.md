@@ -6,12 +6,12 @@ Official extension repository for the NeoMind Edge AI Platform.
 
 ## Overview
 
-This repository contains officially maintained extensions built with the **NeoMind Extension SDK V2**.
+This repository contains officially maintained extensions built for the **NeoMind extension runtime**.
 
 ### Key Features
 
-- **Unified SDK**: Single SDK for both Native and WASM targets
-- **ABI Version 3**: New extension interface with improved safety
+- **Shared Runtime Model**: One extension runtime for both Native and WASM targets
+- **Runtime Protocol v3**: Stable isolated loading protocol with improved safety
 - **Frontend Components**: React-based dashboard components
 - **CSS Variable Theming**: Light/dark mode support
 - **Process Isolation**: Optional isolation for high-risk extensions
@@ -21,7 +21,7 @@ This repository contains officially maintained extensions built with the **NeoMi
 ## Available Extensions
 
 > **Latest Release (v2.0.0)**: 27 extension packages across 6 platforms  
-> **ABI Version**: 3 (Process Isolation Architecture)  
+> **Runtime Protocol**: v3 (isolated extension architecture)  
 > **Release**: [View on GitHub](https://github.com/camthink-ai/NeoMind-Extensions/releases/tag/v2.0.0)
 
 ### Weather Forecast V2
@@ -426,9 +426,9 @@ export const MyComponent = forwardRef<HTMLDivElement, Props>(
 
 ---
 
-## ABI Version 3
+## Runtime Protocol v3
 
-All V2 extensions use ABI version 3, which provides:
+Current extensions target runtime protocol v3, which provides:
 
 - **Improved safety**: Better panic handling
 - **Frontend support**: Built-in component registration
@@ -440,7 +440,7 @@ All V2 extensions use ABI version 3, which provides:
 ```rust
 #[no_mangle]
 pub extern "C" fn neomind_extension_abi_version() -> u32 {
-    3  // ABI Version 3
+    3  // runtime protocol v3
 }
 
 #[no_mangle]
@@ -507,14 +507,14 @@ YOLO extensions contain:
 **CRITICAL**: All extensions MUST be compiled with `panic = "unwind"`
 
 ```toml
-# In Cargo.toml workspace
+# In the workspace root Cargo.toml
 [profile.release]
 opt-level = 3
 lto = "thin"
 panic = "unwind"  # REQUIRED for safety!
 ```
 
-Using `panic = "abort"` will cause the entire NeoMind server to crash on any panic.
+Using `panic = "abort"` will cause the entire NeoMind server to crash on any panic. Do not put `[profile.release]` in member crates inside a workspace, because Cargo will ignore it there.
 
 ---
 

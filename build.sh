@@ -103,7 +103,7 @@ V2_EXTENSIONS=(
 
 # Build Rust extensions
 echo ""
-echo -e "${BLUE}Building V2 Extensions (ABI Version 3)...${NC}"
+echo -e "${BLUE}Building extensions for runtime protocol v3...${NC}"
 
 # Detect WASM extensions and build them
 WASM_EXTENSIONS=()
@@ -131,12 +131,10 @@ if [ ${#NATIVE_EXTENSIONS[@]} -gt 0 ]; then
     echo -e "${BLUE}Building Native Extensions...${NC}"
 
     if [ "$BUILD_TYPE" = "release" ]; then
-        cargo build --release -p neomind-extension-sdk 2>/dev/null || true
         for ext in "${NATIVE_EXTENSIONS[@]}"; do
             cargo build --release -p "$ext" 2>/dev/null || true
         done
     else
-        cargo build -p neomind-extension-sdk 2>/dev/null || true
         for ext in "${NATIVE_EXTENSIONS[@]}"; do
             cargo build -p "$ext" 2>/dev/null || true
         done

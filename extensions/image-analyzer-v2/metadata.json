@@ -2,9 +2,9 @@
   "id": "image-analyzer-v2",
   "name": "Image Analyzer V2",
   "version": "2.0.0",
-  "description": "AI-powered image analysis using YOLOv8 object detection. Built with NeoMind Extension SDK V2.",
+  "description": "Image analysis with YOLOv8 via usls",
   "author": "NeoMind Team",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "categories": [
     "image",
     "vision",
@@ -27,7 +27,7 @@
     "components": [
       "ImageAnalyzer"
     ],
-    "entrypoint": "image-analyzer-v2-components.umd.js"
+    "entrypoint": "image-analyzer-v2-components.umd.cjs"
   },
   "builds": {
     "darwin-aarch64": {

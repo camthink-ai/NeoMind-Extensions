@@ -21,13 +21,12 @@ use neomind_extension_sdk::{
     MetricDescriptor, ExtensionCommand, MetricDataType, ParameterDefinition,
     ParamMetricValue, Result,
 };
-use neomind_extension_sdk::capabilities::{device, ExtensionContext};
+use neomind_extension_sdk::capabilities::CapabilityContext;
 use neomind_extension_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::collections::HashMap;
-use semver::Version;
 use base64::Engine;
 use parking_lot::{Mutex, RwLock};
 use std::sync::Arc;
@@ -225,9 +224,6 @@ fn draw_detections_on_image(
 // ============================================================================
 
 pub struct YoloDeviceInference {
-    /// Extension context for SDK capabilities
-    context: Mutex<Option<Arc<ExtensionContext>>>,
-
     /// YOLO model runtime (native only)
     #[cfg(not(target_arch = "wasm32"))]
     detector: Mutex<Option<Arc<std::sync::Mutex<Runtime<YOLO>>>>>,
@@ -259,7 +255,6 @@ impl YoloDeviceInference {
         }
 
         Self {
-            context: Mutex::new(None),
             #[cfg(not(target_arch = "wasm32"))]
             detector: Mutex::new(None),  // Lazy loading - no model yet
             #[cfg(not(target_arch = "wasm32"))]
@@ -274,14 +269,33 @@ impl YoloDeviceInference {
         }
     }
 
-    /// Initialize the extension context
-    pub fn set_context(&self, context: Arc<ExtensionContext>) {
-        *self.context.lock() = Some(context);
-    }
-
-    /// Get the extension context safely
-    fn get_context(&self) -> Option<Arc<ExtensionContext>> {
-        self.context.lock().clone()
+    fn invoke_capability_sync(
+        &self,
+        capability_name: &str,
+        params: &serde_json::Value,
+    ) -> serde_json::Value {
+        // Use block_in_place to safely block in an async context.
+        // This is safe because the extension runner uses multi_thread runtime.
+        tokio::task::block_in_place(|| {
+            let capability_context = CapabilityContext::default();
+            let response = capability_context.invoke_capability(capability_name, params);
+            if response
+                .get("success")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            {
+                if response.get("result").is_some() {
+                    response
+                } else {
+                    json!({
+                        "success": true,
+                        "result": response,
+                    })
+                }
+            } else {
+                response
+            }
+        })
     }
 
     /// Initialize the YOLO model (native only)
@@ -341,6 +355,7 @@ impl YoloDeviceInference {
 
     /// Static version of load_model for use during initialization (before `self` is available)
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
     fn load_model_static(version: u8) -> std::result::Result<Arc<std::sync::Mutex<Runtime<YOLO>>>, String> {
         let model_filename = format!("yolov{}n.onnx", version);
         let model_path = Self::find_model_path_static(&model_filename)?;
@@ -404,6 +419,7 @@ impl YoloDeviceInference {
 
     /// Static version of find_model_path for use during initialization
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
     fn find_model_path_static(filename: &str) -> std::result::Result<std::path::PathBuf, String> {
         // Load model from extension's models directory
         // Expected path: <extension_dir>/models/<filename>
@@ -444,16 +460,20 @@ impl YoloDeviceInference {
     /// Validate device exists (native only)
     #[cfg(not(target_arch = "wasm32"))]
     async fn validate_device(&self, device_id: &str) -> Result<bool> {
-        if let Some(ctx) = self.get_context() {
-            match device::get_metrics(&ctx, device_id).await {
-                Ok(_) => Ok(true),
-                Err(e) => {
-                    tracing::warn!("[YoloDeviceInference] Device validation failed: {}", e);
-                    Ok(true) // Still allow binding even if validation fails
-                }
-            }
+        let response = self.invoke_capability_sync(
+            "device_metrics_read",
+            &json!({ "device_id": device_id }),
+        );
+        if response
+            .get("success")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+        {
+            Ok(true)
         } else {
-            tracing::debug!("[YoloDeviceInference] Context not available, skipping device validation");
+            if let Some(error) = response.get("error").and_then(|value| value.as_str()) {
+                tracing::warn!("[YoloDeviceInference] Device validation failed: {}", error);
+            }
             Ok(true)
         }
     }
@@ -526,7 +546,7 @@ impl YoloDeviceInference {
 
         self.init_model()?;
 
-        let mut detector = self.detector.lock();
+        let detector = self.detector.lock();
         let model = detector.as_ref()
             .ok_or_else(|| ExtensionError::ExecutionFailed("Model not loaded".to_string()))?;
         let mut model_guard = model.lock().unwrap();
@@ -850,8 +870,7 @@ impl YoloDeviceInference {
         device_id: &str,
         result: &InferenceResult,
         image_b64: &str,
-        result_metric_prefix: &str,
-        ctx: &neomind_extension_sdk::capabilities::CapabilityContext,
+        _result_metric_prefix: &str,
     ) {
         // Update binding stats
         if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
@@ -864,7 +883,7 @@ impl YoloDeviceInference {
             }
         }
 
-        // Write virtual metrics using the CapabilityContext
+        // Write virtual metrics through the native capability bridge.
         // Virtual metrics must start with: transform., virtual., computed., derived., or aggregated.
 
 
@@ -876,7 +895,7 @@ impl YoloDeviceInference {
             "value": result.detections.len(),
             "timestamp": result.timestamp,
         });
-        match ctx.invoke_capability("device_metrics_write", &params) {
+        match self.invoke_capability_sync("device_metrics_write", &params) {
             v if v.get("success").and_then(|s| s.as_bool()).unwrap_or(false) => {
                 eprintln!("[YoloDeviceInference] Successfully wrote {}", metric_name);
             }
@@ -893,7 +912,7 @@ impl YoloDeviceInference {
             "value": result.inference_time_ms,
             "timestamp": result.timestamp,
         });
-        match ctx.invoke_capability("device_metrics_write", &params) {
+        match self.invoke_capability_sync("device_metrics_write", &params) {
             v if v.get("success").and_then(|s| s.as_bool()).unwrap_or(false) => {
                 eprintln!("[YoloDeviceInference] Successfully wrote {}", metric_name);
             }
@@ -911,7 +930,7 @@ impl YoloDeviceInference {
             "value": labels,
             "timestamp": result.timestamp,
         });
-        match ctx.invoke_capability("device_metrics_write", &params) {
+        match self.invoke_capability_sync("device_metrics_write", &params) {
             v if v.get("success").and_then(|s| s.as_bool()).unwrap_or(false) => {
                 eprintln!("[YoloDeviceInference] Successfully wrote {}", metric_name);
             }
@@ -931,7 +950,7 @@ impl YoloDeviceInference {
                 "value": data_uri,
                 "timestamp": result.timestamp,
             });
-            match ctx.invoke_capability("device_metrics_write", &params) {
+            match self.invoke_capability_sync("device_metrics_write", &params) {
                 v if v.get("success").and_then(|s| s.as_bool()).unwrap_or(false) => {
                     eprintln!("[YoloDeviceInference] Successfully wrote {}", metric_name);
                 }
@@ -1012,7 +1031,7 @@ impl Extension for YoloDeviceInference {
             ExtensionMetadata::new(
                 "yolo-device-inference",
                 "YOLO Device Inference",
-                Version::parse("1.0.0").unwrap()
+                "2.0.0"
             )
             .with_description("Automatic YOLOv8 inference on device image data sources")
             .with_author("NeoMind Team")
@@ -1294,14 +1313,13 @@ impl Extension for YoloDeviceInference {
     ///
     /// This method is called by the system when a DeviceMetric event is published.
     /// It checks if the device is bound and processes the image data.
-    async fn handle_event_with_context(
+    fn handle_event(
         &self,
         event_type: &str,
         payload: &serde_json::Value,
-        ctx: &neomind_extension_sdk::capabilities::CapabilityContext,
     ) -> Result<()> {
-        eprintln!("[YoloDeviceInference] handle_event_with_context called: event_type={}", event_type);
-        tracing::info!("[YoloDeviceInference] handle_event_with_context called: event_type={}", event_type);
+        eprintln!("[YoloDeviceInference] handle_event called: event_type={}", event_type);
+        tracing::info!("[YoloDeviceInference] handle_event called: event_type={}", event_type);
 
         eprintln!("[YoloDeviceInference] Checking event_type: {}", event_type);
         if event_type != "DeviceMetric" {
@@ -1393,7 +1411,6 @@ impl Extension for YoloDeviceInference {
                                         &result,
                                         &image_data_b64,
                                         &binding.result_metric_prefix,
-                                        ctx,
                                     );
                                     tracing::debug!(
                                         "[YoloDeviceInference] Inference: device={}, detections={}, time={}ms",

@@ -7,7 +7,7 @@
       "name": "YoloVideoDisplay",
       "type": "panel",
       "displayName": "YOLO Video V2",
-      "description": "Real-time object detection on video streams using YOLOv11. Supports Camera, RTSP, HLS, and RTMP sources. Built with NeoMind Extension SDK V2.",
+      "description": "Real-time object detection on video streams using YOLOv11. Supports Camera, RTSP, HLS, and RTMP sources in the NeoMind extension runtime.",
       "icon": "video",
       "defaultSize": { "width": 480, "height": 360 },
       "minSize": { "width": 320, "height": 240 },

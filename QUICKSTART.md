@@ -1,8 +1,8 @@
 # NeoMind 扩展仓库 - 快速开始指南
 
-## V2 扩展 (ABI Version 3)
+## 扩展运行时
 
-本仓库使用统一的 NeoMind Extension SDK V2，支持 ABI Version 3。
+本仓库中的扩展运行在统一的 NeoMind 扩展运行时上，当前使用运行时协议 v3。
 
 ### 可用扩展
 

@@ -340,7 +340,7 @@ head -10 ~/.claude/skills/neomind-extension/SKILL.md
 ## 📋 系统要求
 
 - **Claude Code**：支持技能的任何版本
-- **NeoMind**：Extension SDK V2
+- **NeoMind**：隔离扩展运行时
 - **平台**：macOS、Linux、Windows
 
 ---

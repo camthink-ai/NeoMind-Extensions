@@ -2,7 +2,7 @@
   "id": "yolo-device-inference",
   "name": "YOLO Device Inference",
   "version": "1.0.0",
-  "description": "Automatic YOLOv8 inference on device image data sources. Bind devices with image data and get automatic object detection results.",
+  "description": "Automatic YOLOv8 inference on device image data sources",
   "author": "NeoMind Team",
   "license": "MIT",
   "type": "native",
@@ -22,15 +22,13 @@
     "inference",
     "real-time"
   ],
-  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions",
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/yolo-device-inference",
   "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
   "frontend": {
     "components": [
-      "Device Inference Card",
-      "Device Inference Manager"
+      "DeviceInferenceCard"
     ],
-    "entrypoint": "yolo-device-inference-components.umd.js",
-    "global_name": "YoloDeviceInferenceComponents"
+    "entrypoint": "yolo-device-inference-components.umd.cjs"
   },
   "builds": {
     "darwin-aarch64": {

@@ -1,7 +1,7 @@
 ---
 name: neomind-extension
 description: |
-  Comprehensive guide for creating NeoMind Edge AI Platform extensions using SDK V2 with ABI Version 3.
+  Comprehensive guide for creating NeoMind Edge AI Platform extensions for the isolated NeoMind runtime.
 
   Use this skill when:
   - Creating new NeoMind extensions from scratch
@@ -13,7 +13,7 @@ description: |
   - Creating device inference extensions
 
   This skill teaches:
-  - SDK V2 patterns based on real extension implementations
+  - Current runtime patterns based on real extension implementations
   - ExtensionMetadata::new() builder pattern
   - FFI exports using neomind_export!() macro
   - ML model lifecycle management (lazy loading, keep loaded across sessions)
@@ -30,7 +30,7 @@ allowed-tools: [Read, Write, Edit, Bash, Glob, Grep, mcp__serena_serena__find_sy
 
 # NeoMind Extension Development Guide
 
-Learn to create production-ready extensions for the NeoMind Edge AI Platform using SDK V2 with ABI Version 3.
+Learn to create production-ready extensions for the NeoMind Edge AI Platform using the isolated NeoMind extension runtime.
 
 ## Quick Start
 
@@ -89,15 +89,11 @@ async-trait = "0.1"
 tokio = { version = "1", features = ["rt", "sync"] }
 semver = "1"
 parking_lot = "0.12"  # For efficient locks
-
-[profile.release]
-panic = "unwind"  # CRITICAL: Required for safety!
-opt-level = 3
-lto = "thin"
 ```
 
 **CRITICAL SAFETY REQUIREMENT:**
 - `panic = "unwind"` is **mandatory** - using `panic = "abort"` will crash the entire NeoMind server on any panic
+- If the extension lives in a Cargo workspace, put `[profile.release]` in the workspace root `Cargo.toml`, not the member crate
 
 ---
 
@@ -296,7 +292,7 @@ Examples:
 ```
 
 **Why `-v2` suffix?**
-- Indicates SDK V2 usage (ABI Version 3)
+- Indicates the current generation of the isolated runtime protocol
 - Distinguishes from legacy extensions
 - Prevents conflicts with old extensions
 
@@ -920,9 +916,9 @@ strategy:
 
 ## Key Concepts
 
-### ABI Version 3
+### Runtime Protocol v3
 
-All V2 extensions use ABI version 3:
+Current extensions use runtime protocol v3:
 - **Improved safety**: Better panic handling with `panic = "unwind"`
 - **Frontend support**: Built-in React component integration
 - **Standardized metrics**: Unified metric types across extensions
@@ -1009,7 +1005,7 @@ fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
 
 ### CRITICAL: Panic Configuration
 
-**Always set `panic = "unwind"` in Cargo.toml:**
+**Always set `panic = "unwind"` in the workspace root Cargo.toml (or the crate root if it is standalone):**
 
 ```toml
 [profile.release]
