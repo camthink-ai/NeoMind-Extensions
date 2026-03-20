@@ -1,6 +1,6 @@
-# NeoMind Extension Development Guide V2
+# NeoMind Extension Development Guide
 
-Complete guide for developing extensions using the **NeoMind Extension SDK V2** with ABI Version 3.
+Complete guide for developing extensions for the **NeoMind extension runtime**.
 
 [中文指南](EXTENSION_GUIDE.zh.md)
 
@@ -20,13 +20,13 @@ Complete guide for developing extensions using the **NeoMind Extension SDK V2** 
 
 ## Overview
 
-NeoMind Extension SDK V2 provides a unified development experience for both Native and WASM targets.
+NeoMind extensions share one runtime model across Native and WASM targets.
 
 ### Key Features
 
 - **Process Isolation Architecture**: All extensions run in isolated processes by default - crashes don't affect the main process
-- **Unified SDK**: Single codebase for Native and WASM
-- **ABI Version 3**: New extension interface with improved safety
+- **Shared Runtime Model**: Single codebase and runtime model for Native and WASM
+- **Runtime Protocol v3**: Stable isolated extension protocol with improved safety
 - **Declarative Macros**: Reduce boilerplate from 50+ lines to 5 lines
 - **Frontend Components**: React-based dashboard widgets
 - **Stream Processing**: Support for real-time data streams (video, sensors, etc.)
@@ -123,12 +123,9 @@ serde_json = "1.0"
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 semver = "1"
-
-[profile.release]
-panic = "unwind"  # Required for safety!
-opt-level = 3
-lto = "thin"
 ```
+
+If you build extensions inside a Cargo workspace, keep release profile settings at the workspace root `Cargo.toml`. Member-level `[profile.release]` sections are ignored by Cargo.
 
 ### 3. Implement Extension
 

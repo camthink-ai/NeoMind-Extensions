@@ -1,7 +1,7 @@
 {
   "name": "@neomind/weather-forecast-v2-frontend",
   "version": "2.0.0",
-  "description": "Weather Forecast V2 Frontend Component - NeoMind Extension SDK V2",
+  "description": "Weather Forecast V2 frontend component for the NeoMind extension runtime",
   "type": "module",
   "scripts": {
     "dev": "vite",

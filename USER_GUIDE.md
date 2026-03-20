@@ -1,6 +1,6 @@
-# NeoMind Extensions V2 - User Guide
+# NeoMind Extensions - User Guide
 
-This guide explains how to find, install, and use NeoMind V2 extensions.
+This guide explains how to find, install, and use NeoMind extensions.
 
 [中文指南](USER_GUIDE.zh.md)
 
@@ -8,7 +8,7 @@ This guide explains how to find, install, and use NeoMind V2 extensions.
 
 ## Table of Contents
 
-1. [What are V2 Extensions?](#what-are-v2-extensions)
+1. [What are NeoMind Extensions?](#what-are-neomind-extensions)
 2. [Installing Extensions](#installing-extensions)
 3. [Available Extensions](#available-extensions)
 4. [Using Extensions](#using-extensions)
@@ -16,16 +16,16 @@ This guide explains how to find, install, and use NeoMind V2 extensions.
 
 ---
 
-## What are V2 Extensions?
+## What are NeoMind Extensions?
 
-NeoMind V2 Extensions are built using the **unified Extension SDK V2** with **ABI Version 3**.
+NeoMind extensions run on the shared extension runtime using the isolated runtime protocol.
 
 ### Key Features
 
 | Feature | Description |
 |---------|-------------|
-| **Unified SDK** | Single SDK for Native and WASM targets |
-| **ABI Version 3** | New extension interface with improved safety |
+| **Shared Runtime Model** | Single runtime model for Native and WASM targets |
+| **Runtime Protocol v3** | Isolated extension protocol with improved safety |
 | **Frontend Components** | React-based dashboard widgets |
 | **CSS Theming** | Light/dark mode support |
 
@@ -203,7 +203,7 @@ V2 extensions provide React components for the dashboard:
 **Symptom**: Extension shows as "Failed to load"
 
 **Solutions**:
-1. Check ABI version: Extension must use ABI Version 3
+1. Check runtime protocol compatibility: extension packages must target runtime protocol v3
 2. Verify binary format matches platform
 3. Check NeoMind logs: `tail -f ~/.neomind/logs/extension.log`
 

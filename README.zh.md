@@ -6,12 +6,12 @@ NeoMind 边缘 AI 平台的官方扩展仓库。
 
 ## 概述
 
-本仓库包含使用 **NeoMind Extension SDK V2** 构建的官方维护扩展。
+本仓库包含面向 **NeoMind 扩展运行时** 构建的官方维护扩展。
 
 ### 核心特性
 
-- **统一 SDK**：单个 SDK 同时支持 Native 和 WASM 目标
-- **ABI 版本 3**：新的扩展接口，改进安全性
+- **统一运行时模型**：Native 和 WASM 共享同一套扩展运行时
+- **运行时协议 v3**：隔离加载协议，安全性更高
 - **前端组件**：基于 React 的仪表板组件
 - **CSS 变量主题**：明暗模式支持
 - **进程隔离**：高风险扩展的可选隔离
@@ -21,7 +21,7 @@ NeoMind 边缘 AI 平台的官方扩展仓库。
 ## 可用扩展
 
 > **最新版本 (v2.0.0)**：6 个平台，27 个扩展包  
-> **ABI 版本**：3（进程隔离架构）  
+> **运行时协议**：v3（隔离扩展架构）  
 > **发布地址**：[GitHub Release](https://github.com/camthink-ai/NeoMind-Extensions/releases/tag/v2.0.0)
 
 ### 天气预报 V2
@@ -288,14 +288,14 @@ npm install && npm run build
 
 ---
 
-## SDK V2 特性
+## 运行时协议 v3 特性
 
 ### FFI 接口
 
 ```rust
 #[no_mangle]
 pub extern "C" fn neomind_extension_abi_version() -> u32 {
-    3  // ABI 版本 3
+    3  // 运行时协议 v3
 }
 
 #[no_mangle]
@@ -362,14 +362,14 @@ YOLO 扩展包含：
 **关键**：所有扩展必须使用 `panic = "unwind"` 编译
 
 ```toml
-# 在 Cargo.toml workspace 中
+# 在 workspace 根 Cargo.toml 中
 [profile.release]
 opt-level = 3
 lto = "thin"
 panic = "unwind"  # 安全必需！
 ```
 
-使用 `panic = "abort"` 会导致任何 panic 时整个 NeoMind 服务器崩溃。
+使用 `panic = "abort"` 会导致任何 panic 时整个 NeoMind 服务器崩溃。不要把 `[profile.release]` 写在 workspace 成员包里，因为 Cargo 会忽略它。
 
 ---
 

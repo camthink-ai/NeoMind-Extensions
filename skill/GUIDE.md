@@ -4,7 +4,7 @@ A comprehensive Claude Code skill for developing extensions for the NeoMind Edge
 
 ## Overview
 
-This skill provides AI-assisted guidance for creating NeoMind extensions using the Extension SDK V2 with ABI Version 3. When you ask Claude about NeoMind extension development, this skill automatically activates to provide step-by-step instructions, code templates, and best practices.
+This skill provides AI-assisted guidance for creating NeoMind extensions for the isolated NeoMind runtime. When you ask Claude about NeoMind extension development, this skill automatically activates to provide step-by-step instructions, code templates, and best practices.
 
 ## Features
 
@@ -124,7 +124,7 @@ You can also invoke the skill directly:
 
 - **Process Isolation**: How extensions run in isolated processes
 - **IPC Protocol**: Communication between main process and extensions
-- **ABI Version 3**: FFI interface requirements
+- **Runtime Protocol v3**: FFI interface requirements
 - **Safety Requirements**: Panic handling and async rules
 
 ### 4. Reference Documentation

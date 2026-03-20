@@ -123,7 +123,7 @@ Based on official documentation from:
 
 ### NeoMind Extension Standards ✅
 
-- ✅ Covers SDK V2 with ABI Version 3
+- ✅ Covers the isolated extension runtime and protocol v3
 - ✅ Explains process isolation architecture
 - ✅ Includes frontend component development
 - ✅ Follows Rust and React best practices
@@ -137,7 +137,7 @@ Based on official documentation from:
 **Architecture Understanding**:
 - Process isolation model
 - IPC communication protocol
-- ABI Version 3 interface
+- runtime protocol v3 interface
 - Native vs WASM comparison
 
 **SDK Mastery**:

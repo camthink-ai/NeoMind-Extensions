@@ -12,10 +12,10 @@
 #[cfg(test)]
 mod tests {
     use neomind_extension_sdk::{
-        Extension, ExtensionMetadata, ExtensionError, ExtensionMetricValue,
+        Extension, ExtensionError,
         MetricDataType, ParamMetricValue,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
     use base64::Engine;
 
     // Import the extension from the library
@@ -119,6 +119,22 @@ mod tests {
 
         assert!(meta.author.is_some());
         assert_eq!(meta.author.as_ref().unwrap(), "NeoMind Team");
+    }
+
+    #[test]
+    fn test_metadata_json_matches_runtime_metadata() {
+        let ext = create_extension();
+        let meta = ext.metadata();
+        let metadata_json: Value = serde_json::from_str(include_str!("../metadata.json")).unwrap();
+
+        assert_eq!(metadata_json["id"], meta.id);
+        assert_eq!(metadata_json["name"], meta.name);
+        assert_eq!(metadata_json["description"].as_str(), meta.description.as_deref());
+        assert_eq!(metadata_json["license"], "MIT");
+        assert_eq!(
+            metadata_json["homepage"],
+            "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/yolo-device-inference"
+        );
     }
 
     // ========================================================================
@@ -791,7 +807,7 @@ mod tests {
         assert_eq!(result, Some(image_b64.to_string()));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handle_event_nested_metric_path() {
         let ext = create_extension();
         let jpeg_data = create_minimal_jpeg();
@@ -824,7 +840,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handle_event_simple_metric_name() {
         let ext = create_extension();
         let jpeg_data = create_minimal_jpeg();
@@ -853,7 +869,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handle_event_ignores_non_matching_device() {
         let ext = create_extension();
 
@@ -879,7 +895,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handle_event_ignores_non_matching_metric() {
         let ext = create_extension();
 
@@ -905,7 +921,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handle_event_ignores_inactive_binding() {
         let ext = create_extension();
 

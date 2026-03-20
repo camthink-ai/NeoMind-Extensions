@@ -1,7 +1,7 @@
 //! NeoMind Image Analyzer Extension (V2)
 //!
 //! Image analysis using YOLOv8 via usls library.
-//! Demonstrates the unified SDK with ABI Version 3.
+//! Built for the NeoMind isolated extension runtime.
 
 use async_trait::async_trait;
 use neomind_extension_sdk::{
@@ -17,7 +17,6 @@ use base64::Engine;
 use parking_lot::Mutex;
 
 #[cfg(not(target_arch = "wasm32"))]
-use semver::Version;
 
 #[cfg(not(target_arch = "wasm32"))]
 use usls::{models::YOLO, Config, DataLoader, Model, ORTConfig, Runtime, Version as YOLOVersion};
@@ -453,7 +452,7 @@ impl Extension for ImageAnalyzer {
                 ExtensionMetadata::new(
                     "image-analyzer-v2",
                     "Image Analyzer V2",
-                    Version::parse("2.0.0").unwrap()
+                    "2.0.0"
                 )
                 .with_description("Image analysis with YOLOv8 via usls")
                 .with_author("NeoMind Team")
@@ -655,6 +654,7 @@ neomind_extension_sdk::neomind_export!(ImageAnalyzer);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     #[test]
     fn test_extension_metadata() {
@@ -662,6 +662,25 @@ mod tests {
         let meta = ext.metadata();
         assert_eq!(meta.id, "image-analyzer-v2");
         assert_eq!(meta.name, "Image Analyzer V2");
+        assert_eq!(meta.description.as_deref(), Some("Image analysis with YOLOv8 via usls"));
+    }
+
+    #[test]
+    fn test_metadata_json_matches_runtime_metadata() {
+        let ext = ImageAnalyzer::new();
+        let meta = ext.metadata();
+        let metadata_json: Value = serde_json::from_str(include_str!("../metadata.json")).unwrap();
+
+        assert_eq!(metadata_json["id"], meta.id);
+        assert_eq!(metadata_json["name"], meta.name);
+        assert_eq!(
+            metadata_json["license"],
+            "Apache-2.0"
+        );
+        assert_eq!(
+            metadata_json["repository"],
+            "https://github.com/camthink-ai/NeoMind-Extensions"
+        );
     }
 
     #[test]

@@ -4,7 +4,7 @@ A comprehensive Claude Code skill for creating extensions for the NeoMind Edge A
 
 ## Overview
 
-This skill provides step-by-step guidance, templates, and reference documentation for developing NeoMind extensions using the Extension SDK V2 with ABI Version 3.
+This skill provides step-by-step guidance, templates, and reference documentation for developing NeoMind extensions for the isolated NeoMind runtime.
 
 ## Features
 
@@ -78,7 +78,7 @@ neomind-extension/
 ### 2. Architecture Understanding
 - Process isolation model
 - IPC communication protocol
-- ABI Version 3 interface
+- runtime protocol v3 interface
 - Native vs WASM comparison
 
 ### 3. SDK Reference
@@ -168,4 +168,4 @@ MIT License
 
 March 3, 2026
 
-Built following official Claude Code skill development standards and NeoMind Extension SDK V2 specifications.
+Built following official Claude Code skill development standards and the NeoMind isolated runtime specifications.

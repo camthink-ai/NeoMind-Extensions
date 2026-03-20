@@ -35,7 +35,7 @@ generation, and documentation for developers using Claude Code.
 
 Features:
 - Automatic activation when discussing extension development
-- Complete SDK V2 and ABI Version 3 documentation
+- Complete runtime protocol v3 documentation
 - Step-by-step workflow guidance
 - Rust backend and React frontend templates
 - Working examples and best practices
@@ -84,7 +84,7 @@ generation, and documentation for developers using Claude Code.
 
 Features:
 - Automatic activation when discussing extension development
-- Complete SDK V2 and ABI Version 3 documentation
+- Complete runtime protocol v3 documentation
 - Step-by-step workflow guidance
 - Rust backend and React frontend templates
 - Working examples and best practices

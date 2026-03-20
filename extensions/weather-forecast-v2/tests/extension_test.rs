@@ -10,13 +10,13 @@
 #[cfg(test)]
 mod tests {
     use neomind_extension_sdk::{
-        Extension, ExtensionMetadata, ExtensionError, ExtensionMetricValue,
+        Extension, ExtensionError,
         MetricDataType, ParamMetricValue,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     // Import the extension from the library
-    use neomind_extension_weather_forecast_v2::{WeatherExtension, WeatherResult};
+    use neomind_extension_weather_forecast_v2::WeatherExtension;
 
     // ========================================================================
     // Helper Functions
@@ -25,6 +25,92 @@ mod tests {
     /// Create a new WeatherExtension instance for testing
     fn create_extension() -> WeatherExtension {
         WeatherExtension::new()
+    }
+
+    fn find_index_entry<'a>(index: &'a Value, id: &str) -> &'a Value {
+        index["extensions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == id)
+            .unwrap()
+    }
+
+    // ========================================================================
+    // Frontend Asset Consistency Tests
+    // ========================================================================
+
+    /// Verify frontend assets consistency across metadata.json and frontend.json
+    /// for all extensions that have frontend components.
+    #[test]
+    fn test_frontend_assets_consistency() {
+        let extensions_with_frontend = [
+            ("weather-forecast-v2", "WeatherCard"),
+            ("image-analyzer-v2", "ImageAnalyzer"),
+            ("yolo-video-v2", "YoloVideoDisplay"),
+            ("yolo-device-inference", "DeviceInferenceCard"),
+        ];
+
+        for (ext_id, expected_component) in extensions_with_frontend {
+            let metadata: Value = match ext_id {
+                "weather-forecast-v2" => serde_json::from_str(include_str!("../metadata.json")).unwrap(),
+                "image-analyzer-v2" => serde_json::from_str(include_str!("../../image-analyzer-v2/metadata.json")).unwrap(),
+                "yolo-video-v2" => serde_json::from_str(include_str!("../../yolo-video-v2/metadata.json")).unwrap(),
+                "yolo-device-inference" => serde_json::from_str(include_str!("../../yolo-device-inference/metadata.json")).unwrap(),
+                _ => unreachable!(),
+            };
+
+            let frontend_json: Value = match ext_id {
+                "weather-forecast-v2" => serde_json::from_str(include_str!("../frontend/frontend.json")).unwrap(),
+                "image-analyzer-v2" => serde_json::from_str(include_str!("../../image-analyzer-v2/frontend/frontend.json")).unwrap(),
+                "yolo-video-v2" => serde_json::from_str(include_str!("../../yolo-video-v2/frontend/frontend.json")).unwrap(),
+                "yolo-device-inference" => serde_json::from_str(include_str!("../../yolo-device-inference/frontend/frontend.json")).unwrap(),
+                _ => unreachable!(),
+            };
+
+            // 1. Check metadata.json has frontend section
+            assert!(metadata.get("frontend").is_some(), "{ext_id}: missing frontend field in metadata.json");
+
+            // 2. Check entrypoint matches (metadata.json should use .umd.cjs)
+            let meta_entrypoint = metadata["frontend"]["entrypoint"].as_str().unwrap();
+            let frontend_entrypoint = frontend_json["entrypoint"].as_str().unwrap();
+            assert_eq!(meta_entrypoint, frontend_entrypoint,
+                "{ext_id}: entrypoint mismatch - metadata has '{meta_entrypoint}', frontend.json has '{frontend_entrypoint}'");
+
+            // 3. Check entrypoint extension is .umd.cjs
+            assert!(meta_entrypoint.ends_with(".umd.cjs"),
+                "{ext_id}: entrypoint should end with .umd.cjs, got '{meta_entrypoint}'");
+
+            // 4. Check components match
+            let meta_components: Vec<&str> = metadata["frontend"]["components"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| c.as_str().unwrap())
+                .collect();
+
+            let frontend_components: Vec<&str> = frontend_json["components"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| c["name"].as_str().unwrap())
+                .collect();
+
+            assert_eq!(meta_components, frontend_components,
+                "{ext_id}: components mismatch - metadata has {meta_components:?}, frontend.json has {frontend_components:?}");
+
+            // 5. Verify expected component exists
+            assert!(frontend_components.contains(&expected_component),
+                "{ext_id}: expected component '{expected_component}' not found in frontend.json");
+
+            // 6. Verify no global_name field (deprecated)
+            assert!(metadata["frontend"].get("global_name").is_none(),
+                "{ext_id}: global_name field should be removed from metadata.json");
+
+            // 7. Verify frontend.json id matches extension id
+            assert_eq!(frontend_json["id"].as_str().unwrap(), ext_id,
+                "{ext_id}: frontend.json id mismatch");
+        }
     }
 
     // ========================================================================
@@ -59,6 +145,50 @@ mod tests {
 
         assert!(meta.author.is_some());
         assert_eq!(meta.author.as_ref().unwrap(), "NeoMind Team");
+    }
+
+    #[test]
+    fn test_market_index_entries_match_core_metadata() {
+        let index: Value = serde_json::from_str(include_str!("../../../extensions/index.json")).unwrap();
+
+        for id in [
+            "weather-forecast-v2",
+            "image-analyzer-v2",
+            "yolo-video-v2",
+            "wasm-demo",
+            "yolo-device-inference",
+        ] {
+            let metadata_path = format!("../{id}/metadata.json");
+            let metadata: Value = match id {
+                "weather-forecast-v2" => serde_json::from_str(include_str!("../metadata.json")).unwrap(),
+                "image-analyzer-v2" => serde_json::from_str(include_str!("../../image-analyzer-v2/metadata.json")).unwrap(),
+                "yolo-video-v2" => serde_json::from_str(include_str!("../../yolo-video-v2/metadata.json")).unwrap(),
+                "wasm-demo" => serde_json::from_str(include_str!("../../wasm-demo/metadata.json")).unwrap(),
+                "yolo-device-inference" => serde_json::from_str(include_str!("../../yolo-device-inference/metadata.json")).unwrap(),
+                _ => unreachable!(),
+            };
+            let entry = find_index_entry(&index, id);
+
+            assert_eq!(entry["id"], metadata["id"], "{metadata_path}");
+            assert_eq!(entry["name"], metadata["name"], "{metadata_path}");
+            assert_eq!(entry["version"], metadata["version"], "{metadata_path}");
+            assert_eq!(entry["description"], metadata["description"], "{metadata_path}");
+            assert_eq!(entry["license"], metadata["license"], "{metadata_path}");
+            assert_eq!(entry["homepage"], metadata["homepage"], "{metadata_path}");
+            assert_eq!(entry["builds"], metadata["builds"], "{metadata_path}");
+            assert_eq!(entry["type"], metadata["type"], "{metadata_path}");
+            assert_eq!(entry["categories"], metadata["categories"], "{metadata_path}");
+            if metadata.get("frontend").is_some() {
+                assert_eq!(entry["frontend"], metadata["frontend"], "{metadata_path}");
+            }
+            assert_eq!(
+                entry["metadata_url"],
+                format!(
+                    "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/{id}/metadata.json"
+                ),
+                "{metadata_path}"
+            );
+        }
     }
 
     #[test]

@@ -339,7 +339,7 @@ head -10 ~/.claude/skills/neomind-extension/SKILL.md
 ## 📋 System Requirements
 
 - **Claude Code**: Any version supporting skills
-- **NeoMind**: Extension SDK V2
+- **NeoMind**: isolated extension runtime
 - **Platform**: macOS, Linux, Windows
 
 ---

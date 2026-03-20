@@ -1,6 +1,6 @@
 //! NeoMind Weather Forecast Extension (V2)
 //!
-//! Weather forecast extension using the unified SDK with ABI Version 3.
+//! Weather forecast extension built for the NeoMind isolated extension runtime.
 //!
 //! Features:
 //! - Real-time weather data from Open-Meteo API
@@ -19,7 +19,6 @@ use neomind_extension_sdk::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicI64, AtomicBool, Ordering};
-use semver::Version;
 
 // ============================================================================
 // Types
@@ -223,9 +222,9 @@ impl Extension for WeatherExtension {
             ExtensionMetadata::new(
                 "weather-forecast-v2",
                 "Weather Forecast V2",
-                Version::parse("2.0.0").unwrap()
+                "2.0.0"
             )
-            .with_description("Weather forecast extension using unified SDK with sync HTTP client")
+            .with_description("Weather forecast extension for the NeoMind isolated runtime using a sync HTTP client")
             .with_author("NeoMind Team")
             .with_config_parameters(vec![
                 ParameterDefinition {
@@ -583,6 +582,7 @@ neomind_extension_sdk::neomind_export!(WeatherExtension);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     #[test]
     fn test_extension_metadata() {
@@ -590,6 +590,29 @@ mod tests {
         let meta = ext.metadata();
         assert_eq!(meta.id, "weather-forecast-v2");
         assert_eq!(meta.name, "Weather Forecast V2");
+        assert_eq!(
+            meta.description.as_deref(),
+            Some("Weather forecast extension for the NeoMind isolated runtime using a sync HTTP client")
+        );
+    }
+
+    #[test]
+    fn test_metadata_json_matches_runtime_metadata() {
+        let ext = WeatherExtension::new();
+        let meta = ext.metadata();
+        let metadata_json: Value = serde_json::from_str(include_str!("../metadata.json")).unwrap();
+
+        assert_eq!(metadata_json["id"], meta.id);
+        assert_eq!(metadata_json["name"], meta.name);
+        assert_eq!(
+            metadata_json["description"].as_str(),
+            meta.description.as_deref()
+        );
+        assert_eq!(metadata_json["license"], "Apache-2.0");
+        assert_eq!(
+            metadata_json["repository"],
+            "https://github.com/camthink-ai/NeoMind-Extensions"
+        );
     }
 
     #[test]

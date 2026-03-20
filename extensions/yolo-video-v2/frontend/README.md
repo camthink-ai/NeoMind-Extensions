@@ -1,6 +1,6 @@
 # YOLO Video V2 Frontend
 
-Built with NeoMind Extension SDK V2.
+Built for the NeoMind extension runtime.
 
 ## Quick Start
 

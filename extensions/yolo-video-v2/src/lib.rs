@@ -1,7 +1,7 @@
 //! YOLO Video Processor Extension (V2)
 //!
 //! Real-time video stream processing with YOLOv11 object detection.
-//! Uses the unified NeoMind Extension SDK with ABI Version 3.
+//! Built for the NeoMind isolated extension runtime.
 //!
 //! SAFETY: This extension is marked as HIGH-RISK due to:
 //! - ONNX runtime AI inference (potential memory issues)
@@ -30,14 +30,13 @@ use neomind_extension_sdk::{
     ParamMetricValue, Result,
 };
 use neomind_extension_sdk::prelude::{
-    StreamCapability, StreamMode, StreamDirection, StreamDataType,
+    FlowControl, StreamCapability, StreamMode, StreamDirection, StreamDataType,
     StreamSession, SessionStats, StreamError, StreamResult,
     PushOutputMessage, mpsc,
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use semver::Version;
 use uuid::Uuid;
 
 use detector::{Detection, YoloDetector};
@@ -736,17 +735,13 @@ impl Extension for YoloVideoProcessorV2 {
     fn metadata(&self) -> &ExtensionMetadata {
         static META: std::sync::OnceLock<ExtensionMetadata> = std::sync::OnceLock::new();
         META.get_or_init(|| {
-            ExtensionMetadata {
-                id: "yolo-video-v2".to_string(),
-                name: "YOLO Video Processor V2".to_string(),
-                version: Version::parse("2.0.0").unwrap(),
-                description: Some("Real-time video stream processing with YOLOv11 (SDK V2)".to_string()),
-                author: Some("NeoMind Team".to_string()),
-                homepage: None,
-                license: Some("Apache-2.0".to_string()),
-                file_path: None,
-                config_parameters: None,
-            }
+            ExtensionMetadata::new(
+                "yolo-video-v2",
+                "YOLO Video V2",
+                "2.0.0",
+            )
+            .with_description("Real-time video stream processing with YOLOv11 for the NeoMind isolated runtime")
+            .with_author("NeoMind Team")
         })
     }
 
@@ -1013,7 +1008,7 @@ impl Extension for YoloVideoProcessorV2 {
             max_chunk_size: 524288,
             preferred_chunk_size: 32768,
             max_concurrent_sessions: 4,
-            ..Default::default()
+            flow_control: FlowControl::default_stream(),
         })
     }
 
@@ -1323,11 +1318,13 @@ impl Extension for YoloVideoProcessorV2 {
                 eprintln!("[YOLO] Session not found: {}", session_id);
                 return Ok(StreamResult::error(
                     Some(chunk.sequence),
+                    chunk.sequence,
                     StreamError {
                         code: "SESSION_NOT_FOUND".to_string(),
                         message: format!("Session {} not found", session_id),
                         retryable: false,
                     },
+                    0.0,
                 ));
             }
         };
@@ -1720,20 +1717,44 @@ neomind_extension_sdk::neomind_export!(YoloVideoProcessorV2);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     #[test]
     fn test_extension_metadata() {
         let ext = YoloVideoProcessorV2::new();
         let meta = ext.metadata();
         assert_eq!(meta.id, "yolo-video-v2");
-        assert_eq!(meta.name, "YOLO Video Processor V2");
+        assert_eq!(meta.name, "YOLO Video V2");
+        assert_eq!(
+            meta.description.as_deref(),
+            Some("Real-time video stream processing with YOLOv11 for the NeoMind isolated runtime")
+        );
+    }
+
+    #[test]
+    fn test_metadata_and_manifest_are_aligned() {
+        let ext = YoloVideoProcessorV2::new();
+        let meta = ext.metadata();
+        let metadata_json: Value = serde_json::from_str(include_str!("../metadata.json")).unwrap();
+        let manifest_json: Value = serde_json::from_str(include_str!("../manifest.json")).unwrap();
+
+        assert_eq!(metadata_json["id"], meta.id);
+        assert_eq!(metadata_json["name"], meta.name);
+        assert_eq!(
+            metadata_json["description"].as_str(),
+            meta.description.as_deref()
+        );
+        assert_eq!(metadata_json["license"], "Apache-2.0");
+        assert_eq!(manifest_json["id"], meta.id);
+        assert_eq!(manifest_json["name"], meta.name);
+        assert_eq!(manifest_json["description"].as_str(), meta.description.as_deref());
     }
 
     #[test]
     fn test_extension_metrics() {
         let ext = YoloVideoProcessorV2::new();
         let metrics = ext.metrics();
-        assert_eq!(metrics.len(), 3);
+        assert_eq!(metrics.len(), 5);
     }
 
     #[test]

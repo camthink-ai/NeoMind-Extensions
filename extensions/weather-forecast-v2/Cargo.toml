@@ -4,20 +4,19 @@ version = "2.0.0"
 edition = "2021"
 authors = ["NeoMind Team"]
 license = "Apache-2.0"
-description = "Weather forecast extension using unified SDK"
+description = "Weather forecast extension for the NeoMind isolated runtime"
 
 [lib]
 name = "neomind_extension_weather_forecast_v2"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-neomind-extension-sdk = { path = "../../../NeoMind/crates/neomind-extension-sdk" }
+neomind-extension-sdk = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 urlencoding = { workspace = true }
 async-trait = "0.1"
 chrono = "0.4"
-semver = "1"
 
 # Use sync HTTP client to avoid Tokio runtime issues in dynamic libraries
 ureq = { version = "2", features = ["json"] }
@@ -29,7 +28,3 @@ tokio = { version = "1", features = ["rt", "sync"] }
 default = []
 native = []
 wasm = []
-
-[profile.release]
-opt-level = 3
-lto = "thin"

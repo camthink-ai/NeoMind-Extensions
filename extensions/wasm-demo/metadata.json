@@ -2,13 +2,13 @@
   "id": "wasm-demo",
   "name": "WASM Demo Extension",
   "version": "1.0.0",
-  "description": "A simple counter extension demonstrating WASM support for NeoMind",
+  "description": "A simple counter extension demonstrating WASM support",
   "author": "NeoMind Team",
   "license": "MIT",
   "type": "wasm",
   "categories": ["demo", "counter", "example"],
   "keywords": ["wasm", "demo", "counter"],
-  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions",
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/wasm-demo",
   "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
   "builds": {
     "wasm": {
