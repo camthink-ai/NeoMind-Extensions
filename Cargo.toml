@@ -13,9 +13,6 @@ members = [
 exclude = [
     "extensions/as-hello",              # AssemblyScript project (not Rust)
     "extensions/test-dashboard-component",  # Frontend-only component (not Rust)
-    "extensions/weather-forecast",      # Legacy (pre-SDK)
-    "extensions/image-analyzer",        # Legacy (pre-SDK)
-    "extensions/yolo-video",            # Legacy (pre-SDK)
 ]
 
 [workspace.package]

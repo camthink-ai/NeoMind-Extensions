@@ -1009,6 +1009,7 @@ impl Extension for YoloVideoProcessorV2 {
             preferred_chunk_size: 32768,
             max_concurrent_sessions: 4,
             flow_control: FlowControl::default_stream(),
+            config_schema: None,
         })
     }
 
@@ -1318,13 +1319,11 @@ impl Extension for YoloVideoProcessorV2 {
                 eprintln!("[YOLO] Session not found: {}", session_id);
                 return Ok(StreamResult::error(
                     Some(chunk.sequence),
-                    chunk.sequence,
                     StreamError {
                         code: "SESSION_NOT_FOUND".to_string(),
                         message: format!("Session {} not found", session_id),
                         retryable: false,
                     },
-                    0.0,
                 ));
             }
         };
