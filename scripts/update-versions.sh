@@ -38,8 +38,8 @@ for ext_dir in "$EXTENSIONS_DIR"/*/; do
     frontend_json="$ext_dir/frontend/frontend.json"
     frontend_section="null"
     if [ -f "$frontend_json" ]; then
-        # Extract component names
-        components=$(jq -c '.components' "$frontend_json" 2>/dev/null || echo "[]")
+        # Extract component names only (not full objects)
+        components=$(jq -c '[.components[].name]' "$frontend_json" 2>/dev/null || echo "[]")
         entrypoint=$(jq -r '.entrypoint // ""' "$frontend_json" 2>/dev/null || echo "")
 
         if [ -n "$entrypoint" ]; then
