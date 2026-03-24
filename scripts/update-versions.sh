@@ -78,7 +78,8 @@ EOF
             platform_suffix=$(echo $platform | sed 's/-/_/')
         fi
 
-        url="https://github.com/$GITHUB_REPO/releases/download/v$MARKET_VERSION/${ext_id}-${version}-${platform_suffix}.nep"
+        # Use MARKET_VERSION for URL, not extension version
+        url="https://github.com/$GITHUB_REPO/releases/download/v$MARKET_VERSION/${ext_id}-${MARKET_VERSION}-${platform_suffix}.nep"
         if [ "$first" = true ]; then
             builds_json+="\"$platform\":{\"url\":\"$url\"}"
             first=false
