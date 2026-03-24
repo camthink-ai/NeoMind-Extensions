@@ -6,7 +6,79 @@
   "author": "NeoMind Team",
   "license": "Apache-2.0",
   "type": "native",
-  "categories": ["ai", "vision", "detection"],
+  "categories": [
+    "ai",
+    "vision",
+    "detection"
+  ],
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/image-analyzer-v2",
-  "builds": {"darwin-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/image-analyzer-v2-2.3.0-darwin_aarch64.nep"},"darwin-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/image-analyzer-v2-2.3.0-darwin_x86_64.nep"},"linux-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/image-analyzer-v2-2.3.0-linux_amd64.nep"},"linux-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/image-analyzer-v2-2.3.0-linux_arm64.nep"},"windows-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/image-analyzer-v2-2.3.0-windows_x86_64.nep"}}
+  "builds": {
+    "darwin-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/image-analyzer-v2-2.3.0-darwin_aarch64.nep"
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/image-analyzer-v2-2.3.0-darwin_x86_64.nep"
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/image-analyzer-v2-2.3.0-linux_amd64.nep"
+    },
+    "linux-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/image-analyzer-v2-2.3.0-linux_arm64.nep"
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/image-analyzer-v2-2.3.0-windows_x86_64.nep"
+    }
+  },
+  "frontend": {
+    "components": [
+      {
+        "name": "ImageAnalyzer",
+        "type": "widget",
+        "displayName": "Image Analyzer V2",
+        "description": "AI-powered object detection using YOLOv8. Upload images to detect and identify objects in the NeoMind extension runtime.",
+        "icon": "image",
+        "defaultSize": {
+          "width": 400,
+          "height": 350
+        },
+        "minSize": {
+          "width": 300,
+          "height": 250
+        },
+        "maxSize": {
+          "width": 600,
+          "height": 500
+        },
+        "configSchema": {
+          "showMetrics": {
+            "type": "boolean",
+            "required": false,
+            "default": true,
+            "description": "Show detection metrics in header"
+          },
+          "maxImageSize": {
+            "type": "number",
+            "required": false,
+            "default": 10485760,
+            "description": "Maximum image file size in bytes"
+          },
+          "confidenceThreshold": {
+            "type": "number",
+            "required": false,
+            "default": 0.5,
+            "description": "Minimum confidence threshold for detections"
+          },
+          "variant": {
+            "type": "string",
+            "required": false,
+            "default": "default",
+            "description": "Display variant (default or compact)"
+          }
+        },
+        "refreshable": false,
+        "refreshInterval": 0
+      }
+    ],
+    "entrypoint": "image-analyzer-v2-components.umd.cjs"
+  }
 }
