@@ -65,7 +65,30 @@ EOF
         categories='["ai", "computer-vision", "device-integration"]'
     fi
 
-    # Generate metadata.json
+    # Build platforms for builds field
+    platforms='darwin-aarch64 darwin-x86_64 linux-x86_64 linux-aarch64 windows-x86_64'
+    builds_json="{"
+    first=true
+    for platform in $platforms; do
+        if [ "$platform" = "linux-x86_64" ]; then
+            platform_suffix="linux_amd64"
+        elif [ "$platform" = "linux-aarch64" ]; then
+            platform_suffix="linux_arm64"
+        else
+            platform_suffix=$(echo $platform | sed 's/-/_/')
+        fi
+
+        url="https://github.com/$GITHUB_REPO/releases/download/v$MARKET_VERSION/${ext_id}-${version}-${platform_suffix}.nep"
+        if [ "$first" = true ]; then
+            builds_json+="\"$platform\":{\"url\":\"$url\"}"
+            first=false
+        else
+            builds_json+=",\"$platform\":{\"url\":\"$url\"}"
+        fi
+    done
+    builds_json+="}"
+
+    # Generate metadata.json with builds field
     cat > "$ext_dir/metadata.json" <<EOF
 {
   "id": "$ext_id",
@@ -76,11 +99,12 @@ EOF
   "license": "Apache-2.0",
   "type": "native",
   "categories": $categories,
-  "homepage": "https://github.com/$GITHUB_REPO/tree/main/extensions/$ext_id"
+  "homepage": "https://github.com/$GITHUB_REPO/tree/main/extensions/$ext_id",
+  "builds": $builds_json
 }
 EOF
 
-    echo "  ✓ Generated metadata.json"
+    echo "  ✓ Generated metadata.json with builds"
 done
 
 echo ""

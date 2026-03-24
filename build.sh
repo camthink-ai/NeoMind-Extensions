@@ -1,11 +1,16 @@
 #!/bin/bash
-# NeoMind Extensions V2 Build Script
-# Builds all V2 extensions and packages them into .nep files
+# NeoMind Extensions Build Script
+# Unified build script for all extensions
+#
+# Usage:
+#   ./build.sh                    # Build all, create packages
+#   ./build.sh --dev              # Dev build, install to NeoMind
+#   ./build.sh --release 2.4.0    # Release build with version
+#   ./build.sh --single yolo-video-v2  # Build single extension
+#
+# For release: ./build.sh --release VERSION
 
 set -e
-
-echo "NeoMind Extensions V2 Build"
-echo "============================"
 
 # Colors
 GREEN='\033[0;32m'
@@ -14,31 +19,61 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-# Parse arguments
+# Default values
 AUTO_INSTALL=false
 SKIP_INSTALL=false
 BUILD_FRONTEND=true
 BUILD_TYPE="release"
 SKIP_PACKAGE=false
+DEV_MODE=false
+SINGLE_EXT=""
+MARKET_VERSION=""
 
-for arg in "$@"; do
-    case "$arg" in
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
         --yes|-y)
             AUTO_INSTALL=true
+            shift
             ;;
         --skip-install)
             SKIP_INSTALL=true
+            shift
             ;;
         --skip-frontend)
             BUILD_FRONTEND=false
+            shift
             ;;
         --skip-package)
             SKIP_PACKAGE=true
+            shift
             ;;
         --debug)
             BUILD_TYPE="debug"
+            shift
+            ;;
+        --dev)
+            DEV_MODE=true
+            AUTO_INSTALL=true
+            SKIP_PACKAGE=true
+            shift
+            ;;
+        --release)
+            BUILD_TYPE="release"
+            shift
+            if [[ -n "$1" && ! "$1" =~ ^- ]]; then
+                MARKET_VERSION="$1"
+                shift
+            fi
+            ;;
+        --single)
+            shift
+            SINGLE_EXT="$1"
+            shift
             ;;
         --help|-h)
+            echo "NeoMind Extensions Build Script"
+            echo ""
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
@@ -47,11 +82,29 @@ for arg in "$@"; do
             echo "  --skip-frontend    Skip building frontend components"
             echo "  --skip-package     Skip creating .nep packages"
             echo "  --debug            Build in debug mode"
+            echo "  --dev              Dev mode: build + install to NeoMind"
+            echo "  --release [VER]    Release mode, optional version for filenames"
+            echo "  --single <ext>     Build single extension only"
             echo "  --help, -h         Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  ./build.sh                           # Build all, create packages"
+            echo "  ./build.sh --dev                     # Dev build, auto-install"
+            echo "  ./build.sh --release 2.4.0           # Release with version"
+            echo "  ./build.sh --single weather-forecast-v2  # Single extension"
             exit 0
+            ;;
+        *)
+            echo -e "${RED}Unknown option: $1${NC}"
+            exit 1
             ;;
     esac
 done
+
+echo "======================================"
+echo "NeoMind Extensions Build"
+echo "======================================"
+echo ""
 
 # Detect platform
 OS=$(uname -s)
@@ -100,6 +153,18 @@ V2_EXTENSIONS=(
     "yolo-device-inference"
     "wasm-demo"
 )
+
+# Filter to single extension if specified
+if [ -n "$SINGLE_EXT" ]; then
+    if [[ " ${V2_EXTENSIONS[@]} " =~ " ${SINGLE_EXT} " ]]; then
+        V2_EXTENSIONS=("$SINGLE_EXT")
+        echo -e "${BLUE}Building single extension: $SINGLE_EXT${NC}"
+    else
+        echo -e "${RED}Error: Unknown extension '$SINGLE_EXT'${NC}"
+        echo "Available: ${V2_EXTENSIONS[*]}"
+        exit 1
+    fi
+fi
 
 # Build Rust extensions
 echo ""
@@ -272,8 +337,10 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             BINARY_NAME="extension.${LIB_EXT}"
         fi
 
-        # Get version from Cargo.toml
-        VERSION=$(grep -m1 'version = ' "$EXT_DIR/Cargo.toml" 2>/dev/null | sed 's/.*version = "\([^"]*\)".*/\1/' || echo "0.1.0")
+        # Get version from Cargo.toml (or use MARKET_VERSION for filename)
+        EXT_VERSION=$(grep -m1 'version = ' "$EXT_DIR/Cargo.toml" 2>/dev/null | sed 's/.*version = "\([^"]*\)".*/\1/' || echo "0.1.0")
+        # Use MARKET_VERSION for filename if provided (for releases)
+        PACKAGE_VERSION="${MARKET_VERSION:-$EXT_VERSION}"
 
         if [ ! -f "$LIB_FILE" ]; then
             echo -e "  ${YELLOW}⚠${NC} $ext: no binary found"
@@ -573,7 +640,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                 --argjson abi_version 3 \
                 --arg id "$ext" \
                 --arg name "$(echo $ext | sed 's/-v2$//' | sed 's/-/ /g')" \
-                --arg version "$VERSION" \
+                --arg version "$EXT_VERSION" \
                 --arg sdk_version "2.0.0" \
                 --arg type "wasm" \
                 --argjson has_models "$HAS_MODELS" \
@@ -600,7 +667,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                 --argjson abi_version 3 \
                 --arg id "$ext" \
                 --arg name "$(echo $ext | sed 's/-v2$//' | sed 's/-/ /g')" \
-                --arg version "$VERSION" \
+                --arg version "$EXT_VERSION" \
                 --arg sdk_version "2.0.0" \
                 --arg type "native" \
                 --arg platform "$PLATFORM" \
@@ -628,10 +695,10 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
         # Create .nep package with platform suffix for native extensions
         if [ "$IS_WASM" = true ]; then
             # WASM is cross-platform, no platform suffix needed
-            OUTPUT_FILE="dist/${ext}-${VERSION}.nep"
+            OUTPUT_FILE="dist/${ext}-${PACKAGE_VERSION}.nep"
         else
             # Native extensions need platform suffix
-            OUTPUT_FILE="dist/${ext}-${VERSION}-${PLATFORM}.nep"
+            OUTPUT_FILE="dist/${ext}-${PACKAGE_VERSION}-${PLATFORM}.nep"
         fi
         cd "$PACKAGE_DIR"
         zip -r -q "$OLDPWD/$OUTPUT_FILE" .
