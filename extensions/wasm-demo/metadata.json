@@ -1,79 +1,11 @@
 {
   "id": "wasm-demo",
-  "name": "WASM Demo Extension",
+  "name": "wasm demo",
   "version": "1.0.0",
-  "description": "A simple counter extension demonstrating WASM support",
+  "description": "Demo WASM extension for the NeoMind extension runtime",
   "author": "NeoMind Team",
-  "license": "MIT",
-  "type": "wasm",
-  "categories": ["demo", "counter", "example"],
-  "keywords": ["wasm", "demo", "counter"],
-  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/wasm-demo",
-  "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
-  "builds": {
-    "wasm": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/wasm-demo-1.0.0.nep"
-    }
-  },
-  "package_url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/wasm-demo-1.0.0.nep",
-  "capabilities": {
-    "metrics": [
-      {
-        "name": "counter",
-        "display_name": "Counter",
-        "data_type": "integer",
-        "description": "The current counter value"
-      },
-      {
-        "name": "request_count",
-        "display_name": "Request Count",
-        "data_type": "integer",
-        "description": "Total number of requests processed"
-      }
-    ],
-    "commands": [
-      {
-        "name": "increment",
-        "display_name": "Increment",
-        "description": "Increment the counter by the specified amount",
-        "parameters": [
-          {
-            "name": "amount",
-            "display_name": "Amount",
-            "description": "Amount to add to the counter",
-            "type": "integer",
-            "required": false,
-            "default": 1
-          }
-        ]
-      },
-      {
-        "name": "decrement",
-        "display_name": "Decrement",
-        "description": "Decrement the counter by the specified amount",
-        "parameters": [
-          {
-            "name": "amount",
-            "display_name": "Amount",
-            "description": "Amount to subtract from the counter",
-            "type": "integer",
-            "required": false,
-            "default": 1
-          }
-        ]
-      },
-      {
-        "name": "reset",
-        "display_name": "Reset",
-        "description": "Reset the counter to zero",
-        "parameters": []
-      },
-      {
-        "name": "get",
-        "display_name": "Get",
-        "description": "Get the current counter value",
-        "parameters": []
-      }
-    ]
-  }
+  "license": "Apache-2.0",
+  "type": "native",
+  "categories": ["utility"],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/wasm-demo"
 }

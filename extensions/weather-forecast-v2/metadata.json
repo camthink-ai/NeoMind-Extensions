@@ -1,104 +1,11 @@
 {
   "id": "weather-forecast-v2",
-  "name": "Weather Forecast V2",
+  "name": "weather forecast",
   "version": "2.0.0",
-  "description": "Weather forecast extension for the NeoMind isolated runtime using a sync HTTP client",
+  "description": "Weather forecast extension for the NeoMind isolated runtime",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
-  "categories": [
-    "weather"
-  ],
   "type": "native",
-  "abi_version": 3,
-  "sdk_version": "2.1.0",
-  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/weather-forecast-v2",
-  "repository": "https://github.com/camthink-ai/NeoMind-Extensions",
-  "keywords": [
-    "weather",
-    "forecast",
-    "temperature",
-    "humidity"
-  ],
-  "frontend": {
-    "components": [
-      "WeatherCard"
-    ],
-    "entrypoint": "weather-forecast-v2-components.umd.cjs"
-  },
-  "builds": {
-    "darwin-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/weather-forecast-v2-2.0.0-darwin_aarch64.nep"
-    },
-    "darwin-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/weather-forecast-v2-2.0.0-darwin_x86_64.nep"
-    },
-    "linux-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/weather-forecast-v2-2.0.0-linux_amd64.nep"
-    },
-    "linux-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/weather-forecast-v2-2.0.0-linux_arm64.nep"
-    },
-    "windows-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/weather-forecast-v2-2.0.0-windows_amd64.nep"
-    }
-  },
-  "package_url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.1.0/weather-forecast-v2-2.0.0.nep",
-  "commands": [
-    {
-      "name": "get_weather",
-      "display_name": "Get Weather",
-      "description": "Get current weather for a city",
-      "parameters": [
-        {
-          "name": "city",
-          "type": "string",
-          "required": true,
-          "description": "City name to get weather for"
-        }
-      ]
-    },
-    {
-      "name": "refresh",
-      "display_name": "Refresh Weather",
-      "description": "Refresh weather data for default city"
-    },
-    {
-      "name": "set_default_city",
-      "display_name": "Set Default City",
-      "description": "Set the default city for weather queries",
-      "parameters": [
-        {
-          "name": "city",
-          "type": "string",
-          "required": true,
-          "description": "City name to set as default"
-        }
-      ]
-    }
-  ],
-  "metrics": [
-    {
-      "name": "temperature_c",
-      "display_name": "Temperature",
-      "unit": "°C",
-      "type": "float"
-    },
-    {
-      "name": "humidity_percent",
-      "display_name": "Humidity",
-      "unit": "%",
-      "type": "integer"
-    },
-    {
-      "name": "wind_speed_kmph",
-      "display_name": "Wind Speed",
-      "unit": "km/h",
-      "type": "float"
-    },
-    {
-      "name": "request_count",
-      "display_name": "Request Count",
-      "type": "integer"
-    }
-  ]
+  "categories": ["weather"],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/weather-forecast-v2"
 }
