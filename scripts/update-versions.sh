@@ -138,8 +138,10 @@ for ext_dir in "$EXTENSIONS_DIR"/*/; do
         ' "$metadata")
 
     # Add frontend info if exists
+    # API expects: { components: ["ComponentName1", "ComponentName2"], entrypoint: "file.js" }
     if [ -f "$frontend_json" ]; then
-        frontend_info=$(jq -c '{components: .components, entrypoint: .entrypoint}' "$frontend_json")
+        # Extract just component names (not full objects)
+        frontend_info=$(jq -c '{components: [.components[].name], entrypoint: .entrypoint}' "$frontend_json")
         entry=$(echo "$entry" | jq --argjson frontend "$frontend_info" '. + {frontend: $frontend}')
     fi
 
