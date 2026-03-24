@@ -1,6 +1,6 @@
 {
-  "version": "2.0.0",
-  "market_version": "2.0.0",
+  "version": "2.3.0",
+  "market_version": "2.3.0",
   "extensions": [
     {
       "id": "weather-forecast-v2",
