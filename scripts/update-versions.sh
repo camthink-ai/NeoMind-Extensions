@@ -147,7 +147,7 @@ for ext_dir in "$EXTENSIONS_DIR"/*/; do
             platform_suffix=$(echo $platform | sed 's/-/_/')
         fi
 
-        url="https://github.com/$GITHUB_REPO/releases/download/v$MARKET_VERSION/${ext_id}-${ext_version}-${platform_suffix}.nep"
+        url="https://github.com/$GITHUB_REPO/releases/download/v$MARKET_VERSION/${ext_id}-${MARKET_VERSION}-${platform_suffix}.nep"
         builds=$(echo "$builds" | jq --arg p "$platform" --arg u "$url" '. + {($p): {url: $u}}')
     done
 
