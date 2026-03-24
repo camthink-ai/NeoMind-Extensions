@@ -6,7 +6,75 @@
   "author": "NeoMind Team",
   "license": "Apache-2.0",
   "type": "native",
-  "categories": ["weather"],
+  "categories": [
+    "weather"
+  ],
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/weather-forecast-v2",
-  "builds": {"darwin-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/weather-forecast-v2-2.3.0-darwin_aarch64.nep"},"darwin-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/weather-forecast-v2-2.3.0-darwin_x86_64.nep"},"linux-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/weather-forecast-v2-2.3.0-linux_amd64.nep"},"linux-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/weather-forecast-v2-2.3.0-linux_arm64.nep"},"windows-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/weather-forecast-v2-2.3.0-windows_x86_64.nep"}}
+  "builds": {
+    "darwin-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/weather-forecast-v2-2.3.0-darwin_aarch64.nep"
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/weather-forecast-v2-2.3.0-darwin_x86_64.nep"
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/weather-forecast-v2-2.3.0-linux_amd64.nep"
+    },
+    "linux-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/weather-forecast-v2-2.3.0-linux_arm64.nep"
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/weather-forecast-v2-2.3.0-windows_x86_64.nep"
+    }
+  },
+  "frontend": {
+    "components": [
+      {
+        "name": "WeatherCard",
+        "type": "card",
+        "displayName": "Weather Forecast V2",
+        "description": "Real-time weather display with temperature, humidity, wind and more. Supports automatic data collection with configurable interval.",
+        "icon": "cloud-sun",
+        "defaultSize": {
+          "width": 340,
+          "height": 320
+        },
+        "minSize": {
+          "width": 240,
+          "height": 260
+        },
+        "maxSize": {
+          "width": 480,
+          "height": 400
+        },
+        "configSchema": {
+          "defaultCity": {
+            "type": "string",
+            "required": false,
+            "default": "Beijing",
+            "description": "Default city for weather display"
+          },
+          "refreshInterval": {
+            "type": "number",
+            "required": false,
+            "default": 300000,
+            "description": "Refresh interval in milliseconds (default: 5 minutes)"
+          },
+          "unit": {
+            "type": "string",
+            "required": false,
+            "default": "celsius",
+            "description": "Temperature unit",
+            "options": [
+              "celsius",
+              "fahrenheit"
+            ]
+          }
+        },
+        "refreshable": true,
+        "refreshInterval": 300000
+      }
+    ],
+    "entrypoint": "weather-forecast-v2-components.umd.cjs"
+  }
 }

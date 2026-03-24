@@ -6,7 +6,97 @@
   "author": "NeoMind Team",
   "license": "Apache-2.0",
   "type": "native",
-  "categories": ["ai", "vision", "detection"],
+  "categories": [
+    "ai",
+    "vision",
+    "detection"
+  ],
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/yolo-video-v2",
-  "builds": {"darwin-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/yolo-video-v2-2.3.0-darwin_aarch64.nep"},"darwin-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/yolo-video-v2-2.3.0-darwin_x86_64.nep"},"linux-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/yolo-video-v2-2.3.0-linux_amd64.nep"},"linux-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/yolo-video-v2-2.3.0-linux_arm64.nep"},"windows-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/yolo-video-v2-2.3.0-windows_x86_64.nep"}}
+  "builds": {
+    "darwin-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/yolo-video-v2-2.3.0-darwin_aarch64.nep"
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/yolo-video-v2-2.3.0-darwin_x86_64.nep"
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/yolo-video-v2-2.3.0-linux_amd64.nep"
+    },
+    "linux-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/yolo-video-v2-2.3.0-linux_arm64.nep"
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/yolo-video-v2-2.3.0-windows_x86_64.nep"
+    }
+  },
+  "frontend": {
+    "components": [
+      {
+        "name": "YoloVideoDisplay",
+        "type": "panel",
+        "displayName": "YOLO Video V2",
+        "description": "Real-time object detection on video streams using YOLOv11. Supports Camera, RTSP, HLS, and RTMP sources in the NeoMind extension runtime.",
+        "icon": "video",
+        "defaultSize": {
+          "width": 480,
+          "height": 360
+        },
+        "minSize": {
+          "width": 320,
+          "height": 240
+        },
+        "maxSize": {
+          "width": 800,
+          "height": 600
+        },
+        "configSchema": {
+          "sourceUrl": {
+            "type": "string",
+            "required": false,
+            "default": "camera://0",
+            "description": "Video source URL (camera://0, rtsp://..., hls://..., rtmp://...)"
+          },
+          "confidenceThreshold": {
+            "type": "number",
+            "required": false,
+            "default": 0.5,
+            "description": "Minimum confidence threshold for detections"
+          },
+          "maxObjects": {
+            "type": "number",
+            "required": false,
+            "default": 20,
+            "description": "Maximum number of objects to detect per frame"
+          },
+          "fps": {
+            "type": "number",
+            "required": false,
+            "default": 15,
+            "description": "Target frames per second"
+          },
+          "drawBoxes": {
+            "type": "boolean",
+            "required": false,
+            "default": true,
+            "description": "Draw bounding boxes on detected objects"
+          },
+          "showStats": {
+            "type": "boolean",
+            "required": false,
+            "default": true,
+            "description": "Show detection statistics"
+          },
+          "variant": {
+            "type": "string",
+            "required": false,
+            "default": "default",
+            "description": "Display variant (default or compact)"
+          }
+        },
+        "refreshable": false,
+        "refreshInterval": 0
+      }
+    ],
+    "entrypoint": "yolo-video-v2-components.umd.cjs"
+  }
 }

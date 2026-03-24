@@ -89,7 +89,7 @@ EOF
     done
     builds_json+="}"
 
-    # Generate metadata.json with builds field
+    # Generate base metadata.json with builds field
     cat > "$ext_dir/metadata.json" <<EOF
 {
   "id": "$ext_id",
@@ -105,7 +105,15 @@ EOF
 }
 EOF
 
-    echo "  ✓ Generated metadata.json with builds"
+    # Add frontend field if exists
+    if [ "$frontend_section" != "null" ]; then
+        jq --argjson frontend "$frontend_section" '. + {frontend: $frontend}' \
+            "$ext_dir/metadata.json" > "$ext_dir/metadata.json.tmp"
+        mv "$ext_dir/metadata.json.tmp" "$ext_dir/metadata.json"
+        echo "  ✓ Generated metadata.json with builds and frontend"
+    else
+        echo "  ✓ Generated metadata.json with builds"
+    fi
 done
 
 echo ""
