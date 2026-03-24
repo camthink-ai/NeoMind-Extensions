@@ -36,16 +36,28 @@ Learn to create production-ready extensions for the NeoMind Edge AI Platform usi
 
 **Create a new extension:**
 ```bash
-cd NeoMind-Extension
+cd NeoMind-Extensions
 cp -r extensions/weather-forecast-v2 extensions/my-extension-v2
 cd extensions/my-extension-v2
+# Update Cargo.toml with your extension name
 ```
 
 **Build and test:**
 ```bash
+# Dev build + auto-install
+./build.sh --dev --single my-extension-v2
+
+# Or manual build
 cargo build --release
 mkdir -p ~/.neomind/extensions
 cp target/release/libneomind_extension_my_extension_v2.dylib ~/.neomind/extensions/
+```
+
+**Build all & package:**
+```bash
+./build.sh                           # Build all, create packages
+./build.sh --release 2.4.0           # Release with version
+./release.sh 2.4.0                   # Same as above
 ```
 
 ---
@@ -832,27 +844,47 @@ export default defineConfig({
 
 ## Building & Packaging
 
-### Local Build
+### Unified Build Script
+
+**Main build script:**
+```bash
+./build.sh                           # Build all, create packages
+./build.sh --dev                     # Dev build + auto-install
+./build.sh --release 2.4.0           # Release with version in filenames
+./build.sh --single your-extension-v2 # Build single extension
+./build.sh --skip-frontend           # Skip frontend builds
+./build.sh --debug                   # Debug build
+./build.sh --help                    # Show all options
+```
+
+**Release helper:**
+```bash
+./release.sh 2.4.0                   # Build + package for release
+```
+
+### Development Workflow
 
 ```bash
-# Build all extensions
-./build.sh --yes
+# Create new extension
+cp -r extensions/weather-forecast-v2 extensions/my-extension-v2
+cd extensions/my-extension-v2
+# Update Cargo.toml
 
-# Build single extension
-cargo build --release -p your-extension-v2
+# Dev build + auto-install
+./build.sh --dev --single my-extension-v2
 
-# Build without installing
-./build.sh --skip-install
-
-# Debug build
-./build.sh --debug
+# Test in NeoMind
+# Extensions are installed to ~/.neomind/extensions/
 ```
 
 ### Creating .nep Package
 
 ```bash
 # Package all extensions
-./build.sh --yes --skip-install
+./build.sh
+
+# Package with version
+./release.sh 2.4.0
 
 # Packages created in dist/
 ls -lh dist/*.nep
@@ -1145,18 +1177,23 @@ async fn process_concurrent(&self) -> Result<()> {
 
 ### File Locations
 
-- **Extensions**: `NeoMind-Extension/extensions/`
+- **Extensions**: `NeoMind-Extensions/extensions/`
 - **SDK**: `NeoMind/crates/neomind-extension-sdk`
 - **Install location**: `~/.neomind/extensions/`
 
 ### Essential Commands
 
 ```bash
-# Build extension
-cargo build --release -p your-extension-v2
+# Dev build + auto-install
+./build.sh --dev --single your-extension-v2
 
-# Install extension
-cp target/release/libneomind_extension_your_extension_v2.dylib ~/.neomind/extensions/
+# Or manual build
+cargo build --release -p your-extension-v2
+cp target/release/libneomind_extension_*.dylib ~/.neomind/extensions/
+
+# Build all & package
+./build.sh                    # Build all, create packages
+./release.sh 2.4.0            # Release with version
 
 # View logs
 neomind logs --extension your-extension-v2
@@ -1164,8 +1201,19 @@ neomind logs --extension your-extension-v2
 # List extensions
 neomind extension list
 
-# Create package
-bash scripts/package.sh -d extensions/your-extension-v2
+# Generate JSON files
+./scripts/update-versions.sh 2.4.0
+```
+
+### Build Script Options
+
+```bash
+./build.sh                           # Build all, create packages
+./build.sh --dev                     # Dev build + auto-install
+./build.sh --release 2.4.0           # Release with version
+./build.sh --single weather-forecast-v2  # Single extension
+./build.sh --skip-frontend           # Skip frontend builds
+./build.sh --debug                   # Debug build
 ```
 
 ### Platform Matrix
