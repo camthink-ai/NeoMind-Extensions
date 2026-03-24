@@ -10,7 +10,7 @@ echo "======================================"
 echo ""
 
 # Version from workspace
-VERSION="2.2.0"
+VERSION="2.3.0"
 
 # Colors
 GREEN='\033[0;32m'
