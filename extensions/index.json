@@ -5,7 +5,7 @@
     {
       "id": "image-analyzer-v2",
       "name": "image analyzer",
-      "version": "2.0.0",
+      "version": "2.3.1",
       "description": "Image analysis extension using YOLOv8",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
@@ -44,7 +44,7 @@
     {
       "id": "wasm-demo",
       "name": "wasm demo",
-      "version": "1.0.0",
+      "version": "2.3.1",
       "description": "Demo WASM extension for the NeoMind extension runtime",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
@@ -75,7 +75,7 @@
     {
       "id": "weather-forecast-v2",
       "name": "weather forecast",
-      "version": "2.0.0",
+      "version": "2.3.1",
       "description": "Weather forecast extension for the NeoMind isolated runtime",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
@@ -112,7 +112,7 @@
     {
       "id": "yolo-device-inference",
       "name": "yolo device inference",
-      "version": "1.0.0",
+      "version": "2.3.1",
       "description": "YOLOv8 device inference extension with automatic detection on data source updates",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
@@ -151,7 +151,7 @@
     {
       "id": "yolo-video-v2",
       "name": "yolo video",
-      "version": "2.0.0",
+      "version": "2.3.1",
       "description": "Real-time video processing with YOLOv11 for the NeoMind isolated runtime",
       "author": "NeoMind Team",
       "license": "Apache-2.0",

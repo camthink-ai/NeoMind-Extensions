@@ -1,7 +1,7 @@
 {
   "id": "image-analyzer-v2",
   "name": "image analyzer",
-  "version": "2.0.0",
+  "version": "2.3.1",
   "description": "Image analysis extension using YOLOv8",
   "author": "NeoMind Team",
   "license": "Apache-2.0",

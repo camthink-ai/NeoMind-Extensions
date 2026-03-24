@@ -1,7 +1,7 @@
 {
   "id": "wasm-demo",
   "name": "wasm demo",
-  "version": "1.0.0",
+  "version": "2.3.1",
   "description": "Demo WASM extension for the NeoMind extension runtime",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
