@@ -31,47 +31,7 @@
   },
   "frontend": {
     "components": [
-      {
-        "name": "DeviceInferenceCard",
-        "type": "widget",
-        "displayName": "YOLO Device Inference",
-        "description": "Bind device with image data source for automatic YOLO object detection",
-        "icon": "camera",
-        "defaultSize": {
-          "width": 400,
-          "height": 350
-        },
-        "minSize": {
-          "width": 300,
-          "height": 250
-        },
-        "maxSize": {
-          "width": 600,
-          "height": 500
-        },
-        "configSchema": {
-          "confidence": {
-            "type": "number",
-            "required": false,
-            "default": 0.25,
-            "description": "Confidence threshold for detections (0.0-1.0)"
-          },
-          "drawBoxes": {
-            "type": "boolean",
-            "required": false,
-            "default": true,
-            "description": "Draw detection boxes on images"
-          },
-          "showPreview": {
-            "type": "boolean",
-            "required": false,
-            "default": true,
-            "description": "Show detection preview image"
-          }
-        },
-        "refreshable": false,
-        "refreshInterval": 0
-      }
+      "DeviceInferenceCard"
     ],
     "entrypoint": "yolo-device-inference-components.umd.cjs"
   }
