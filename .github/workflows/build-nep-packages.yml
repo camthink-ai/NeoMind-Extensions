@@ -27,6 +27,11 @@ on:
         options:
           - 'true'
           - 'false'
+      version:
+        description: 'Release version (e.g., 2.3.2)'
+        required: false
+        default: '2.3.2'
+        type: string
 
 permissions:
   contents: write
@@ -150,7 +155,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="2.1.0"
+          VERSION="${{ inputs.version || '2.3.2' }}"
 
           cat > /tmp/release_notes.md << 'EOF'
           # NeoMind Extension Packages V2
