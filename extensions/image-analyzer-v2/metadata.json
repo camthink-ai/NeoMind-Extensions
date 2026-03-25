@@ -1,38 +1,4 @@
 {
-  "id": "image-analyzer-v2",
-  "name": "image analyzer",
-  "version": "2.3.0",
-  "description": "Image analysis extension using YOLOv8",
-  "author": "NeoMind Team",
-  "license": "Apache-2.0",
-  "type": "native",
-  "categories": [
-    "ai",
-    "vision",
-    "detection"
-  ],
-  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/image-analyzer-v2",
-  "builds": {
-    "darwin-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/image-analyzer-v2-2.3.0-darwin_aarch64.nep"
-    },
-    "darwin-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/image-analyzer-v2-2.3.0-darwin_x86_64.nep"
-    },
-    "linux-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/image-analyzer-v2-2.3.0-linux_amd64.nep"
-    },
-    "linux-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/image-analyzer-v2-2.3.0-linux_arm64.nep"
-    },
-    "windows-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.0/image-analyzer-v2-2.3.0-windows_x86_64.nep"
-    }
-  },
-  "frontend": {
-    "components": [
-      "ImageAnalyzer"
-    ],
-    "entrypoint": "image-analyzer-v2-components.umd.cjs"
-  }
+  "version": "2.3.2",
+  "package_url": null
 }
