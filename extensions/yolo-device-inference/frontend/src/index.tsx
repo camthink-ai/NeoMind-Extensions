@@ -226,7 +226,7 @@ const STYLES = `
   flex-direction: column;
   gap: 8px;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 /* Image preview - main focus */
@@ -866,6 +866,52 @@ export const DeviceInferenceCard = forwardRef<HTMLDivElement, ExtensionComponent
 
           {/* Content */}
           <div className="ydi-content">
+            {/* Control bar - compact selectors (moved above preview for better UX) */}
+            <div className="ydi-control-bar">
+              <div className="ydi-selector">
+                <div className="ydi-selector-label">Device</div>
+                <Dropdown
+                  value={selectedDevice}
+                  options={deviceOptions}
+                  placeholder="Select device..."
+                  onChange={(val) => {
+                    setSelectedDevice(val)
+                    setBinding(null)
+                    if (onDataSourceChange) {
+                      onDataSourceChange({
+                        type: 'device',
+                        extensionId,
+                        deviceId: val,
+                        metricId: selectedMetric,
+                        deviceName: devices.find(d => d.id === val)?.name,
+                      })
+                    }
+                  }}
+                />
+              </div>
+              <div className="ydi-selector">
+                <div className="ydi-selector-label">Image Source</div>
+                <Dropdown
+                  value={selectedMetric}
+                  options={metricOptions}
+                  placeholder="Auto"
+                  onChange={(val) => {
+                    setSelectedMetric(val)
+                    if (onDataSourceChange && selectedDevice) {
+                      onDataSourceChange({
+                        type: 'device',
+                        extensionId,
+                        deviceId: selectedDevice,
+                        metricId: val,
+                        deviceName: devices.find(d => d.id === selectedDevice)?.name,
+                      })
+                    }
+                  }}
+                  disabled={!selectedDevice}
+                />
+              </div>
+            </div>
+
             {/* Preview with overlay */}
             <div className="ydi-preview-wrapper">
               <div className="ydi-preview">
@@ -914,52 +960,6 @@ export const DeviceInferenceCard = forwardRef<HTMLDivElement, ExtensionComponent
                   <div className="ydi-error-overlay">{error}</div>
                 </div>
               )}
-            </div>
-
-            {/* Control bar - compact selectors */}
-            <div className="ydi-control-bar">
-              <div className="ydi-selector">
-                <div className="ydi-selector-label">Device</div>
-                <Dropdown
-                  value={selectedDevice}
-                  options={deviceOptions}
-                  placeholder="Select device..."
-                  onChange={(val) => {
-                    setSelectedDevice(val)
-                    setBinding(null)
-                    if (onDataSourceChange) {
-                      onDataSourceChange({
-                        type: 'device',
-                        extensionId,
-                        deviceId: val,
-                        metricId: selectedMetric,
-                        deviceName: devices.find(d => d.id === val)?.name,
-                      })
-                    }
-                  }}
-                />
-              </div>
-              <div className="ydi-selector">
-                <div className="ydi-selector-label">Image Source</div>
-                <Dropdown
-                  value={selectedMetric}
-                  options={metricOptions}
-                  placeholder="Auto"
-                  onChange={(val) => {
-                    setSelectedMetric(val)
-                    if (onDataSourceChange && selectedDevice) {
-                      onDataSourceChange({
-                        type: 'device',
-                        extensionId,
-                        deviceId: selectedDevice,
-                        metricId: val,
-                        deviceName: devices.find(d => d.id === selectedDevice)?.name,
-                      })
-                    }
-                  }}
-                  disabled={!selectedDevice}
-                />
-              </div>
             </div>
 
             {/* Actions */}
