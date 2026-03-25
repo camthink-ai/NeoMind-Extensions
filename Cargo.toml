@@ -29,6 +29,8 @@ serde = { version = "1.0", features = ["derive"] }
 # IndexMap instead of HashMap, which has a stable memory layout across versions.
 serde_json = { version = "1.0", features = ["preserve_order"] }
 urlencoding = "2.1"
+thiserror = "2.0"
+async-trait = "0.1"
 
 # Use crates.io version for ABI isolation
 # When SDK is published, extensions don't need to recompile when main project updates
