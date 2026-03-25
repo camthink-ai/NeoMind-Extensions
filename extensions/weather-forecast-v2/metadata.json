@@ -1,4 +1,33 @@
 {
+  "id": "weather-forecast-v2",
+  "name": "weather forecast",
   "version": "2.3.2",
-  "package_url": null
+  "description": "Weather forecast extension for the NeoMind isolated runtime",
+  "author": "NeoMind Team",
+  "license": "Apache-2.0",
+  "type": "native",
+  "categories": [
+    "weather"
+  ],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/weather-forecast-v2",
+  "builds": {
+    "darwin-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/weather-forecast-v2-2.3.2-darwin_aarch64.nep"
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/weather-forecast-v2-2.3.2-linux_amd64.nep"
+    },
+    "linux-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/weather-forecast-v2-2.3.2-linux_arm64.nep"
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/weather-forecast-v2-2.3.2-windows_amd64.nep"
+    }
+  },
+  "frontend": {
+    "components": [
+      "WeatherCard"
+    ],
+    "entrypoint": "weather-forecast-v2-components.umd.cjs"
+  }
 }

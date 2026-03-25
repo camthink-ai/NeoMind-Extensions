@@ -1,4 +1,35 @@
 {
+  "id": "yolo-video-v2",
+  "name": "yolo video",
   "version": "2.3.2",
-  "package_url": null
+  "description": "Real-time video processing with YOLOv11 for the NeoMind isolated runtime",
+  "author": "NeoMind Team",
+  "license": "Apache-2.0",
+  "type": "native",
+  "categories": [
+    "ai",
+    "vision",
+    "detection"
+  ],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/yolo-video-v2",
+  "builds": {
+    "darwin-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-video-v2-2.3.2-darwin_aarch64.nep"
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-video-v2-2.3.2-linux_amd64.nep"
+    },
+    "linux-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-video-v2-2.3.2-linux_arm64.nep"
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-video-v2-2.3.2-windows_amd64.nep"
+    }
+  },
+  "frontend": {
+    "components": [
+      "YoloVideoDisplay"
+    ],
+    "entrypoint": "yolo-video-v2-components.umd.cjs"
+  }
 }
