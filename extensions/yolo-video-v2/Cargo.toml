@@ -11,11 +11,11 @@ name = "neomind_extension_yolo_video_v2"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-neomind-extension-sdk = { path = "../../../NeoMind/crates/neomind-extension-sdk" }
+neomind-extension-sdk = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = "1"
-async-trait = "0.1"
+thiserror = { workspace = true }
+async-trait = { workspace = true }
 chrono = "0.4"
 semver = "1"
 base64 = "0.22"
