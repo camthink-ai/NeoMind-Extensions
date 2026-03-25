@@ -5,7 +5,7 @@
     {
       "id": "image-analyzer-v2",
       "name": "image analyzer",
-      "version": "2.3.1",
+      "version": "2.3.2",
       "description": "Image analysis extension using YOLOv8",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
@@ -20,9 +20,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/image-analyzer-v2-2.3.2-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/image-analyzer-v2-2.3.2-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/image-analyzer-v2-2.3.2-linux_amd64.nep"
         },
@@ -30,7 +27,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/image-analyzer-v2-2.3.2-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/image-analyzer-v2-2.3.2-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/image-analyzer-v2-2.3.2-windows_amd64.nep"
         }
       },
       "frontend": {
@@ -44,7 +41,7 @@
     {
       "id": "wasm-demo",
       "name": "wasm demo",
-      "version": "2.3.1",
+      "version": "2.3.2",
       "description": "Demo WASM extension for the NeoMind extension runtime",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
@@ -57,9 +54,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/wasm-demo-2.3.2-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/wasm-demo-2.3.2-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/wasm-demo-2.3.2-linux_amd64.nep"
         },
@@ -67,7 +61,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/wasm-demo-2.3.2-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/wasm-demo-2.3.2-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/wasm-demo-2.3.2-windows_amd64.nep"
         }
       },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/wasm-demo/metadata.json"
@@ -75,7 +69,7 @@
     {
       "id": "weather-forecast-v2",
       "name": "weather forecast",
-      "version": "2.3.1",
+      "version": "2.3.2",
       "description": "Weather forecast extension for the NeoMind isolated runtime",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
@@ -88,9 +82,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/weather-forecast-v2-2.3.2-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/weather-forecast-v2-2.3.2-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/weather-forecast-v2-2.3.2-linux_amd64.nep"
         },
@@ -98,7 +89,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/weather-forecast-v2-2.3.2-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/weather-forecast-v2-2.3.2-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/weather-forecast-v2-2.3.2-windows_amd64.nep"
         }
       },
       "frontend": {
@@ -112,7 +103,7 @@
     {
       "id": "yolo-device-inference",
       "name": "yolo device inference",
-      "version": "2.3.1",
+      "version": "2.3.2",
       "description": "YOLOv8 device inference extension with automatic detection on data source updates",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
@@ -127,9 +118,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-linux_amd64.nep"
         },
@@ -137,7 +125,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-windows_amd64.nep"
         }
       },
       "frontend": {
@@ -151,7 +139,7 @@
     {
       "id": "yolo-video-v2",
       "name": "yolo video",
-      "version": "2.3.1",
+      "version": "2.3.2",
       "description": "Real-time video processing with YOLOv11 for the NeoMind isolated runtime",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
@@ -166,9 +154,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-video-v2-2.3.2-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-video-v2-2.3.2-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-video-v2-2.3.2-linux_amd64.nep"
         },
@@ -176,7 +161,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-video-v2-2.3.2-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-video-v2-2.3.2-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-video-v2-2.3.2-windows_amd64.nep"
         }
       },
       "frontend": {
