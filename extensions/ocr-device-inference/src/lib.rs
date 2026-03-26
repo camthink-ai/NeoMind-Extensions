@@ -6,9 +6,11 @@
 use async_trait::async_trait;
 use neomind_extension_sdk::{
     Extension, ExtensionMetadata, ExtensionError,
-    MetricDescriptor, Result,
+    MetricDescriptor, ExtensionCommand, MetricDataType, ParameterDefinition,
+    ParamMetricValue, Result,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -415,8 +417,192 @@ impl Extension for OcrDeviceInference {
         ]
     }
 
-    fn commands(&self) -> Vec<neomind_extension_sdk::ExtensionCommand> {
-        vec![]
+    fn commands(&self) -> Vec<ExtensionCommand> {
+        vec![
+            ExtensionCommand {
+                name: "bind_device".to_string(),
+                display_name: "Bind Device".to_string(),
+                description: "Bind a device for automatic OCR inference on image updates".to_string(),
+                payload_template: String::new(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "device_id".to_string(),
+                        display_name: "Device ID".to_string(),
+                        description: "ID of the device to bind".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "device_name".to_string(),
+                        display_name: "Device Name".to_string(),
+                        description: "Display name for the device".to_string(),
+                        param_type: MetricDataType::String,
+                        required: false,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "image_metric".to_string(),
+                        display_name: "Image Metric".to_string(),
+                        description: "Name of the image data source metric".to_string(),
+                        param_type: MetricDataType::String,
+                        required: false,
+                        default_value: Some(ParamMetricValue::String("image".to_string())),
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "result_metric_prefix".to_string(),
+                        display_name: "Result Metric Prefix".to_string(),
+                        description: "Prefix for virtual metrics storing results".to_string(),
+                        param_type: MetricDataType::String,
+                        required: false,
+                        default_value: Some(ParamMetricValue::String("ocr_".to_string())),
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "draw_boxes".to_string(),
+                        display_name: "Draw Boxes".to_string(),
+                        description: "Whether to draw text boxes on images".to_string(),
+                        param_type: MetricDataType::Boolean,
+                        required: false,
+                        default_value: Some(ParamMetricValue::Boolean(true)),
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: HashMap::new(),
+                samples: vec![json!({"device_id": "camera-01", "image_metric": "image", "draw_boxes": true})],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "unbind_device".to_string(),
+                display_name: "Unbind Device".to_string(),
+                description: "Unbind a device from automatic OCR inference".to_string(),
+                payload_template: String::new(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "device_id".to_string(),
+                        display_name: "Device ID".to_string(),
+                        description: "ID of the device to unbind".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: HashMap::new(),
+                samples: vec![json!({"device_id": "camera-01"})],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "get_bindings".to_string(),
+                display_name: "Get Bindings".to_string(),
+                description: "Get all device bindings and their status".to_string(),
+                payload_template: String::new(),
+                parameters: vec![],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "recognize_image".to_string(),
+                display_name: "Recognize Image".to_string(),
+                description: "Perform OCR on an image and return recognized text".to_string(),
+                payload_template: String::new(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "image".to_string(),
+                        display_name: "Image".to_string(),
+                        description: "Base64 encoded image data".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: HashMap::new(),
+                samples: vec![json!({"image": "base64_encoded_image_data"})],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "toggle_binding".to_string(),
+                display_name: "Toggle Binding".to_string(),
+                description: "Toggle a device binding active state".to_string(),
+                payload_template: String::new(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "device_id".to_string(),
+                        display_name: "Device ID".to_string(),
+                        description: "ID of the bound device".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "active".to_string(),
+                        display_name: "Active".to_string(),
+                        description: "Whether the binding should be active".to_string(),
+                        param_type: MetricDataType::Boolean,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: HashMap::new(),
+                samples: vec![json!({"device_id": "camera-01", "active": false})],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "get_status".to_string(),
+                display_name: "Get Status".to_string(),
+                description: "Get extension status including model info and statistics".to_string(),
+                payload_template: String::new(),
+                parameters: vec![],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "get_config".to_string(),
+                display_name: "Get Config".to_string(),
+                description: "Get current OCR extension configuration".to_string(),
+                payload_template: String::new(),
+                parameters: vec![],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "configure".to_string(),
+                display_name: "Configure".to_string(),
+                description: "Configure the extension with persisted settings".to_string(),
+                payload_template: String::new(),
+                parameters: vec![],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                parameter_groups: Vec::new(),
+            },
+        ]
     }
 
     async fn execute_command(&self, command: &str, _args: &serde_json::Value) -> Result<serde_json::Value> {
