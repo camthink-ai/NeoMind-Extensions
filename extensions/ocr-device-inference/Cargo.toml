@@ -1,0 +1,37 @@
+[package]
+name = "ocr-device-inference"
+version = "1.0.0"
+edition = "2021"
+authors = ["NeoMind Team"]
+license = "MIT"
+description = "OCR device inference extension with automatic text recognition on data source updates"
+
+[lib]
+name = "neomind_extension_ocr_device_inference"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neomind-extension-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+chrono = "0.4"
+base64 = "0.22"
+image = "0.25"
+imageproc = "0.24"
+rusttype = "0.9"
+parking_lot = "0.12"
+tracing = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+uuid = { version = "1.0", features = ["v4"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ort = { version = "2.0.0-rc.11", features = ["half"] }
+usls = { version = "0.2.0-alpha.3", default-features = false, features = ["vision", "ort-download-binaries"] }
+
+[features]
+default = []
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "test-util"] }
