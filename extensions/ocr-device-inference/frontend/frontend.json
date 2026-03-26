@@ -1,0 +1,36 @@
+{
+  "id": "ocr-device-inference",
+  "version": "1.0.0",
+  "entrypoint": "ocr-device-inference-components.umd.cjs",
+  "components": [
+    {
+      "name": "OcrDeviceCard",
+      "type": "widget",
+      "displayName": "OCR识别",
+      "description": "绑定设备进行自动 OCR 识别，或手动上传图像测试",
+      "icon": "file-text",
+      "defaultSize": { "width": 450, "height": 500 },
+      "minSize": { "width": 350, "height": 400 },
+      "maxSize": { "width": 600, "height": 700 },
+      "configSchema": {
+        "drawBoxes": {
+          "type": "boolean",
+          "default": true,
+          "description": "在图像上绘制文本框"
+        },
+        "showPreview": {
+          "type": "boolean",
+          "default": true,
+          "description": "显示识别结果预览"
+        }
+      }
+    }
+  ],
+  "i18n": {
+    "defaultLanguage": "zh",
+    "supportedLanguages": ["zh", "en"]
+  },
+  "dependencies": {
+    "react": ">=18.0.0"
+  }
+}

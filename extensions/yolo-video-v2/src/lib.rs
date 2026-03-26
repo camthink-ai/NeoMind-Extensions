@@ -712,6 +712,54 @@ impl YoloVideoProcessorV2 {
             processor: Arc::new(StreamProcessor::new()),
         }
     }
+
+    /// Recover a session that was lost due to process restart
+    ///
+    /// This method is called when a frame arrives for a session that doesn't exist.
+    /// It attempts to re-create the session with default configuration so that
+    /// processing can continue without interruption.
+    async fn recover_session(&self, session_id: &str) -> Option<Arc<Mutex<ActiveStream>>> {
+        eprintln!("[YOLO] Attempting to recover session: {}", session_id);
+        tracing::warn!(
+            session_id = %session_id,
+            "Attempting to recover lost session (extension may have restarted)"
+        );
+
+        // Create a recovered session with default config
+        let stream = ActiveStream {
+            _id: session_id.to_string(),
+            _config: StreamConfig::default(),
+            started_at: Instant::now(),
+            frame_count: 0,
+            total_detections: 0,
+            last_frame: None,
+            last_detections: Vec::new(),
+            last_frame_time: None,
+            fps: 0.0,
+            running: true,
+            detected_objects: HashMap::new(),
+            push_task: None,
+            last_process_time: None,
+            dropped_frames: 0,
+        };
+
+        // Register the recovered session
+        {
+            let mut registry = get_registry().lock();
+            registry.streams.insert(session_id.to_string(), Arc::new(Mutex::new(stream)));
+            eprintln!("[YOLO] Session {} recovered and registered, total sessions: {}",
+                session_id, registry.streams.len());
+        }
+
+        tracing::info!(
+            session_id = %session_id,
+            "Session recovered successfully"
+        );
+
+        // Return the recovered stream
+        let registry = get_registry().lock();
+        registry.streams.get(session_id).cloned()
+    }
 }
 
 impl Default for YoloVideoProcessorV2 {
@@ -1316,15 +1364,30 @@ impl Extension for YoloVideoProcessorV2 {
         let stream = match stream {
             Some(s) => s,
             None => {
-                eprintln!("[YOLO] Session not found: {}", session_id);
-                return Ok(StreamResult::error(
-                    Some(chunk.sequence),
-                    StreamError {
-                        code: "SESSION_NOT_FOUND".to_string(),
-                        message: format!("Session {} not found", session_id),
-                        retryable: false,
-                    },
-                ));
+                // 🔧 SESSION RECOVERY: Try to recover session if it was lost due to process restart
+                // This can happen when the extension process is restarted mid-stream
+                eprintln!("[YOLO] Session not found: {}, attempting recovery...", session_id);
+
+                // Try to recover the session by re-initializing with default config
+                let recovered = self.recover_session(session_id).await;
+
+                match recovered {
+                    Some(s) => {
+                        eprintln!("[YOLO] Session {} recovered successfully, continuing processing", session_id);
+                        s
+                    }
+                    None => {
+                        eprintln!("[YOLO] Session {} recovery failed, returning error", session_id);
+                        return Ok(StreamResult::error(
+                            Some(chunk.sequence),
+                            StreamError {
+                                code: "SESSION_NOT_FOUND".to_string(),
+                                message: format!("Session {} not found and recovery failed", session_id),
+                                retryable: true, // Mark as retryable since we might recover on next attempt
+                            },
+                        ));
+                    }
+                }
             }
         };
 
