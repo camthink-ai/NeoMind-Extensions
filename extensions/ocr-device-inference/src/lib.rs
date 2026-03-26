@@ -19,6 +19,7 @@ use chrono::Utc;
 
 #[cfg(not(target_arch = "wasm32"))]
 use uuid::Uuid;
+use base64::Engine;
 
 // ============================================================================
 // Types
@@ -357,6 +358,231 @@ impl Default for OcrDeviceInference {
     }
 }
 
+impl OcrDeviceInference {
+    /// Validate device exists (native only)
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn validate_device(&self, _device_id: &str) -> Result<bool> {
+        // For now, always return true
+        // TODO: Implement proper device validation when SDK provides device metrics capability
+        Ok(true)
+    }
+
+    /// Bind a device for automatic OCR inference
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn bind_device_async(&self, mut binding: DeviceBinding) -> Result<()> {
+        let device_id = binding.device_id.clone();
+
+        // Validate device exists
+        if !self.validate_device(&device_id).await? {
+            return Err(ExtensionError::NotFound(format!(
+                "Device '{}' not found or metric '{}' not available",
+                device_id, binding.image_metric
+            )));
+        }
+
+        // Ensure binding is active
+        binding.active = true;
+
+        // Add to bindings
+        self.bindings.write().insert(device_id.clone(), binding.clone());
+
+        // Initialize stats
+        self.binding_stats.write().insert(device_id.clone(), BindingStatus {
+            binding,
+            last_inference: None,
+            total_inferences: 0,
+            total_text_blocks: 0,
+            last_error: None,
+            last_image: None,
+            last_text_blocks: None,
+            last_annotated_image: None,
+        });
+
+        // Persist configuration
+        self.persist_config();
+
+        tracing::info!("[OcrDeviceInference] Device bound: {}", device_id);
+        Ok(())
+    }
+
+    /// Unbind a device
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn unbind_device_async(&self, device_id: &str) -> Result<()> {
+        self.bindings.write().remove(device_id);
+        self.binding_stats.write().remove(device_id);
+
+        // Persist configuration
+        self.persist_config();
+
+        tracing::info!("[OcrDeviceInference] Device unbound: {}", device_id);
+        Ok(())
+    }
+
+    /// Recognize text from base64 image (native only)
+    #[cfg(not(target_arch = "wasm32"))]
+    fn recognize_image(&self, image_b64: &str) -> Result<OcrResult> {
+        let image_data = base64::engine::general_purpose::STANDARD.decode(image_b64)
+            .map_err(|e| ExtensionError::InvalidArguments(format!("Invalid base64: {}", e)))?;
+
+        // Initialize OCR engine if needed and run OCR
+        let result = {
+            let mut engine = self.ocr_engine.lock();
+            if !engine.is_loaded() {
+                // Try to load models from extension directory
+                let models_dir = std::env::var("NEOMIND_EXTENSION_DIR")
+                    .map(|d| std::path::PathBuf::from(d).join("models"))
+                    .unwrap_or_else(|_| std::path::PathBuf::from("models"));
+
+                if let Err(e) = engine.init(&models_dir) {
+                    return Err(ExtensionError::ExecutionFailed(format!("Failed to load OCR models: {}", e)));
+                }
+            }
+
+            // Run OCR
+            engine.recognize(&image_data, "manual")?
+        };
+
+        // Update binding stats for manual analysis
+        {
+            let mut stats_map = self.binding_stats.write();
+            let stats = stats_map.entry("manual".to_string())
+                .or_insert_with(|| BindingStatus {
+                    binding: DeviceBinding {
+                        device_id: "manual".to_string(),
+                        device_name: Some("Manual Recognition".to_string()),
+                        image_metric: "input".to_string(),
+                        result_metric_prefix: "manual_".to_string(),
+                        draw_boxes: true,
+                        active: true,
+                    },
+                    last_inference: None,
+                    total_inferences: 0,
+                    total_text_blocks: 0,
+                    last_error: None,
+                    last_image: None,
+                    last_text_blocks: None,
+                    last_annotated_image: None,
+                });
+
+            stats.last_inference = Some(result.timestamp);
+            stats.total_inferences += 1;
+            stats.total_text_blocks += result.total_blocks as u64;
+            stats.last_text_blocks = Some(result.text_blocks.clone());
+            stats.last_annotated_image = result.annotated_image_base64.clone();
+            stats.last_error = None;
+        }
+
+        // Update global stats
+        self.total_inferences.fetch_add(1, Ordering::SeqCst);
+        self.total_text_blocks.fetch_add(result.total_blocks as u64, Ordering::SeqCst);
+
+        Ok(result)
+    }
+
+    /// Persist configuration to file
+    fn persist_config(&self) {
+        let config = self.get_config();
+
+        // Get extension directory from environment
+        if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
+            let config_path = std::path::PathBuf::from(&ext_dir).join("config.json");
+
+            match serde_json::to_string_pretty(&config) {
+                Ok(json) => {
+                    if let Err(e) = std::fs::write(&config_path, json) {
+                        tracing::warn!("[OcrDeviceInference] Failed to persist config: {}", e);
+                    } else {
+                        tracing::debug!("[OcrDeviceInference] Config persisted to {:?}", config_path);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("[OcrDeviceInference] Failed to serialize config: {}", e);
+                }
+            }
+        } else {
+            tracing::debug!("[OcrDeviceInference] NEOMIND_EXTENSION_DIR not set, skipping config persistence");
+        }
+    }
+
+    /// Load configuration from file
+    fn load_config_from_file(&self) -> Option<OcrConfig> {
+        // Since the working directory is set to the extension directory,
+        // we can directly use "config.json" in the current directory
+        let config_path = std::path::PathBuf::from("config.json");
+
+        if config_path.exists() {
+            match std::fs::read_to_string(&config_path) {
+                Ok(json) => {
+                    match serde_json::from_str::<OcrConfig>(&json) {
+                        Ok(config) => {
+                            tracing::info!("[OcrDeviceInference] Loaded config from file, bindings = {}", config.bindings.len());
+                            return Some(config);
+                        }
+                        Err(e) => {
+                            tracing::error!("[OcrDeviceInference] Failed to parse config file: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("[OcrDeviceInference] Failed to read config file: {}", e);
+                }
+            }
+        }
+
+        // Also try using NEOMIND_EXTENSION_DIR as fallback
+        if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
+            let config_path = std::path::PathBuf::from(ext_dir).join("config.json");
+            if config_path.exists() {
+                match std::fs::read_to_string(&config_path) {
+                    Ok(json) => {
+                        match serde_json::from_str::<OcrConfig>(&json) {
+                            Ok(config) => {
+                                tracing::info!("[OcrDeviceInference] Loaded config from NEOMIND_EXTENSION_DIR, bindings = {}", config.bindings.len());
+                                return Some(config);
+                            }
+                            Err(e) => {
+                                tracing::error!("[OcrDeviceInference] Failed to parse config file: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("[OcrDeviceInference] Failed to read config file: {}", e);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Load configuration
+    fn load_config(&self, config: &OcrConfig) -> Result<()> {
+        // Load settings
+        *self.draw_boxes_by_default.lock() = config.draw_boxes_by_default;
+
+        // Load bindings
+        for binding in &config.bindings {
+            // Add to bindings
+            self.bindings.write().insert(binding.device_id.clone(), binding.clone());
+
+            // Initialize stats
+            self.binding_stats.write().insert(binding.device_id.clone(), BindingStatus {
+                binding: binding.clone(),
+                last_inference: None,
+                total_inferences: 0,
+                total_text_blocks: 0,
+                last_error: None,
+                last_image: None,
+                last_text_blocks: None,
+                last_annotated_image: None,
+            });
+        }
+
+        tracing::info!("[OcrDeviceInference] Loaded {} persisted bindings", config.bindings.len());
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl Extension for OcrDeviceInference {
     fn as_any(&self) -> &dyn std::any::Any {
@@ -605,8 +831,211 @@ impl Extension for OcrDeviceInference {
         ]
     }
 
-    async fn execute_command(&self, command: &str, _args: &serde_json::Value) -> Result<serde_json::Value> {
-        Err(ExtensionError::CommandNotFound(command.to_string()))
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
+        match command {
+            "bind_device" => {
+                let device_id = args.get("device_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing device_id".to_string()))?;
+
+                let binding = DeviceBinding {
+                    device_id: device_id.to_string(),
+                    device_name: args.get("device_name").and_then(|v| v.as_str()).map(String::from),
+                    image_metric: args.get("image_metric")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("image").to_string(),
+                    result_metric_prefix: args.get("result_metric_prefix")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("ocr_").to_string(),
+                    draw_boxes: args.get("draw_boxes")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(*self.draw_boxes_by_default.lock()),
+                    active: true,
+                };
+
+                self.bind_device_async(binding).await?;
+
+                Ok(json!({
+                    "success": true,
+                    "device_id": device_id,
+                    "message": format!("Device {} bound successfully", device_id)
+                }))
+            }
+
+            "unbind_device" => {
+                let device_id = args.get("device_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing device_id".to_string()))?;
+
+                self.unbind_device_async(device_id).await?;
+
+                Ok(json!({
+                    "success": true,
+                    "device_id": device_id,
+                    "message": format!("Device {} unbound successfully", device_id)
+                }))
+            }
+
+            "get_bindings" => {
+                let bindings = self.get_bindings();
+                Ok(json!({
+                    "success": true,
+                    "bindings": bindings
+                }))
+            }
+
+            "recognize_image" => {
+                let image_b64 = args.get("image")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing image parameter".to_string()))?;
+
+                let result = self.recognize_image(image_b64)?;
+                Ok(serde_json::to_value(result)
+                    .map_err(|e| ExtensionError::ExecutionFailed(format!("Serialization error: {}", e)))?)
+            }
+
+            "toggle_binding" => {
+                let device_id = args.get("device_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing device_id".to_string()))?;
+
+                let active = args.get("active")
+                    .and_then(|v| v.as_bool())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing active parameter".to_string()))?;
+
+                if let Some(binding) = self.bindings.write().get_mut(device_id) {
+                    binding.active = active;
+
+                    if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
+                        stats.binding.active = active;
+                    }
+
+                    Ok(json!({
+                        "success": true,
+                        "device_id": device_id,
+                        "active": active
+                    }))
+                } else {
+                    Err(ExtensionError::NotFound(format!("Device {} not bound", device_id)))
+                }
+            }
+
+            "get_status" => {
+                Ok(self.get_status())
+            }
+
+            "get_config" => {
+                let config = self.get_config();
+                Ok(serde_json::to_value(&config)
+                    .map_err(|e| ExtensionError::ExecutionFailed(format!("Serialization error: {}", e)))?)
+            }
+
+            "configure" => {
+                // Load config from file
+                if let Some(config) = self.load_config_from_file() {
+                    self.load_config(&config)?;
+                    Ok(json!({
+                        "success": true,
+                        "message": "Configuration loaded from file",
+                        "bindings_count": config.bindings.len()
+                    }))
+                } else {
+                    Ok(json!({
+                        "success": true,
+                        "message": "No persisted configuration found"
+                    }))
+                }
+            }
+
+            _ => Err(ExtensionError::CommandNotFound(command.to_string())),
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
+        match command {
+            "bind_device" => {
+                let device_id = args.get("device_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing device_id".to_string()))?;
+
+                let binding = DeviceBinding {
+                    device_id: device_id.to_string(),
+                    device_name: args.get("device_name").and_then(|v| v.as_str()).map(String::from),
+                    image_metric: args.get("image_metric").and_then(|v| v.as_str()).unwrap_or("image").to_string(),
+                    result_metric_prefix: args.get("result_metric_prefix").and_then(|v| v.as_str()).unwrap_or("ocr_").to_string(),
+                    draw_boxes: args.get("draw_boxes").and_then(|v| v.as_bool()).unwrap_or(*self.draw_boxes_by_default.lock()),
+                    active: true,
+                };
+
+                // For WASM, just store the binding
+                self.bindings.write().insert(device_id.to_string(), binding.clone());
+                self.binding_stats.write().insert(device_id.to_string(), BindingStatus {
+                    binding,
+                    last_inference: None,
+                    total_inferences: 0,
+                    total_text_blocks: 0,
+                    last_error: None,
+                    last_image: None,
+                    last_text_blocks: None,
+                    last_annotated_image: None,
+                });
+
+                Ok(json!({"success": true, "device_id": device_id}))
+            }
+
+            "unbind_device" => {
+                let device_id = args.get("device_id").and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing device_id".to_string()))?;
+                self.bindings.write().remove(device_id);
+                self.binding_stats.write().remove(device_id);
+                Ok(json!({"success": true, "device_id": device_id}))
+            }
+
+            "get_bindings" => {
+                Ok(json!({"success": true, "bindings": self.get_bindings()}))
+            }
+
+            "configure" => {
+                // Load config from file
+                if let Some(config) = self.load_config_from_file() {
+                    let _ = self.load_config(&config);
+                    Ok(json!({"success": true, "message": "Configuration loaded from file"}))
+                } else {
+                    Ok(json!({"success": true, "message": "No persisted configuration found"}))
+                }
+            }
+
+            "get_status" => Ok(self.get_status()),
+
+            "toggle_binding" => {
+                let device_id = args.get("device_id").and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing device_id".to_string()))?;
+                let active = args.get("active").and_then(|v| v.as_bool())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing active parameter".to_string()))?;
+                if let Some(binding) = self.bindings.write().get_mut(device_id) {
+                    binding.active = active;
+                    if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
+                        stats.binding.active = active;
+                    }
+                    Ok(json!({"success": true, "device_id": device_id, "active": active}))
+                } else {
+                    Err(ExtensionError::NotFound(format!("Device {} not bound", device_id)))
+                }
+            }
+
+            "recognize_image" => {
+                Err(ExtensionError::NotSupported("Not supported in WASM".to_string()))
+            }
+
+            "get_config" => {
+                Ok(serde_json::to_value(&self.get_config())
+                    .map_err(|e| ExtensionError::ExecutionFailed(format!("Serialization error: {}", e)))?)
+            }
+
+            _ => Err(ExtensionError::CommandNotFound(command.to_string())),
+        }
     }
 }
 
