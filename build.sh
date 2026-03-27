@@ -151,6 +151,7 @@ V2_EXTENSIONS=(
     "image-analyzer-v2"
     "yolo-video-v2"
     "yolo-device-inference"
+    "ocr-device-inference"
     "wasm-demo"
 )
 
