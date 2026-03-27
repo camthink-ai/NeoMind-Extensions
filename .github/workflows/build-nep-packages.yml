@@ -11,6 +11,9 @@ on:
       - 'extensions/weather-forecast-v2/**'
       - 'extensions/image-analyzer-v2/**'
       - 'extensions/yolo-video-v2/**'
+      - 'extensions/yolo-device-inference/**'
+      - 'extensions/ocr-device-inference/**'
+      - 'extensions/wasm-demo/**'
       - 'scripts/package.sh'
       - '.github/workflows/build-nep-packages.yml'
   workflow_dispatch:
