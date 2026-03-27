@@ -1,2 +1,4 @@
-export { OcrDeviceCard } from './OcrDeviceCard'
-export default { OcrDeviceCard }
+import { OcrDeviceCard } from './OcrDeviceCard'
+
+export { OcrDeviceCard }
+export default OcrDeviceCard

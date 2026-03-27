@@ -1,7 +1,18 @@
 //! OCR Device Inference Extension
 //!
-//! This extension provides automatic OCR (Optical Character Recognition) inference
-//! on device image data sources using DB + SVTR pipeline.
+//! This extension provides OCR (Optical Character Recognition) inference
+//! on device image data sources using PPOCR DB + SVTR pipeline.
+//!
+//! # Features
+//! - Bind/unbind devices with image data sources
+//! - Device validation before binding
+//! - Event-driven inference on device data updates
+//! - Store detection results as virtual metrics
+//!
+//! # Event Handling
+//! This extension uses the SDK's built-in event handling mechanism:
+//! - `event_subscriptions()` declares which events to subscribe to
+//! - `handle_event()` is called by the system when events are received
 
 use async_trait::async_trait;
 use neomind_extension_sdk::{
@@ -10,6 +21,7 @@ use neomind_extension_sdk::{
     ParamMetricValue, Result,
 };
 use neomind_extension_sdk::capabilities::CapabilityContext;
+use neomind_extension_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
@@ -17,30 +29,57 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use parking_lot::{Mutex, RwLock};
 use chrono::Utc;
-
-#[cfg(not(target_arch = "wasm32"))]
-use uuid::Uuid;
 use base64::Engine;
 
 // ============================================================================
 // Types
 // ============================================================================
 
+/// Supported OCR languages
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Language {
+    #[serde(alias = "zh", alias = "chinese")]
+    Chinese,
+    #[serde(alias = "en", alias = "english")]
+    #[default]
+    English,
+}
+
+impl std::fmt::Display for Language {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Language::Chinese => write!(f, "chinese"),
+            Language::English => write!(f, "english"),
+        }
+    }
+}
+
 /// Device binding configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceBinding {
-    /// Device ID
     pub device_id: String,
-    /// Device name (for display)
     pub device_name: Option<String>,
-    /// Image data source metric name
     pub image_metric: String,
-    /// Virtual metric name prefix for storing results
     pub result_metric_prefix: String,
-    /// Whether to draw text boxes on images
     pub draw_boxes: bool,
-    /// Whether the binding is active
     pub active: bool,
+    #[serde(default)]
+    pub language: Language,
+}
+
+impl Default for DeviceBinding {
+    fn default() -> Self {
+        Self {
+            device_id: String::new(),
+            device_name: None,
+            image_metric: "image".to_string(),
+            result_metric_prefix: "ocr_".to_string(),
+            draw_boxes: true,
+            active: true,
+            language: Language::default(),
+        }
+    }
 }
 
 /// Bounding box for text region
@@ -55,150 +94,147 @@ pub struct BoundingBox {
 /// Single text block recognition result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextBlock {
-    /// Recognized text content
     pub text: String,
-    /// Confidence score (0.0 - 1.0)
     pub confidence: f32,
-    /// Bounding box of text region
     pub bbox: BoundingBox,
 }
 
 /// OCR inference result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrResult {
-    /// Device ID
     pub device_id: String,
-    /// Recognized text blocks
     pub text_blocks: Vec<TextBlock>,
-    /// Full text merged with newlines
     pub full_text: String,
-    /// Number of text blocks
     pub total_blocks: usize,
-    /// Average confidence score
     pub avg_confidence: f32,
-    /// Inference time in milliseconds
     pub inference_time_ms: u64,
-    /// Original image width
     pub image_width: u32,
-    /// Original image height
     pub image_height: u32,
-    /// Unix timestamp
     pub timestamp: i64,
-    /// Annotated image with text boxes (base64)
     pub annotated_image_base64: Option<String>,
 }
 
-/// Binding status for tracking
+/// Binding status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BindingStatus {
-    /// The binding configuration
     pub binding: DeviceBinding,
-    /// Last inference timestamp
     pub last_inference: Option<i64>,
-    /// Total inference count
     pub total_inferences: u64,
-    /// Total text blocks detected
     pub total_text_blocks: u64,
-    /// Last error message
     pub last_error: Option<String>,
-    /// Last processed image (base64 data URI)
+    /// Last original image (base64 data URI)
     pub last_image: Option<String>,
     /// Last recognized text blocks
     pub last_text_blocks: Option<Vec<TextBlock>>,
-    /// Last annotated image (base64 data URI)
+    /// Last full text
+    pub last_full_text: Option<String>,
+    /// Last annotated image with bounding boxes (base64 data URI)
     pub last_annotated_image: Option<String>,
-}
-
-/// Extension configuration for persistence
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OcrConfig {
-    /// Draw text boxes by default
-    pub draw_boxes_by_default: bool,
-    /// Device bindings
-    pub bindings: Vec<DeviceBinding>,
-}
-
-impl Default for OcrConfig {
-    fn default() -> Self {
-        Self {
-            draw_boxes_by_default: true,
-            bindings: Vec::new(),
-        }
-    }
-}
-
-impl Default for DeviceBinding {
-    fn default() -> Self {
-        Self {
-            device_id: String::new(),
-            device_name: None,
-            image_metric: "image".to_string(),
-            result_metric_prefix: "ocr_".to_string(),
-            draw_boxes: true,
-            active: true,
-        }
-    }
 }
 
 // ============================================================================
 // OCR Engine (Native Only)
 // ============================================================================
 
-/// OCR Pipeline Engine - encapsulates DB detection + SVTR recognition
-///
-/// This is a simplified implementation that will be enhanced when
-/// the full usls OCR API is available.
 #[cfg(not(target_arch = "wasm32"))]
 pub struct OcrEngine {
-    /// Models loaded flag
+    detector: Option<usls::Runtime<usls::models::DB>>,
+    recognizer_chinese: Option<usls::Runtime<usls::models::SVTR>>,
+    recognizer_english: Option<usls::Runtime<usls::models::SVTR>>,
     loaded: bool,
-    /// Load error message
     load_error: Option<String>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl OcrEngine {
     pub fn new() -> Self {
-        tracing::info!("[OcrDeviceInference] OCR models will be loaded on first use (lazy loading)");
+        tracing::info!("[OcrDeviceInference] OCR engine created");
         Self {
+            detector: None,
+            recognizer_chinese: None,
+            recognizer_english: None,
             loaded: false,
             load_error: None,
         }
     }
 
-    /// Initialize models (lazy loading)
-    pub fn init(&mut self, models_dir: &std::path::Path) -> Result<()> {
+    pub fn init(&mut self, models_dir: &std::path::Path, language: &Language) -> Result<()> {
         if self.loaded {
             return Ok(());
         }
 
-        // Check for required model files
-        let det_path = models_dir.join("det_mv3_db.onnx");
-        if !det_path.exists() {
-            return Err(ExtensionError::LoadFailed(
-                format!("DB model not found: {:?}. Please download OCR models.", det_path)
-            ));
-        }
+        let start = std::time::Instant::now();
 
-        let rec_path = models_dir.join("rec_svtr.onnx");
-        if !rec_path.exists() {
-            return Err(ExtensionError::LoadFailed(
-                format!("SVTR model not found: {:?}. Please download OCR models.", rec_path)
-            ));
-        }
+        // Initialize DB detector with v5 config (language-agnostic)
+        let detector_config = usls::Config::ppocr_det_v5_mobile()
+            .with_model_file(models_dir.join("det_mv3_db.onnx").to_string_lossy().to_string())
+            .with_device_all(usls::Device::Cpu(0))
+            .commit()
+            .map_err(|e| ExtensionError::ExecutionFailed(format!("Detector config failed: {}", e)))?;
 
-        // Mark as loaded - actual model initialization will be done when usls OCR API is stable
+        let detector = <usls::models::DB as usls::Model>::new(detector_config)
+            .map_err(|e| ExtensionError::ExecutionFailed(format!("Detector init failed: {}", e)))?;
+
+        self.detector = Some(detector);
+
+        // Initialize the appropriate recognizer based on language
+        self.load_recognizer(models_dir, language)?;
+
         self.loaded = true;
-        self.load_error = None;
-        tracing::info!("[OcrDeviceInference] OCR models found and ready");
+
+        let elapsed = start.elapsed().as_millis();
+        tracing::info!("[OcrDeviceInference] Models loaded in {}ms for language: {}", elapsed, language);
+
         Ok(())
     }
 
-    /// Perform OCR on image data
-    ///
-    /// This is a placeholder implementation. Full OCR functionality
-    /// will be implemented when the usls OCR API is finalized.
-    pub fn recognize(&mut self, image_data: &[u8], device_id: &str) -> Result<OcrResult> {
+    fn load_recognizer(&mut self, models_dir: &std::path::Path, language: &Language) -> Result<()> {
+        match language {
+            Language::Chinese => {
+                if self.recognizer_chinese.is_none() {
+                    // Load vocabulary from local file
+                    let vocab_path = models_dir.join("vocab.txt");
+                    let vocab: Vec<String> = std::fs::read_to_string(&vocab_path)
+                        .map_err(|e| ExtensionError::ExecutionFailed(format!("Failed to read vocab file: {}", e)))?
+                        .lines()
+                        .map(|s| s.to_string())
+                        .collect();
+
+                    tracing::info!("[OcrDeviceInference] Loaded {} vocab entries from {:?}", vocab.len(), vocab_path);
+
+                    // Use base SVTR config with local vocab
+                    let config = usls::Config::svtr()
+                        .with_model_file(models_dir.join("rec_svtr.onnx").to_string_lossy().to_string())
+                        .with_class_names_owned(vocab)
+                        .with_device_all(usls::Device::Cpu(0))
+                        .with_model_ixx(0, 3, 960)  // max text length
+                        .commit()
+                        .map_err(|e| ExtensionError::ExecutionFailed(format!("Chinese recognizer config failed: {}", e)))?;
+
+                    let recognizer = <usls::models::SVTR as usls::Model>::new(config)
+                        .map_err(|e| ExtensionError::ExecutionFailed(format!("Chinese recognizer init failed: {}", e)))?;
+                    self.recognizer_chinese = Some(recognizer);
+                }
+            }
+            Language::English => {
+                if self.recognizer_english.is_none() {
+                    let config = usls::Config::ppocr_rec_v4_en()
+                        .with_model_file(models_dir.join("rec_en.onnx").to_string_lossy().to_string())
+                        .with_device_all(usls::Device::Cpu(0))
+                        .with_model_ixx(0, 3, 960)
+                        .commit()
+                        .map_err(|e| ExtensionError::ExecutionFailed(format!("English recognizer config failed: {}", e)))?;
+
+                    let recognizer = <usls::models::SVTR as usls::Model>::new(config)
+                        .map_err(|e| ExtensionError::ExecutionFailed(format!("English recognizer init failed: {}", e)))?;
+                    self.recognizer_english = Some(recognizer);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn recognize(&mut self, image_data: &[u8], device_id: &str, language: &Language) -> Result<OcrResult> {
         let start = std::time::Instant::now();
 
         if !self.loaded {
@@ -207,58 +243,209 @@ impl OcrEngine {
             ));
         }
 
-        // Create temp file for image
-        let temp_path = std::env::temp_dir()
-            .join(format!("ocr_inference_{}.jpg", Uuid::new_v4()));
-        std::fs::write(&temp_path, image_data)
-            .map_err(|e| ExtensionError::ExecutionFailed(
-                format!("Failed to write temp image: {}", e)
-            ))?;
+        // Load image using image crate, then convert to usls::Image
+        let dyn_img = image::load_from_memory(image_data)
+            .map_err(|e| ExtensionError::ExecutionFailed(format!("Failed to load image: {}", e)))?;
 
-        // Load image to get dimensions
-        let (img_width, img_height) = self.get_image_dimensions(&temp_path);
+        // Keep original for annotation
+        let mut annotated_img = dyn_img.to_rgba8();
 
-        // Clean up temp file
-        let _ = std::fs::remove_file(&temp_path);
+        let img: usls::Image = dyn_img.into();
+        let (img_width, img_height) = (img.width(), img.height());
+
+        // Detect text regions
+        let det_results = if let Some(ref mut detector) = self.detector {
+            detector.forward(&[img.clone()])
+                .map_err(|e| ExtensionError::ExecutionFailed(format!("Detection failed: {}", e)))?
+        } else {
+            return Err(ExtensionError::ExecutionFailed("Detector not initialized".to_string()));
+        };
+
+        // Collect cropped images and their bounding boxes first (before borrowing recognizer)
+        let mut crops_with_bboxes: Vec<(usls::Image, BoundingBox)> = Vec::new();
+
+        if let Some(det_result) = det_results.first() {
+            tracing::info!("[OcrDeviceInference] Detection found {} polygons", det_result.polygons.len());
+            for polygon in &det_result.polygons {
+                let cropped = Self::crop_polygon_static(&img, polygon);
+                if let Some(crop_img) = cropped {
+                    let bbox = Self::polygon_to_bbox_static(polygon, img_width, img_height);
+                    crops_with_bboxes.push((crop_img, bbox));
+                }
+            }
+        } else {
+            tracing::warn!("[OcrDeviceInference] Detection returned no results");
+        }
+
+        tracing::info!("[OcrDeviceInference] Created {} crops for recognition", crops_with_bboxes.len());
+
+        // Now recognize all cropped images
+        let mut text_blocks = Vec::new();
+        let mut all_texts = Vec::new();
+        let mut total_confidence = 0.0;
+
+        for (crop_img, bbox) in crops_with_bboxes {
+            // Recognize text using the selected recognizer
+            let rec_results = match language {
+                Language::Chinese => {
+                    if let Some(ref mut recognizer) = self.recognizer_chinese {
+                        recognizer.forward(&[crop_img])
+                            .map_err(|e| ExtensionError::ExecutionFailed(format!("Recognition failed: {}", e)))?
+                    } else {
+                        return Err(ExtensionError::ExecutionFailed("Chinese recognizer not initialized".to_string()));
+                    }
+                }
+                Language::English => {
+                    if let Some(ref mut recognizer) = self.recognizer_english {
+                        recognizer.forward(&[crop_img])
+                            .map_err(|e| ExtensionError::ExecutionFailed(format!("Recognition failed: {}", e)))?
+                    } else {
+                        return Err(ExtensionError::ExecutionFailed("English recognizer not initialized".to_string()));
+                    }
+                }
+            };
+
+            if let Some(rec_result) = rec_results.first() {
+                tracing::info!("[OcrDeviceInference] Recognition found {} texts", rec_result.texts.len());
+                for text_obj in &rec_result.texts {
+                    let text_str = text_obj.text().to_string();
+                    let conf = text_obj.confidence().unwrap_or(0.0);
+
+                    tracing::info!("[OcrDeviceInference] Recognized: '{}' (confidence: {:.2})", text_str, conf);
+
+                    text_blocks.push(TextBlock {
+                        text: text_str.clone(),
+                        confidence: conf,
+                        bbox: bbox.clone(),
+                    });
+                    all_texts.push(text_str);
+                    total_confidence += conf;
+
+                    // Draw bounding box on annotated image
+                    Self::draw_bbox_static(&mut annotated_img, &bbox, img_width, img_height);
+                }
+            } else {
+                tracing::warn!("[OcrDeviceInference] Recognition returned no results for crop");
+            }
+        }
+
+        tracing::info!("[OcrDeviceInference] Total text blocks: {}, full text length: {}", text_blocks.len(), all_texts.join("\n").len());
 
         let inference_time = start.elapsed().as_millis() as u64;
         let timestamp = Utc::now().timestamp();
 
-        // Placeholder: Return empty result
-        // TODO: Implement full OCR pipeline when usls OCR API is stable
-        tracing::debug!("[OcrDeviceInference] OCR placeholder executed in {}ms", inference_time);
+        let avg_conf = if text_blocks.is_empty() {
+            0.0
+        } else {
+            total_confidence / text_blocks.len() as f32
+        };
+
+        // Convert annotated image to base64
+        let annotated_base64 = Self::image_to_base64_static(&annotated_img);
 
         Ok(OcrResult {
             device_id: device_id.to_string(),
-            text_blocks: Vec::new(),
-            full_text: String::new(),
-            total_blocks: 0,
-            avg_confidence: 0.0,
+            text_blocks: text_blocks.clone(),
+            full_text: all_texts.join("\n"),
+            total_blocks: text_blocks.len(),
+            avg_confidence: avg_conf,
             inference_time_ms: inference_time,
             image_width: img_width,
             image_height: img_height,
             timestamp,
-            annotated_image_base64: None,
+            annotated_image_base64: Some(annotated_base64),
         })
     }
 
-    /// Get image dimensions using image crate
-    fn get_image_dimensions(&self, path: &std::path::Path) -> (u32, u32) {
-        match image::ImageReader::open(path) {
-            Ok(reader) => match reader.into_dimensions() {
-                Ok((w, h)) => (w, h),
-                Err(_) => (0, 0),
-            },
-            Err(_) => (0, 0),
+    fn crop_polygon_static(img: &usls::Image, polygon: &usls::Polygon) -> Option<usls::Image> {
+        let coords = polygon.exterior();
+        if coords.is_empty() {
+            return None;
+        }
+
+        let xs: Vec<f32> = coords.iter().map(|p| p[0]).collect();
+        let ys: Vec<f32> = coords.iter().map(|p| p[1]).collect();
+
+        let x_min = xs.iter().cloned().fold(f32::INFINITY, f32::min) as u32;
+        let x_max = xs.iter().cloned().fold(f32::NEG_INFINITY, f32::max) as u32;
+        let y_min = ys.iter().cloned().fold(f32::INFINITY, f32::min) as u32;
+        let y_max = ys.iter().cloned().fold(f32::NEG_INFINITY, f32::max) as u32;
+
+        let x_min = x_min.max(0);
+        let x_max = x_max.min(img.width() - 1);
+        let y_min = y_min.max(0);
+        let y_max = y_max.min(img.height() - 1);
+
+        if x_max <= x_min || y_max <= y_min {
+            return None;
+        }
+
+        let cropped = img.to_dyn().crop_imm(x_min, y_min, x_max - x_min + 1, y_max - y_min + 1);
+        Some(cropped.into())
+    }
+
+    fn polygon_to_bbox_static(polygon: &usls::Polygon, img_w: u32, img_h: u32) -> BoundingBox {
+        let coords = polygon.exterior();
+        let xs: Vec<f32> = coords.iter().map(|p| p[0]).collect();
+        let ys: Vec<f32> = coords.iter().map(|p| p[1]).collect();
+
+        let x_min = xs.iter().cloned().fold(f32::INFINITY, f32::min);
+        let x_max = xs.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let y_min = ys.iter().cloned().fold(f32::INFINITY, f32::min);
+        let y_max = ys.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+
+        BoundingBox {
+            x: x_min / img_w as f32,
+            y: y_min / img_h as f32,
+            width: (x_max - x_min) / img_w as f32,
+            height: (y_max - y_min) / img_h as f32,
         }
     }
 
-    /// Check if models are loaded
+    fn draw_bbox_static(img: &mut image::RgbaImage, bbox: &BoundingBox, img_w: u32, img_h: u32) {
+        use imageproc::drawing::draw_hollow_rect_mut;
+        use imageproc::rect::Rect;
+
+        let x = (bbox.x * img_w as f32) as i32;
+        let y = (bbox.y * img_h as f32) as i32;
+        let w = (bbox.width * img_w as f32) as u32;
+        let h = (bbox.height * img_h as f32) as u32;
+
+        let color = image::Rgba([0u8, 255u8, 0u8, 255u8]);
+
+        let x = x.max(0).min(img_w as i32 - 1);
+        let y = y.max(0).min(img_h as i32 - 1);
+        let w = w.min(img_w.saturating_sub(x as u32));
+        let h = h.min(img_h.saturating_sub(y as u32));
+
+        if w > 0 && h > 0 {
+            let rect = Rect::at(x, y).of_size(w, h);
+            draw_hollow_rect_mut(img, rect, color);
+            if w > 2 && h > 2 {
+                let rect2 = Rect::at(x + 1, y + 1).of_size(w - 2, h - 2);
+                draw_hollow_rect_mut(img, rect2, color);
+            }
+        }
+    }
+
+    fn image_to_base64_static(img: &image::RgbaImage) -> String {
+        use base64::Engine;
+
+        let rgb_img = image::DynamicImage::ImageRgba8(img.clone()).into_rgb8();
+        let mut buffer = Vec::new();
+        let mut cursor = std::io::Cursor::new(&mut buffer);
+
+        if rgb_img.write_to(&mut cursor, image::ImageFormat::Jpeg).is_ok() {
+            base64::engine::general_purpose::STANDARD.encode(&buffer)
+        } else {
+            String::new()
+        }
+    }
+
     pub fn is_loaded(&self) -> bool {
         self.loaded
     }
 
-    /// Get load error if any
     pub fn get_load_error(&self) -> Option<&str> {
         self.load_error.as_deref()
     }
@@ -272,254 +459,110 @@ impl Default for OcrEngine {
 }
 
 // ============================================================================
-// Main Extension Structure
+// Main Extension
 // ============================================================================
 
 pub struct OcrDeviceInference {
-    /// OCR engine (native only)
     #[cfg(not(target_arch = "wasm32"))]
     ocr_engine: Mutex<OcrEngine>,
 
-    /// Device bindings: device_id -> binding
     bindings: Arc<RwLock<HashMap<String, DeviceBinding>>>,
-
-    /// Binding status for tracking
     binding_stats: Arc<RwLock<HashMap<String, BindingStatus>>>,
-
-    /// Global statistics
     total_inferences: Arc<AtomicU64>,
     total_text_blocks: Arc<AtomicU64>,
     total_errors: Arc<AtomicU64>,
-
-    /// Configuration
-    draw_boxes_by_default: Mutex<bool>,
 }
 
 impl OcrDeviceInference {
     pub fn new() -> Self {
-        #[cfg(not(target_arch = "wasm32"))]
-        tracing::info!("[OcrDeviceInference] Extension created, models will load on first use");
-
         Self {
             #[cfg(not(target_arch = "wasm32"))]
             ocr_engine: Mutex::new(OcrEngine::new()),
-
             bindings: Arc::new(RwLock::new(HashMap::new())),
             binding_stats: Arc::new(RwLock::new(HashMap::new())),
             total_inferences: Arc::new(AtomicU64::new(0)),
             total_text_blocks: Arc::new(AtomicU64::new(0)),
             total_errors: Arc::new(AtomicU64::new(0)),
-            draw_boxes_by_default: Mutex::new(true),
         }
     }
 
+    fn get_status(&self) -> serde_json::Value {
+        let bindings = self.bindings.read();
+        let stats = self.binding_stats.read();
+
+        json!({
+            "model_loaded": cfg!(not(target_arch = "wasm32")),
+            "total_inferences": self.total_inferences.load(Ordering::Relaxed),
+            "total_text_blocks": self.total_text_blocks.load(Ordering::Relaxed),
+            "total_errors": self.total_errors.load(Ordering::Relaxed),
+            "bindings_count": bindings.len(),
+            "bindings": stats.values().map(|s| {
+                json!({
+                    "device_id": s.binding.device_id,
+                    "active": s.binding.active,
+                    "total_inferences": s.total_inferences
+                })
+            }).collect::<Vec<_>>()
+        })
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn find_models_dir(&self) -> Result<std::path::PathBuf> {
+        // Try NEOMIND_EXTENSION_DIR first (set by NeoMind runtime)
+        if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
+            let models_dir = std::path::PathBuf::from(&ext_dir).join("models");
+            if models_dir.exists() {
+                tracing::info!("[OcrDeviceInference] Found models at: {:?}", models_dir);
+                return Ok(models_dir);
+            }
+        }
+
+        // Fallback: Check current working directory
+        if let Ok(cwd) = std::env::current_dir() {
+            let models_dir = cwd.join("models");
+            if models_dir.exists() {
+                tracing::info!("[OcrDeviceInference] Found models at: {:?}", models_dir);
+                return Ok(models_dir);
+            }
+        }
+
+        // Additional fallback paths
+        let fallback_paths = vec![
+            std::path::PathBuf::from("models"),
+            std::path::PathBuf::from("../models"),
+        ];
+
+        for models_dir in fallback_paths {
+            if models_dir.exists() {
+                tracing::info!("[OcrDeviceInference] Found models at: {:?}", models_dir);
+                return Ok(models_dir);
+            }
+        }
+
+        Err(ExtensionError::ExecutionFailed(
+            "Models directory not found. Please ensure OCR models are installed.".to_string()
+        ))
+    }
+
+    /// Invoke a capability synchronously (for use in handle_event)
+    #[cfg(not(target_arch = "wasm32"))]
     fn invoke_capability_sync(
         &self,
         capability_name: &str,
         params: &serde_json::Value,
     ) -> serde_json::Value {
-        // Use block_in_place to safely block in an async context.
-        // This is safe because the extension runner uses multi_thread runtime.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            tokio::task::block_in_place(|| {
-                let capability_context = CapabilityContext::default();
-                let response = capability_context.invoke_capability(capability_name, params);
-                if response
-                    .get("success")
-                    .and_then(|value| value.as_bool())
-                    .unwrap_or(false)
-                {
-                    if response.get("result").is_some() {
-                        response
-                    } else {
-                        json!({
-                            "success": true,
-                            "result": response,
-                        })
-                    }
-                } else {
-                    response
-                }
-            })
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            json!({ "success": false, "error": "Not supported in WASM" })
-        }
-    }
-
-    /// Get all bindings
-    pub fn get_bindings(&self) -> Vec<BindingStatus> {
-        self.binding_stats.read().values().cloned().collect()
-    }
-
-    /// Get extension status
-    pub fn get_status(&self) -> serde_json::Value {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let model_loaded = self.ocr_engine.lock().is_loaded();
-            serde_json::json!({
-                "model_loaded": model_loaded,
-                "total_bindings": self.bindings.read().len(),
-                "total_inferences": self.total_inferences.load(Ordering::SeqCst),
-                "total_text_blocks": self.total_text_blocks.load(Ordering::SeqCst),
-                "total_errors": self.total_errors.load(Ordering::SeqCst),
-            })
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            serde_json::json!({
-                "model_loaded": false,
-                "total_bindings": self.bindings.read().len(),
-                "total_inferences": self.total_inferences.load(Ordering::SeqCst),
-                "total_text_blocks": self.total_text_blocks.load(Ordering::SeqCst),
-                "total_errors": self.total_errors.load(Ordering::SeqCst),
-            })
-        }
-    }
-
-    /// Get current config for persistence
-    pub fn get_config(&self) -> OcrConfig {
-        OcrConfig {
-            draw_boxes_by_default: *self.draw_boxes_by_default.lock(),
-            bindings: self.bindings.read().values().cloned().collect(),
-        }
-    }
-}
-
-impl Default for OcrDeviceInference {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl OcrDeviceInference {
-    /// Handle events from the EventBus
-    ///
-    /// This method is called by the system when a DeviceMetric event is published.
-    /// It checks if the device is bound and processes the image data.
-    fn handle_event(
-        &self,
-        event_type: &str,
-        payload: &serde_json::Value,
-    ) -> Result<()> {
-        tracing::info!("[OcrDeviceInference] handle_event called: event_type={}", event_type);
-
-        if event_type != "DeviceMetric" {
-            return Ok(());
-        }
-
-        // Extract event data from the standardized format
-        let inner_payload = payload.get("payload").unwrap_or(payload);
-
-        let device_id = inner_payload.get("device_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-
-        let metric = inner_payload.get("metric")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-
-        tracing::info!("[OcrDeviceInference] Processing: device={}, metric={}", device_id, metric);
-
-        let value = inner_payload.get("value");
-
-        // Check if this device is bound
-        let binding = {
-            let bindings = self.bindings.read();
-            bindings.get(device_id).cloned()
-        };
-
-        if let Some(binding) = binding {
-            if !binding.active {
-                tracing::debug!("[OcrDeviceInference] Binding inactive for device: {}", device_id);
-                return Ok(());
-            }
-
-            // Check if metric matches
-            let exact_match = metric == binding.image_metric;
-
-            let (top_level_metric, nested_path) = if binding.image_metric.contains('.') {
-                let parts: Vec<&str> = binding.image_metric.splitn(2, '.').collect();
-                (parts[0].to_string(), Some(parts[1].to_string()))
-            } else {
-                (binding.image_metric.clone(), None)
-            };
-
-            let metric_matches = exact_match || metric == top_level_metric;
-            let nested_path = if exact_match { None } else { nested_path };
-
-            tracing::info!(
-                "[OcrDeviceInference] Event: device={}, metric={}, binding_metric={}, exact={}, top_level={}, matches={}",
-                device_id, metric, binding.image_metric, exact_match, top_level_metric, metric_matches
-            );
-
-            if !metric_matches {
-                return Ok(());
-            }
-
-            // Extract image data from value
-            let image_b64 = self.extract_image_from_value(value, nested_path.as_deref());
-
-            if let Some(image_data_b64) = image_b64 {
-                match base64::engine::general_purpose::STANDARD.decode(&image_data_b64) {
-                    Ok(image_data) => {
-                        tracing::info!("[OcrDeviceInference] Base64 decoded successfully, image size: {} bytes", image_data.len());
-                        #[cfg(not(target_arch = "wasm32"))]
-                        {
-                            match self.process_device_image(device_id, &image_data, &binding) {
-                                Ok(result) => {
-                                    tracing::info!("[OcrDeviceInference] OCR completed: {} text blocks", result.text_blocks.len());
-                                    self.total_inferences.fetch_add(1, Ordering::SeqCst);
-                                    self.total_text_blocks.fetch_add(result.text_blocks.len() as u64, Ordering::SeqCst);
-                                    self.write_ocr_results(
-                                        device_id,
-                                        &result,
-                                        &image_data_b64,
-                                        &binding.result_metric_prefix,
-                                    );
-                                    tracing::debug!(
-                                        "[OcrDeviceInference] Inference: device={}, text_blocks={}, time={}ms",
-                                        device_id,
-                                        result.text_blocks.len(),
-                                        result.inference_time_ms
-                                    );
-                                }
-                                Err(e) => {
-                                    self.total_errors.fetch_add(1, Ordering::SeqCst);
-                                    tracing::warn!("[OcrDeviceInference] Process failed: device={}, error={}", device_id, e);
-                                    if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
-                                        stats.last_error = Some(e.to_string());
-                                    }
-                                }
-                            }
-                        }
-
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            tracing::warn!("[OcrDeviceInference] Image processing not supported in WASM");
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("[OcrDeviceInference] Base64 decode failed: device={}, error={}", device_id, e);
-                    }
-                }
-            }
-        }
-
-        Ok(())
+        tokio::task::block_in_place(|| {
+            let capability_context = CapabilityContext::default();
+            capability_context.invoke_capability(capability_name, params)
+        })
     }
 
     /// Extract image data from a value, supporting nested paths
-    pub fn extract_image_from_value<'a>(&self, value: Option<&'a serde_json::Value>, nested_path: Option<&str>) -> Option<String> {
+    fn extract_image_from_value<'a>(&self, value: Option<&'a serde_json::Value>, nested_path: Option<&str>) -> Option<String> {
         let v = value?;
 
         // If we have a nested path, navigate to it
         let target_value = if let Some(path) = nested_path {
-            // Navigate through nested path
             let mut current = v;
             for part in path.split('.') {
                 current = current.get(part)?;
@@ -529,151 +572,88 @@ impl OcrDeviceInference {
             v
         };
 
-        // Try to extract string from the target value
-        let raw_string: Option<&str> = {
-            // Format 1: Direct string
-            if let Some(s) = target_value.as_str() {
-                Some(s)
-            // Format 2: MetricValue wrapper {"String": "..."}
-            } else if let Some(s) = target_value.get("String").and_then(|s| s.as_str()) {
-                Some(s)
-            // Format 3: Object with string fields (try common field names)
-            } else {
-                for field in &["image", "data", "value", "base64"] {
-                    if let Some(s) = target_value.get(field).and_then(|s| s.as_str()) {
-                        return Some(s.to_string());
-                    }
-                }
-                None
-            }
-        };
-
-        raw_string.map(|s| s.to_string())
-    }
-
-    /// Process device image and run OCR (native only)
-    #[cfg(not(target_arch = "wasm32"))]
-    fn process_device_image(&self, device_id: &str, image_data: &[u8], binding: &DeviceBinding) -> Result<OcrResult> {
-        // Initialize OCR engine if needed
-        {
-            let mut engine = self.ocr_engine.lock();
-            if !engine.is_loaded() {
-                // Try to load models from extension directory
-                let models_dir = std::env::var("NEOMIND_EXTENSION_DIR")
-                    .map(|d| std::path::PathBuf::from(d).join("models"))
-                    .unwrap_or_else(|_| std::path::PathBuf::from("models"));
-
-                if let Err(e) = engine.init(&models_dir) {
-                    return Err(ExtensionError::ExecutionFailed(format!("Failed to load OCR models: {}", e)));
+        // Try to extract string
+        if let Some(s) = target_value.as_str() {
+            // Check if it's a data URI
+            if s.starts_with("data:image") {
+                let parts: Vec<&str> = s.splitn(2, ',').collect();
+                if parts.len() == 2 {
+                    return Some(parts[1].to_string());
                 }
             }
-
-            // Run OCR
-            let result = engine.recognize(image_data, device_id)?;
-
-            // Add annotated image if draw_boxes is enabled
-            if binding.draw_boxes {
-                // TODO: Implement box drawing when usls OCR API provides it
-                // For now, leave annotated_image_base64 as None
-            }
-
-            Ok(result)
+            return Some(s.to_string());
         }
+
+        None
     }
 
-    /// Process OCR result and write virtual metrics
+    /// Process inference result and write virtual metrics
     #[cfg(not(target_arch = "wasm32"))]
-    fn write_ocr_results(
+    fn write_inference_results(
         &self,
         device_id: &str,
         result: &OcrResult,
         image_b64: &str,
-        result_metric_prefix: &str,
     ) {
         // Update binding stats
         if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
             stats.last_image = Some(format!("data:image/jpeg;base64,{}", image_b64));
             stats.last_text_blocks = Some(result.text_blocks.clone());
+            stats.last_full_text = Some(result.full_text.clone());
             stats.last_inference = Some(result.timestamp);
             stats.total_inferences += 1;
-            stats.total_text_blocks += result.text_blocks.len() as u64;
-            stats.last_error = None;
-
-            // Update annotated image if available
+            stats.total_text_blocks += result.total_blocks as u64;
             if let Some(annotated_b64) = &result.annotated_image_base64 {
                 stats.last_annotated_image = Some(format!("data:image/jpeg;base64,{}", annotated_b64));
             }
         }
 
-        // Write virtual metrics for recognized text blocks
-        for (idx, block) in result.text_blocks.iter().enumerate() {
-            let metric_name = format!("{}text_block_{}", result_metric_prefix, idx);
-            let params = serde_json::json!({
-                "device_id": device_id,
-                "metric": metric_name,
-                "value": serde_json::json!({
-                    "text": block.text,
-                    "confidence": block.confidence,
-                    "bbox": block.bbox
-                }),
-                "timestamp": result.timestamp,
-            });
+        // Write virtual metrics through the native capability bridge.
+        // Virtual metrics must start with: transform., virtual., computed., derived., or aggregated.
 
-            match self.invoke_capability_sync("device_metrics_write", &params) {
-                v if v.get("success").and_then(|s| s.as_bool()).unwrap_or(false) => {
-                    tracing::debug!("[OcrDeviceInference] Successfully wrote {}", metric_name);
-                }
-                _ => {
-                    tracing::warn!("[OcrDeviceInference] Failed to write {}", metric_name);
-                }
-            }
-        }
-
-        // Write full text as a single metric
-        let full_text_metric = format!("{}full_text", result_metric_prefix);
+        // Write text block count (virtual metric)
+        let metric_name = "virtual.ocr.count";
         let params = serde_json::json!({
             "device_id": device_id,
-            "metric": full_text_metric,
-            "value": result.full_text.clone(),
+            "metric": metric_name,
+            "value": result.total_blocks,
             "timestamp": result.timestamp,
         });
+        let _ = self.invoke_capability_sync("device_metrics_write", &params);
 
-        match self.invoke_capability_sync("device_metrics_write", &params) {
-            v if v.get("success").and_then(|s| s.as_bool()).unwrap_or(false) => {
-                tracing::debug!("[OcrDeviceInference] Successfully wrote {}", full_text_metric);
-            }
-            _ => {
-                tracing::warn!("[OcrDeviceInference] Failed to write {}", full_text_metric);
-            }
-        }
-
-        // Write statistics
-        let stats_metric = format!("{}stats", result_metric_prefix);
+        // Write full text (virtual metric)
+        let metric_name = "virtual.ocr.full_text";
         let params = serde_json::json!({
             "device_id": device_id,
-            "metric": stats_metric,
-            "value": serde_json::json!({
-                "total_blocks": result.total_blocks,
-                "avg_confidence": result.avg_confidence,
-                "inference_time_ms": result.inference_time_ms,
-                "image_width": result.image_width,
-                "image_height": result.image_height
-            }),
+            "metric": metric_name,
+            "value": result.full_text,
             "timestamp": result.timestamp,
         });
+        let _ = self.invoke_capability_sync("device_metrics_write", &params);
 
-        match self.invoke_capability_sync("device_metrics_write", &params) {
-            v if v.get("success").and_then(|s| s.as_bool()).unwrap_or(false) => {
-                tracing::debug!("[OcrDeviceInference] Successfully wrote {}", stats_metric);
-            }
-            _ => {
-                tracing::warn!("[OcrDeviceInference] Failed to write {}", stats_metric);
-            }
-        }
+        // Write average confidence (virtual metric)
+        let metric_name = "virtual.ocr.confidence";
+        let params = serde_json::json!({
+            "device_id": device_id,
+            "metric": metric_name,
+            "value": result.avg_confidence,
+            "timestamp": result.timestamp,
+        });
+        let _ = self.invoke_capability_sync("device_metrics_write", &params);
 
-        // Write annotated image (virtual metric) if available
+        // Write inference time (virtual metric)
+        let metric_name = "virtual.ocr.inference_time_ms";
+        let params = serde_json::json!({
+            "device_id": device_id,
+            "metric": metric_name,
+            "value": result.inference_time_ms,
+            "timestamp": result.timestamp,
+        });
+        let _ = self.invoke_capability_sync("device_metrics_write", &params);
+
+        // Write annotated image (virtual metric) with proper data URI format
         if let Some(img) = &result.annotated_image_base64 {
-            let metric_name = format!("{}annotated_image", result_metric_prefix);
+            let metric_name = "virtual.ocr.annotated_image";
             let data_uri = format!("data:image/jpeg;base64,{}", img);
             let params = serde_json::json!({
                 "device_id": device_id,
@@ -681,300 +661,47 @@ impl OcrDeviceInference {
                 "value": data_uri,
                 "timestamp": result.timestamp,
             });
-
-            match self.invoke_capability_sync("device_metrics_write", &params) {
-                v if v.get("success").and_then(|s| s.as_bool()).unwrap_or(false) => {
-                    tracing::debug!("[OcrDeviceInference] Successfully wrote {}", metric_name);
-                }
-                _ => {
-                    tracing::warn!("[OcrDeviceInference] Failed to write {}", metric_name);
-                }
-            }
-        }
-    }
-
-    /// Validate device exists (native only)
-    #[cfg(not(target_arch = "wasm32"))]
-    async fn validate_device(&self, _device_id: &str) -> Result<bool> {
-        // For now, always return true
-        // TODO: Implement proper device validation when SDK provides device metrics capability
-        Ok(true)
-    }
-
-    /// Bind a device for automatic OCR inference
-    #[cfg(not(target_arch = "wasm32"))]
-    async fn bind_device_async(&self, mut binding: DeviceBinding) -> Result<()> {
-        let device_id = binding.device_id.clone();
-
-        // Validate device exists
-        if !self.validate_device(&device_id).await? {
-            return Err(ExtensionError::NotFound(format!(
-                "Device '{}' not found or metric '{}' not available",
-                device_id, binding.image_metric
-            )));
+            let _ = self.invoke_capability_sync("device_metrics_write", &params);
         }
 
-        // Ensure binding is active
-        binding.active = true;
-
-        // Add to bindings
-        self.bindings.write().insert(device_id.clone(), binding.clone());
-
-        // Initialize stats
-        self.binding_stats.write().insert(device_id.clone(), BindingStatus {
-            binding,
-            last_inference: None,
-            total_inferences: 0,
-            total_text_blocks: 0,
-            last_error: None,
-            last_image: None,
-            last_text_blocks: None,
-            last_annotated_image: None,
+        // Write text blocks as JSON (virtual metric)
+        let metric_name = "virtual.ocr.text";
+        let params = serde_json::json!({
+            "device_id": device_id,
+            "metric": metric_name,
+            "value": serde_json::to_string(&result.text_blocks).unwrap_or_default(),
+            "timestamp": result.timestamp,
         });
+        let _ = self.invoke_capability_sync("device_metrics_write", &params);
 
-        // Persist configuration
-        self.persist_config();
-
-        tracing::info!("[OcrDeviceInference] Device bound: {}", device_id);
-        Ok(())
+        tracing::info!(
+            "[OcrDeviceInference] Wrote inference results for device={}, blocks={}, time={}ms",
+            device_id,
+            result.total_blocks,
+            result.inference_time_ms
+        );
     }
+}
 
-    /// Unbind a device
-    #[cfg(not(target_arch = "wasm32"))]
-    async fn unbind_device_async(&self, device_id: &str) -> Result<()> {
-        self.bindings.write().remove(device_id);
-        self.binding_stats.write().remove(device_id);
-
-        // Persist configuration
-        self.persist_config();
-
-        tracing::info!("[OcrDeviceInference] Device unbound: {}", device_id);
-        Ok(())
-    }
-
-    /// Recognize text from base64 image (native only)
-    #[cfg(not(target_arch = "wasm32"))]
-    fn recognize_image(&self, image_b64: &str) -> Result<OcrResult> {
-        let image_data = base64::engine::general_purpose::STANDARD.decode(image_b64)
-            .map_err(|e| ExtensionError::InvalidArguments(format!("Invalid base64: {}", e)))?;
-
-        // Initialize OCR engine if needed and run OCR
-        let result = {
-            let mut engine = self.ocr_engine.lock();
-            if !engine.is_loaded() {
-                // Try to load models from extension directory
-                let models_dir = std::env::var("NEOMIND_EXTENSION_DIR")
-                    .map(|d| std::path::PathBuf::from(d).join("models"))
-                    .unwrap_or_else(|_| std::path::PathBuf::from("models"));
-
-                if let Err(e) = engine.init(&models_dir) {
-                    return Err(ExtensionError::ExecutionFailed(format!("Failed to load OCR models: {}", e)));
-                }
-            }
-
-            // Run OCR
-            engine.recognize(&image_data, "manual")?
-        };
-
-        // Update binding stats for manual analysis
-        {
-            let mut stats_map = self.binding_stats.write();
-            let stats = stats_map.entry("manual".to_string())
-                .or_insert_with(|| BindingStatus {
-                    binding: DeviceBinding {
-                        device_id: "manual".to_string(),
-                        device_name: Some("Manual Recognition".to_string()),
-                        image_metric: "input".to_string(),
-                        result_metric_prefix: "manual_".to_string(),
-                        draw_boxes: true,
-                        active: true,
-                    },
-                    last_inference: None,
-                    total_inferences: 0,
-                    total_text_blocks: 0,
-                    last_error: None,
-                    last_image: None,
-                    last_text_blocks: None,
-                    last_annotated_image: None,
-                });
-
-            stats.last_inference = Some(result.timestamp);
-            stats.total_inferences += 1;
-            stats.total_text_blocks += result.total_blocks as u64;
-            stats.last_text_blocks = Some(result.text_blocks.clone());
-            stats.last_annotated_image = result.annotated_image_base64.clone();
-            stats.last_error = None;
-        }
-
-        // Update global stats
-        self.total_inferences.fetch_add(1, Ordering::SeqCst);
-        self.total_text_blocks.fetch_add(result.total_blocks as u64, Ordering::SeqCst);
-
-        Ok(result)
-    }
-
-    /// Persist configuration to file
-    fn persist_config(&self) {
-        let config = self.get_config();
-
-        // Get extension directory from environment
-        if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
-            let config_path = std::path::PathBuf::from(&ext_dir).join("config.json");
-
-            match serde_json::to_string_pretty(&config) {
-                Ok(json) => {
-                    if let Err(e) = std::fs::write(&config_path, json) {
-                        tracing::warn!("[OcrDeviceInference] Failed to persist config: {}", e);
-                    } else {
-                        tracing::debug!("[OcrDeviceInference] Config persisted to {:?}", config_path);
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("[OcrDeviceInference] Failed to serialize config: {}", e);
-                }
-            }
-        } else {
-            tracing::debug!("[OcrDeviceInference] NEOMIND_EXTENSION_DIR not set, skipping config persistence");
-        }
-    }
-
-    /// Load configuration from file
-    fn load_config_from_file(&self) -> Option<OcrConfig> {
-        // Since the working directory is set to the extension directory,
-        // we can directly use "config.json" in the current directory
-        let config_path = std::path::PathBuf::from("config.json");
-
-        if config_path.exists() {
-            match std::fs::read_to_string(&config_path) {
-                Ok(json) => {
-                    match serde_json::from_str::<OcrConfig>(&json) {
-                        Ok(config) => {
-                            tracing::info!("[OcrDeviceInference] Loaded config from file, bindings = {}", config.bindings.len());
-                            return Some(config);
-                        }
-                        Err(e) => {
-                            tracing::error!("[OcrDeviceInference] Failed to parse config file: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("[OcrDeviceInference] Failed to read config file: {}", e);
-                }
-            }
-        }
-
-        // Also try using NEOMIND_EXTENSION_DIR as fallback
-        if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
-            let config_path = std::path::PathBuf::from(ext_dir).join("config.json");
-            if config_path.exists() {
-                match std::fs::read_to_string(&config_path) {
-                    Ok(json) => {
-                        match serde_json::from_str::<OcrConfig>(&json) {
-                            Ok(config) => {
-                                tracing::info!("[OcrDeviceInference] Loaded config from NEOMIND_EXTENSION_DIR, bindings = {}", config.bindings.len());
-                                return Some(config);
-                            }
-                            Err(e) => {
-                                tracing::error!("[OcrDeviceInference] Failed to parse config file: {}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("[OcrDeviceInference] Failed to read config file: {}", e);
-                    }
-                }
-            }
-        }
-
-        None
-    }
-
-    /// Load configuration
-    fn load_config(&self, config: &OcrConfig) -> Result<()> {
-        // Load settings
-        *self.draw_boxes_by_default.lock() = config.draw_boxes_by_default;
-
-        // Load bindings
-        for binding in &config.bindings {
-            // Add to bindings
-            self.bindings.write().insert(binding.device_id.clone(), binding.clone());
-
-            // Initialize stats
-            self.binding_stats.write().insert(binding.device_id.clone(), BindingStatus {
-                binding: binding.clone(),
-                last_inference: None,
-                total_inferences: 0,
-                total_text_blocks: 0,
-                last_error: None,
-                last_image: None,
-                last_text_blocks: None,
-                last_annotated_image: None,
-            });
-        }
-
-        tracing::info!("[OcrDeviceInference] Loaded {} persisted bindings", config.bindings.len());
-        Ok(())
+impl Default for OcrDeviceInference {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[async_trait]
 impl Extension for OcrDeviceInference {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn metadata(&self) -> &ExtensionMetadata {
         static META: std::sync::OnceLock<ExtensionMetadata> = std::sync::OnceLock::new();
         META.get_or_init(|| {
             ExtensionMetadata::new(
                 "ocr-device-inference",
-                "OCR识别",
-                "1.0.0"
+                "OCR",
+                env!("CARGO_PKG_VERSION")
             )
-            .with_description("Automatic OCR inference on device image data sources")
+            .with_description("OCR device inference extension with automatic text recognition")
             .with_author("NeoMind Team")
         })
-    }
-
-    fn metrics(&self) -> Vec<MetricDescriptor> {
-        vec![
-            MetricDescriptor {
-                name: "bound_devices".to_string(),
-                display_name: "Bound Devices".to_string(),
-                data_type: neomind_extension_sdk::MetricDataType::Integer,
-                unit: "count".to_string(),
-                min: Some(0.0),
-                max: None,
-                required: false,
-            },
-            MetricDescriptor {
-                name: "total_inferences".to_string(),
-                display_name: "Total Inferences".to_string(),
-                data_type: neomind_extension_sdk::MetricDataType::Integer,
-                unit: "count".to_string(),
-                min: Some(0.0),
-                max: None,
-                required: false,
-            },
-            MetricDescriptor {
-                name: "total_text_blocks".to_string(),
-                display_name: "Total Text Blocks".to_string(),
-                data_type: neomind_extension_sdk::MetricDataType::Integer,
-                unit: "count".to_string(),
-                min: Some(0.0),
-                max: None,
-                required: false,
-            },
-            MetricDescriptor {
-                name: "total_errors".to_string(),
-                display_name: "Total Errors".to_string(),
-                data_type: neomind_extension_sdk::MetricDataType::Integer,
-                unit: "count".to_string(),
-                min: Some(0.0),
-                max: None,
-                required: false,
-            },
-        ]
     }
 
     fn commands(&self) -> Vec<ExtensionCommand> {
@@ -1019,20 +746,9 @@ impl Extension for OcrDeviceInference {
                         options: Vec::new(),
                     },
                     ParameterDefinition {
-                        name: "result_metric_prefix".to_string(),
-                        display_name: "Result Metric Prefix".to_string(),
-                        description: "Prefix for virtual metrics storing results".to_string(),
-                        param_type: MetricDataType::String,
-                        required: false,
-                        default_value: Some(ParamMetricValue::String("ocr_".to_string())),
-                        min: None,
-                        max: None,
-                        options: Vec::new(),
-                    },
-                    ParameterDefinition {
                         name: "draw_boxes".to_string(),
                         display_name: "Draw Boxes".to_string(),
-                        description: "Whether to draw text boxes on images".to_string(),
+                        description: "Whether to draw text bounding boxes on images".to_string(),
                         param_type: MetricDataType::Boolean,
                         required: false,
                         default_value: Some(ParamMetricValue::Boolean(true)),
@@ -1040,15 +756,26 @@ impl Extension for OcrDeviceInference {
                         max: None,
                         options: Vec::new(),
                     },
+                    ParameterDefinition {
+                        name: "language".to_string(),
+                        display_name: "Language".to_string(),
+                        description: "OCR language: 'chinese' (default) or 'english'".to_string(),
+                        param_type: MetricDataType::String,
+                        required: false,
+                        default_value: Some(ParamMetricValue::String("chinese".to_string())),
+                        min: None,
+                        max: None,
+                        options: vec!["chinese".to_string(), "english".to_string()],
+                    },
                 ],
                 fixed_values: HashMap::new(),
-                samples: vec![json!({"device_id": "camera-01", "image_metric": "image", "draw_boxes": true})],
+                samples: vec![],
                 parameter_groups: Vec::new(),
             },
             ExtensionCommand {
                 name: "unbind_device".to_string(),
                 display_name: "Unbind Device".to_string(),
-                description: "Unbind a device from automatic OCR inference".to_string(),
+                description: "Unbind a device from OCR inference".to_string(),
                 payload_template: String::new(),
                 parameters: vec![
                     ParameterDefinition {
@@ -1064,51 +791,19 @@ impl Extension for OcrDeviceInference {
                     },
                 ],
                 fixed_values: HashMap::new(),
-                samples: vec![json!({"device_id": "camera-01"})],
-                parameter_groups: Vec::new(),
-            },
-            ExtensionCommand {
-                name: "get_bindings".to_string(),
-                display_name: "Get Bindings".to_string(),
-                description: "Get all device bindings and their status".to_string(),
-                payload_template: String::new(),
-                parameters: vec![],
-                fixed_values: HashMap::new(),
                 samples: vec![],
-                parameter_groups: Vec::new(),
-            },
-            ExtensionCommand {
-                name: "recognize_image".to_string(),
-                display_name: "Recognize Image".to_string(),
-                description: "Perform OCR on an image and return recognized text".to_string(),
-                payload_template: String::new(),
-                parameters: vec![
-                    ParameterDefinition {
-                        name: "image".to_string(),
-                        display_name: "Image".to_string(),
-                        description: "Base64 encoded image data".to_string(),
-                        param_type: MetricDataType::String,
-                        required: true,
-                        default_value: None,
-                        min: None,
-                        max: None,
-                        options: Vec::new(),
-                    },
-                ],
-                fixed_values: HashMap::new(),
-                samples: vec![json!({"image": "base64_encoded_image_data"})],
                 parameter_groups: Vec::new(),
             },
             ExtensionCommand {
                 name: "toggle_binding".to_string(),
                 display_name: "Toggle Binding".to_string(),
-                description: "Toggle a device binding active state".to_string(),
+                description: "Enable or disable a device binding".to_string(),
                 payload_template: String::new(),
                 parameters: vec![
                     ParameterDefinition {
                         name: "device_id".to_string(),
                         display_name: "Device ID".to_string(),
-                        description: "ID of the bound device".to_string(),
+                        description: "ID of the device binding to toggle".to_string(),
                         param_type: MetricDataType::String,
                         required: true,
                         default_value: None,
@@ -1119,43 +814,66 @@ impl Extension for OcrDeviceInference {
                     ParameterDefinition {
                         name: "active".to_string(),
                         display_name: "Active".to_string(),
-                        description: "Whether the binding should be active".to_string(),
+                        description: "Whether to activate or deactivate the binding".to_string(),
                         param_type: MetricDataType::Boolean,
-                        required: true,
-                        default_value: None,
+                        required: false,
+                        default_value: Some(ParamMetricValue::Boolean(true)),
                         min: None,
                         max: None,
                         options: Vec::new(),
                     },
                 ],
                 fixed_values: HashMap::new(),
-                samples: vec![json!({"device_id": "camera-01", "active": false})],
+                samples: vec![],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "get_bindings".to_string(),
+                display_name: "Get Bindings".to_string(),
+                description: "Get all device bindings".to_string(),
+                payload_template: String::new(),
+                parameters: vec![],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "recognize_image".to_string(),
+                display_name: "Recognize Image".to_string(),
+                description: "Perform OCR on a base64 encoded image".to_string(),
+                payload_template: String::new(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "image".to_string(),
+                        display_name: "Image".to_string(),
+                        description: "Base64 encoded image (supports data URI format)".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "language".to_string(),
+                        display_name: "Language".to_string(),
+                        description: "OCR language: 'chinese' (default) or 'english'".to_string(),
+                        param_type: MetricDataType::String,
+                        required: false,
+                        default_value: Some(ParamMetricValue::String("chinese".to_string())),
+                        min: None,
+                        max: None,
+                        options: vec!["chinese".to_string(), "english".to_string()],
+                    },
+                ],
+                fixed_values: HashMap::new(),
+                samples: vec![],
                 parameter_groups: Vec::new(),
             },
             ExtensionCommand {
                 name: "get_status".to_string(),
                 display_name: "Get Status".to_string(),
-                description: "Get extension status including model info and statistics".to_string(),
-                payload_template: String::new(),
-                parameters: vec![],
-                fixed_values: HashMap::new(),
-                samples: vec![],
-                parameter_groups: Vec::new(),
-            },
-            ExtensionCommand {
-                name: "get_config".to_string(),
-                display_name: "Get Config".to_string(),
-                description: "Get current OCR extension configuration".to_string(),
-                payload_template: String::new(),
-                parameters: vec![],
-                fixed_values: HashMap::new(),
-                samples: vec![],
-                parameter_groups: Vec::new(),
-            },
-            ExtensionCommand {
-                name: "configure".to_string(),
-                display_name: "Configure".to_string(),
-                description: "Configure the extension with persisted settings".to_string(),
+                description: "Get extension status and statistics".to_string(),
                 payload_template: String::new(),
                 parameters: vec![],
                 fixed_values: HashMap::new(),
@@ -1165,151 +883,110 @@ impl Extension for OcrDeviceInference {
         ]
     }
 
-    fn event_subscriptions(&self) -> &[&str] {
-        &["DeviceMetric"]
+    fn metrics(&self) -> Vec<MetricDescriptor> {
+        vec![
+            MetricDescriptor {
+                name: "bound_devices".to_string(),
+                display_name: "Bound Devices".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "count".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "total_inferences".to_string(),
+                display_name: "Total Inferences".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "count".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "total_text_blocks".to_string(),
+                display_name: "Total Text Blocks".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "count".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "total_errors".to_string(),
+                display_name: "Total Errors".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "count".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "virtual.ocr.text".to_string(),
+                display_name: "OCR Text Blocks".to_string(),
+                data_type: MetricDataType::String,
+                unit: "json".to_string(),
+                min: None,
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "virtual.ocr.full_text".to_string(),
+                display_name: "Full Text".to_string(),
+                data_type: MetricDataType::String,
+                unit: "text".to_string(),
+                min: None,
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "virtual.ocr.count".to_string(),
+                display_name: "Text Block Count".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "count".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "virtual.ocr.confidence".to_string(),
+                display_name: "Average Confidence".to_string(),
+                data_type: MetricDataType::Float,
+                unit: "score".to_string(),
+                min: Some(0.0),
+                max: Some(1.0),
+                required: false,
+            },
+        ]
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
         match command {
             "bind_device" => {
-                let device_id = args.get("device_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing device_id".to_string()))?;
+                let device_id = args["device_id"].as_str()
+                    .ok_or_else(|| ExtensionError::ExecutionFailed("device_id required".to_string()))?
+                    .to_string();
+
+                let device_name = args["device_name"].as_str().map(|s| s.to_string());
+                let image_metric = args["image_metric"].as_str()
+                    .unwrap_or("image")
+                    .to_string();
+                let draw_boxes = args["draw_boxes"].as_bool().unwrap_or(true);
 
                 let binding = DeviceBinding {
-                    device_id: device_id.to_string(),
-                    device_name: args.get("device_name").and_then(|v| v.as_str()).map(String::from),
-                    image_metric: args.get("image_metric")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("image").to_string(),
-                    result_metric_prefix: args.get("result_metric_prefix")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("ocr_").to_string(),
-                    draw_boxes: args.get("draw_boxes")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(*self.draw_boxes_by_default.lock()),
+                    device_id: device_id.clone(),
+                    device_name,
+                    image_metric,
+                    result_metric_prefix: "ocr_".to_string(),
+                    draw_boxes,
                     active: true,
+                    language: args["language"].as_str()
+                        .and_then(|s| serde_json::from_str(&format!("\"{}\"", s)).ok())
+                        .unwrap_or_default(),
                 };
 
-                self.bind_device_async(binding).await?;
-
-                Ok(json!({
-                    "success": true,
-                    "device_id": device_id,
-                    "message": format!("Device {} bound successfully", device_id)
-                }))
-            }
-
-            "unbind_device" => {
-                let device_id = args.get("device_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing device_id".to_string()))?;
-
-                self.unbind_device_async(device_id).await?;
-
-                Ok(json!({
-                    "success": true,
-                    "device_id": device_id,
-                    "message": format!("Device {} unbound successfully", device_id)
-                }))
-            }
-
-            "get_bindings" => {
-                let bindings = self.get_bindings();
-                Ok(json!({
-                    "success": true,
-                    "bindings": bindings
-                }))
-            }
-
-            "recognize_image" => {
-                let image_b64 = args.get("image")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing image parameter".to_string()))?;
-
-                let result = self.recognize_image(image_b64)?;
-                Ok(serde_json::to_value(result)
-                    .map_err(|e| ExtensionError::ExecutionFailed(format!("Serialization error: {}", e)))?)
-            }
-
-            "toggle_binding" => {
-                let device_id = args.get("device_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing device_id".to_string()))?;
-
-                let active = args.get("active")
-                    .and_then(|v| v.as_bool())
-                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing active parameter".to_string()))?;
-
-                if let Some(binding) = self.bindings.write().get_mut(device_id) {
-                    binding.active = active;
-
-                    if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
-                        stats.binding.active = active;
-                    }
-
-                    Ok(json!({
-                        "success": true,
-                        "device_id": device_id,
-                        "active": active
-                    }))
-                } else {
-                    Err(ExtensionError::NotFound(format!("Device {} not bound", device_id)))
-                }
-            }
-
-            "get_status" => {
-                Ok(self.get_status())
-            }
-
-            "get_config" => {
-                let config = self.get_config();
-                Ok(serde_json::to_value(&config)
-                    .map_err(|e| ExtensionError::ExecutionFailed(format!("Serialization error: {}", e)))?)
-            }
-
-            "configure" => {
-                // Load config from file
-                if let Some(config) = self.load_config_from_file() {
-                    self.load_config(&config)?;
-                    Ok(json!({
-                        "success": true,
-                        "message": "Configuration loaded from file",
-                        "bindings_count": config.bindings.len()
-                    }))
-                } else {
-                    Ok(json!({
-                        "success": true,
-                        "message": "No persisted configuration found"
-                    }))
-                }
-            }
-
-            _ => Err(ExtensionError::CommandNotFound(command.to_string())),
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
-        match command {
-            "bind_device" => {
-                let device_id = args.get("device_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing device_id".to_string()))?;
-
-                let binding = DeviceBinding {
-                    device_id: device_id.to_string(),
-                    device_name: args.get("device_name").and_then(|v| v.as_str()).map(String::from),
-                    image_metric: args.get("image_metric").and_then(|v| v.as_str()).unwrap_or("image").to_string(),
-                    result_metric_prefix: args.get("result_metric_prefix").and_then(|v| v.as_str()).unwrap_or("ocr_").to_string(),
-                    draw_boxes: args.get("draw_boxes").and_then(|v| v.as_bool()).unwrap_or(*self.draw_boxes_by_default.lock()),
-                    active: true,
-                };
-
-                // For WASM, just store the binding
-                self.bindings.write().insert(device_id.to_string(), binding.clone());
-                self.binding_stats.write().insert(device_id.to_string(), BindingStatus {
+                self.bindings.write().insert(device_id.clone(), binding.clone());
+                self.binding_stats.write().insert(device_id.clone(), BindingStatus {
                     binding,
                     last_inference: None,
                     total_inferences: 0,
@@ -1317,63 +994,262 @@ impl Extension for OcrDeviceInference {
                     last_error: None,
                     last_image: None,
                     last_text_blocks: None,
+                    last_full_text: None,
                     last_annotated_image: None,
                 });
 
+                tracing::info!("[OcrDeviceInference] Bound device: {}", device_id);
                 Ok(json!({"success": true, "device_id": device_id}))
             }
 
             "unbind_device" => {
-                let device_id = args.get("device_id").and_then(|v| v.as_str())
-                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing device_id".to_string()))?;
+                let device_id = args["device_id"].as_str()
+                    .ok_or_else(|| ExtensionError::ExecutionFailed("device_id required".to_string()))?;
+
                 self.bindings.write().remove(device_id);
                 self.binding_stats.write().remove(device_id);
-                Ok(json!({"success": true, "device_id": device_id}))
+
+                tracing::info!("[OcrDeviceInference] Unbound device: {}", device_id);
+                Ok(json!({"success": true}))
             }
 
             "get_bindings" => {
-                Ok(json!({"success": true, "bindings": self.get_bindings()}))
-            }
-
-            "configure" => {
-                // Load config from file
-                if let Some(config) = self.load_config_from_file() {
-                    let _ = self.load_config(&config);
-                    Ok(json!({"success": true, "message": "Configuration loaded from file"}))
-                } else {
-                    Ok(json!({"success": true, "message": "No persisted configuration found"}))
-                }
-            }
-
-            "get_status" => Ok(self.get_status()),
-
-            "toggle_binding" => {
-                let device_id = args.get("device_id").and_then(|v| v.as_str())
-                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing device_id".to_string()))?;
-                let active = args.get("active").and_then(|v| v.as_bool())
-                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing active parameter".to_string()))?;
-                if let Some(binding) = self.bindings.write().get_mut(device_id) {
-                    binding.active = active;
-                    if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
-                        stats.binding.active = active;
-                    }
-                    Ok(json!({"success": true, "device_id": device_id, "active": active}))
-                } else {
-                    Err(ExtensionError::NotFound(format!("Device {} not bound", device_id)))
-                }
+                let stats = self.binding_stats.read();
+                Ok(json!({"success": true, "bindings": stats.values().collect::<Vec<_>>()}))
             }
 
             "recognize_image" => {
-                Err(ExtensionError::NotSupported("Not supported in WASM".to_string()))
+                tracing::info!("[OcrDeviceInference] recognize_image called");
+                let image_b64 = args["image"].as_str()
+                    .ok_or_else(|| ExtensionError::ExecutionFailed("image required".to_string()))?;
+
+                tracing::info!("[OcrDeviceInference] Image base64 length: {} bytes", image_b64.len());
+
+                // Parse language parameter
+                let language: Language = args["language"].as_str()
+                    .and_then(|s| serde_json::from_str(&format!("\"{}\"", s)).ok())
+                    .unwrap_or_default();
+
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let image_data = if image_b64.starts_with("data:image") {
+                        let parts: Vec<&str> = image_b64.splitn(2, ',').collect();
+                        if parts.len() != 2 {
+                            return Err(ExtensionError::ExecutionFailed("Invalid data URI".to_string()));
+                        }
+                        base64::engine::general_purpose::STANDARD.decode(parts[1])
+                            .map_err(|e| ExtensionError::ExecutionFailed(format!("Base64 decode failed: {}", e)))?
+                    } else {
+                        base64::engine::general_purpose::STANDARD.decode(image_b64)
+                            .map_err(|e| ExtensionError::ExecutionFailed(format!("Base64 decode failed: {}", e)))?
+                    };
+
+                    tracing::info!("[OcrDeviceInference] Decoded image data: {} bytes", image_data.len());
+
+                    // Initialize engine if needed
+                    {
+                        let engine = self.ocr_engine.lock();
+                        if !engine.is_loaded() {
+                            tracing::info!("[OcrDeviceInference] Engine not loaded, initializing...");
+                            drop(engine);
+                            let mut engine = self.ocr_engine.lock();
+
+                            // Find models directory using NEOMIND_EXTENSION_DIR or fallbacks
+                            let models_dir = self.find_models_dir()?;
+                            engine.init(&models_dir, &language)?;
+                        }
+                    }
+
+                    tracing::info!("[OcrDeviceInference] Calling recognize with language: {:?}", language);
+                    let mut engine = self.ocr_engine.lock();
+                    let result = engine.recognize(&image_data, "manual", &language)?;
+                    tracing::info!("[OcrDeviceInference] Recognize returned {} text blocks", result.text_blocks.len());
+
+                    self.total_inferences.fetch_add(1, Ordering::Relaxed);
+                    self.total_text_blocks.fetch_add(result.total_blocks as u64, Ordering::Relaxed);
+
+                    Ok(json!({"success": true, "data": result}))
+                }
+
+                #[cfg(target_arch = "wasm32")]
+                {
+                    Ok(json!({"success": false, "error": "OCR not supported on WASM"}))
+                }
             }
 
-            "get_config" => {
-                Ok(serde_json::to_value(&self.get_config())
-                    .map_err(|e| ExtensionError::ExecutionFailed(format!("Serialization error: {}", e)))?)
+            "toggle_binding" => {
+                let device_id = args["device_id"].as_str()
+                    .ok_or_else(|| ExtensionError::ExecutionFailed("device_id required".to_string()))?;
+
+                let active = args["active"].as_bool().unwrap_or(true);
+
+                if let Some(binding) = self.bindings.write().get_mut(device_id) {
+                    binding.active = active;
+                    tracing::info!("[OcrDeviceInference] Toggled binding: {} -> {}", device_id, active);
+                }
+
+                if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
+                    stats.binding.active = active;
+                }
+
+                Ok(json!({"success": true, "device_id": device_id, "active": active}))
             }
 
-            _ => Err(ExtensionError::CommandNotFound(command.to_string())),
+            "get_status" => {
+                Ok(json!({"success": true, "data": self.get_status()}))
+            }
+
+            _ => Err(ExtensionError::ExecutionFailed(format!("Unknown command: {}", command))),
         }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    /// Subscribe to DeviceMetric events to listen for device image updates
+    fn event_subscriptions(&self) -> &[&str] {
+        &["DeviceMetric"]
+    }
+
+    /// Handle events from the EventBus
+    ///
+    /// This method is called by the system when a DeviceMetric event is published.
+    /// It checks if the device is bound and processes the image data.
+    fn handle_event(
+        &self,
+        event_type: &str,
+        payload: &serde_json::Value,
+    ) -> Result<()> {
+        tracing::debug!("[OcrDeviceInference] handle_event called: event_type={}", event_type);
+
+        if event_type != "DeviceMetric" {
+            return Ok(());
+        }
+
+        // Extract event data from the standardized format
+        let inner_payload = payload.get("payload").unwrap_or(payload);
+
+        let device_id = inner_payload.get("device_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        let metric = inner_payload.get("metric")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        tracing::debug!("[OcrDeviceInference] Processing: device={}, metric={}", device_id, metric);
+
+        let value = inner_payload.get("value");
+
+        // Check if this device is bound
+        let bindings = self.bindings.read();
+        let binding = bindings.get(device_id).cloned();
+
+        if let Some(binding) = binding {
+            if !binding.active {
+                tracing::debug!("[OcrDeviceInference] Binding inactive for device: {}", device_id);
+                return Ok(());
+            }
+
+            // Check if metric matches
+            let exact_match = metric == binding.image_metric;
+
+            let (top_level_metric, nested_path) = if binding.image_metric.contains('.') {
+                let parts: Vec<&str> = binding.image_metric.splitn(2, '.').collect();
+                (parts[0].to_string(), Some(parts[1].to_string()))
+            } else {
+                (binding.image_metric.clone(), None)
+            };
+
+            let metric_matches = exact_match || metric == top_level_metric;
+            let nested_path = if exact_match { None } else { nested_path };
+
+            tracing::debug!(
+                "[OcrDeviceInference] Event: device={}, metric={}, binding_metric={}, matches={}",
+                device_id, metric, binding.image_metric, metric_matches
+            );
+
+            if !metric_matches {
+                return Ok(());
+            }
+
+            // Extract image data from value
+            let image_b64 = self.extract_image_from_value(value, nested_path.as_deref());
+
+            if let Some(image_data_b64) = image_b64 {
+                match base64::engine::general_purpose::STANDARD.decode(&image_data_b64) {
+                    Ok(image_data) => {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            // Initialize engine if needed
+                            {
+                                let engine = self.ocr_engine.lock();
+                                if !engine.is_loaded() {
+                                    drop(engine);
+                                    let mut engine = self.ocr_engine.lock();
+                                    match self.find_models_dir() {
+                                        Ok(models_dir) => {
+                                            if let Err(e) = engine.init(&models_dir, &binding.language) {
+                                                tracing::error!("[OcrDeviceInference] Failed to init engine: {}", e);
+                                                if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
+                                                    stats.last_error = Some(e.to_string());
+                                                }
+                                                return Ok(());
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("[OcrDeviceInference] Failed to find models: {}", e);
+                                            if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
+                                                stats.last_error = Some(e.to_string());
+                                            }
+                                            return Ok(());
+                                        }
+                                    }
+                                }
+                            }
+
+                            let mut engine = self.ocr_engine.lock();
+                            match engine.recognize(&image_data, device_id, &binding.language) {
+                                Ok(result) => {
+                                    tracing::info!(
+                                        "[OcrDeviceInference] Inference: device={}, blocks={}, time={}ms",
+                                        device_id,
+                                        result.total_blocks,
+                                        result.inference_time_ms
+                                    );
+                                    self.total_inferences.fetch_add(1, Ordering::SeqCst);
+                                    self.total_text_blocks.fetch_add(result.total_blocks as u64, Ordering::SeqCst);
+                                    self.write_inference_results(
+                                        device_id,
+                                        &result,
+                                        &image_data_b64,
+                                    );
+                                }
+                                Err(e) => {
+                                    self.total_errors.fetch_add(1, Ordering::SeqCst);
+                                    tracing::warn!("[OcrDeviceInference] Process failed: device={}, error={}", device_id, e);
+                                    if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
+                                        stats.last_error = Some(e.to_string());
+                                    }
+                                }
+                            }
+                        }
+
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            tracing::warn!("[OcrDeviceInference] Image processing not supported in WASM");
+                            let _ = image_data;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("[OcrDeviceInference] Base64 decode failed: device={}, error={}", device_id, e);
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 

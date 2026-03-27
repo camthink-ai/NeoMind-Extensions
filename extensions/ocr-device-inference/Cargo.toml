@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2021"
 authors = ["NeoMind Team"]
 license = "MIT"
-description = "OCR device inference extension with automatic text recognition on data source updates"
+description = "OCR device inference extension with automatic text recognition"
 
 [lib]
 name = "neomind_extension_ocr_device_inference"

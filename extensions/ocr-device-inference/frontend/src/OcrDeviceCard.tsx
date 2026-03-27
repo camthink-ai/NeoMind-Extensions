@@ -5,7 +5,7 @@
  * Matches the styling pattern of yolo-device-inference.
  */
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 
 // ============================================================================
 // Types
@@ -53,6 +53,7 @@ export interface BindingStatus {
   last_image?: string
   last_text_blocks?: TextBlock[]
   last_annotated_image?: string
+  last_full_text?: string
 }
 
 export interface ExtensionStatus {
@@ -90,12 +91,12 @@ const STYLES = `
 .ocr {
   --ocr-fg: hsl(240 10% 10%);
   --ocr-muted: hsl(240 5% 45%);
-  --ocr-accent: hsl(142 70% 55%);
+  --ocr-accent: hsl(200 70% 55%);
   --ocr-card: rgba(255,255,255,0.5);
   --ocr-border: rgba(0,0,0,0.06);
   --ocr-hover: rgba(0,0,0,0.03);
   --ocr-danger: hsl(0 72% 51%);
-  --ocr-success: hsl(142 70% 45%);
+  --ocr-success: hsl(200 70% 45%);
   width: 100%;
   height: 100%;
   font-size: 12px;
@@ -217,6 +218,11 @@ const STYLES = `
 
 /* Upload area */
 .ocr-upload-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   border: 2px dashed var(--ocr-border);
   border-radius: 8px;
   padding: 20px;
@@ -224,6 +230,7 @@ const STYLES = `
   cursor: pointer;
   transition: all 0.2s;
   background: rgba(0,0,0,0.02);
+  min-height: 150px;
 }
 
 .ocr-upload-area:hover {
@@ -259,11 +266,13 @@ const STYLES = `
   opacity: 0.7;
 }
 
-/* Preview area */
+/* Preview area - adaptive for image display */
 .ocr-preview-area {
+  flex: 1;
   display: flex;
-  gap: 10px;
-  min-height: 120px;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
 }
 
 .ocr-image-preview {
@@ -274,12 +283,68 @@ const STYLES = `
   display: flex;
   align-items: center;
   justify-content: center;
+  min-height: 100px;
 }
 
 .ocr-image-preview img {
   max-width: 100%;
-  max-height: 120px;
+  max-height: 100%;
   object-fit: contain;
+}
+
+/* Floating action buttons */
+.ocr-actions-floating {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+  background: rgba(255,255,255,0.9);
+  backdrop-filter: blur(8px);
+  padding: 6px;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.dark .ocr-actions-floating {
+  background: rgba(40,40,40,0.9);
+}
+
+.ocr-actions-bottom {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  background: var(--ocr-bg);
+  border-top: 1px solid var(--ocr-border);
+  margin-top: auto;
+}
+
+/* Annotated image preview */
+.ocr-annotated-preview {
+  margin-bottom: 8px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--ocr-border);
+}
+
+.ocr-annotated-preview img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.ocr-annotated-label {
+  padding: 6px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ocr-muted);
+  background: var(--ocr-hover);
+}
+
+.ocr-annotated-preview img {
+  width: 100%;
+  height: auto;
+  display: block;
 }
 
 /* Text results */
@@ -448,7 +513,18 @@ const STYLES = `
   display: flex;
   gap: 8px;
   flex-shrink: 0;
-  margin-top: auto;
+  padding: 8px 0 0 0;
+  border-top: 1px solid var(--ocr-border);
+  background: var(--ocr-card);
+}
+
+.ocr-actions-sticky {
+  position: sticky;
+  bottom: 0;
+  margin: 0 -12px -12px -12px;
+  padding: 10px 12px;
+  background: var(--ocr-card);
+  backdrop-filter: blur(8px);
 }
 
 .ocr-spinner {
@@ -588,6 +664,91 @@ const STYLES = `
   cursor: pointer;
 }
 
+/* Web-style dropdown */
+.ocr-dropdown {
+  position: relative;
+}
+
+.ocr-dropdown-trigger {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--ocr-border);
+  border-radius: 4px;
+  font-size: 11px;
+  background: var(--ocr-card);
+  color: var(--ocr-fg);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  transition: border-color 0.15s;
+}
+
+.ocr-dropdown-trigger:hover {
+  border-color: var(--ocr-accent);
+}
+
+.ocr-dropdown-trigger-placeholder {
+  color: var(--ocr-muted);
+}
+
+.ocr-dropdown-arrow {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.2s;
+}
+
+.ocr-dropdown-open .ocr-dropdown-arrow {
+  transform: rotate(180deg);
+}
+
+.ocr-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  background: var(--ocr-card);
+  border: 1px solid var(--ocr-border);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 100;
+  display: none;
+}
+
+.ocr-dropdown-open .ocr-dropdown-menu {
+  display: block;
+}
+
+.ocr-dropdown-item {
+  padding: 8px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ocr-dropdown-item:hover {
+  background: var(--ocr-hover);
+}
+
+.ocr-dropdown-item-selected {
+  background: rgba(142, 70, 65, 0.1);
+  color: var(--ocr-accent);
+}
+
+.ocr-dropdown-item-empty {
+  padding: 12px;
+  font-size: 11px;
+  color: var(--ocr-muted);
+  text-align: center;
+}
+
 .ocr-form-checkbox {
   display: flex;
   align-items: center;
@@ -639,6 +800,49 @@ const STYLES = `
   align-items: center;
   gap: 6px;
 }
+
+/* Binding preview styles */
+.ocr-binding-preview {
+  margin-top: 10px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(0,0,0,0.03);
+}
+.ocr-binding-preview img {
+  width: 100%;
+  height: auto;
+  max-height: 120px;
+  object-fit: contain;
+  border-radius: 4px;
+}
+.ocr-binding-text-container {
+  margin-top: 8px;
+  padding: 8px;
+  background: rgba(0,0,0,0.02);
+  border-radius: 4px;
+  max-height: 100px;
+  overflow-y: auto;
+}
+.ocr-binding-text-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ocr-muted);
+  margin-bottom: 4px;
+}
+.ocr-binding-text {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ocr-fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ocr-binding-empty-text {
+  color: var(--ocr-muted);
+  font-style: italic;
+  font-size: 10px;
+  text-align: center;
+  padding: 20px;
+}
 `
 
 function injectStyles() {
@@ -687,6 +891,63 @@ const Icon = ({ name, className = '', style }: { name: string; className?: strin
 
 const EXTENSION_ID = 'ocr-device-inference'
 
+// Image compression to avoid HTTP 413 errors
+const compressImage = (dataUrl: string, maxSizeKB = 500): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      let { width, height } = img
+      const maxDimension = 1920
+
+      // Scale down if needed
+      if (width > maxDimension || height > maxDimension) {
+        const ratio = Math.min(maxDimension / width, maxDimension / height)
+        width = Math.round(width * ratio)
+        height = Math.round(height * ratio)
+      }
+
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        reject(new Error('Failed to get canvas context'))
+        return
+      }
+
+      ctx.drawImage(img, 0, 0, width, height)
+
+      // Try different quality levels until size is acceptable
+      let quality = 0.9
+      const tryCompress = (): string | null => {
+        const data = canvas.toDataURL('image/jpeg', quality)
+        // Estimate base64 size (actual bytes = base64 length * 3/4)
+        const sizeKB = (data.length * 0.75) / 1024
+        if (sizeKB <= maxSizeKB || quality <= 0.1) {
+          return data
+        }
+        return null
+      }
+
+      let result = tryCompress()
+      while (!result && quality > 0.1) {
+        quality -= 0.1
+        result = tryCompress()
+      }
+
+      if (result) {
+        resolve(result)
+      } else {
+        // Fallback to PNG if JPEG compression fails
+        resolve(canvas.toDataURL('image/png'))
+      }
+    }
+    img.onerror = () => reject(new Error('Failed to load image'))
+    img.src = dataUrl
+  })
+}
+
 const getApiHeaders = () => {
   const token = localStorage.getItem('neomind_token') || sessionStorage.getItem('neomind_token_session')
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -718,37 +979,21 @@ async function fetchDevices(): Promise<Device[]> {
     const res = await fetch(`${getApiBase()}/devices`, { headers: getApiHeaders() })
     if (!res.ok) return []
     const data = await res.json()
-    return data.data?.devices || data.devices || data.data || []
+    const devices = data.data?.devices || data.devices || data.data || []
+    console.log('[OCR Frontend] Fetched devices:', devices.length, devices.map((d: Device) => ({ id: d.id, name: d.name, metricsCount: d.metrics?.length })))
+    return devices
   } catch {
     return []
   }
 }
 
-async function fetchDeviceMetrics(deviceId: string): Promise<Metric[]> {
-  try {
-    const res = await fetch(`${getApiBase()}/devices/${deviceId}/current`, { headers: getApiHeaders() })
-    if (!res.ok) return []
-    const data = await res.json()
-    const metrics = data.data?.metrics || data.metrics || {}
-    return Object.entries(metrics).map(([id, m]: [string, any]) => ({
-      id,
-      name: m.name || id,
-      display_name: m.display_name || m.name || id,
-      type: m.data_type || 'string',
-      data_type: m.data_type || 'string'
-    }))
-  } catch {
-    return []
-  }
-}
 
 // ============================================================================
 // Main Component
 // ============================================================================
 
 export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
-  executeCommand = executeCommandApi,
-  config = {}
+  executeCommand = executeCommandApi
 }) => {
   useEffect(() => injectStyles(), [])
 
@@ -760,7 +1005,6 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
   const [isDragging, setIsDragging] = useState(false)
   const [ocrResult, setOcrResult] = useState<OcrResult | null>(null)
   const [recognizing, setRecognizing] = useState(false)
-  const [copySuccess, setCopySuccess] = useState(false)
 
   // Device bindings state
   const [devices, setDevices] = useState<Device[]>([])
@@ -769,12 +1013,67 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
 
   // Form state
   const [formDevice, setFormDevice] = useState('')
-  const [formImageMetric, setFormImageMetric] = useState('image')
-  const [formResultPrefix, setFormResultPrefix] = useState('ocr_')
-  const [formDrawBoxes, setFormDrawBoxes] = useState(true)
+  const [formImageMetric, setFormImageMetric] = useState('')
+  const [deviceDropdownOpen, setDeviceDropdownOpen] = useState(false)
+  const [metricDropdownOpen, setMetricDropdownOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [deviceMetrics, setDeviceMetrics] = useState<Metric[]>([])
+
+  // Available metrics from selected device
+  const availableMetrics = deviceMetrics
+
+  // Fetch device metrics when device changes - using /devices/{id}/current endpoint
+  useEffect(() => {
+    const fetchDeviceMetrics = async () => {
+      if (!formDevice) {
+        setDeviceMetrics([])
+        setFormImageMetric('')
+        return
+      }
+
+      try {
+        // Use /devices/{id}/current to get metrics (same as yolo-device)
+        const res = await fetch(`${getApiBase()}/devices/${formDevice}/current`, { headers: getApiHeaders() })
+        if (res.ok) {
+          const data = await res.json()
+          const metricsObj = data.data?.metrics || data.metrics || {}
+          // Convert metrics object to array
+          const metrics: Metric[] = Object.entries(metricsObj).map(([id, m]: [string, any]) => ({
+            id,
+            name: m.name || id,
+            display_name: m.display_name || m.name || id,
+            type: m.data_type || 'string',
+            data_type: m.data_type || 'string'
+          }))
+          console.log('[OCR Frontend] Fetched device metrics from /current:', formDevice, metrics.length, metrics.map(m => m.id))
+          setDeviceMetrics(metrics)
+
+          // Auto-select image metric
+          if (metrics.length > 0) {
+            const imageMetric = metrics.find(m =>
+              m.id === 'image' || m.name === 'image' ||
+              m.data_type === 'image' || m.id.toLowerCase().includes('image')
+            )
+            setFormImageMetric(imageMetric?.id || metrics[0].id)
+          } else {
+            setFormImageMetric('')
+          }
+        } else {
+          console.log('[OCR Frontend] /current endpoint failed, status:', res.status)
+          setDeviceMetrics([])
+          setFormImageMetric('')
+        }
+      } catch (e) {
+        console.error('[OCR Frontend] Failed to fetch device metrics:', e)
+        setDeviceMetrics([])
+        setFormImageMetric('')
+      }
+    }
+
+    fetchDeviceMetrics()
+  }, [formDevice])
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -786,6 +1085,17 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
     }
     loadDevices()
   }, [])
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setDeviceDropdownOpen(false)
+    }
+    if (deviceDropdownOpen) {
+      document.addEventListener('click', handleClickOutside)
+      return () => document.removeEventListener('click', handleClickOutside)
+    }
+  }, [deviceDropdownOpen])
 
   // Refresh bindings and status
   const refresh = useCallback(async () => {
@@ -807,19 +1117,25 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
   }, [refresh])
 
   // Image upload handlers
-  const handleFileSelect = (file: File) => {
+  const handleFileSelect = async (file: File) => {
     if (!file.type.startsWith('image/')) {
       setError('Please select an image file')
       return
     }
 
     const reader = new FileReader()
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       const result = e.target?.result as string
-      setSelectedImage(result)
-      setOcrResult(null)
-      setError(null)
-      setSuccess(null)
+      try {
+        // Compress image to avoid HTTP 413
+        const compressed = await compressImage(result, 500)
+        setSelectedImage(compressed)
+        setOcrResult(null)
+        setError(null)
+        setSuccess(null)
+      } catch {
+        setError('Failed to process image')
+      }
     }
     reader.readAsDataURL(file)
   }
@@ -860,11 +1176,24 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
     // Convert data URI to base64
     const base64Data = selectedImage.split(',')[1]
 
+    console.log('[OCR Frontend] Sending recognize_image command, base64 length:', base64Data?.length)
+
     const result = await executeCommand('recognize_image', { image: base64Data })
 
-    if (result.success && result.data) {
-      setOcrResult(result.data)
-      setSuccess('Recognition completed successfully')
+    console.log('[OCR Frontend] Result:', result)
+    console.log('[OCR Frontend] text_blocks:', result.data?.data?.text_blocks)
+    console.log('[OCR Frontend] full_text:', result.data?.data?.full_text)
+    console.log('[OCR Frontend] annotated_image_base64 length:', result.data?.data?.annotated_image_base64?.length)
+
+    if (result.success && result.data?.data) {
+      // The actual OCR data is nested in result.data.data
+      const ocrData = {
+        ...result.data.data,
+        text_blocks: result.data.data.text_blocks || [],
+        full_text: result.data.data.full_text || ''
+      }
+      setOcrResult(ocrData)
+      setSuccess('OCR completed')
       setTimeout(() => setSuccess(null), 3000)
     } else {
       setError(result.error || 'Recognition failed')
@@ -873,23 +1202,15 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
     setRecognizing(false)
   }
 
-  // Copy text to clipboard
-  const handleCopyText = async () => {
-    if (!ocrResult?.full_text) return
-
-    try {
-      await navigator.clipboard.writeText(ocrResult.full_text)
-      setCopySuccess(true)
-      setTimeout(() => setCopySuccess(false), 2000)
-    } catch (err) {
-      setError('Failed to copy text')
-    }
-  }
-
   // Bind device
   const handleBind = async () => {
     if (!formDevice) {
       setError('Please select a device')
+      return
+    }
+
+    if (!formImageMetric) {
+      setError('Please select an image metric')
       return
     }
 
@@ -903,18 +1224,18 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
       device_id: formDevice,
       device_name: device?.name,
       image_metric: formImageMetric,
-      result_metric_prefix: formResultPrefix,
-      draw_boxes: formDrawBoxes,
+      result_metric_prefix: 'ocr_',
+      draw_boxes: true,
       active: true
     })
 
     if (result.success) {
-      setSuccess('Device bound successfully')
+      setSuccess('Device bound')
       setFormDevice('')
       await refresh()
       setTimeout(() => setSuccess(null), 3000)
     } else {
-      setError(result.error || 'Failed to bind device')
+      setError(result.error || 'Bind failed')
     }
 
     setLoading(false)
@@ -928,11 +1249,11 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
     const result = await executeCommand('unbind_device', { device_id: deviceId })
 
     if (result.success) {
-      setSuccess('Device unbound successfully')
+      setSuccess('Device unbound')
       await refresh()
       setTimeout(() => setSuccess(null), 3000)
     } else {
-      setError(result.error || 'Failed to unbind device')
+      setError(result.error || 'Failed to unbind')
     }
 
     setLoading(false)
@@ -973,8 +1294,8 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
         >
           <div className="ocr-upload-placeholder">
             <Icon name="upload" className="ocr-upload-icon" />
-            <div className="ocr-upload-text">点击或拖拽上传图片</div>
-            <div className="ocr-upload-hint">支持 JPG、PNG 格式</div>
+            <div className="ocr-upload-text">Click or drag to upload image</div>
+            <div className="ocr-upload-hint">Supports JPG, PNG formats</div>
           </div>
           <input
             ref={fileInputRef}
@@ -987,66 +1308,52 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
       ) : (
         <>
           <div className="ocr-preview-area">
-            <div className="ocr-image-preview">
-              <img src={selectedImage} alt="Preview" />
-            </div>
+            {/* Show annotated image or original image */}
+            {ocrResult?.annotated_image_base64 ? (
+              <div className="ocr-annotated-preview">
+                <img src={`data:image/jpeg;base64,${ocrResult.annotated_image_base64}`} alt="OCR Result" />
+              </div>
+            ) : (
+              <div className="ocr-image-preview">
+                <img src={selectedImage} alt="Preview" />
+              </div>
+            )}
 
+            {/* Show detected text */}
             {ocrResult && (
               <div className="ocr-text-results">
                 <div className="ocr-text-header">
-                  <span className="ocr-text-label">识别结果</span>
-                  <button className="ocr-copy-btn" onClick={handleCopyText}>
-                    {copySuccess ? (
-                      <>
-                        <Icon name="check" style={{ width: '10px', height: '10px' }} />
-                        已复制
-                      </>
-                    ) : (
-                      <>
-                        <Icon name="copy" style={{ width: '10px', height: '10px' }} />
-                        复制
-                      </>
-                    )}
-                  </button>
+                  <span className="ocr-text-label">Detected Text</span>
                 </div>
                 <div className="ocr-text-content">
-                  {ocrResult.full_text || <span className="ocr-text-placeholder">未识别到文字</span>}
-                </div>
-                <div className="ocr-text-blocks">
-                  {ocrResult.text_blocks.map((block, idx) => (
-                    <div key={idx} className="ocr-text-block">
-                      <span className="ocr-text-block-text">{block.text}</span>
-                      <span className={`ocr-text-block-conf ${block.confidence < 0.8 ? 'ocr-text-block-conf-low' : ''}`}>
-                        {(block.confidence * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                  ))}
+                  {ocrResult.full_text || <span className="ocr-text-placeholder">No text detected</span>}
                 </div>
               </div>
             )}
-          </div>
 
-          <div className="ocr-actions">
-            <button className="ocr-btn" onClick={() => { setSelectedImage(null); setOcrResult(null); setError(null); }}>
-              清除
-            </button>
-            <button
-              className="ocr-btn ocr-btn-primary"
-              onClick={handleRecognize}
-              disabled={recognizing}
-            >
-              {recognizing ? (
-                <>
-                  <div className="ocr-spinner" />
-                  识别中...
-                </>
-              ) : (
-                <>
-                  <Icon name="type" style={{ width: '14px', height: '14px' }} />
-                  开始识别
-                </>
-              )}
-            </button>
+            {/* Action buttons at bottom */}
+            <div className="ocr-actions-bottom">
+              <button className="ocr-btn ocr-btn-sm" onClick={() => { setSelectedImage(null); setOcrResult(null); setError(null); }}>
+                Clear
+              </button>
+              <button
+                className="ocr-btn ocr-btn-sm ocr-btn-primary"
+                onClick={handleRecognize}
+                disabled={recognizing}
+              >
+                {recognizing ? (
+                  <>
+                    <div className="ocr-spinner" />
+                    OCR...
+                  </>
+                ) : (
+                  <>
+                    <Icon name="type" style={{ width: '12px', height: '12px' }} />
+                    OCR
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </>
       )}
@@ -1073,64 +1380,93 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
       {/* Add binding form */}
       <div className="ocr-form">
         <div className="ocr-form-group">
-          <label className="ocr-form-label">设备</label>
-          <select
-            className="ocr-form-select"
-            value={formDevice}
-            onChange={(e) => setFormDevice(e.target.value)}
-          >
-            <option value="">选择设备...</option>
-            {devices.map(d => (
-              <option key={d.id} value={d.id}>{d.name || d.id}</option>
-            ))}
-          </select>
+          <label className="ocr-form-label">Device</label>
+          <div className={`ocr-dropdown ${deviceDropdownOpen ? 'ocr-dropdown-open' : ''}`}>
+            <div
+              className="ocr-dropdown-trigger"
+              onClick={(e) => { e.stopPropagation(); setDeviceDropdownOpen(!deviceDropdownOpen) }}
+            >
+              {formDevice ? (
+                <span>{devices.find(d => d.id === formDevice)?.name || formDevice}</span>
+              ) : (
+                <span className="ocr-dropdown-trigger-placeholder">Select device...</span>
+              )}
+              <svg className="ocr-dropdown-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </div>
+            {deviceDropdownOpen && (
+              <div className="ocr-dropdown-menu">
+                {devices.length === 0 ? (
+                  <div className="ocr-dropdown-item-empty">No devices available</div>
+                ) : (
+                  devices.map(d => (
+                    <div
+                      key={d.id}
+                      className={`ocr-dropdown-item ${formDevice === d.id ? 'ocr-dropdown-item-selected' : ''}`}
+                      onClick={(e) => { e.stopPropagation(); setFormDevice(d.id); setDeviceDropdownOpen(false) }}
+                    >
+                      <Icon name="link" style={{ width: '12px', height: '12px' }} />
+                      {d.name || d.id}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="ocr-form-group">
-          <label className="ocr-form-label">图像指标</label>
-          <input
-            className="ocr-form-input"
-            type="text"
-            value={formImageMetric}
-            onChange={(e) => setFormImageMetric(e.target.value)}
-            placeholder="image"
-          />
+          <label className="ocr-form-label">Image Metric</label>
+          <div className={`ocr-dropdown ${metricDropdownOpen ? 'ocr-dropdown-open' : ''}`}>
+            <div
+              className="ocr-dropdown-trigger"
+              onClick={(e) => { e.stopPropagation(); setMetricDropdownOpen(!metricDropdownOpen); setDeviceDropdownOpen(false) }}
+            >
+              {formImageMetric ? (
+                <span>{availableMetrics.find(m => m.id === formImageMetric)?.display_name || formImageMetric}</span>
+              ) : (
+                <span className="ocr-dropdown-trigger-placeholder">{formDevice ? 'Select metric...' : 'Select device first'}</span>
+              )}
+              <svg className="ocr-dropdown-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </div>
+            {metricDropdownOpen && (
+              <div className="ocr-dropdown-menu">
+                {availableMetrics.length === 0 ? (
+                  <div className="ocr-dropdown-item-empty">{formDevice ? 'No metrics found' : 'Select device first'}</div>
+                ) : (
+                  availableMetrics.map(m => (
+                    <div
+                      key={m.id}
+                      className={`ocr-dropdown-item ${formImageMetric === m.id ? 'ocr-dropdown-item-selected' : ''}`}
+                      onClick={(e) => { e.stopPropagation(); setFormImageMetric(m.id); setMetricDropdownOpen(false) }}
+                    >
+                      <Icon name="image" style={{ width: '12px', height: '12px' }} />
+                      {m.display_name || m.name || m.id}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
         </div>
-
-        <div className="ocr-form-group">
-          <label className="ocr-form-label">结果前缀</label>
-          <input
-            className="ocr-form-input"
-            type="text"
-            value={formResultPrefix}
-            onChange={(e) => setFormResultPrefix(e.target.value)}
-            placeholder="ocr_"
-          />
-        </div>
-
-        <label className="ocr-form-checkbox">
-          <input
-            type="checkbox"
-            checked={formDrawBoxes}
-            onChange={(e) => setFormDrawBoxes(e.target.checked)}
-          />
-          绘制文字框
-        </label>
 
         <button
           className="ocr-btn ocr-btn-primary"
           onClick={handleBind}
-          disabled={loading || !formDevice}
+          disabled={loading || !formDevice || !formImageMetric}
         >
           {loading ? (
             <>
               <div className="ocr-spinner" />
-              绑定中...
+              Binding...
             </>
           ) : (
             <>
               <Icon name="link" style={{ width: '14px', height: '14px' }} />
-              绑定设备
+              Bind Device
             </>
           )}
         </button>
@@ -1141,7 +1477,7 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
         {bindings.length === 0 ? (
           <div className="ocr-empty-state">
             <Icon name="link" className="ocr-empty-icon" />
-            <div>暂无设备绑定</div>
+            <div>No device bindings</div>
           </div>
         ) : (
           bindings.map((bindingStatus, idx) => (
@@ -1151,29 +1487,44 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
                   {bindingStatus.binding.device_name || bindingStatus.binding.device_id}
                 </span>
                 <span className={`ocr-binding-status ${bindingStatus.binding.active ? 'ocr-binding-status-active' : 'ocr-binding-status-paused'}`}>
-                  {bindingStatus.binding.active ? '运行中' : '已暂停'}
+                  {bindingStatus.binding.active ? 'Running' : 'Paused'}
                 </span>
               </div>
 
               <div className="ocr-binding-info">
                 <div className="ocr-binding-stat">
-                  推断次数: {bindingStatus.total_inferences}
+                  Inferences: {bindingStatus.total_inferences}
                 </div>
                 <div className="ocr-binding-stat">
-                  文字块: {bindingStatus.total_text_blocks}
+                  Text blocks: {bindingStatus.total_text_blocks}
                 </div>
                 {bindingStatus.last_inference && (
                   <div className="ocr-binding-stat">
-                    最后: {new Date(bindingStatus.last_inference).toLocaleTimeString()}
+                    Last: {new Date(bindingStatus.last_inference).toLocaleTimeString()}
                   </div>
                 )}
               </div>
 
               {bindingStatus.last_error && (
                 <div style={{ fontSize: '10px', color: 'var(--ocr-danger)', marginBottom: '6px' }}>
-                  错误: {bindingStatus.last_error}
+                  Error: {bindingStatus.last_error}
                 </div>
               )}
+
+              {/* Preview image */}
+              {bindingStatus.last_annotated_image && (
+                <div className="ocr-binding-preview">
+                  <img src={bindingStatus.last_annotated_image} alt="OCR Result" />
+                </div>
+              )}
+
+              {/* Text content */}
+              <div className="ocr-binding-text-container">
+                <div className="ocr-binding-text-label">Recognized Text</div>
+                <div className="ocr-binding-text">
+                  {bindingStatus.last_full_text || 'No results'}
+                </div>
+              </div>
 
               <div className="ocr-binding-actions">
                 <button
@@ -1182,7 +1533,7 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
                   disabled={loading}
                 >
                   <Icon name={bindingStatus.binding.active ? 'pause' : 'play'} style={{ width: '12px', height: '12px' }} />
-                  {bindingStatus.binding.active ? '暂停' : '恢复'}
+                  {bindingStatus.binding.active ? 'Pause' : 'Resume'}
                 </button>
                 <button
                   className="ocr-btn ocr-btn-sm ocr-btn-danger"
@@ -1190,7 +1541,7 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
                   disabled={loading}
                 >
                   <Icon name="trash" style={{ width: '12px', height: '12px' }} />
-                  解绑
+                  Unbind
                 </button>
               </div>
             </div>
@@ -1207,10 +1558,10 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
         <div className="ocr-header">
           <div className="ocr-title">
             <Icon name="type" style={{ width: '16px', height: '16px' }} />
-            <span>OCR 设备推断</span>
+            <span>OCR Device Inference</span>
           </div>
           <div className={`ocr-badge ${status?.model_loaded ? 'ocr-badge-active' : ''}`}>
-            {status?.model_loaded ? '已加载' : '未加载'}
+            {status?.model_loaded ? 'Loaded' : 'Not Loaded'}
           </div>
         </div>
 
@@ -1221,14 +1572,14 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
             onClick={() => setActiveTab('manual')}
           >
             <Icon name="image" style={{ width: '14px', height: '14px' }} />
-            手动测试
+            Test
           </button>
           <button
             className={`ocr-tab ${activeTab === 'bindings' ? 'ocr-tab-active' : ''}`}
             onClick={() => setActiveTab('bindings')}
           >
             <Icon name="link" style={{ width: '14px', height: '14px' }} />
-            设备绑定
+            Bindings
           </button>
         </div>
 

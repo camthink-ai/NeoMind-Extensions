@@ -545,99 +545,94 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
     }
 
     ws.onmessage = (event) => {
+      // Binary responses are not used - all results come as JSON text messages
+      // This is because metadata (including detections) must be sent with the frame
       if (event.data instanceof ArrayBuffer) {
-        // Binary response
-        try {
-          const data = new Uint8Array(event.data)
-          if (data.length > 8) {
-            const jpegData = data.slice(8)
-            const base64 = btoa(String.fromCharCode(...jpegData))
-            setFrameData(base64)
-            updateFps()
-          }
-        } catch (e) {
-          console.error('[YOLO] Failed to parse binary response:', e)
-        }
-      } else {
-        // Text message
-        try {
-          const msg = JSON.parse(event.data)
+        // Skip binary responses - they don't contain detection metadata
+        console.debug('[YOLO] Received binary response (no metadata), skipping')
+        return
+      }
 
-          switch (msg.type) {
-            case 'session_created':
-              sessionIdRef.current = msg.session_id
-              setIsRunning(true)
-              setSessionTime(0)
-              sessionTimerRef.current = setInterval(() => setSessionTime(t => t + 1), 1000)
+      // Text message (JSON)
+      if (typeof event.data !== 'string') return
 
-              // For camera mode, start capture loop (50ms interval for max 20 FPS)
-              if (mode === 'camera') {
-                sendingRef.current = true
-                frameTimerRef.current = setInterval(captureAndSendFrame, 50)
+      try {
+        const msg = JSON.parse(event.data)
+
+        switch (msg.type) {
+          case 'session_created':
+            sessionIdRef.current = msg.session_id
+            setIsRunning(true)
+            setSessionTime(0)
+            sessionTimerRef.current = setInterval(() => setSessionTime(t => t + 1), 1000)
+
+            // For camera mode, start capture loop (50ms interval for max 20 FPS)
+            if (mode === 'camera') {
+              sendingRef.current = true
+              frameTimerRef.current = setInterval(captureAndSendFrame, 50)
+            }
+            break
+
+          case 'push_output':
+            // Network stream push mode
+            if (msg.data && msg.data_type === 'image/jpeg') {
+              setFrameData(msg.data)
+              updateFps()
+              if (msg.metadata?.detections) {
+                setDetections(msg.metadata.detections)
               }
-              break
+            }
+            break
 
-            case 'push_output':
-              // Network stream push mode
-              if (msg.data && msg.data_type === 'image/jpeg') {
-                setFrameData(msg.data)
-                updateFps()
+          case 'result':
+            // Processing result from server - data is already base64 encoded
+            if (msg.data) {
+              // ✨ FIX: Check if frame was skipped before setting image data
+              // Skipped frames return JSON metadata instead of image data
+              const isSkipped = msg.skipped === true ||
+                                (typeof msg.data === 'string' &&
+                                 (msg.data.startsWith('{') ||
+                                  msg.metadata?.skipped === true));
+
+              if (isSkipped) {
+                // Frame was skipped (rate limiting), keep displaying last frame
+                console.debug('[YOLO] Frame skipped by backend, keeping previous frame')
+                // Don't update frameData - keep showing the last valid frame
                 if (msg.metadata?.detections) {
                   setDetections(msg.metadata.detections)
                 }
-              }
-              break
+              } else if (typeof msg.data === 'string' && msg.data.length > 0) {
+                // Valid image data (base64 string)
+                setFrameData(msg.data)
+                updateFps()
+                setFrameCount(prev => prev + 1)
 
-            case 'result':
-              // Processing result from server - data is already base64 encoded
-              if (msg.data) {
-                // ✨ FIX: Check if frame was skipped before setting image data
-                // Skipped frames return JSON metadata instead of image data
-                const isSkipped = msg.skipped === true || 
-                                  (typeof msg.data === 'string' && 
-                                   (msg.data.startsWith('{') || 
-                                    msg.metadata?.skipped === true));
-                
-                if (isSkipped) {
-                  // Frame was skipped (rate limiting), keep displaying last frame
-                  console.debug('[YOLO] Frame skipped by backend, keeping previous frame')
-                  // Don't update frameData - keep showing the last valid frame
-                  if (msg.metadata?.detections) {
-                    setDetections(msg.metadata.detections)
-                  }
-                } else if (typeof msg.data === 'string' && msg.data.length > 0) {
-                  // Valid image data (base64 string)
-                  setFrameData(msg.data)
-                  updateFps()
-                  setFrameCount(prev => prev + 1)
-
-                  if (msg.metadata?.detections) {
-                    setDetections(msg.metadata.detections)
-                  }
-                } else {
-                  console.warn('[YOLO] Received invalid frame data:', typeof msg.data, msg.data?.substring(0, 100))
+                if (msg.metadata?.detections) {
+                  setDetections(msg.metadata.detections)
                 }
+              } else {
+                console.warn('[YOLO] Received invalid frame data:', typeof msg.data, msg.data?.substring(0, 100))
               }
-              break
+            }
+            break
 
-            case 'error':
-              // Ignore frame rate throttling errors (these are normal during high load)
-              if (msg.message && msg.message.includes('Frame rate too high')) {
-                console.debug('[YOLO] Frame dropped due to rate limiting (normal)')
-                break
-              }
-              // Show other errors to user
-              setError(`${msg.code}: ${msg.message}`)
+          case 'error':
+            // Ignore frame rate throttling errors (these are normal during high load)
+            if (msg.message && msg.message.includes('Frame rate too high')) {
+              console.debug('[YOLO] Frame dropped due to rate limiting (normal)')
               break
+            }
+            // Show other errors to user
+            setError(`${msg.code}: ${msg.message}`)
+            break
 
-            case 'session_closed':
-              setIsRunning(false)
-              sessionIdRef.current = null
-              break
-          }
-        } catch (e) {
-          console.error('[YOLO] Failed to parse message:', e)
+          case 'session_closed':
+            setIsRunning(false)
+            sessionIdRef.current = null
+            break
         }
+      } catch (e) {
+        console.error('[YOLO] Failed to parse message:', e)
       }
     }
 
