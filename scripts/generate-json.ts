@@ -151,10 +151,7 @@ function inferCategories(extId: string): string[] {
 }
 
 // Get platform suffix for URL
-function getPlatformSuffix(platform: string, extId: string): string {
-  const version = MARKET_VERSION;
-  const extVersion = '2.0.0'; // Default extension version
-
+function getPlatformSuffix(platform: string, extId: string, extVersion: string): string {
   switch (platform) {
     case 'darwin-aarch64':
       return `${extId}-${extVersion}-darwin_aarch64.nep`;
@@ -218,7 +215,7 @@ function main() {
 
     for (const platform of platforms) {
       builds[platform] = {
-        url: `https://github.com/${GITHUB_REPO}/releases/download/v${MARKET_VERSION}/${getPlatformSuffix(platform, extId)}`
+        url: `https://github.com/${GITHUB_REPO}/releases/download/v${MARKET_VERSION}/${getPlatformSuffix(platform, extId, cargo.package.version)}`
       };
     }
 

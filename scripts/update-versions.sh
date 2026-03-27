@@ -78,8 +78,8 @@ EOF
             platform_suffix=$(echo $platform | sed 's/-/_/')
         fi
 
-        # Use MARKET_VERSION for URL, not extension version
-        url="https://github.com/$GITHUB_REPO/releases/download/v$MARKET_VERSION/${ext_id}-${MARKET_VERSION}-${platform_suffix}.nep"
+        # Use extension version from Cargo.toml for filename
+        url="https://github.com/$GITHUB_REPO/releases/download/v$MARKET_VERSION/${ext_id}-${version}-${platform_suffix}.nep"
         if [ "$first" = true ]; then
             builds_json+="\"$platform\":{\"url\":\"$url\"}"
             first=false
@@ -155,7 +155,7 @@ for ext_dir in "$EXTENSIONS_DIR"/*/; do
             platform_suffix=$(echo $platform | sed 's/-/_/')
         fi
 
-        url="https://github.com/$GITHUB_REPO/releases/download/v$MARKET_VERSION/${ext_id}-${MARKET_VERSION}-${platform_suffix}.nep"
+        url="https://github.com/$GITHUB_REPO/releases/download/v$MARKET_VERSION/${ext_id}-${ext_version}-${platform_suffix}.nep"
         builds=$(echo "$builds" | jq --arg p "$platform" --arg u "$url" '. + {($p): {url: $u}}')
     done
 
