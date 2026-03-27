@@ -20,6 +20,9 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/image-analyzer-v2-2.3.2-darwin_aarch64.nep"
         },
+        "darwin-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/image-analyzer-v2-2.3.2-darwin_x86_64.nep"
+        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/image-analyzer-v2-2.3.2-linux_amd64.nep"
         },
@@ -27,7 +30,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/image-analyzer-v2-2.3.2-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/image-analyzer-v2-2.3.2-windows_amd64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/image-analyzer-v2-2.3.2-windows_x86_64.nep"
         }
       },
       "frontend": {
@@ -37,6 +40,45 @@
         "entrypoint": "image-analyzer-v2-components.umd.cjs"
       },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/image-analyzer-v2/metadata.json"
+    },
+    {
+      "id": "ocr-device-inference",
+      "name": "ocr device inference",
+      "version": "1.0.0",
+      "description": "OCR device inference extension with automatic text recognition",
+      "author": "NeoMind Team",
+      "license": "Apache-2.0",
+      "type": "native",
+      "categories": [
+        "ai",
+        "computer-vision",
+        "device-integration"
+      ],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/ocr-device-inference",
+      "builds": {
+        "darwin-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/ocr-device-inference-2.3.2-darwin_aarch64.nep"
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/ocr-device-inference-2.3.2-darwin_x86_64.nep"
+        },
+        "linux-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/ocr-device-inference-2.3.2-linux_amd64.nep"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/ocr-device-inference-2.3.2-linux_arm64.nep"
+        },
+        "windows-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/ocr-device-inference-2.3.2-windows_x86_64.nep"
+        }
+      },
+      "frontend": {
+        "components": [
+          "OcrDeviceCard"
+        ],
+        "entrypoint": "ocr-device-inference-components.umd.cjs"
+      },
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/ocr-device-inference/metadata.json"
     },
     {
       "id": "wasm-demo",
@@ -54,6 +96,9 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/wasm-demo-2.3.2-darwin_aarch64.nep"
         },
+        "darwin-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/wasm-demo-2.3.2-darwin_x86_64.nep"
+        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/wasm-demo-2.3.2-linux_amd64.nep"
         },
@@ -61,7 +106,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/wasm-demo-2.3.2-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/wasm-demo-2.3.2-windows_amd64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/wasm-demo-2.3.2-windows_x86_64.nep"
         }
       },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/wasm-demo/metadata.json"
@@ -82,6 +127,9 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/weather-forecast-v2-2.3.2-darwin_aarch64.nep"
         },
+        "darwin-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/weather-forecast-v2-2.3.2-darwin_x86_64.nep"
+        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/weather-forecast-v2-2.3.2-linux_amd64.nep"
         },
@@ -89,7 +137,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/weather-forecast-v2-2.3.2-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/weather-forecast-v2-2.3.2-windows_amd64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/weather-forecast-v2-2.3.2-windows_x86_64.nep"
         }
       },
       "frontend": {
@@ -118,6 +166,9 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-darwin_aarch64.nep"
         },
+        "darwin-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-darwin_x86_64.nep"
+        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-linux_amd64.nep"
         },
@@ -125,7 +176,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-windows_amd64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-windows_x86_64.nep"
         }
       },
       "frontend": {
@@ -154,6 +205,9 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-video-v2-2.3.2-darwin_aarch64.nep"
         },
+        "darwin-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-video-v2-2.3.2-darwin_x86_64.nep"
+        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-video-v2-2.3.2-linux_amd64.nep"
         },
@@ -161,7 +215,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-video-v2-2.3.2-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-video-v2-2.3.2-windows_amd64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-video-v2-2.3.2-windows_x86_64.nep"
         }
       },
       "frontend": {

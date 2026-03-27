@@ -16,6 +16,9 @@
     "darwin-aarch64": {
       "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-darwin_aarch64.nep"
     },
+    "darwin-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-darwin_x86_64.nep"
+    },
     "linux-x86_64": {
       "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-linux_amd64.nep"
     },
@@ -23,7 +26,7 @@
       "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-linux_arm64.nep"
     },
     "windows-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-windows_amd64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.3.2/yolo-device-inference-2.3.2-windows_x86_64.nep"
     }
   },
   "frontend": {
