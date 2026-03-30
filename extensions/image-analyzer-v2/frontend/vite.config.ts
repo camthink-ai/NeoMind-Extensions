@@ -13,13 +13,11 @@ export default defineConfig({
       fileName: 'image-analyzer-v2-components',
       formats: ['umd']
     },
+    // Don't externalize React - bundle it for cross-environment compatibility
+    // (desktop app Tauri has global React, web browser doesn't)
     rollupOptions: {
-      external: ['react', 'react-dom'],
       output: {
-        globals: {
-          react: 'React',
-          'react-dom': 'ReactDOM'
-        }
+        exports: 'named'
       }
     },
     outDir: 'dist',

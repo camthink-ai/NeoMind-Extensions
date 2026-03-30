@@ -13,13 +13,10 @@ export default defineConfig({
       fileName: 'yolo-device-inference-components',
       formats: ['umd']
     },
+    // Don't externalize React - bundle it for cross-environment compatibility
     rollupOptions: {
-      external: ['react', 'react-dom'],
       output: {
-        globals: {
-          react: 'React',
-          'react-dom': 'ReactDOM'
-        }
+        exports: 'named'
       }
     },
     outDir: 'dist',
