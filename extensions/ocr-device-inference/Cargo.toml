@@ -27,8 +27,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 uuid = { version = "1.0", features = ["v4"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-ort = { version = "2.0.0-rc.11", features = ["half"] }
-usls = { version = "0.2.0-alpha.3", default-features = false, features = ["vision", "ort-download-binaries"] }
+ort = { workspace = true }
+usls = { version = "0.1.11", features = ["yolo", "ort-download-binaries"] }
 
 [features]
 default = []
