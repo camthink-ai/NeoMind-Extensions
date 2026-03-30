@@ -27,8 +27,8 @@ tracing = "0.1"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 chrono = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread"] }
-ort = { version = "2.0.0-rc.11", features = ["half"] }
-usls = { version = "0.2.0-alpha.3", default-features = false, features = ["ort-download-binaries", "vision"] }
+ort = { workspace = true }
+usls = { version = "0.1.11", features = ["yolo", "ort-download-binaries"] }
 reqwest = { version = "0.12", features = ["blocking"] }
 
 # WASM-only dependencies
