@@ -79,8 +79,11 @@ jobs:
       - name: Checkout extension repo
         uses: actions/checkout@v4
         with:
-          ref: refs/heads/main
-          fetch-depth: 1
+          fetch-depth: 0
+
+      - name: Pull latest changes
+        run: git pull origin main
+        shell: bash
 
       - name: Checkout NeoMind core
         uses: actions/checkout@v4
