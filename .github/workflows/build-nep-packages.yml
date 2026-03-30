@@ -8,13 +8,8 @@ on:
   push:
     branches: [main]
     paths:
-      - 'extensions/weather-forecast-v2/**'
-      - 'extensions/image-analyzer-v2/**'
-      - 'extensions/yolo-video-v2/**'
-      - 'extensions/yolo-device-inference/**'
-      - 'extensions/ocr-device-inference/**'
-      - 'extensions/wasm-demo/**'
-      - 'scripts/package.sh'
+      - 'extensions/**'
+      - 'scripts/**'
       - '.github/workflows/build-nep-packages.yml'
   workflow_dispatch:
     inputs:
