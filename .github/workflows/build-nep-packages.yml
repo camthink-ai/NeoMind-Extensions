@@ -73,8 +73,10 @@ jobs:
     steps:
       - name: Get latest commit
         id: latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          LATEST_SHA=$(curl -s https://api.github.com/repos/${{ github.repository }}/commits/main | jq -r '.sha')
+          LATEST_SHA=$(curl -s -H "Authorization: token $GH_TOKEN" https://api.github.com/repos/${{ github.repository }}/commits/main | jq -r '.sha')
           echo "sha=$LATEST_SHA" >> $GITHUB_OUTPUT
         shell: bash
 
