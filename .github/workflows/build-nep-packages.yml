@@ -78,6 +78,9 @@ jobs:
     steps:
       - name: Checkout extension repo
         uses: actions/checkout@v4
+        with:
+          ref: refs/heads/main
+          fetch-depth: 1
 
       - name: Checkout NeoMind core
         uses: actions/checkout@v4
