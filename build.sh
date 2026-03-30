@@ -702,7 +702,19 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             OUTPUT_FILE="dist/${ext}-${PACKAGE_VERSION}-${PLATFORM}.nep"
         fi
         cd "$PACKAGE_DIR"
-        zip -r -q "$OLDPWD/$OUTPUT_FILE" .
+
+        # Use appropriate zip command based on OS
+        if command -v zip &> /dev/null; then
+            zip -r -q "$OLDPWD/$OUTPUT_FILE" .
+        elif command -v pwsh &> /dev/null; then
+            # Windows: use PowerShell Compress-Archive
+            pwsh -Command "Compress-Archive -Path '*' -DestinationPath '$OLDPWD/$OUTPUT_FILE' -Force"
+        elif command -v powershell &> /dev/null; then
+            powershell -Command "Compress-Archive -Path '*' -DestinationPath '$OLDPWD/$OUTPUT_FILE' -Force"
+        else
+            echo -e "${RED}Error: No zip utility available${NC}"
+            exit 1
+        fi
         cd - > /dev/null
 
         # Calculate checksum
