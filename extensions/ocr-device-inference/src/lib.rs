@@ -167,7 +167,7 @@ impl OcrEngine {
 
         // Initialize DB detector with v5 config (language-agnostic)
         let detector_config = usls::Config::ppocr_det_v5_mobile()
-            .with_model_file(models_dir.join("det_mv3_db.onnx").to_string_lossy().to_string())
+            .with_model_file(&models_dir.join("det_mv3_db.onnx").to_string_lossy())
             .with_device_all(usls::Device::Cpu(0))
             .commit()
             .map_err(|e| ExtensionError::ExecutionFailed(format!("Detector config failed: {}", e)))?;
@@ -192,26 +192,19 @@ impl OcrEngine {
         match language {
             Language::Chinese => {
                 if self.recognizer_chinese.is_none() {
-                    // Load vocabulary from local file
                     let vocab_path = models_dir.join("vocab.txt");
-                    let vocab: Vec<String> = std::fs::read_to_string(&vocab_path)
-                        .map_err(|e| ExtensionError::ExecutionFailed(format!("Failed to read vocab file: {}", e)))?
-                        .lines()
-                        .map(|s| s.to_string())
-                        .collect();
+                    tracing::info!("[OcrDeviceInference] Loading vocab from {:?}", vocab_path);
 
-                    tracing::info!("[OcrDeviceInference] Loaded {} vocab entries from {:?}", vocab.len(), vocab_path);
-
-                    // Use base SVTR config with local vocab
+                    // Use base SVTR config with local vocab file path
                     let config = usls::Config::svtr()
-                        .with_model_file(models_dir.join("rec_svtr.onnx").to_string_lossy().to_string())
-                        .with_class_names_owned(vocab)
+                        .with_model_file(&models_dir.join("rec_svtr.onnx").to_string_lossy())
+                        .with_vocab_txt(&vocab_path.to_string_lossy())
                         .with_device_all(usls::Device::Cpu(0))
-                        .with_model_ixx(0, 3, 960)  // max text length
+                        .with_model_ixx(0, 3, 960.into())  // max text length
                         .commit()
                         .map_err(|e| ExtensionError::ExecutionFailed(format!("Chinese recognizer config failed: {}", e)))?;
 
-                    let recognizer = <usls::models::SVTR as usls::Model>::new(config)
+                    let recognizer = usls::models::SVTR::new(config)
                         .map_err(|e| ExtensionError::ExecutionFailed(format!("Chinese recognizer init failed: {}", e)))?;
                     self.recognizer_chinese = Some(recognizer);
                 }
@@ -219,13 +212,13 @@ impl OcrEngine {
             Language::English => {
                 if self.recognizer_english.is_none() {
                     let config = usls::Config::ppocr_rec_v4_en()
-                        .with_model_file(models_dir.join("rec_en.onnx").to_string_lossy().to_string())
+                        .with_model_file(&models_dir.join("rec_en.onnx").to_string_lossy())
                         .with_device_all(usls::Device::Cpu(0))
-                        .with_model_ixx(0, 3, 960)
+                        .with_model_ixx(0, 3, 960.into())
                         .commit()
                         .map_err(|e| ExtensionError::ExecutionFailed(format!("English recognizer config failed: {}", e)))?;
 
-                    let recognizer = <usls::models::SVTR as usls::Model>::new(config)
+                    let recognizer = usls::models::SVTR::new(config)
                         .map_err(|e| ExtensionError::ExecutionFailed(format!("English recognizer init failed: {}", e)))?;
                     self.recognizer_english = Some(recognizer);
                 }
@@ -358,7 +351,7 @@ impl OcrEngine {
     }
 
     fn crop_polygon_static(img: &usls::Image, polygon: &usls::Polygon) -> Option<usls::Image> {
-        let coords = polygon.exterior();
+        let coords = polygon.points();
         if coords.is_empty() {
             return None;
         }
@@ -385,7 +378,7 @@ impl OcrEngine {
     }
 
     fn polygon_to_bbox_static(polygon: &usls::Polygon, img_w: u32, img_h: u32) -> BoundingBox {
-        let coords = polygon.exterior();
+        let coords = polygon.points();
         let xs: Vec<f32> = coords.iter().map(|p| p[0]).collect();
         let ys: Vec<f32> = coords.iter().map(|p| p[1]).collect();
 
