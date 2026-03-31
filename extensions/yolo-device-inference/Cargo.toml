@@ -30,7 +30,7 @@ uuid = { version = "1.0", features = ["v4"] }
 # Native-only dependencies for YOLO inference
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ort = { workspace = true }
-usls = { version = "0.1.11", features = ["yolo", "ort-download-binaries"] }
+usls = { version = "0.1.11", default-features = false, features = ["yolo", "ort-load-dynamic"] }
 
 [features]
 default = []
