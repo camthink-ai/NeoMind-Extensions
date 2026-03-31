@@ -32,7 +32,7 @@ use parking_lot::{Mutex, RwLock};
 use std::sync::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
-use usls::{models::YOLO, Config, DataLoader, Model, ORTConfig, Runtime, Version as YOLOVersion};
+use usls::{models::YOLO, Config, DataLoader, Version as YOLOVersion};
 
 // ============================================================================
 // Types
@@ -226,7 +226,7 @@ fn draw_detections_on_image(
 pub struct YoloDeviceInference {
     /// YOLO model runtime (native only)
     #[cfg(not(target_arch = "wasm32"))]
-    detector: Mutex<Option<Arc<std::sync::Mutex<Runtime<YOLO>>>>>,
+    detector: Mutex<Option<Arc<std::sync::Mutex<YOLO>>>>,
     #[cfg(not(target_arch = "wasm32"))]
     model_load_error: Mutex<Option<String>>,
 
@@ -331,7 +331,7 @@ impl YoloDeviceInference {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn load_model(&self, version: u8) -> std::result::Result<Arc<std::sync::Mutex<Runtime<YOLO>>>, String> {
+    fn load_model(&self, version: u8) -> std::result::Result<Arc<std::sync::Mutex<YOLO>>, String> {
         let model_filename = format!("yolov{}n.onnx", version);
         let model_path = self.find_model_path(&model_filename)?;
 
@@ -339,13 +339,13 @@ impl YoloDeviceInference {
 
         let conf = *self.default_confidence.lock();
 
-        let ort_config = ORTConfig::default()
-            .with_file(model_path.to_str().unwrap());
-
-        let config = Config::yolo_detect()
-            .with_model(ort_config)
+        // Create config using usls 0.1.11 API
+        let config = Config::yolo()
+            .with_model_file(model_path.to_str().unwrap())
             .with_version(YOLOVersion(version, 0, None))
-            .with_class_confs(&[conf]);
+            .with_class_confs(&[conf])
+            .commit()
+            .map_err(|e| format!("Failed to commit config: {:?}", e))?;
 
         let model = YOLO::new(config)
             .map_err(|e| format!("Failed to create YOLO model: {:?}", e))?;
@@ -356,7 +356,7 @@ impl YoloDeviceInference {
     /// Static version of load_model for use during initialization (before `self` is available)
     #[cfg(not(target_arch = "wasm32"))]
     #[allow(dead_code)]
-    fn load_model_static(version: u8) -> std::result::Result<Arc<std::sync::Mutex<Runtime<YOLO>>>, String> {
+    fn load_model_static(version: u8) -> std::result::Result<Arc<std::sync::Mutex<YOLO>>, String> {
         let model_filename = format!("yolov{}n.onnx", version);
         let model_path = Self::find_model_path_static(&model_filename)?;
 
@@ -365,13 +365,13 @@ impl YoloDeviceInference {
         // Use default confidence threshold
         let conf = 0.25;
 
-        let ort_config = ORTConfig::default()
-            .with_file(model_path.to_str().unwrap());
-
-        let config = Config::yolo_detect()
-            .with_model(ort_config)
+        // Create config using usls 0.1.11 API
+        let config = Config::yolo()
+            .with_model_file(model_path.to_str().unwrap())
             .with_version(YOLOVersion(version, 0, None))
-            .with_class_confs(&[conf]);
+            .with_class_confs(&[conf])
+            .commit()
+            .map_err(|e| format!("Failed to commit config: {:?}", e))?;
 
         let model = YOLO::new(config)
             .map_err(|e| format!("Failed to create YOLO model: {:?}", e))?;
@@ -557,20 +557,14 @@ impl YoloDeviceInference {
             .map_err(|e| ExtensionError::ExecutionFailed(format!("Failed to write temp image: {}", e)))?;
 
         // Load image
-        let dl = DataLoader::new(&temp_path)
-            .map_err(|e| ExtensionError::ExecutionFailed(format!("Failed to load image: {}", e)))?;
-        let xs = dl.try_read()
+        let temp_path_str = temp_path.to_str().ok_or_else(|| ExtensionError::ExecutionFailed("Invalid temp path".to_string()))?;
+        let xs = DataLoader::try_read_one(temp_path_str)
             .map_err(|e| ExtensionError::ExecutionFailed(format!("Failed to read image: {}", e)))?;
 
-        let (img_width, img_height) = if !xs.is_empty() {
-            let img = &xs[0];
-            (img.width(), img.height())
-        } else {
-            (0, 0)
-        };
+        let (img_width, img_height) = (xs.width(), xs.height());
 
         // Run inference
-        let ys = model_guard.run(&xs)
+        let ys = model_guard.forward(&[xs])
             .map_err(|e| ExtensionError::ExecutionFailed(format!("Inference failed: {}", e)))?;
 
         // Clean up temp file immediately

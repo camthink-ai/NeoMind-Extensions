@@ -138,9 +138,9 @@ pub struct BindingStatus {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub struct OcrEngine {
-    detector: Option<usls::Runtime<usls::models::DB>>,
-    recognizer_chinese: Option<usls::Runtime<usls::models::SVTR>>,
-    recognizer_english: Option<usls::Runtime<usls::models::SVTR>>,
+    detector: Option<usls::models::DB>,
+    recognizer_chinese: Option<usls::models::SVTR>,
+    recognizer_english: Option<usls::models::SVTR>,
     loaded: bool,
     load_error: Option<String>,
 }
@@ -172,7 +172,7 @@ impl OcrEngine {
             .commit()
             .map_err(|e| ExtensionError::ExecutionFailed(format!("Detector config failed: {}", e)))?;
 
-        let detector = <usls::models::DB as usls::Model>::new(detector_config)
+        let detector = usls::models::DB::new(detector_config)
             .map_err(|e| ExtensionError::ExecutionFailed(format!("Detector init failed: {}", e)))?;
 
         self.detector = Some(detector);
