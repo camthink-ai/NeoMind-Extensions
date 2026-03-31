@@ -3,6 +3,7 @@ name: Build .nep Packages V2
 # NeoMind Extension SDK V2 - Process Isolation Architecture
 # All extensions run in isolated processes with IPC communication
 # ABI Version: 3
+# Updated: usls 0.1.11 API compatibility
 
 on:
   push:
