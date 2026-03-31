@@ -198,11 +198,17 @@ if [ ${#NATIVE_EXTENSIONS[@]} -gt 0 ]; then
 
     if [ "$BUILD_TYPE" = "release" ]; then
         for ext in "${NATIVE_EXTENSIONS[@]}"; do
-            cargo build --release -p "$ext" 2>/dev/null || true
+            echo -e "  ${BLUE}Building${NC} $ext..."
+            if ! cargo build --release -p "$ext" 2>&1; then
+                echo -e "  ${RED}✗${NC} $ext build failed"
+            fi
         done
     else
         for ext in "${NATIVE_EXTENSIONS[@]}"; do
-            cargo build -p "$ext" 2>/dev/null || true
+            echo -e "  ${BLUE}Building${NC} $ext..."
+            if ! cargo build -p "$ext" 2>&1; then
+                echo -e "  ${RED}✗${NC} $ext build failed"
+            fi
         done
     fi
 fi
