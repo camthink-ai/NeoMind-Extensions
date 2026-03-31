@@ -10,7 +10,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(target_arch = "wasm32"))]
-use usls::{models::YOLO, Config, Model, ORTConfig, Runtime, Version};
+use usls::{models::YOLO, Config, Version};
 
 // Re-export BoundingBox from parent module to avoid duplication
 pub use crate::BoundingBox;
@@ -27,7 +27,7 @@ pub struct Detection {
 /// YOLOv11 detector using usls
 pub struct YoloDetector {
     #[cfg(not(target_arch = "wasm32"))]
-    model: Option<Arc<std::sync::Mutex<Runtime<YOLO>>>>,
+    model: Option<Arc<std::sync::Mutex<YOLO>>>,
     #[cfg(target_arch = "wasm32")]
     model_loaded: bool,
     model_size: usize,
@@ -68,25 +68,18 @@ impl YoloDetector {
             std::fs::write(&model_path, &model_bytes)
                 .map_err(|e| format!("Failed to write temp model file: {}", e))?;
 
-            // Create Config for YOLO detection
+            // Create Config for YOLO detection using usls 0.1.11 API
             eprintln!("[YOLO-Detector] Configuring YOLO model with usls...");
 
-            // ✨ CRITICAL: Configure ONNX Runtime memory management to prevent leaks
-            // Reference: https://github.com/microsoft/onnxruntime/issues?q=memory+leak
-            // - Arena allocator can grow indefinitely in video streaming scenarios
-            // - Limit threads to reduce memory pressure
-            let ort_config = ORTConfig::default()
-                .with_file(model_path.to_str().unwrap())
-                .with_num_intra_threads(1)  // ✨ Reduce to 1 thread to minimize memory
-                .with_num_inter_threads(1); // ✨ Reduce to 1 thread to minimize memory
-
-            // Use yolo_detect() preset configuration for YOLOv11 detection
-            let config = Config::yolo_detect()
-                .with_model(ort_config)
+            // Use yolo() configuration for YOLOv11 detection
+            let config = Config::yolo()
+                .with_model_file(model_path.to_str().unwrap())
                 .with_version(Version(11, 0, None))  // YOLOv11
-                .with_class_confs(&[0.25]);  // Confidence threshold 0.25
+                .with_class_confs(&[0.25])  // Confidence threshold 0.25
+                .commit()
+                .map_err(|e| format!("Failed to commit config: {:?}", e))?;
 
-            // Create YOLO model from config using Model::new()
+            // Create YOLO model from config
             eprintln!("[YOLO-Detector] Creating YOLO runtime...");
             let model = YOLO::new(config)
                 .map_err(|e| {
@@ -265,7 +258,7 @@ impl YoloDetector {
                     // ✨ CRITICAL: Convert Arc into a raw pointer and leak it
                     // This ensures the Arc AND its data are never dropped
                     // The memory will be reclaimed by the OS when the process exits
-                    let leaked: *const Arc<std::sync::Mutex<Runtime<YOLO>>> =
+                    let leaked: *const Arc<std::sync::Mutex<YOLO>> =
                         Box::into_raw(Box::new(model));
 
                     // Intentionally leak the pointer - never dereference it
@@ -279,7 +272,7 @@ impl YoloDetector {
     /// Run YOLO inference using usls with proper API
     #[cfg(not(target_arch = "wasm32"))]
     fn run_inference(
-        model: &Arc<std::sync::Mutex<Runtime<YOLO>>>,
+        model: &Arc<std::sync::Mutex<YOLO>>,
         image: &RgbImage,
         max_detections: u32,
     ) -> Vec<Detection> {
@@ -295,9 +288,9 @@ impl YoloDetector {
             }
         };
 
-        // Run inference using Model::run()
+        // Run inference using Model::forward()
         let mut model_guard = model.lock().unwrap();
-        let ys = match model_guard.run(&[usls_image]) {
+        let ys = match model_guard.forward(&[usls_image]) {
             Ok(results) => results,
             Err(e) => {
                 tracing::error!("YOLO inference failed: {:?}", e);
@@ -405,7 +398,7 @@ impl Drop for YoloDetector {
         {
             if let Some(model) = self.model.take() {
                 // Leak the model to prevent usls::Runtime from being dropped
-                let leaked: *const Arc<std::sync::Mutex<Runtime<YOLO>>> =
+                let leaked: *const Arc<std::sync::Mutex<YOLO>> =
                     Box::into_raw(Box::new(model));
                 let _ = leaked;
                 

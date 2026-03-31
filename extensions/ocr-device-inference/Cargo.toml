@@ -28,7 +28,7 @@ uuid = { version = "1.0", features = ["v4"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ort = { workspace = true }
-usls = { version = "0.1.11", default-features = false, features = ["yolo", "ort-load-dynamic"] }
+usls = { version = "0.1.11", default-features = false, features = ["yolo", "db", "svtr", "ort-load-dynamic"] }
 
 [features]
 default = []

@@ -19,7 +19,7 @@ use parking_lot::Mutex;
 #[cfg(not(target_arch = "wasm32"))]
 
 #[cfg(not(target_arch = "wasm32"))]
-use usls::{models::YOLO, Config, DataLoader, Model, ORTConfig, Runtime, Version as YOLOVersion};
+use usls::{models::YOLO, Config, DataLoader, Version as YOLOVersion};
 
 // ============================================================================
 // Types
@@ -87,7 +87,7 @@ pub struct ImageAnalyzer {
 
 #[cfg(not(target_arch = "wasm32"))]
 struct YOLODetector {
-    model: Option<Runtime<YOLO>>,
+    model: Option<YOLO>,
     load_error: Option<String>,
 }
 
@@ -156,19 +156,19 @@ impl ImageAnalyzer {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn run_detection(model: &mut Runtime<YOLO>, image_data: &[u8]) -> std::result::Result<Vec<Detection>, String> {
+    fn run_detection(model: &mut YOLO, image_data: &[u8]) -> std::result::Result<Vec<Detection>, String> {
         // Create temporary file for image data
         let temp_path = std::env::temp_dir().join(format!("neomind_img_{}.jpg", std::process::id()));
         std::fs::write(&temp_path, image_data)
             .map_err(|e| format!("Failed to write temp image: {}", e))?;
 
-        // Load image using usls DataLoader - create with path, then read
-        let dl = DataLoader::new(&temp_path)
-            .map_err(|e| format!("Failed to create DataLoader: {}", e))?;
-        let xs = dl.try_read()
+        // Load image using usls DataLoader - use try_read_one for single image
+        let temp_path_str = temp_path.to_str().ok_or("Invalid temp path")?;
+        let image = DataLoader::try_read_one(temp_path_str)
             .map_err(|e| format!("Failed to load image: {}", e))?;
 
         // Run inference - forward() requires a slice of images
+        let xs = vec![image];
         let ys = model.forward(&xs)
             .map_err(|e| format!("Inference failed: {}", e))?;
 
@@ -327,7 +327,7 @@ impl YOLODetector {
         }
     }
 
-    fn try_load_model(conf: f32, iou: f32, version: &str, _scale: &str) -> std::result::Result<Runtime<YOLO>, String> {
+    fn try_load_model(conf: f32, iou: f32, version: &str, _scale: &str) -> std::result::Result<YOLO, String> {
         // Parse version number from string (e.g., "v8" -> 8)
         let version_num: u8 = version.trim_start_matches('v')
             .parse()
@@ -352,18 +352,16 @@ impl YOLODetector {
         std::fs::write(&model_path, &model_bytes)
             .map_err(|e| format!("Failed to write temp model file: {}", e))?;
 
-        // Create ORTConfig with model file path
-        let ort_config = ORTConfig::default()
-            .with_file(model_path.to_str().unwrap());
-
-        // Create config using yolo_detect() preset
-        let config = Config::yolo_detect()
-            .with_model(ort_config)
+        // Create config using usls 0.1.11 API
+        let config = Config::yolo()
+            .with_model_file(model_path.to_str().unwrap())
             .with_version(YOLOVersion(version_num, 0, None))
             .with_class_confs(&[conf])
-            .with_iou(iou);
+            .with_iou(iou)
+            .commit()
+            .map_err(|e| format!("Failed to commit config: {:?}", e))?;
 
-        // Create YOLO model using Model trait
+        // Create YOLO model
         let model = YOLO::new(config)
             .map_err(|e| format!("Failed to create YOLO model: {:?}", e))?;
 
