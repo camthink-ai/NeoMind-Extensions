@@ -30,7 +30,7 @@ once_cell = "1.19"
 # Native-only dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ort = { workspace = true }
-usls = { version = "0.1.11", features = ["yolo", "ort-download-binaries"] }
+usls = { version = "0.1.11", default-features = false, features = ["yolo", "ort-load-dynamic"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 nokhwa = { version = "0.10", features = ["input-native"] }
 crossbeam-channel = "0.5"

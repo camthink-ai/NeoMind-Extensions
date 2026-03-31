@@ -107,7 +107,85 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y zip jq pkg-config libssl-dev
+          sudo apt-get install -y zip jq pkg-config libssl-dev patchelf
+
+      - name: Install ONNX Runtime (Ubuntu 22.04 compatible)
+        if: runner.os == 'Linux'
+        run: |
+          # Install ONNX Runtime 1.17.3 which is compatible with glibc 2.35 (Ubuntu 22.04)
+          # Newer versions require glibc 2.38+ due to __isoc23_ symbols
+          ORT_VERSION="1.17.3"
+
+          if [ "${{ matrix.platform }}" = "linux_amd64" ]; then
+            ORT_ARCH="x64"
+          else
+            ORT_ARCH="arm64"
+          fi
+
+          ORT_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}.tgz"
+
+          echo "Downloading ONNX Runtime from: $ORT_URL"
+          curl -L -o /tmp/onnxruntime.tgz "$ORT_URL"
+          tar -xzf /tmp/onnxruntime.tgz -C /tmp
+
+          # Set library path for ort crate to find the library
+          echo "ORT_LIB_PATH=/tmp/onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}/lib" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=/tmp/onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+
+          # Verify no __isoc23_ symbols (glibc 2.38+)
+          echo "Verifying glibc compatibility..."
+          if nm -D /tmp/onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}/lib/libonnxruntime.so | grep -q __isoc23; then
+            echo "ERROR: ONNX Runtime contains __isoc23_ symbols (requires glibc 2.38+)"
+            exit 1
+          fi
+          echo "✓ ONNX Runtime is compatible with glibc 2.35+"
+
+      - name: Install ONNX Runtime (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          # Install ONNX Runtime 1.17.3 for macOS
+          ORT_VERSION="1.17.3"
+
+          if [ "${{ matrix.platform }}" = "darwin_aarch64" ]; then
+            ORT_ARCH="arm64"
+          else
+            ORT_ARCH="x64"
+          fi
+
+          ORT_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-osx-${ORT_ARCH}-${ORT_VERSION}.tgz"
+
+          echo "Downloading ONNX Runtime from: $ORT_URL"
+          curl -L -o /tmp/onnxruntime.tgz "$ORT_URL"
+          tar -xzf /tmp/onnxruntime.tgz -C /tmp
+
+          # Set library path for ort crate
+          echo "ORT_LIB_PATH=/tmp/onnxruntime-osx-${ORT_ARCH}-${ORT_VERSION}/lib" >> $GITHUB_ENV
+          echo "DYLD_LIBRARY_PATH=/tmp/onnxruntime-osx-${ORT_ARCH}-${ORT_VERSION}/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
+
+      - name: Install ONNX Runtime (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Install ONNX Runtime 1.17.3 for Windows
+          $ORT_VERSION = "1.17.3"
+
+          if ("${{ matrix.platform }}" -eq "windows_amd64") {
+            $ORT_ARCH = "x64"
+          } else {
+            $ORT_ARCH = "x86"
+          }
+
+          $ORT_URL = "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-win-${ORT_ARCH}-${ORT_VERSION}.zip"
+
+          Write-Host "Downloading ONNX Runtime from: $ORT_URL"
+          Invoke-WebRequest -Uri $ORT_URL -OutFile "C:\onnxruntime.zip"
+          Expand-Archive -Path "C:\onnxruntime.zip" -DestinationPath "C:\"
+
+          # Set library path for ort crate
+          $ORT_PATH = "C:\onnxruntime-win-${ORT_ARCH}-${ORT_VERSION}\lib"
+          Write-Host "ORT_LIB_PATH=$ORT_PATH"
+          echo "ORT_LIB_PATH=$ORT_PATH" >> $env:GITHUB_ENV
+          echo "$ORT_PATH" >> $env:GITHUB_PATH
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'

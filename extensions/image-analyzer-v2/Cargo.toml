@@ -28,7 +28,7 @@ tracing = "0.1"
 chrono = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 ort = { workspace = true }
-usls = { version = "0.1.11", features = ["yolo", "ort-download-binaries"] }
+usls = { version = "0.1.11", default-features = false, features = ["yolo", "ort-load-dynamic"] }
 reqwest = { version = "0.12", features = ["blocking"] }
 
 # WASM-only dependencies

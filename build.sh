@@ -370,6 +370,42 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             cp "$LIB_FILE" "$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
         fi
 
+        # Copy ONNX Runtime library for native extensions using ort
+        if [ "$IS_WASM" = false ]; then
+            ORT_LIB=""
+            BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
+
+            # Check common locations for ONNX Runtime library
+            if [ -n "$ORT_LIB_PATH" ] && [ -d "$ORT_LIB_PATH" ]; then
+                # Use ORT_LIB_PATH if set
+                if [ "$LIB_EXT" = "dylib" ]; then
+                    ORT_LIB=$(find "$ORT_LIB_PATH" -name "libonnxruntime*.dylib" 2>/dev/null | head -1)
+                elif [ "$LIB_EXT" = "so" ]; then
+                    ORT_LIB=$(find "$ORT_LIB_PATH" -name "libonnxruntime.so*" 2>/dev/null | head -1)
+                elif [ "$LIB_EXT" = "dll" ]; then
+                    ORT_LIB=$(find "$ORT_LIB_PATH" -name "onnxruntime*.dll" 2>/dev/null | head -1)
+                fi
+            fi
+
+            # Also check LD_LIBRARY_PATH
+            if [ -z "$ORT_LIB" ] && [ -n "$LD_LIBRARY_PATH" ]; then
+                IFS=':' read -ra PATHS <<< "$LD_LIBRARY_PATH"
+                for p in "${PATHS[@]}"; do
+                    if [ -d "$p" ]; then
+                        if [ "$LIB_EXT" = "so" ]; then
+                            ORT_LIB=$(find "$p" -name "libonnxruntime.so*" 2>/dev/null | head -1)
+                        fi
+                        [ -n "$ORT_LIB" ] && break
+                    fi
+                done
+            fi
+
+            if [ -n "$ORT_LIB" ] && [ -f "$ORT_LIB" ]; then
+                cp "$ORT_LIB" "$BINARY_DIR/"
+                echo -e "    ${GREEN}→${NC} Bundled ONNX Runtime: $(basename $ORT_LIB)"
+            fi
+        fi
+
         # Fix the binary's LC_ID_DYLIB to use @executable_path instead of absolute path
         # This is critical for Rust cdylib which sets LC_ID_DYLIB to absolute build path
         if [ "$IS_WASM" = false ] && [ "$OS" = "Darwin" ]; then
@@ -448,6 +484,22 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                         fi
                     fi
                 done
+            fi
+        fi
+
+
+        # Fix dynamic library dependencies for Linux (set rpath for bundled libraries)
+        if [ "$IS_WASM" = false ] && [ "$OS" = "Linux" ]; then
+            BINARY_PATH="$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
+            BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
+
+            # Check if patchelf is available
+            if command -v patchelf &> /dev/null; then
+                # Set rpath to $ORIGIN (current directory) so the binary can find bundled libraries
+                echo -e "    ${BLUE}→${NC} Setting rpath for Linux..."
+                patchelf --set-rpath '$ORIGIN' "$BINARY_PATH" 2>/dev/null && \
+                    echo -e "    ${GREEN}✓${NC} Set rpath to \$ORIGIN" || \
+                    echo -e "    ${YELLOW}⚠${NC} Could not set rpath (may already be correct)"
             fi
         fi
 
