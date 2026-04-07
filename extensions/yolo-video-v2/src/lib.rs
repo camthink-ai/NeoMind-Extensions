@@ -424,40 +424,30 @@ pub struct StreamProcessor {
 
 impl StreamProcessor {
     pub fn new() -> Self {
-        // Only load model in Extension Runner process (where NEOMIND_EXTENSION_DIR is set)
-        // In main process, we only need metadata, not the actual model
-        let has_extension_dir = std::env::var("NEOMIND_EXTENSION_DIR").is_ok();
-        
-        let detector = if has_extension_dir {
-            // In Extension Runner process - load the model
-            tracing::info!("[YOLO-Video] Extension Runner detected, loading YOLO detector");
-            
-            match YoloDetector::new() {
-                Ok(d) => {
-                    tracing::info!("[YOLO-Video] ✓ YOLO detector loaded successfully");
-                    Some(d)
-                }
-                Err(e) => {
-                    tracing::error!("[YOLO-Video] Failed to load detector: {}", e);
-                    tracing::error!("[YOLO-Video] Extension will not function without YOLO model");
-                    None
-                }
+        // Lazy initialization: create the detector wrapper but don't load the model yet.
+        // The model will be loaded on first use via ensure_loaded().
+        let detector = match YoloDetector::new() {
+            Ok(d) => {
+                tracing::info!("[YOLO-Video] YOLO detector created (lazy - model not loaded yet)");
+                Some(d)
             }
-        } else {
-            // In main process - do not load the model, just skip it
-            tracing::info!("[YOLO-Video] Main process detected, skipping YOLO detector load");
-            None
+            Err(e) => {
+                tracing::error!("[YOLO-Video] Failed to create detector: {}", e);
+                None
+            }
         };
-        
+
         Self {
             detector: Arc::new(parking_lot::Mutex::new(detector)),
         }
     }
 
-    /// Get the YOLO detector (lazy loading if not initialized)
+    /// Get the YOLO detector, ensuring it's loaded (lazy initialization)
     fn get_detector(&self) -> Option<parking_lot::MappedMutexGuard<'_, YoloDetector>> {
-        let lock = self.detector.lock();
-        if lock.is_some() {
+        let mut lock = self.detector.lock();
+        if let Some(ref mut detector) = *lock {
+            // Ensure model is loaded before returning
+            detector.ensure_loaded();
             Some(parking_lot::MutexGuard::map(lock, |opt| opt.as_mut().unwrap()))
         } else {
             None
@@ -468,7 +458,13 @@ impl StreamProcessor {
 
     #[allow(dead_code)]
     fn has_model(&self) -> bool {
-        self.detector.lock().as_ref().map_or(false, |d| d.is_loaded())
+        let mut lock = self.detector.lock();
+        if let Some(ref mut d) = *lock {
+            d.ensure_loaded();
+            d.is_loaded()
+        } else {
+            false
+        }
     }
 
     /// Trigger memory cleanup (called by gc_memory command)

@@ -89,6 +89,79 @@ pub struct ImageAnalyzer {
 struct YOLODetector {
     model: Option<YOLO>,
     load_error: Option<String>,
+    /// Config for lazy loading
+    conf: f32,
+    iou: f32,
+    version: String,
+    scale: String,
+    /// Whether we've attempted to load the model
+    load_attempted: bool,
+}
+
+/// Set up native library search paths before ONNX Runtime is loaded.
+/// Checks NEOMIND_EXTENSION_DIR/lib/ and common system paths.
+#[cfg(not(target_arch = "wasm32"))]
+fn setup_native_lib_paths() {
+    let lib_env = if cfg!(target_os = "macos") {
+        "DYLD_LIBRARY_PATH"
+    } else {
+        "LD_LIBRARY_PATH"
+    };
+
+    let mut paths = vec![];
+
+    // 1. Extension's bundled libraries - check all possible locations
+    if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
+        let ext_path = std::path::Path::new(&ext_dir);
+
+        // lib/ directory (top-level)
+        let lib_dir = ext_path.join("lib");
+        if lib_dir.is_dir() {
+            tracing::info!("[NativeLibs] Adding extension lib dir: {}", lib_dir.display());
+            paths.push(lib_dir.to_string_lossy().to_string());
+        }
+
+        // binaries/<platform>/ directory (where extension.dylib and bundled libs live)
+        let binaries_dir = ext_path.join("binaries");
+        if binaries_dir.is_dir() {
+            // Add all subdirectories (darwin_aarch64, linux_amd64, etc.)
+            if let Ok(entries) = std::fs::read_dir(&binaries_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        tracing::info!("[NativeLibs] Adding platform dir: {}", path.display());
+                        paths.push(path.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Also check current working directory (extension runner sets this)
+    if let Ok(cwd) = std::env::current_dir() {
+        let lib_dir = cwd.join("lib");
+        if lib_dir.is_dir() {
+            paths.push(lib_dir.to_string_lossy().to_string());
+        }
+    }
+
+    // 2. Inherit existing paths
+    if let Ok(existing) = std::env::var(lib_env) {
+        paths.push(existing);
+    }
+
+    // 3. Common system paths
+    for dir in ["/opt/homebrew/lib", "/usr/local/lib"] {
+        if std::path::Path::new(dir).is_dir() {
+            paths.push(dir.to_string());
+        }
+    }
+
+    if !paths.is_empty() {
+        let combined = paths.join(":");
+        tracing::info!("[NativeLibs] Setting {} = {}", lib_env, combined);
+        std::env::set_var(lib_env, &combined);
+    }
 }
 
 impl ImageAnalyzer {
@@ -112,6 +185,7 @@ impl ImageAnalyzer {
         #[cfg(not(target_arch = "wasm32"))]
         let (objects, description, model_loaded, model_error) = {
             let mut detector = self.detector.lock();
+            detector.ensure_loaded();
 
             if let Some(ref mut model) = detector.model {
                 match Self::run_detection(model, data) {
@@ -252,7 +326,8 @@ impl ImageAnalyzer {
     pub fn get_model_status(&self) -> serde_json::Value {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let detector = self.detector.lock();
+            let mut detector = self.detector.lock();
+            detector.ensure_loaded();
             json!({
                 "loaded": detector.model.is_some(),
                 "error": detector.load_error,
@@ -286,7 +361,9 @@ impl ImageAnalyzer {
         };
 
         let mut detector = self.detector.lock();
+        // Reset and force reload
         *detector = YOLODetector::new(conf, nms, version, scale);
+        detector.ensure_loaded();
 
         if detector.model.is_some() {
             Ok(())
@@ -308,21 +385,38 @@ impl Default for ImageAnalyzer {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl YOLODetector {
+    /// Create a new detector without loading the model (lazy initialization)
     fn new(conf: f32, iou: f32, version: &str, scale: &str) -> Self {
-        match Self::try_load_model(conf, iou, version, scale) {
+        Self {
+            model: None,
+            load_error: None,
+            conf,
+            iou,
+            version: version.to_string(),
+            scale: scale.to_string(),
+            load_attempted: false,
+        }
+    }
+
+    /// Ensure the model is loaded (lazy init on first use)
+    fn ensure_loaded(&mut self) {
+        if self.load_attempted {
+            return;
+        }
+        self.load_attempted = true;
+
+        // Set up native library paths before ONNX Runtime is loaded
+        setup_native_lib_paths();
+
+        tracing::info!("[YOLODetector] Lazy loading model: {}-{}", self.version, self.scale);
+        match Self::try_load_model(self.conf, self.iou, &self.version, &self.scale) {
             Ok(model) => {
-                tracing::info!("[YOLODetector] Model loaded successfully: {}-{}", version, scale);
-                Self {
-                    model: Some(model),
-                    load_error: None,
-                }
+                tracing::info!("[YOLODetector] Model loaded successfully: {}-{}", self.version, self.scale);
+                self.model = Some(model);
             }
             Err(e) => {
                 tracing::error!("[YOLODetector] Failed to load model: {}", e);
-                Self {
-                    model: None,
-                    load_error: Some(e),
-                }
+                self.load_error = Some(e);
             }
         }
     }
