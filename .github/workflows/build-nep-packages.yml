@@ -226,7 +226,12 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && inputs.release == 'true'
+    # Always create release when VERSION file changes on main,
+    # or when manually triggered with release=true
+    if: >
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'push') ||
+       (github.event_name == 'workflow_dispatch' && inputs.release == 'true'))
     permissions:
       contents: write
     steps:
@@ -246,8 +251,16 @@ jobs:
         run: |
           VERSION="$(cat VERSION | tr -d '[:space:]')"
 
-          cat > /tmp/release_notes.md << 'EOF'
-          # NeoMind Extension Packages V2
+          # Generate extension list from built packages
+          EXT_TABLE=""
+          for nep in dist/*.nep; do
+            [ -f "$nep" ] || continue
+            name=$(basename "$nep" | sed 's/-[0-9].*//')
+            EXT_TABLE="${EXT_TABLE}| **${name}** | ${name} |\n"
+          done
+
+          cat > /tmp/release_notes.md << EOF
+          # NeoMind Extension Packages v${VERSION}
 
           ## Architecture: Process Isolation
 
@@ -258,29 +271,25 @@ jobs:
 
           ## Platform Support
 
-          | Platform | Architecture | Extensions |
-          |----------|--------------|------------|
-          | macOS | ARM64, x86_64 | All |
-          | Linux | x86_64, ARM64 | All |
-          | Windows | x86_64, x86 | All |
+          | Platform | Architecture |
+          |----------|--------------|
+          | macOS | ARM64, x86_64 |
+          | Linux | x86_64, ARM64 |
+          | Windows | x86_64, x86 |
 
-          ## Extensions (ABI Version 3)
+          ## Packages
 
-          | Extension | Description |
-          |-----------|-------------|
-          | **weather-forecast-v2** | Weather forecast |
-          | **image-analyzer-v2** | Image analysis with YOLOv8 |
-          | **yolo-video-v2** | Video processing with YOLOv11 |
+          $(ls dist/*.nep 2>/dev/null | while read f; do echo "- \`$(basename $f)\`"; done)
 
           ## Installation
 
           Via NeoMind Web UI or API:
 
-          ```bash
-          curl -X POST http://localhost:9375/api/extensions/upload/file \
-            -H 'Content-Type: application/octet-stream' \
+          \`\`\`bash
+          curl -X POST http://localhost:9375/api/extensions/upload/file \\
+            -H 'Content-Type: application/octet-stream' \\
             --data-binary @package.nep
-          ```
+          \`\`\`
 
           ## Requirements
 
@@ -289,10 +298,11 @@ jobs:
           EOF
 
           if gh release view "v$VERSION" &>/dev/null; then
-            echo "Release v$VERSION exists, uploading packages..."
+            echo "Release v$VERSION exists, updating packages..."
+            gh release edit "v$VERSION" --notes-file /tmp/release_notes.md
           else
             gh release create "v$VERSION" \
-              --title "NeoMind Extensions V2" \
+              --title "NeoMind Extensions v${VERSION}" \
               --notes-file /tmp/release_notes.md
           fi
 
