@@ -384,12 +384,18 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             # Check common locations for ONNX Runtime library
             if [ -n "$ORT_LIB_PATH" ] && [ -d "$ORT_LIB_PATH" ]; then
                 # Use ORT_LIB_PATH if set
+                # IMPORTANT: Exclude dSYM directories - they contain debug symbols, not the actual library
                 if [ "$LIB_EXT" = "dylib" ]; then
-                    ORT_LIB=$(find "$ORT_LIB_PATH" -name "libonnxruntime*.dylib" 2>/dev/null | head -1)
+                    # Prefer the unversioned symlink (libonnxruntime.dylib), fall back to versioned
+                    if [ -f "$ORT_LIB_PATH/libonnxruntime.dylib" ]; then
+                        ORT_LIB="$ORT_LIB_PATH/libonnxruntime.dylib"
+                    else
+                        ORT_LIB=$(find "$ORT_LIB_PATH" -maxdepth 1 -name "libonnxruntime*.dylib" -not -path "*/dSYM/*" 2>/dev/null | head -1)
+                    fi
                 elif [ "$LIB_EXT" = "so" ]; then
-                    ORT_LIB=$(find "$ORT_LIB_PATH" -name "libonnxruntime.so*" 2>/dev/null | head -1)
+                    ORT_LIB=$(find "$ORT_LIB_PATH" -maxdepth 1 -name "libonnxruntime.so*" 2>/dev/null | head -1)
                 elif [ "$LIB_EXT" = "dll" ]; then
-                    ORT_LIB=$(find "$ORT_LIB_PATH" -name "onnxruntime*.dll" 2>/dev/null | head -1)
+                    ORT_LIB=$(find "$ORT_LIB_PATH" -maxdepth 1 -name "onnxruntime*.dll" 2>/dev/null | head -1)
                 fi
             fi
 
@@ -399,7 +405,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                 for p in "${PATHS[@]}"; do
                     if [ -d "$p" ]; then
                         if [ "$LIB_EXT" = "so" ]; then
-                            ORT_LIB=$(find "$p" -name "libonnxruntime.so*" 2>/dev/null | head -1)
+                            ORT_LIB=$(find "$p" -maxdepth 1 -name "libonnxruntime.so*" 2>/dev/null | head -1)
                         fi
                         [ -n "$ORT_LIB" ] && break
                     fi
@@ -764,6 +770,13 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
         # Use appropriate zip command based on OS
         if command -v zip &> /dev/null; then
             zip -r -q "$OLDPWD/$OUTPUT_FILE" .
+            # Verify ZIP integrity (catches CRC errors from corrupted files)
+            if ! unzip -t -q "$OLDPWD/$OUTPUT_FILE" > /dev/null 2>&1; then
+                echo -e "${RED}ERROR: ZIP integrity check failed for $OUTPUT_FILE${NC}"
+                echo -e "${RED}This usually means a bundled library file was corrupted during copy.${NC}"
+                unzip -t "$OLDPWD/$OUTPUT_FILE" 2>&1 | grep -i "error\|fail\|bad" || true
+                exit 1
+            fi
         elif command -v pwsh &> /dev/null; then
             # Windows: use PowerShell Compress-Archive
             pwsh -Command "Compress-Archive -Path '*' -DestinationPath '$OLDPWD/$OUTPUT_FILE' -Force"
