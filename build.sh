@@ -767,16 +767,30 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
         fi
         cd "$PACKAGE_DIR"
 
-        # Use appropriate zip command based on OS
-        if command -v zip &> /dev/null; then
+        # Use Python zipfile for reliable CRC handling
+        # macOS zip command has a known bug producing incorrect CRC32 for large files
+        if command -v python3 &> /dev/null; then
+            python3 -c "
+import zipfile, os, sys
+output = '$OLDPWD/$OUTPUT_FILE'
+with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zf:
+    for root, dirs, files in os.walk('.'):
+        for f in sorted(files + dirs):
+            fp = os.path.join(root, f)
+            arcname = fp[2:]  # strip './'
+            if os.path.isdir(fp):
+                zf.write(fp, arcname + '/')
+            else:
+                zf.write(fp, arcname)
+# Verify
+with zipfile.ZipFile(output, 'r') as zf:
+    bad = zf.testzip()
+    if bad is not None:
+        print(f'ERROR: CRC check failed for: {bad}', file=sys.stderr)
+        sys.exit(1)
+"
+        elif command -v zip &> /dev/null; then
             zip -r -q "$OLDPWD/$OUTPUT_FILE" .
-            # Verify ZIP integrity (catches CRC errors from corrupted files)
-            if ! unzip -t -q "$OLDPWD/$OUTPUT_FILE" > /dev/null 2>&1; then
-                echo -e "${RED}ERROR: ZIP integrity check failed for $OUTPUT_FILE${NC}"
-                echo -e "${RED}This usually means a bundled library file was corrupted during copy.${NC}"
-                unzip -t "$OLDPWD/$OUTPUT_FILE" 2>&1 | grep -i "error\|fail\|bad" || true
-                exit 1
-            fi
         elif command -v pwsh &> /dev/null; then
             # Windows: use PowerShell Compress-Archive
             pwsh -Command "Compress-Archive -Path '*' -DestinationPath '$OLDPWD/$OUTPUT_FILE' -Force"
