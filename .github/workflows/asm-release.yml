@@ -7,9 +7,8 @@
 name: Build WASM Extensions
 
 on:
-  push:
-    tags:
-      - 'v*'
+  # Only trigger manually - native builds are handled by build-nep-packages.yml
+  # WASM builds are only needed for explicit wasm32 targets
   workflow_dispatch:
 
 env:

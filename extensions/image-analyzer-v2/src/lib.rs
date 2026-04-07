@@ -131,6 +131,33 @@ fn setup_native_lib_paths() {
                     if path.is_dir() {
                         tracing::info!("[NativeLibs] Adding platform dir: {}", path.display());
                         paths.push(path.to_string_lossy().to_string());
+
+                        // Create unversioned symlinks for versioned libraries
+                        // e.g. libonnxruntime.1.19.2.dylib -> libonnxruntime.dylib
+                        if let Ok(files) = std::fs::read_dir(&path) {
+                            for file in files.flatten() {
+                                let file_path = file.path();
+                                let name = file_path.file_name().unwrap_or_default().to_string_lossy();
+                                // Match versioned dylib/so patterns
+                                if let Some(base) = name.strip_suffix(".dylib")
+                                    .or_else(|| name.strip_suffix(".so"))
+                                {
+                                    if base.contains('.') {
+                                        // Has version suffix like libonnxruntime.1.19.2
+                                        let unversioned = if cfg!(target_os = "macos") {
+                                            format!("{}.dylib", base.split('.').next().unwrap_or(base))
+                                        } else {
+                                            format!("{}.so", base.split('.').next().unwrap_or(base))
+                                        };
+                                        let link_path = path.join(&unversioned);
+                                        if !link_path.exists() {
+                                            let _ = std::os::unix::fs::symlink(&file_path, &link_path);
+                                            tracing::info!("[NativeLibs] Created symlink: {} -> {}", unversioned, name);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
