@@ -11,6 +11,8 @@ on:
     paths:
       - 'extensions/**'
       - 'scripts/**'
+      - 'VERSION'
+      - 'release.sh'
       - '.github/workflows/build-nep-packages.yml'
   workflow_dispatch:
     inputs:
@@ -26,11 +28,6 @@ on:
         options:
           - 'true'
           - 'false'
-      version:
-        description: 'Release version (e.g., 2.3.2)'
-        required: false
-        default: '2.3.2'
-        type: string
 
 permissions:
   contents: write
@@ -76,6 +73,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Read version from VERSION file
+        id: version
+        run: echo "VERSION=$(cat VERSION | tr -d '[:space:]')" >> $GITHUB_OUTPUT
+        shell: bash
 
       - name: Checkout NeoMind core
         uses: actions/checkout@v4
@@ -196,6 +198,11 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Show version
+        run: |
+          echo "Building version: $(cat VERSION)"
+        shell: bash
+
       - name: Build extensions
         run: |
           chmod +x build.sh
@@ -237,7 +244,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ inputs.version || '2.3.2' }}"
+          VERSION="$(cat VERSION | tr -d '[:space:]')"
 
           cat > /tmp/release_notes.md << 'EOF'
           # NeoMind Extension Packages V2
