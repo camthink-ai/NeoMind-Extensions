@@ -765,11 +765,13 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             # Native extensions need platform suffix
             OUTPUT_FILE="dist/${ext}-${PACKAGE_VERSION}-${PLATFORM}.nep"
         fi
+        # Resolve absolute output path BEFORE changing directory
+        OUTPUT_ABS="$(cd "$(dirname "$OUTPUT_FILE")" && pwd)/$(basename "$OUTPUT_FILE")"
+
         cd "$PACKAGE_DIR"
 
         # Use Python zipfile for reliable CRC handling
         # macOS zip command has a known bug producing incorrect CRC32 for large files
-        OUTPUT_ABS="$(cd "$OLDPWD" && pwd)/$(basename "$OUTPUT_FILE")"
         if command -v python3 &> /dev/null; then
             python3 -c "
 import zipfile, os, sys
