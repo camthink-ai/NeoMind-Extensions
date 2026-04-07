@@ -314,6 +314,28 @@ fn setup_native_lib_paths() {
         tracing::info!("[NativeLibs] Setting {} = {}", lib_env, combined);
         std::env::set_var(lib_env, &combined);
     }
+
+    // Set ORT_DYLIB_PATH to the exact location of libonnxruntime
+    // This is the recommended way for the `ort` crate's load-dynamic feature.
+    // DYLD_LIBRARY_PATH set at runtime via set_var may not affect dlopen on macOS.
+    if std::env::var("ORT_DYLIB_PATH").is_err() {
+        let ort_filename = if cfg!(target_os = "macos") {
+            "libonnxruntime.dylib"
+        } else if cfg!(target_os = "windows") {
+            "onnxruntime.dll"
+        } else {
+            "libonnxruntime.so"
+        };
+
+        for dir in &paths {
+            let ort_path = std::path::Path::new(dir).join(ort_filename);
+            if ort_path.exists() {
+                tracing::info!("[NativeLibs] Setting ORT_DYLIB_PATH = {}", ort_path.display());
+                std::env::set_var("ORT_DYLIB_PATH", &ort_path);
+                break;
+            }
+        }
+    }
 }
 
 // ============================================================================
