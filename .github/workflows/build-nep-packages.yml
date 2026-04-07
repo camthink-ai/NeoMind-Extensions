@@ -11,6 +11,7 @@ on:
     paths:
       - 'extensions/**'
       - 'scripts/**'
+      - 'build.sh'
       - 'VERSION'
       - 'release.sh'
       - '.github/workflows/build-nep-packages.yml'
