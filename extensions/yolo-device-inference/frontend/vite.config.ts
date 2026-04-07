@@ -13,11 +13,17 @@ export default defineConfig({
       fileName: 'yolo-device-inference-components',
       formats: ['umd']
     },
-    // Don't externalize React - bundle it for cross-environment compatibility
+    // Externalize React - use host app's React via window globals
     rollupOptions: {
+      external: ['react', 'react-dom', 'react/jsx-runtime'],
       output: {
-        exports: 'named'
-      }
+        exports: 'named',
+        globals: {
+          react: 'React',
+          'react-dom': 'ReactDOM',
+          'react/jsx-runtime': 'jsxRuntime',
+        },
+      },
     },
     outDir: 'dist',
     emptyOutDir: true
