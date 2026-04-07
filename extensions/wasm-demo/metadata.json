@@ -1,7 +1,7 @@
 {
   "id": "wasm-demo",
   "name": "wasm demo",
-  "version": "2.4.5",
+  "version": "2.4.6",
   "description": "Demo WASM extension for the NeoMind extension runtime",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
@@ -12,19 +12,19 @@
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/wasm-demo",
   "builds": {
     "darwin-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.5/wasm-demo-2.4.5-darwin_aarch64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.6/wasm-demo-2.4.6-darwin_aarch64.nep"
     },
     "darwin-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.5/wasm-demo-2.4.5-darwin_x86_64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.6/wasm-demo-2.4.6-darwin_x86_64.nep"
     },
     "linux-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.5/wasm-demo-2.4.5-linux_amd64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.6/wasm-demo-2.4.6-linux_amd64.nep"
     },
     "linux-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.5/wasm-demo-2.4.5-linux_arm64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.6/wasm-demo-2.4.6-linux_arm64.nep"
     },
     "windows-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.5/wasm-demo-2.4.5-windows_x86_64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.6/wasm-demo-2.4.6-windows_x86_64.nep"
     }
   }
 }
