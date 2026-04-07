@@ -1,7 +1,7 @@
 {
   "id": "weather-forecast-v2",
   "name": "weather forecast",
-  "version": "2.4.6",
+  "version": "2.4.7",
   "description": "Weather forecast extension for the NeoMind isolated runtime",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
@@ -12,19 +12,19 @@
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/weather-forecast-v2",
   "builds": {
     "darwin-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.6/weather-forecast-v2-2.4.6-darwin_aarch64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.7/weather-forecast-v2-2.4.7-darwin_aarch64.nep"
     },
     "darwin-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.6/weather-forecast-v2-2.4.6-darwin_x86_64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.7/weather-forecast-v2-2.4.7-darwin_x86_64.nep"
     },
     "linux-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.6/weather-forecast-v2-2.4.6-linux_amd64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.7/weather-forecast-v2-2.4.7-linux_amd64.nep"
     },
     "linux-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.6/weather-forecast-v2-2.4.6-linux_arm64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.7/weather-forecast-v2-2.4.7-linux_arm64.nep"
     },
     "windows-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.6/weather-forecast-v2-2.4.6-windows_x86_64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.7/weather-forecast-v2-2.4.7-windows_x86_64.nep"
     }
   },
   "frontend": {
