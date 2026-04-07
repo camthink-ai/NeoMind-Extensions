@@ -1,7 +1,7 @@
 {
   "id": "ocr-device-inference",
   "name": "ocr device inference",
-  "version": "2.4.10",
+  "version": "2.4.11",
   "description": "OCR device inference extension with automatic text recognition",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
@@ -14,19 +14,19 @@
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/ocr-device-inference",
   "builds": {
     "darwin-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.10/ocr-device-inference-2.4.10-darwin_aarch64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.11/ocr-device-inference-2.4.11-darwin_aarch64.nep"
     },
     "darwin-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.10/ocr-device-inference-2.4.10-darwin_x86_64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.11/ocr-device-inference-2.4.11-darwin_x86_64.nep"
     },
     "linux-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.10/ocr-device-inference-2.4.10-linux_amd64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.11/ocr-device-inference-2.4.11-linux_amd64.nep"
     },
     "linux-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.10/ocr-device-inference-2.4.10-linux_arm64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.11/ocr-device-inference-2.4.11-linux_arm64.nep"
     },
     "windows-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.10/ocr-device-inference-2.4.10-windows_x86_64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.11/ocr-device-inference-2.4.11-windows_x86_64.nep"
     }
   },
   "frontend": {
