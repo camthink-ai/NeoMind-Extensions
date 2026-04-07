@@ -1,7 +1,8 @@
 # NeoMind WASM Extensions - Automated Release Workflow
 #
-# This workflow builds WASM extensions when a version tag is pushed.
-# Dynamically detects and builds all WASM extensions in the extensions/ directory.
+# This workflow builds Rust-based WASM extensions when a version tag is pushed.
+# WASM extensions are detected by having a Cargo.toml with crate-type = ["cdylib"]
+# and are built with cargo build --target wasm32-unknown-unknown.
 
 name: Build WASM Extensions
 
@@ -9,6 +10,10 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
 
 permissions:
   contents: write
@@ -20,13 +25,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
       - name: Find WASM extensions
         id: find-extensions
         run: |
-          # Find all directories with package.json (WASM extensions)
+          # Find Rust extensions with cdylib crate type (WASM candidates)
           EXTENSIONS=""
           for dir in extensions/*/; do
-            if [ -f "$dir/package.json" ]; then
+            if [ -f "$dir/Cargo.toml" ] && grep -q 'cdylib' "$dir/Cargo.toml"; then
               EXT_NAME=$(basename "$dir")
               if [ -n "$EXTENSIONS" ]; then
                 EXTENSIONS="$EXTENSIONS,$EXT_NAME"
@@ -42,23 +52,39 @@ jobs:
         run: |
           EXTENSIONS="${{ steps.find-extensions.outputs.extensions }}"
           if [ -z "$EXTENSIONS" ]; then
-            echo "No WASM extensions found!"
-            exit 1
+            echo "No WASM extensions found — skipping WASM build."
+            echo "skip=true" >> $GITHUB_ENV
+            exit 0
           fi
 
-          # Build each extension
           for EXT in ${EXTENSIONS//,/ }; do
             echo "================================"
-            echo "Building extension: $EXT"
+            echo "Building WASM extension: $EXT"
             echo "================================"
-            cd "extensions/$EXT"
-            npm install
-            npm run build
-            cd ../..
+
+            # Determine library name from Cargo.toml [lib] name field
+            LIB_NAME=$(grep -A1 '^\[lib\]' "extensions/$EXT/Cargo.toml" | grep '^name' | sed 's/.*=.*"\([^"]*\)".*/\1/')
+            if [ -z "$LIB_NAME" ]; then
+              LIB_NAME=$(echo "$EXT" | tr '-' '_')
+            fi
+
+            cargo build --target wasm32-unknown-unknown --release -p "$LIB_NAME" 2>&1 || \
+            cargo build --target wasm32-unknown-unknown --release -p "$EXT" 2>&1
+
+            WASM_FILE="target/wasm32-unknown-unknown/release/${LIB_NAME}.wasm"
+            if [ ! -f "$WASM_FILE" ]; then
+              echo "ERROR: WASM file not found: $WASM_FILE"
+              ls -la target/wasm32-unknown-unknown/release/*.wasm 2>/dev/null || true
+              exit 1
+            fi
+
+            WASM_SIZE=$(ls -lh "$WASM_FILE" | awk '{print $5}')
+            echo "Built: $WASM_FILE ($WASM_SIZE)"
           done
 
       - name: Extract version from tag
         id: version
+        if: env.skip != 'true'
         run: |
           TAG=${GITHUB_REF#refs/tags/}
           echo "tag=$TAG" >> $GITHUB_OUTPUT
@@ -66,110 +92,74 @@ jobs:
           echo "Release tag: $TAG"
 
       - name: Prepare release artifacts
+        if: env.skip != 'true'
         run: |
           EXTENSIONS="${{ steps.find-extensions.outputs.extensions }}"
+          VERSION="${{ steps.version.outputs.version }}"
           mkdir -p release
 
-          # Process each extension
           for EXT in ${EXTENSIONS//,/ }; do
             echo "Packaging extension: $EXT"
 
-            # Find WASM file
-            WASM_FILE=$(find "extensions/$EXT/build" -name "$EXT.wasm" -o -name "*.wasm" | head -1)
-            if [ -z "$WASM_FILE" ]; then
+            # Determine library name
+            LIB_NAME=$(grep -A1 '^\[lib\]' "extensions/$EXT/Cargo.toml" | grep '^name' | sed 's/.*=.*"\([^"]*\)".*/\1/')
+            if [ -z "$LIB_NAME" ]; then
+              LIB_NAME=$(echo "$EXT" | tr '-' '_')
+            fi
+
+            WASM_FILE="target/wasm32-unknown-unknown/release/${LIB_NAME}.wasm"
+            if [ ! -f "$WASM_FILE" ]; then
               echo "Warning: WASM file not found for $EXT"
               continue
             fi
 
-            # Create extension directory
-            EXT_DIR="release/$EXT"
-            mkdir -p "$EXT_DIR"
+            # Create .nep package (WASM extensions are platform-independent)
+            NEP_NAME="${EXT}-${VERSION}.nep"
+            cp "$WASM_FILE" "release/${NEP_NAME}"
 
-            # Copy WASM file with standardized name
-            cp "$WASM_FILE" "$EXT_DIR/$EXT.wasm"
-
-            # Copy metadata if exists
-            if [ -f "extensions/$EXT/metadata.json" ]; then
-              cp "extensions/$EXT/metadata.json" "$EXT_DIR/$EXT.json"
-            fi
-
-            echo "  Packaged: $EXT"
-            ls -lh "$EXT_DIR"
+            echo "  Packaged: $NEP_NAME ($(ls -lh "$WASM_FILE" | awk '{print $5}'))"
           done
 
           echo ""
           echo "All packages:"
           ls -lh release/
 
-      - name: Calculate SHA256 checksums
-        run: |
-          cd release
-
-          # Calculate checksums for each extension
-          for EXT_DIR in */; do
-            echo "Calculating checksums for $EXT_DIR"
-
-            # WASM file checksum
-            if [ -f "$EXT_DIR/$EXT_DIR.wasm" ]; then
-              WASM_SHA=$(sha256sum "$EXT_DIR/$EXT_DIR.wasm" | awk '{print $1}')
-              echo "$WASM_SHA  $EXT_DIR.wasm" > "$EXT_DIR/$EXT_DIR.wasm.sha256"
-              echo "    WASM: $WASM_SHA"
-            fi
-
-            # JSON file checksum
-            if [ -f "$EXT_DIR/$EXT_DIR.json" ]; then
-              JSON_SHA=$(sha256sum "$EXT_DIR/$EXT_DIR.json" | awk '{print $1}')
-              echo "$JSON_SHA  $EXT_DIR.json" > "$EXT_DIR/$EXT_DIR.json.sha256"
-              echo "    JSON: $JSON_SHA"
-            fi
-
-            # Create checksums.txt for this extension using printf (avoid heredoc issues)
-            printf "# SHA256 Checksums\n# Generated from GitHub Actions\n" > "$EXT_DIR/checksums.txt"
-            if [ -f "$EXT_DIR/$EXT_DIR.wasm.sha256" ]; then
-              printf "%s\n" "$(cat $EXT_DIR/$EXT_DIR.wasm.sha256)" "$EXT_DIR.wasm" >> "$EXT_DIR/checksums.txt"
-            fi
-            if [ -f "$EXT_DIR/$EXT_DIR.json.sha256" ]; then
-              printf "%s\n" "$(cat $EXT_DIR/$EXT_DIR.json.sha256)" "$EXT_DIR.json" >> "$EXT_DIR/checksums.txt"
-            fi
-          done
-
-          echo ""
-          echo "All packages with checksums:"
-          find . -name "checksums.txt" -exec sh -c 'echo "{}:" && cat {}' \;
-
-      - name: Create extension packages
-        run: |
-          cd release
-          VERSION="${{ steps.version.outputs.tag }}"
-
-          # Create tar.gz for each extension
-          for EXT_DIR in */; do
-            echo "Packaging $EXT_DIR..."
-            tar -czvf "$EXT_DIR-$VERSION.tar.gz" "$EXT_DIR"
-          done
-
-          echo ""
-          echo "Created packages:"
-          ls -lh *.tar.gz
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release/*.tar.gz
-          generate_release_notes: true
-          draft: false
-          prerelease: false
-          name: ${{ steps.version.outputs.tag }}
+      - name: Upload WASM packages to release
+        if: env.skip != 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          if ! gh release view "v$VERSION" &>/dev/null; then
+            echo "Creating new release v$VERSION for WASM packages..."
+            gh release create "v$VERSION" \
+              --title "NeoMind Extensions v${VERSION}" \
+              --notes "WASM extension packages for v${VERSION}"
+          fi
+
+          for nep in release/*.nep; do
+            [ -f "$nep" ] || continue
+            echo "Uploading: $(basename "$nep")"
+            gh release upload "v$VERSION" "$nep" --clobber
+          done
+          echo "WASM packages uploaded to release v$VERSION"
 
       - name: Release summary
+        if: env.skip != 'true'
         run: |
-          echo "## WASM Release Created!" >> $GITHUB_STEP_SUMMARY
+          echo "## WASM Extension Build" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tag:** ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Released Extensions" >> $GITHUB_STEP_SUMMARY
+          echo "### WASM Packages" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          ls -lh release/*.tar.gz >> $GITHUB_STEP_SUMMARY
+          ls -lh release/*.nep >> $GITHUB_STEP_SUMMARY || echo "No packages" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Skip summary
+        if: env.skip == 'true'
+        run: |
+          echo "## WASM Extension Build - Skipped" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No WASM extensions found in repository." >> $GITHUB_STEP_SUMMARY
