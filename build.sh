@@ -769,10 +769,12 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
 
         # Use Python zipfile for reliable CRC handling
         # macOS zip command has a known bug producing incorrect CRC32 for large files
+        OUTPUT_ABS="$(cd "$OLDPWD" && pwd)/$(basename "$OUTPUT_FILE")"
         if command -v python3 &> /dev/null; then
             python3 -c "
 import zipfile, os, sys
-output = '$OLDPWD/$OUTPUT_FILE'
+output = os.path.abspath(r'$OUTPUT_ABS')
+os.makedirs(os.path.dirname(output), exist_ok=True)
 with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zf:
     for root, dirs, files in os.walk('.'):
         for f in sorted(files + dirs):
