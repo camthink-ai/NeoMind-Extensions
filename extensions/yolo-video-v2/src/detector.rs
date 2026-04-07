@@ -24,6 +24,59 @@ pub struct Detection {
     pub bbox: BoundingBox,
 }
 
+/// Set up native library search paths before ONNX Runtime is loaded.
+/// Checks NEOMIND_EXTENSION_DIR/lib/ and common system paths.
+#[cfg(not(target_arch = "wasm32"))]
+fn setup_native_lib_paths() {
+    let lib_env = if cfg!(target_os = "macos") {
+        "DYLD_LIBRARY_PATH"
+    } else {
+        "LD_LIBRARY_PATH"
+    };
+
+    let mut paths = vec![];
+
+    // 1. Extension's bundled lib/ directory
+    if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
+        let lib_dir = std::path::Path::new(&ext_dir).join("lib");
+        if lib_dir.is_dir() {
+            tracing::info!("[NativeLibs] Adding extension lib dir: {}", lib_dir.display());
+            paths.push(lib_dir.to_string_lossy().to_string());
+        }
+        // Also check the binaries directory (same level as extension.dylib)
+        let bin_dir = std::path::Path::new(&ext_dir).join("binaries");
+        if bin_dir.is_dir() {
+            paths.push(bin_dir.to_string_lossy().to_string());
+        }
+    }
+
+    // Also check current working directory (extension runner sets this)
+    if let Ok(cwd) = std::env::current_dir() {
+        let lib_dir = cwd.join("lib");
+        if lib_dir.is_dir() {
+            paths.push(lib_dir.to_string_lossy().to_string());
+        }
+    }
+
+    // 2. Inherit existing paths
+    if let Ok(existing) = std::env::var(lib_env) {
+        paths.push(existing);
+    }
+
+    // 3. Common system paths
+    for dir in ["/opt/homebrew/lib", "/usr/local/lib"] {
+        if std::path::Path::new(dir).is_dir() {
+            paths.push(dir.to_string());
+        }
+    }
+
+    if !paths.is_empty() {
+        let combined = paths.join(":");
+        tracing::info!("[NativeLibs] Setting {} = {}", lib_env, combined);
+        std::env::set_var(lib_env, &combined);
+    }
+}
+
 /// YOLOv11 detector using usls
 pub struct YoloDetector {
     #[cfg(not(target_arch = "wasm32"))]
@@ -31,82 +84,147 @@ pub struct YoloDetector {
     #[cfg(target_arch = "wasm32")]
     model_loaded: bool,
     model_size: usize,
+    /// Config for lazy loading
+    conf: f32,
+    iou: f32,
+    version: String,
+    scale: String,
+    /// Whether we've attempted to load the model
+    load_attempted: bool,
+    /// Error from last load attempt
+    load_error: Option<String>,
 }
 
 impl YoloDetector {
-    /// Create a new detector by loading the model
+    /// Create a new detector without loading the model (lazy initialization)
     pub fn new() -> Result<Self, String> {
-        eprintln!("[YOLO-Detector] Creating YoloDetector...");
+        eprintln!("[YOLO-Detector] Creating YoloDetector (lazy - model not loaded yet)...");
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let model_data = Self::load_model_data()?;
-
-            if model_data.is_none() {
-                let ext_dir = std::env::var("NEOMIND_EXTENSION_DIR").unwrap_or_else(|_| "unknown".to_string());
-                tracing::error!("❌ YOLO model file not found!");
-                tracing::error!("Extension directory: {}", ext_dir);
-                tracing::error!("Expected path: {}/models/yolo11n.onnx", ext_dir);
-                tracing::error!("The extension will NOT function properly without the model file.");
-                return Err(format!(
-                    "YOLO model not found. Please ensure yolo11n.onnx is in the models/ directory. Searched in: {}",
-                    ext_dir
-                ));
-            }
-
-            let model_bytes = model_data.unwrap();
-            let model_size = model_bytes.len();
-            eprintln!("[YOLO-Detector] Model data loaded: {} bytes", model_size);
-
-            // Save model to temp file with unique name (usls requires file path)
-            // Use unique filename to avoid race conditions in concurrent tests
-            let temp_dir = std::env::temp_dir();
-            let unique_id = uuid::Uuid::new_v4();
-            let model_path = temp_dir.join(format!("yolo11n_{}.onnx", unique_id));
-            eprintln!("[YOLO-Detector] Writing model to temp file: {}", model_path.display());
-
-            std::fs::write(&model_path, &model_bytes)
-                .map_err(|e| format!("Failed to write temp model file: {}", e))?;
-
-            // Create Config for YOLO detection using usls 0.1.11 API
-            eprintln!("[YOLO-Detector] Configuring YOLO model with usls...");
-
-            // Use yolo() configuration for YOLOv11 detection
-            let config = Config::yolo()
-                .with_model_file(model_path.to_str().unwrap())
-                .with_version(Version(11, 0, None))  // YOLOv11
-                .with_class_confs(&[0.25])  // Confidence threshold 0.25
-                .commit()
-                .map_err(|e| format!("Failed to commit config: {:?}", e))?;
-
-            // Create YOLO model from config
-            eprintln!("[YOLO-Detector] Creating YOLO runtime...");
-            let model = YOLO::new(config)
-                .map_err(|e| {
-                    eprintln!("[YOLO-Detector] ❌ Failed to create YOLO model: {:?}", e);
-                    format!("Failed to create YOLO model: {:?}", e)
-                })?;
-
-            eprintln!("[YOLO-Detector] ✓ YOLO model loaded successfully!");
-            eprintln!("[YOLO-Detector] Model: YOLOv11n, Confidence: 0.25");
-
-            // Clean up temp file
-            let _ = std::fs::remove_file(&model_path);
-
             Ok(Self {
-                model: Some(Arc::new(std::sync::Mutex::new(model))),
-                model_size,
+                model: None,
+                model_size: 0,
+                conf: 0.25,
+                iou: 0.45,
+                version: "11".to_string(),
+                scale: "n".to_string(),
+                load_attempted: false,
+                load_error: None,
             })
         }
 
         #[cfg(target_arch = "wasm32")]
         {
-            eprintln!("[YOLO-Detector] ⚠️ WASM target, running in fallback mode");
+            eprintln!("[YOLO-Detector] WASM target, running in fallback mode");
             Ok(Self {
                 model_loaded: false,
                 model_size: 0,
+                conf: 0.25,
+                iou: 0.45,
+                version: "11".to_string(),
+                scale: "n".to_string(),
+                load_attempted: false,
+                load_error: None,
             })
         }
+    }
+
+    /// Ensure the model is loaded (lazy init on first use)
+    pub fn ensure_loaded(&mut self) {
+        if self.load_attempted {
+            return;
+        }
+        self.load_attempted = true;
+
+        // Set up native library paths before ONNX Runtime is loaded
+        #[cfg(not(target_arch = "wasm32"))]
+        setup_native_lib_paths();
+
+        tracing::info!("[YOLO-Detector] Lazy loading model: v{}-{}", self.version, self.scale);
+        eprintln!("[YOLO-Detector] Lazy loading model...");
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            match Self::try_load_model(&self.version, self.conf) {
+                Ok((model, model_size)) => {
+                    tracing::info!("[YOLO-Detector] Model loaded successfully: v{}-{}", self.version, self.scale);
+                    eprintln!("[YOLO-Detector] YOLO model loaded successfully!");
+                    self.model = Some(model);
+                    self.model_size = model_size;
+                }
+                Err(e) => {
+                    tracing::error!("[YOLO-Detector] Failed to load model: {}", e);
+                    eprintln!("[YOLO-Detector] Failed to load model: {}", e);
+                    self.load_error = Some(e);
+                }
+            }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            // WASM fallback - no actual loading
+        }
+    }
+
+    /// Try to load the model (called by ensure_loaded)
+    #[cfg(not(target_arch = "wasm32"))]
+    fn try_load_model(version: &str, conf: f32) -> Result<(Arc<std::sync::Mutex<YOLO>>, usize), String> {
+        eprintln!("[YOLO-Detector] Loading YOLO model v{}", version);
+
+        let model_data = Self::load_model_data()?;
+
+        if model_data.is_none() {
+            let ext_dir = std::env::var("NEOMIND_EXTENSION_DIR").unwrap_or_else(|_| "unknown".to_string());
+            return Err(format!(
+                "YOLO model not found. Please ensure yolo11n.onnx is in the models/ directory. Searched in: {}",
+                ext_dir
+            ));
+        }
+
+        let model_bytes = model_data.unwrap();
+        let model_size = model_bytes.len();
+        eprintln!("[YOLO-Detector] Model data loaded: {} bytes", model_size);
+
+        // Save model to temp file with unique name (usls requires file path)
+        let temp_dir = std::env::temp_dir();
+        let unique_id = uuid::Uuid::new_v4();
+        let model_path = temp_dir.join(format!("yolo11n_{}.onnx", unique_id));
+        eprintln!("[YOLO-Detector] Writing model to temp file: {}", model_path.display());
+
+        std::fs::write(&model_path, &model_bytes)
+            .map_err(|e| format!("Failed to write temp model file: {}", e))?;
+
+        // Create Config for YOLO detection using usls API
+        eprintln!("[YOLO-Detector] Configuring YOLO model with usls...");
+
+        // Parse version number
+        let version_num: u8 = version.trim_start_matches('v')
+            .parse()
+            .unwrap_or(11);
+
+        let config = Config::yolo()
+            .with_model_file(model_path.to_str().unwrap())
+            .with_version(Version(version_num, 0, None))
+            .with_class_confs(&[conf])
+            .commit()
+            .map_err(|e| format!("Failed to commit config: {:?}", e))?;
+
+        // Create YOLO model from config
+        eprintln!("[YOLO-Detector] Creating YOLO runtime...");
+        let model = YOLO::new(config)
+            .map_err(|e| {
+                eprintln!("[YOLO-Detector] Failed to create YOLO model: {:?}", e);
+                format!("Failed to create YOLO model: {:?}", e)
+            })?;
+
+        eprintln!("[YOLO-Detector] YOLO model loaded successfully!");
+        eprintln!("[YOLO-Detector] Model: YOLOv{}n, Confidence: {}", version_num, conf);
+
+        // Clean up temp file
+        let _ = std::fs::remove_file(&model_path);
+
+        Ok((Arc::new(std::sync::Mutex::new(model)), model_size))
     }
 
     /// Load model data from disk
@@ -188,6 +306,11 @@ impl YoloDetector {
     /// Get model size in bytes
     pub fn model_size(&self) -> usize {
         self.model_size
+    }
+
+    /// Get the load error if model failed to load
+    pub fn get_load_error(&self) -> Option<&str> {
+        self.load_error.as_deref()
     }
 
     /// Run inference on an image

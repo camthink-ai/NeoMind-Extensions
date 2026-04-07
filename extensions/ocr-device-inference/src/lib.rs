@@ -136,6 +136,54 @@ pub struct BindingStatus {
 // OCR Engine (Native Only)
 // ============================================================================
 
+/// Set up native library search paths before ONNX Runtime is loaded.
+/// Checks NEOMIND_EXTENSION_DIR/lib/ and common system paths.
+#[cfg(not(target_arch = "wasm32"))]
+fn setup_native_lib_paths() {
+    let lib_env = if cfg!(target_os = "macos") {
+        "DYLD_LIBRARY_PATH"
+    } else {
+        "LD_LIBRARY_PATH"
+    };
+
+    let mut paths = vec![];
+
+    // 1. Extension's bundled lib/ directory
+    if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
+        let lib_dir = std::path::Path::new(&ext_dir).join("lib");
+        if lib_dir.is_dir() {
+            tracing::info!("[NativeLibs] Adding extension lib dir: {}", lib_dir.display());
+            paths.push(lib_dir.to_string_lossy().to_string());
+        }
+    }
+
+    // Also check current working directory (extension runner sets this)
+    if let Ok(cwd) = std::env::current_dir() {
+        let lib_dir = cwd.join("lib");
+        if lib_dir.is_dir() {
+            paths.push(lib_dir.to_string_lossy().to_string());
+        }
+    }
+
+    // 2. Inherit existing paths
+    if let Ok(existing) = std::env::var(lib_env) {
+        paths.push(existing);
+    }
+
+    // 3. Common system paths
+    for dir in ["/opt/homebrew/lib", "/usr/local/lib"] {
+        if std::path::Path::new(dir).is_dir() {
+            paths.push(dir.to_string());
+        }
+    }
+
+    if !paths.is_empty() {
+        let combined = paths.join(":");
+        tracing::info!("[NativeLibs] Setting {} = {}", lib_env, combined);
+        std::env::set_var(lib_env, &combined);
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub struct OcrEngine {
     detector: Option<usls::models::DB>,
@@ -143,49 +191,139 @@ pub struct OcrEngine {
     recognizer_english: Option<usls::models::SVTR>,
     loaded: bool,
     load_error: Option<String>,
+    /// Whether we've attempted to load the model
+    load_attempted: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl OcrEngine {
+    /// Create a new engine without loading the model (lazy initialization)
     pub fn new() -> Self {
-        tracing::info!("[OcrDeviceInference] OCR engine created");
+        tracing::info!("[OcrDeviceInference] OCR engine created (lazy - models not loaded yet)");
         Self {
             detector: None,
             recognizer_chinese: None,
             recognizer_english: None,
             loaded: false,
             load_error: None,
+            load_attempted: false,
         }
     }
 
-    pub fn init(&mut self, models_dir: &std::path::Path, language: &Language) -> Result<()> {
-        if self.loaded {
-            return Ok(());
+    /// Ensure the model is loaded (lazy init on first use)
+    pub fn ensure_loaded(&mut self) {
+        if self.load_attempted {
+            return;
         }
+        self.load_attempted = true;
 
+        // Set up native library paths before ONNX Runtime is loaded
+        setup_native_lib_paths();
+
+        // Find models directory
+        let models_dir = match Self::find_models_dir_static() {
+            Ok(dir) => dir,
+            Err(e) => {
+                tracing::error!("[OcrEngine] Failed to find models directory: {}", e);
+                self.load_error = Some(e.to_string());
+                return;
+            }
+        };
+
+        tracing::info!("[OcrEngine] Lazy loading OCR models from: {:?}", models_dir);
         let start = std::time::Instant::now();
 
         // Initialize DB detector with v5 config (language-agnostic)
+        match Self::try_load_detector(&models_dir) {
+            Ok(detector) => {
+                self.detector = Some(detector);
+            }
+            Err(e) => {
+                let err_msg = format!("Detector init failed: {}", e);
+                tracing::error!("[OcrEngine] {}", err_msg);
+                self.load_error = Some(err_msg);
+                return;
+            }
+        }
+
+        // Try to load both recognizers so they're ready for either language
+        if let Err(e) = self.load_recognizer(&models_dir, &Language::Chinese) {
+            tracing::warn!("[OcrEngine] Chinese recognizer not loaded (will load on demand): {}", e);
+        }
+        if let Err(e) = self.load_recognizer(&models_dir, &Language::English) {
+            tracing::warn!("[OcrEngine] English recognizer not loaded (will load on demand): {}", e);
+        }
+
+        self.loaded = true;
+        let elapsed = start.elapsed().as_millis();
+        tracing::info!("[OcrEngine] Models loaded in {}ms", elapsed);
+    }
+
+    /// Find the models directory (static version for use in ensure_loaded)
+    fn find_models_dir_static() -> Result<std::path::PathBuf> {
+        // Try NEOMIND_EXTENSION_DIR first (set by NeoMind runtime)
+        if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
+            let models_dir = std::path::PathBuf::from(&ext_dir).join("models");
+            if models_dir.exists() {
+                tracing::info!("[OcrEngine] Found models at: {:?}", models_dir);
+                return Ok(models_dir);
+            }
+        }
+
+        // Fallback: Check current working directory
+        if let Ok(cwd) = std::env::current_dir() {
+            let models_dir = cwd.join("models");
+            if models_dir.exists() {
+                tracing::info!("[OcrEngine] Found models at: {:?}", models_dir);
+                return Ok(models_dir);
+            }
+        }
+
+        // Additional fallback paths
+        let fallback_paths = vec![
+            std::path::PathBuf::from("models"),
+            std::path::PathBuf::from("../models"),
+        ];
+
+        for models_dir in fallback_paths {
+            if models_dir.exists() {
+                tracing::info!("[OcrEngine] Found models at: {:?}", models_dir);
+                return Ok(models_dir);
+            }
+        }
+
+        Err(ExtensionError::ExecutionFailed(
+            "Models directory not found. Please ensure OCR models are installed.".to_string()
+        ))
+    }
+
+    /// Try to load the detector model
+    fn try_load_detector(models_dir: &std::path::Path) -> Result<usls::models::DB> {
         let detector_config = usls::Config::ppocr_det_v5_mobile()
             .with_model_file(&models_dir.join("det_mv3_db.onnx").to_string_lossy())
             .with_device_all(usls::Device::Cpu(0))
             .commit()
             .map_err(|e| ExtensionError::ExecutionFailed(format!("Detector config failed: {}", e)))?;
 
-        let detector = usls::models::DB::new(detector_config)
-            .map_err(|e| ExtensionError::ExecutionFailed(format!("Detector init failed: {}", e)))?;
+        usls::models::DB::new(detector_config)
+            .map_err(|e| ExtensionError::ExecutionFailed(format!("Detector init failed: {}", e)))
+    }
 
-        self.detector = Some(detector);
+    /// Initialize the engine (delegates to ensure_loaded for lazy loading)
+    pub fn init(&mut self, _models_dir: &std::path::Path, _language: &Language) -> Result<()> {
+        if self.loaded {
+            return Ok(());
+        }
 
-        // Initialize the appropriate recognizer based on language
-        self.load_recognizer(models_dir, language)?;
+        self.ensure_loaded();
 
-        self.loaded = true;
-
-        let elapsed = start.elapsed().as_millis();
-        tracing::info!("[OcrDeviceInference] Models loaded in {}ms for language: {}", elapsed, language);
-
-        Ok(())
+        if self.loaded {
+            Ok(())
+        } else {
+            Err(ExtensionError::ExecutionFailed(
+                self.load_error.clone().unwrap_or_else(|| "Failed to load OCR models".to_string())
+            ))
+        }
     }
 
     fn load_recognizer(&mut self, models_dir: &std::path::Path, language: &Language) -> Result<()> {
@@ -230,10 +368,26 @@ impl OcrEngine {
     pub fn recognize(&mut self, image_data: &[u8], device_id: &str, language: &Language) -> Result<OcrResult> {
         let start = std::time::Instant::now();
 
+        // Lazy load on first use
+        self.ensure_loaded();
+
         if !self.loaded {
             return Err(ExtensionError::ExecutionFailed(
-                "OCR engine not initialized".to_string()
+                self.load_error.clone().unwrap_or_else(|| "OCR engine not initialized".to_string())
             ));
+        }
+
+        // On-demand recognizer loading for the requested language
+        let needs_recognizer = match language {
+            Language::Chinese => self.recognizer_chinese.is_none(),
+            Language::English => self.recognizer_english.is_none(),
+        };
+        if needs_recognizer {
+            if let Ok(models_dir) = Self::find_models_dir_static() {
+                if let Err(e) = self.load_recognizer(&models_dir, language) {
+                    tracing::warn!("[OcrEngine] On-demand recognizer load failed: {}", e);
+                }
+            }
         }
 
         // Load image using image crate, then convert to usls::Image
@@ -483,8 +637,17 @@ impl OcrDeviceInference {
         let bindings = self.bindings.read();
         let stats = self.binding_stats.read();
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let (model_loaded, model_error) = {
+            let engine = self.ocr_engine.lock();
+            (engine.is_loaded(), engine.get_load_error().map(|s| s.to_string()))
+        };
+        #[cfg(target_arch = "wasm32")]
+        let (model_loaded, model_error): (bool, Option<String>) = (false, Some("WASM not supported".to_string()));
+
         json!({
-            "model_loaded": cfg!(not(target_arch = "wasm32")),
+            "model_loaded": model_loaded,
+            "model_error": model_error,
             "total_inferences": self.total_inferences.load(Ordering::Relaxed),
             "total_text_blocks": self.total_text_blocks.load(Ordering::Relaxed),
             "total_errors": self.total_errors.load(Ordering::Relaxed),
@@ -1039,19 +1202,7 @@ impl Extension for OcrDeviceInference {
 
                     tracing::info!("[OcrDeviceInference] Decoded image data: {} bytes", image_data.len());
 
-                    // Initialize engine if needed
-                    {
-                        let engine = self.ocr_engine.lock();
-                        if !engine.is_loaded() {
-                            tracing::info!("[OcrDeviceInference] Engine not loaded, initializing...");
-                            drop(engine);
-                            let mut engine = self.ocr_engine.lock();
-
-                            // Find models directory using NEOMIND_EXTENSION_DIR or fallbacks
-                            let models_dir = self.find_models_dir()?;
-                            engine.init(&models_dir, &language)?;
-                        }
-                    }
+                    // recognize() will call ensure_loaded() internally for lazy init
 
                     tracing::info!("[OcrDeviceInference] Calling recognize with language: {:?}", language);
                     let mut engine = self.ocr_engine.lock();
@@ -1175,33 +1326,7 @@ impl Extension for OcrDeviceInference {
                     Ok(image_data) => {
                         #[cfg(not(target_arch = "wasm32"))]
                         {
-                            // Initialize engine if needed
-                            {
-                                let engine = self.ocr_engine.lock();
-                                if !engine.is_loaded() {
-                                    drop(engine);
-                                    let mut engine = self.ocr_engine.lock();
-                                    match self.find_models_dir() {
-                                        Ok(models_dir) => {
-                                            if let Err(e) = engine.init(&models_dir, &binding.language) {
-                                                tracing::error!("[OcrDeviceInference] Failed to init engine: {}", e);
-                                                if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
-                                                    stats.last_error = Some(e.to_string());
-                                                }
-                                                return Ok(());
-                                            }
-                                        }
-                                        Err(e) => {
-                                            tracing::error!("[OcrDeviceInference] Failed to find models: {}", e);
-                                            if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
-                                                stats.last_error = Some(e.to_string());
-                                            }
-                                            return Ok(());
-                                        }
-                                    }
-                                }
-                            }
-
+                            // recognize() will call ensure_loaded() internally for lazy init
                             let mut engine = self.ocr_engine.lock();
                             match engine.recognize(&image_data, device_id, &binding.language) {
                                 Ok(result) => {

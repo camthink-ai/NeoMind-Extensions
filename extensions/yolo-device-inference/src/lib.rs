@@ -220,15 +220,195 @@ fn draw_detections_on_image(
 }
 
 // ============================================================================
+// Native Library Path Setup
+// ============================================================================
+
+/// Set up native library search paths before ONNX Runtime is loaded.
+/// Checks NEOMIND_EXTENSION_DIR/lib/ and common system paths.
+#[cfg(not(target_arch = "wasm32"))]
+fn setup_native_lib_paths() {
+    let lib_env = if cfg!(target_os = "macos") {
+        "DYLD_LIBRARY_PATH"
+    } else {
+        "LD_LIBRARY_PATH"
+    };
+
+    let mut paths = vec![];
+
+    // 1. Extension's bundled lib/ directory
+    if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
+        let lib_dir = std::path::Path::new(&ext_dir).join("lib");
+        if lib_dir.is_dir() {
+            tracing::info!("[NativeLibs] Adding extension lib dir: {}", lib_dir.display());
+            paths.push(lib_dir.to_string_lossy().to_string());
+        }
+        // Also check the binaries directory (same level as extension.dylib)
+        let bin_dir = std::path::Path::new(&ext_dir).join("binaries");
+        if bin_dir.is_dir() {
+            paths.push(bin_dir.to_string_lossy().to_string());
+        }
+    }
+
+    // Also check current working directory (extension runner sets this)
+    if let Ok(cwd) = std::env::current_dir() {
+        let lib_dir = cwd.join("lib");
+        if lib_dir.is_dir() {
+            paths.push(lib_dir.to_string_lossy().to_string());
+        }
+    }
+
+    // 2. Inherit existing paths
+    if let Ok(existing) = std::env::var(lib_env) {
+        paths.push(existing);
+    }
+
+    // 3. Common system paths
+    for dir in ["/opt/homebrew/lib", "/usr/local/lib"] {
+        if std::path::Path::new(dir).is_dir() {
+            paths.push(dir.to_string());
+        }
+    }
+
+    if !paths.is_empty() {
+        let combined = paths.join(":");
+        tracing::info!("[NativeLibs] Setting {} = {}", lib_env, combined);
+        std::env::set_var(lib_env, &combined);
+    }
+}
+
+// ============================================================================
+// YOLODetector - Lazy-loading model wrapper
+// ============================================================================
+
+/// Wrapper around the YOLO model that supports lazy loading.
+/// The model is NOT loaded at construction time; instead, `ensure_loaded()` is called
+/// on first use to defer the heavy ONNX Runtime initialization.
+#[cfg(not(target_arch = "wasm32"))]
+struct YOLODetector {
+    /// The loaded YOLO model (None until first use)
+    model: Option<YOLO>,
+    /// Last loading error, if any
+    load_error: Option<String>,
+    /// Confidence threshold (stored for lazy loading)
+    conf: f32,
+    /// IoU / NMS threshold (stored for lazy loading)
+    iou: f32,
+    /// Model version string, e.g. "v8"
+    version: String,
+    /// Model scale, e.g. "n"
+    scale: String,
+    /// Whether we've already attempted to load the model
+    load_attempted: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl YOLODetector {
+    /// Create a new detector WITHOUT loading the model (lazy initialization).
+    fn new(conf: f32, _iou: f32, version: &str, scale: &str) -> Self {
+        Self {
+            model: None,
+            load_error: None,
+            conf,
+            iou: _iou,
+            version: version.to_string(),
+            scale: scale.to_string(),
+            load_attempted: false,
+        }
+    }
+
+    /// Ensure the model is loaded. On the first call this performs the actual
+    /// ONNX Runtime initialization; subsequent calls are no-ops.
+    fn ensure_loaded(&mut self) {
+        if self.load_attempted {
+            return;
+        }
+        self.load_attempted = true;
+
+        // Set up native library paths before ONNX Runtime is loaded
+        setup_native_lib_paths();
+
+        tracing::info!("[YOLODetector] Lazy loading model: {}-{}", self.version, self.scale);
+        match Self::try_load_model(self.conf, &self.version, &self.scale) {
+            Ok(model) => {
+                tracing::info!("[YOLODetector] Model loaded successfully: {}-{}", self.version, self.scale);
+                self.model = Some(model);
+            }
+            Err(e) => {
+                tracing::error!("[YOLODetector] Failed to load model: {}", e);
+                self.load_error = Some(e);
+            }
+        }
+    }
+
+    /// Attempt to load the YOLO model from disk.
+    fn try_load_model(conf: f32, version: &str, scale: &str) -> std::result::Result<YOLO, String> {
+        // Parse version number from string (e.g., "v8" -> 8)
+        let version_num: u8 = version
+            .trim_start_matches('v')
+            .parse()
+            .map_err(|_| format!("Invalid version: {}", version))?;
+
+        let model_filename = format!("yolov{}{}.onnx", version_num, scale);
+        let model_path = Self::find_model_path_static(&model_filename)?;
+
+        tracing::info!("[YOLODetector] Loading model file: {}", model_path.display());
+
+        // Create config using usls API
+        let config = Config::yolo()
+            .with_model_file(model_path.to_str().unwrap())
+            .with_version(YOLOVersion(version_num, 0, None))
+            .with_class_confs(&[conf])
+            .commit()
+            .map_err(|e| format!("Failed to commit config: {:?}", e))?;
+
+        let model = YOLO::new(config)
+            .map_err(|e| format!("Failed to create YOLO model: {:?}", e))?;
+
+        Ok(model)
+    }
+
+    /// Find model file by searching common locations (static version).
+    fn find_model_path_static(filename: &str) -> std::result::Result<std::path::PathBuf, String> {
+        // Try NEOMIND_EXTENSION_DIR first
+        if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
+            let path = std::path::PathBuf::from(&ext_dir).join("models").join(filename);
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+
+        // Fallback: Check current working directory
+        if let Ok(cwd) = std::env::current_dir() {
+            let path = cwd.join("models").join(filename);
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+
+        // Additional fallback paths
+        let fallback_paths = vec![
+            std::path::PathBuf::from("models").join(filename),
+            std::path::PathBuf::from("../models").join(filename),
+        ];
+
+        for path in fallback_paths {
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+
+        Err(format!("Model file '{}' not found in extension models directory", filename))
+    }
+}
+
+// ============================================================================
 // Extension Implementation
 // ============================================================================
 
 pub struct YoloDeviceInference {
-    /// YOLO model runtime (native only)
+    /// YOLO model runtime (native only) - lazy-loading wrapper
     #[cfg(not(target_arch = "wasm32"))]
-    detector: Mutex<Option<Arc<std::sync::Mutex<YOLO>>>>,
-    #[cfg(not(target_arch = "wasm32"))]
-    model_load_error: Mutex<Option<String>>,
+    detector: Mutex<YOLODetector>,
 
     /// Device bindings: device_id -> binding
     bindings: Arc<RwLock<HashMap<String, DeviceBinding>>>,
@@ -256,9 +436,7 @@ impl YoloDeviceInference {
 
         Self {
             #[cfg(not(target_arch = "wasm32"))]
-            detector: Mutex::new(None),  // Lazy loading - no model yet
-            #[cfg(not(target_arch = "wasm32"))]
-            model_load_error: Mutex::new(None),
+            detector: Mutex::new(YOLODetector::new(0.25, 0.45, "v8", "n")),
             bindings: Arc::new(RwLock::new(HashMap::new())),
             binding_stats: Arc::new(RwLock::new(HashMap::new())),
             total_inferences: Arc::new(AtomicU64::new(0)),
@@ -298,163 +476,70 @@ impl YoloDeviceInference {
         })
     }
 
-    /// Initialize the YOLO model (native only)
+    /// Initialize the YOLO model (native only) - ensures lazy loading
     #[cfg(not(target_arch = "wasm32"))]
     fn init_model(&self) -> Result<()> {
         let mut detector = self.detector.lock();
+        detector.ensure_loaded();
 
-        if detector.is_some() {
-            return Ok(());
+        if detector.model.is_none() {
+            let err = detector.load_error.clone()
+                .unwrap_or_else(|| "Model not loaded".to_string());
+            return Err(ExtensionError::LoadFailed(err));
         }
-
-        let version_str = self.model_version.lock().clone();
-        let parts: Vec<&str> = version_str.split('-').collect();
-        let version_num: u8 = parts.get(0)
-            .and_then(|v| v.trim_start_matches('v').parse().ok())
-            .unwrap_or(8);
-
-        let model_result = self.load_model(version_num);
-
-        match model_result {
-            Ok(model) => {
-                *detector = Some(model);
-                *self.model_load_error.lock() = None;
-                tracing::debug!("[YoloDeviceInference] YOLO model loaded");
-                Ok(())
-            }
-            Err(e) => {
-                *self.model_load_error.lock() = Some(e.clone());
-                tracing::error!("[YoloDeviceInference] Failed to load model: {}", e);
-                Err(ExtensionError::LoadFailed(e))
-            }
-        }
+        Ok(())
     }
 
+    /// Reload model with new configuration
     #[cfg(not(target_arch = "wasm32"))]
-    fn load_model(&self, version: u8) -> std::result::Result<Arc<std::sync::Mutex<YOLO>>, String> {
-        let model_filename = format!("yolov{}n.onnx", version);
-        let model_path = self.find_model_path(&model_filename)?;
-
-        tracing::debug!("[YoloDeviceInference] Loading model: {}", model_filename);
-
+    pub fn reload_model(&self) -> std::result::Result<(), String> {
         let conf = *self.default_confidence.lock();
+        let version_str = self.model_version.lock().clone();
 
-        // Create config using usls 0.1.11 API
-        let config = Config::yolo()
-            .with_model_file(model_path.to_str().unwrap())
-            .with_version(YOLOVersion(version, 0, None))
-            .with_class_confs(&[conf])
-            .commit()
-            .map_err(|e| format!("Failed to commit config: {:?}", e))?;
+        // Parse version string (e.g., "v8-n" -> version="v8", scale="n")
+        let parts: Vec<&str> = version_str.split('-').collect();
+        let (version, scale) = if parts.len() >= 2 {
+            (parts[0], parts[1])
+        } else {
+            ("v8", "n")
+        };
 
-        let model = YOLO::new(config)
-            .map_err(|e| format!("Failed to create YOLO model: {:?}", e))?;
+        let mut detector = self.detector.lock();
+        // Reset and force reload
+        *detector = YOLODetector::new(conf, 0.45, version, scale);
+        detector.ensure_loaded();
 
-        Ok(Arc::new(std::sync::Mutex::new(model)))
+        if detector.model.is_some() {
+            Ok(())
+        } else {
+            Err(detector.load_error.clone().unwrap_or_else(|| "Unknown error".to_string()))
+        }
     }
 
-    /// Static version of load_model for use during initialization (before `self` is available)
+    /// Get model status
     #[cfg(not(target_arch = "wasm32"))]
-    #[allow(dead_code)]
-    fn load_model_static(version: u8) -> std::result::Result<Arc<std::sync::Mutex<YOLO>>, String> {
-        let model_filename = format!("yolov{}n.onnx", version);
-        let model_path = Self::find_model_path_static(&model_filename)?;
+    pub fn get_model_status(&self) -> serde_json::Value {
+        let mut detector = self.detector.lock();
+        detector.ensure_loaded();
+        json!({
+            "loaded": detector.model.is_some(),
+            "error": detector.load_error,
+            "confidence_threshold": *self.default_confidence.lock(),
+            "model_version": self.model_version.lock().clone(),
+        })
+    }
 
-        tracing::debug!("[YoloDeviceInference] Loading model: {}", model_filename);
-
-        // Use default confidence threshold
-        let conf = 0.25;
-
-        // Create config using usls 0.1.11 API
-        let config = Config::yolo()
-            .with_model_file(model_path.to_str().unwrap())
-            .with_version(YOLOVersion(version, 0, None))
-            .with_class_confs(&[conf])
-            .commit()
-            .map_err(|e| format!("Failed to commit config: {:?}", e))?;
-
-        let model = YOLO::new(config)
-            .map_err(|e| format!("Failed to create YOLO model: {:?}", e))?;
-
-        Ok(Arc::new(std::sync::Mutex::new(model)))
+    #[cfg(target_arch = "wasm32")]
+    pub fn get_model_status(&self) -> serde_json::Value {
+        json!({
+            "loaded": false,
+            "error": "YOLO not available in WASM"
+        })
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn find_model_path(&self, filename: &str) -> std::result::Result<std::path::PathBuf, String> {
-        // Load model from extension's models directory
-        // Expected path: <extension_dir>/models/<filename>
-        
-        // Try NEOMIND_EXTENSION_DIR first
-        eprintln!("[YoloDeviceInference] Checking NEOMIND_EXTENSION_DIR env var");
-        if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
-            eprintln!("[YoloDeviceInference] NEOMIND_EXTENSION_DIR = {}", ext_dir);
-            let path = std::path::PathBuf::from(&ext_dir).join("models").join(filename);
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-
-        // Fallback: Check current working directory
-        if let Ok(cwd) = std::env::current_dir() {
-            let path = cwd.join("models").join(filename);
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-
-        // Additional fallback paths
-        let fallback_paths = vec![
-            std::path::PathBuf::from("models").join(filename),
-            std::path::PathBuf::from("../models").join(filename),
-        ];
-
-        for path in fallback_paths {
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-
-        Err(format!("Model file '{}' not found in extension models directory", filename))
-    }
-
-    /// Static version of find_model_path for use during initialization
-    #[cfg(not(target_arch = "wasm32"))]
-    #[allow(dead_code)]
-    fn find_model_path_static(filename: &str) -> std::result::Result<std::path::PathBuf, String> {
-        // Load model from extension's models directory
-        // Expected path: <extension_dir>/models/<filename>
-        
-        // Try NEOMIND_EXTENSION_DIR first
-        eprintln!("[YoloDeviceInference] Checking NEOMIND_EXTENSION_DIR env var");
-        if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
-            eprintln!("[YoloDeviceInference] NEOMIND_EXTENSION_DIR = {}", ext_dir);
-            let path = std::path::PathBuf::from(&ext_dir).join("models").join(filename);
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-
-        // Fallback: Check current working directory
-        if let Ok(cwd) = std::env::current_dir() {
-            let path = cwd.join("models").join(filename);
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-
-        // Additional fallback paths
-        let fallback_paths = vec!
-[ std::path::PathBuf::from("models").join(filename),
-            std::path::PathBuf::from("../models").join(filename),
-        ];
-
-        for path in fallback_paths {
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-
-        Err(format!("Model file '{}' not found in extension models directory", filename))
+        YOLODetector::find_model_path_static(filename)
     }
 
     /// Validate device exists (native only)
@@ -544,12 +629,21 @@ impl YoloDeviceInference {
     pub fn process_image(&self, device_id: &str, image_data: &[u8], draw_boxes: bool) -> Result<InferenceResult> {
         let start = std::time::Instant::now();
 
-        self.init_model()?;
+        // Ensure model is loaded (lazy loading)
+        {
+            let mut detector = self.detector.lock();
+            detector.ensure_loaded();
+            if detector.model.is_none() {
+                let err = detector.load_error.clone()
+                    .unwrap_or_else(|| "Model not loaded".to_string());
+                return Err(ExtensionError::ExecutionFailed(err));
+            }
+        }
 
-        let detector = self.detector.lock();
-        let model = detector.as_ref()
+        // Now lock detector and run inference
+        let mut detector = self.detector.lock();
+        let model = detector.model.as_mut()
             .ok_or_else(|| ExtensionError::ExecutionFailed("Model not loaded".to_string()))?;
-        let mut model_guard = model.lock().unwrap();
 
         // Create temp file for image
         let temp_path = std::env::temp_dir().join(format!("yolo_inference_{}.jpg", uuid::Uuid::new_v4()));
@@ -564,7 +658,7 @@ impl YoloDeviceInference {
         let (img_width, img_height) = (xs.width(), xs.height());
 
         // Run inference
-        let ys = model_guard.forward(&[xs])
+        let ys = model.forward(&[xs])
             .map_err(|e| ExtensionError::ExecutionFailed(format!("Inference failed: {}", e)))?;
 
         // Clean up temp file immediately
@@ -688,15 +782,11 @@ impl YoloDeviceInference {
     pub fn get_status(&self) -> serde_json::Value {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            // Try to load model if not already loaded
-            if self.detector.lock().is_none() {
-                tracing::debug!("[YoloDeviceInference] Model not loaded, attempting to load...");
-                if let Err(e) = self.init_model() {
-                    tracing::error!("[YoloDeviceInference] Failed to load model in get_status: {}", e);
-                }
-            }
-
-            let model_loaded = self.detector.lock().is_some();
+            // Trigger lazy loading to get accurate model status
+            let mut detector = self.detector.lock();
+            detector.ensure_loaded();
+            let model_loaded = detector.model.is_some();
+            let model_error = detector.load_error.clone();
 
             json!({
                 "model_loaded": model_loaded,
@@ -706,7 +796,7 @@ impl YoloDeviceInference {
                 "total_inferences": self.total_inferences.load(Ordering::SeqCst),
                 "total_detections": self.total_detections.load(Ordering::SeqCst),
                 "total_errors": self.total_errors.load(Ordering::SeqCst),
-                "model_error": self.model_load_error.lock().clone(),
+                "model_error": model_error,
             })
         }
 
@@ -1593,6 +1683,9 @@ impl Extension for YoloDeviceInference {
                     total_inferences: 0,
                     total_detections: 0,
                     last_error: None,
+                    last_image: None,
+                    last_detections: None,
+                    last_annotated_image: None,
                 });
 
                 Ok(json!({"success": true, "device_id": device_id}))
@@ -1683,6 +1776,23 @@ impl Extension for YoloDeviceInference {
 
         if let Some(version) = config.get("model_version").and_then(|v| v.as_str()) {
             *self.model_version.lock() = version.to_string();
+        }
+
+        // Sync config to the lazy-loading detector so it uses the right params on first load
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let conf = *self.default_confidence.lock();
+            let version_str = self.model_version.lock().clone();
+            let parts: Vec<&str> = version_str.split('-').collect();
+            let (version, scale) = if parts.len() >= 2 {
+                (parts[0], parts[1])
+            } else {
+                ("v8", "n")
+            };
+            let mut detector = self.detector.lock();
+            detector.conf = conf;
+            detector.version = version.to_string();
+            detector.scale = scale.to_string();
         }
 
         tracing::debug!("[YoloDeviceInference] Configuration applied successfully");
