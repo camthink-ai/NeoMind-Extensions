@@ -189,7 +189,10 @@ fn setup_native_lib_paths() {
                                         };
                                         let link_path = path.join(&unversioned);
                                         if !link_path.exists() {
+                                            #[cfg(unix)]
                                             let _ = std::os::unix::fs::symlink(&file_path, &link_path);
+                                            #[cfg(not(unix))]
+                                            let _ = ();
                                             tracing::info!("[NativeLibs] Created symlink: {} -> {}", unversioned, name);
                                         }
                                     }
