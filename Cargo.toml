@@ -33,12 +33,9 @@ urlencoding = "2.1"
 thiserror = "2.0"
 async-trait = "0.1"
 
-# ONNX Runtime - use rc.10 for glibc 2.34 compatibility (Ubuntu 22.04+)
-# rc.11+ requires glibc 2.38+ due to C++23 features
-# See: https://github.com/pykeio/ort/issues/523
-#
-# Use load-dynamic to avoid __isoc23_ symbols in pre-built binaries
-# The CI will install compatible ONNX Runtime libraries
+# ONNX Runtime - ort 2.0.0-rc.10 requires ORT 1.22.x (ORT_API_VERSION=22)
+# usls 0.1.11 pins ort = "=2.0.0-rc.10"
+# Use load-dynamic: ORT is loaded at runtime from bundled dylib/so/dll
 ort = { version = "2.0.0-rc.10", default-features = false, features = ["half", "load-dynamic"] }
 
 # Use crates.io version for ABI isolation

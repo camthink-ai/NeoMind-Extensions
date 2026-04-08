@@ -101,9 +101,9 @@ jobs:
       - name: Install ONNX Runtime (Ubuntu 22.04 compatible)
         if: runner.os == 'Linux'
         run: |
-          # Install ONNX Runtime 1.19.2 which is compatible with glibc 2.35 (Ubuntu 22.04)
-          # Newer versions require glibc 2.38+ due to __isoc23 symbols
-          ORT_VERSION="1.19.2"
+          # ONNX Runtime 1.22.0 - matches ort crate 2.0.0-rc.10 (ORT_API_VERSION=22)
+          # Verified: no __isoc23 symbols, compatible with glibc 2.35 (Ubuntu 22.04)
+          ORT_VERSION="1.22.0"
 
           if [ "${{ matrix.platform }}" = "linux_amd64" ]; then
             ORT_ARCH="x64"
@@ -133,15 +133,9 @@ jobs:
       - name: Install ONNX Runtime (macOS)
         if: runner.os == 'macOS'
         run: |
-          # Install ONNX Runtime 1.19.2 for macOS
-          ORT_VERSION="1.19.2"
-
-          if [ "${{ matrix.platform }}" = "darwin_aarch64" ]; then
-            ORT_ARCH="arm64"
-          else
-            # Intel Mac uses 'x86_64' in ONNX Runtime naming
-            ORT_ARCH="x86_64"
-          fi
+          # ONNX Runtime 1.22.0 - matches ort crate 2.0.0-rc.10 (ORT_API_VERSION=22)
+          ORT_VERSION="1.22.0"
+          ORT_ARCH="arm64"
 
           ORT_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-osx-${ORT_ARCH}-${ORT_VERSION}.tgz"
 
@@ -157,8 +151,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # Install ONNX Runtime 1.19.2 for Windows
-          $ORT_VERSION = "1.19.2"
+          # ONNX Runtime 1.22.0 - matches ort crate 2.0.0-rc.10 (ORT_API_VERSION=22)
+          $ORT_VERSION = "1.22.0"
 
           if ("${{ matrix.platform }}" -eq "windows_amd64") {
             $ORT_ARCH = "x64"
