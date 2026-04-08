@@ -35,6 +35,11 @@ export interface OcrResult {
   annotated_image_base64: string | null
 }
 
+export interface RoiPolygon {
+  label?: string
+  points: [number, number][]  // [[x1,y1], [x2,y2], ...] normalized 0-1
+}
+
 export interface DeviceBinding {
   device_id: string
   device_name?: string
@@ -42,6 +47,8 @@ export interface DeviceBinding {
   result_metric_prefix: string
   draw_boxes: boolean
   active: boolean
+  roi_regions?: RoiPolygon[]
+  roi_overlap_threshold?: number
 }
 
 export interface BindingStatus {
@@ -85,7 +92,7 @@ interface Metric {
 // Styles
 // ============================================================================
 
-const CSS_ID = 'ocr-styles-v1'
+const CSS_ID = 'ocr-styles-v2'
 
 const STYLES = `
 .ocr {
@@ -273,17 +280,28 @@ const STYLES = `
   flex-direction: column;
   min-height: 0;
   position: relative;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(0,0,0,0.04);
+}
+
+.dark .ocr-preview-area {
+  background: rgba(255,255,255,0.04);
 }
 
 .ocr-image-preview {
   flex: 1;
   border-radius: 6px;
   overflow: hidden;
-  background: rgba(0,0,0,0.05);
+  background: rgba(0,0,0,0.03);
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 100px;
+  min-height: 120px;
+}
+
+.dark .ocr-image-preview {
+  background: rgba(255,255,255,0.02);
 }
 
 .ocr-image-preview img {
@@ -296,18 +314,22 @@ const STYLES = `
 .ocr-actions-floating {
   position: absolute;
   bottom: 8px;
-  right: 8px;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
-  gap: 6px;
-  background: rgba(255,255,255,0.9);
-  backdrop-filter: blur(8px);
-  padding: 6px;
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  gap: 8px;
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(12px);
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--ocr-border);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+  z-index: 10;
 }
 
 .dark .ocr-actions-floating {
-  background: rgba(40,40,40,0.9);
+  background: rgba(40,40,40,0.92);
+  border-color: rgba(255,255,255,0.1);
 }
 
 .ocr-actions-bottom {
@@ -375,17 +397,20 @@ const STYLES = `
 .ocr-copy-btn {
   padding: 3px 6px;
   border: 1px solid var(--ocr-border);
-  border-radius: 3px;
+  border-radius: 4px;
   font-size: 9px;
   cursor: pointer;
   background: transparent;
-  color: var(--ocr-fg);
+  color: var(--ocr-muted);
   transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
 }
 
 .ocr-copy-btn:hover {
   background: var(--ocr-hover);
-  border-color: var(--ocr-accent);
+  color: var(--ocr-fg);
+  border-color: rgba(0,0,0,0.12);
 }
 
 .ocr-text-content {
@@ -460,34 +485,45 @@ const STYLES = `
 
 /* Buttons */
 .ocr-btn {
-  padding: 8px 16px;
+  padding: 7px 14px;
   border: 1px solid var(--ocr-border);
-  border-radius: 6px;
+  border-radius: 5px;
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s;
-  background: transparent;
+  transition: all 0.15s;
+  background: var(--ocr-card);
   color: var(--ocr-fg);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
+  white-space: nowrap;
 }
 
 .ocr-btn:hover {
   background: var(--ocr-hover);
+  border-color: rgba(0,0,0,0.12);
+}
+
+.dark .ocr-btn:hover {
+  border-color: rgba(255,255,255,0.15);
 }
 
 .ocr-btn-primary {
   background: var(--ocr-accent);
   border-color: var(--ocr-accent);
-  color: #000;
+  color: #fff;
 }
 
 .ocr-btn-primary:hover {
-  opacity: 0.9;
+  opacity: 0.85;
   background: var(--ocr-accent);
+}
+
+.ocr-btn-accent {
+  border-color: var(--ocr-accent);
+  color: var(--ocr-accent);
 }
 
 .ocr-btn-danger {
@@ -505,8 +541,10 @@ const STYLES = `
 }
 
 .ocr-btn-sm {
-  padding: 4px 8px;
+  padding: 4px 10px;
   font-size: 10px;
+  border-radius: 4px;
+  gap: 4px;
 }
 
 .ocr-actions {
@@ -613,6 +651,9 @@ const STYLES = `
 .ocr-binding-actions {
   display: flex;
   gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--ocr-border);
 }
 
 /* Form */
@@ -803,25 +844,43 @@ const STYLES = `
 
 /* Binding preview styles */
 .ocr-binding-preview {
-  margin-top: 10px;
+  margin-top: 8px;
   border-radius: 6px;
   overflow: hidden;
   background: rgba(0,0,0,0.03);
+  position: relative;
+  border: 1px solid var(--ocr-border);
+}
+.dark .ocr-binding-preview {
+  background: rgba(255,255,255,0.03);
 }
 .ocr-binding-preview img {
   width: 100%;
   height: auto;
-  max-height: 120px;
+  max-height: 200px;
   object-fit: contain;
-  border-radius: 4px;
+  display: block;
 }
 .ocr-binding-text-container {
-  margin-top: 8px;
-  padding: 8px;
-  background: rgba(0,0,0,0.02);
-  border-radius: 4px;
-  max-height: 100px;
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  max-height: 80px;
   overflow-y: auto;
+  padding: 8px 10px;
+  background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0.9) 20%);
+  backdrop-filter: blur(6px);
+  border-top: 1px solid rgba(0,0,0,0.05);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ocr-fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.dark .ocr-binding-text-container {
+  background: linear-gradient(to bottom, rgba(30,30,30,0), rgba(30,30,30,0.9) 20%);
+  border-top-color: rgba(255,255,255,0.06);
 }
 .ocr-binding-text-label {
   font-size: 10px;
@@ -842,6 +901,140 @@ const STYLES = `
   font-size: 10px;
   text-align: center;
   padding: 20px;
+}
+
+/* Floating results overlay for manual test */
+.ocr-results-overlay {
+  position: absolute;
+  bottom: 48px;
+  right: 8px;
+  left: 8px;
+  max-height: 45%;
+  background: rgba(255,255,255,0.94);
+  backdrop-filter: blur(12px);
+  border-radius: 8px;
+  border: 1px solid var(--ocr-border);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 10;
+  transition: opacity 0.2s, transform 0.2s;
+}
+.dark .ocr-results-overlay {
+  background: rgba(30,30,30,0.94);
+  border-color: rgba(255,255,255,0.1);
+}
+.ocr-results-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--ocr-border);
+  flex-shrink: 0;
+  background: rgba(0,0,0,0.02);
+}
+.dark .ocr-results-overlay-header {
+  background: rgba(255,255,255,0.03);
+}
+.ocr-results-overlay-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--ocr-muted);
+}
+.ocr-results-overlay-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ocr-fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ROI Editor overlay */
+.ocr-roi-editor {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: rgba(0,0,0,0.3);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+}
+.ocr-roi-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: var(--ocr-card);
+  border-bottom: 1px solid var(--ocr-border);
+  flex-shrink: 0;
+}
+.ocr-roi-editor-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ocr-fg);
+}
+.ocr-roi-editor-canvas-wrap {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+.ocr-roi-editor-canvas-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.ocr-roi-editor-canvas-wrap canvas {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+}
+.ocr-roi-editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: var(--ocr-card);
+  border-top: 1px solid var(--ocr-border);
+  flex-shrink: 0;
+  gap: 8px;
+}
+.ocr-roi-threshold {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--ocr-muted);
+}
+.ocr-roi-threshold input[type=range] {
+  width: 80px;
+  height: 4px;
+  accent-color: var(--ocr-accent);
+}
+.ocr-roi-polygon-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  background: var(--ocr-hover);
+  border-radius: 3px;
+  font-size: 10px;
+}
+.ocr-roi-polygon-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ocr-roi-hint {
+  font-size: 9px;
+  color: var(--ocr-muted);
+  padding: 4px 10px;
 }
 `
 
@@ -869,6 +1062,9 @@ const ICONS: Record<string, string> = {
   check: '<polyline points="20 6 9 17 4 12"/>',
   x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
   alert: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
+  target: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+  eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff: '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>',
 }
 
 const Icon = ({ name, className = '', style }: { name: string; className?: string; style?: React.CSSProperties }) => (
@@ -989,6 +1185,213 @@ async function fetchDevices(): Promise<Device[]> {
 
 
 // ============================================================================
+// ROI Editor Component
+// ============================================================================
+
+const ROI_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899']
+
+interface RoiEditorProps {
+  binding: DeviceBinding
+  imageUrl?: string
+  onSave: (regions: RoiPolygon[], threshold: number) => Promise<void>
+  onCancel: () => void
+}
+
+const RoiEditor: React.FC<RoiEditorProps> = ({ binding, imageUrl, onSave, onCancel }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const imgRef = useRef<HTMLImageElement | null>(null)
+  const [regions, setRegions] = useState<RoiPolygon[]>(binding.roi_regions || [])
+  const [threshold, setThreshold] = useState(binding.roi_overlap_threshold || 0.5)
+  const [currentPoints, setCurrentPoints] = useState<[number, number][]>([])
+  const [saving, setSaving] = useState(false)
+
+  // Redraw canvas
+  const redraw = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas || !imgRef.current) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const rect = canvas.parentElement?.getBoundingClientRect()
+    if (!rect) return
+    canvas.width = rect.width
+    canvas.height = rect.height
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+    // Draw existing regions
+    regions.forEach((region, idx) => {
+      const color = ROI_COLORS[idx % ROI_COLORS.length]
+      drawPolygon(ctx, region.points, color, canvas.width, canvas.height)
+    })
+
+    // Draw current drawing
+    if (currentPoints.length > 0) {
+      const color = ROI_COLORS[regions.length % ROI_COLORS.length]
+      drawPolygon(ctx, currentPoints, color, canvas.width, canvas.height, true)
+    }
+  }, [regions, currentPoints])
+
+  const drawPolygon = (
+    ctx: CanvasRenderingContext2D,
+    points: [number, number][],
+    color: string,
+    w: number,
+    h: number,
+    isOpen = false
+  ) => {
+    if (points.length === 0) return
+    ctx.save()
+    ctx.strokeStyle = color
+    ctx.fillStyle = color + '33'
+    ctx.lineWidth = 2
+
+    ctx.beginPath()
+    ctx.moveTo(points[0][0] * w, points[0][1] * h)
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i][0] * w, points[i][1] * h)
+    }
+    if (!isOpen && points.length > 2) {
+      ctx.closePath()
+      ctx.fill()
+    }
+    ctx.stroke()
+
+    // Draw vertex dots
+    points.forEach((p) => {
+      ctx.beginPath()
+      ctx.arc(p[0] * w, p[1] * h, 4, 0, Math.PI * 2)
+      ctx.fillStyle = color
+      ctx.fill()
+      ctx.strokeStyle = '#fff'
+      ctx.lineWidth = 1
+      ctx.stroke()
+    })
+
+    ctx.restore()
+  }
+
+  useEffect(() => {
+    redraw()
+    const handleResize = () => redraw()
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [redraw])
+
+  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const x = (e.clientX - rect.left) / rect.width
+    const y = (e.clientY - rect.top) / rect.height
+
+    // Check if clicking near first point to close polygon
+    if (currentPoints.length >= 3) {
+      const first = currentPoints[0]
+      const dist = Math.sqrt((x - first[0]) ** 2 + (y - first[1]) ** 2)
+      if (dist < 0.03) {
+        // Close the polygon
+        setRegions([...regions, { points: [...currentPoints] as [number, number][] }])
+        setCurrentPoints([])
+        return
+      }
+    }
+
+    setCurrentPoints([...currentPoints, [x, y] as [number, number]])
+  }
+
+  const handleDoubleClick = () => {
+    if (currentPoints.length >= 3) {
+      setRegions([...regions, { points: [...currentPoints] as [number, number][] }])
+      setCurrentPoints([])
+    }
+  }
+
+  const removeRegion = (idx: number) => {
+    setRegions(regions.filter((_, i) => i !== idx))
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await onSave(regions, threshold)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="ocr-roi-editor">
+      <div className="ocr-roi-editor-header">
+        <span className="ocr-roi-editor-title">
+          ROI Editor — {binding.device_name || binding.device_id}
+        </span>
+        <button className="ocr-btn ocr-btn-sm" onClick={onCancel}>
+          <Icon name="x" style={{ width: '12px', height: '12px' }} />
+        </button>
+      </div>
+      <div className="ocr-roi-editor-canvas-wrap">
+        {imageUrl && (
+          <img
+            ref={(el) => { if (el) { imgRef.current = el } }}
+            src={imageUrl}
+            alt="ROI base"
+            onLoad={() => { setTimeout(redraw, 50) }}
+          />
+        )}
+        <canvas
+          ref={canvasRef}
+          onClick={handleCanvasClick}
+          onDoubleClick={handleDoubleClick}
+        />
+      </div>
+      <div className="ocr-roi-hint">
+        Click to add vertices. Double-click or click near first point to close polygon.
+      </div>
+      <div className="ocr-roi-editor-footer">
+        <div className="ocr-roi-threshold">
+          <span>Threshold:</span>
+          <input
+            type="range"
+            min={0.1}
+            max={1}
+            step={0.05}
+            value={threshold}
+            onChange={(e) => setThreshold(parseFloat(e.target.value))}
+          />
+          <span>{Math.round(threshold * 100)}%</span>
+        </div>
+        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', flex: 1, justifyContent: 'center' }}>
+          {regions.map((r, idx) => (
+            <div key={idx} className="ocr-roi-polygon-item">
+              <span className="ocr-roi-polygon-dot" style={{ background: ROI_COLORS[idx % ROI_COLORS.length] }} />
+              <span>{r.label || `Region ${idx + 1}`}</span>
+              <button
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', color: 'var(--ocr-danger)' }}
+                onClick={() => removeRegion(idx)}
+              >
+                <Icon name="x" style={{ width: '10px', height: '10px' }} />
+              </button>
+            </div>
+          ))}
+          {currentPoints.length > 0 && (
+            <div className="ocr-roi-polygon-item" style={{ opacity: 0.6 }}>
+              <span className="ocr-roi-polygon-dot" style={{ background: ROI_COLORS[regions.length % ROI_COLORS.length] }} />
+              Drawing ({currentPoints.length} pts)
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <button className="ocr-btn ocr-btn-sm" onClick={onCancel}>Cancel</button>
+          <button className="ocr-btn ocr-btn-sm ocr-btn-primary" onClick={handleSave} disabled={saving}>
+            {saving ? <div className="ocr-spinner" /> : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ============================================================================
 // Main Component
 // ============================================================================
 
@@ -1005,6 +1408,10 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
   const [isDragging, setIsDragging] = useState(false)
   const [ocrResult, setOcrResult] = useState<OcrResult | null>(null)
   const [recognizing, setRecognizing] = useState(false)
+  const [showResults, setShowResults] = useState(true)
+
+  // ROI editor state
+  const [roiEditorDeviceId, setRoiEditorDeviceId] = useState<string | null>(null)
 
   // Device bindings state
   const [devices, setDevices] = useState<Device[]>([])
@@ -1308,32 +1715,37 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
       ) : (
         <>
           <div className="ocr-preview-area">
-            {/* Show annotated image or original image */}
+            {/* Show annotated image or original image — fills entire area */}
             {ocrResult?.annotated_image_base64 ? (
-              <div className="ocr-annotated-preview">
-                <img src={`data:image/jpeg;base64,${ocrResult.annotated_image_base64}`} alt="OCR Result" />
+              <div className="ocr-image-preview">
+                <img src={`data:image/jpeg;base64,${ocrResult.annotated_image_base64}`} alt="OCR Result" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
               </div>
             ) : (
               <div className="ocr-image-preview">
-                <img src={selectedImage} alt="Preview" />
+                <img src={selectedImage} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
               </div>
             )}
 
-            {/* Show detected text */}
-            {ocrResult && (
-              <div className="ocr-text-results">
-                <div className="ocr-text-header">
-                  <span className="ocr-text-label">Detected Text</span>
+            {/* Floating results overlay */}
+            {ocrResult && showResults && (
+              <div className="ocr-results-overlay">
+                <div className="ocr-results-overlay-header">
+                  <span className="ocr-results-overlay-title">
+                    Detected Text ({ocrResult.total_blocks} blocks, {(ocrResult.avg_confidence * 100).toFixed(0)}%)
+                  </span>
+                  <button className="ocr-copy-btn" onClick={() => setShowResults(false)} title="Hide results">
+                    <Icon name="eyeOff" style={{ width: '12px', height: '12px' }} />
+                  </button>
                 </div>
-                <div className="ocr-text-content">
+                <div className="ocr-results-overlay-body">
                   {ocrResult.full_text || <span className="ocr-text-placeholder">No text detected</span>}
                 </div>
               </div>
             )}
 
-            {/* Action buttons at bottom */}
-            <div className="ocr-actions-bottom">
-              <button className="ocr-btn ocr-btn-sm" onClick={() => { setSelectedImage(null); setOcrResult(null); setError(null); }}>
+            {/* Floating action bar: Clear + OCR + Show/Hide Results */}
+            <div className="ocr-actions-floating">
+              <button className="ocr-btn ocr-btn-sm" onClick={() => { setSelectedImage(null); setOcrResult(null); setError(null); setShowResults(true); }}>
                 Clear
               </button>
               <button
@@ -1353,6 +1765,15 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
                   </>
                 )}
               </button>
+              {ocrResult && (
+                <button
+                  className={`ocr-btn ocr-btn-sm ${showResults ? '' : 'ocr-btn-accent'}`}
+                  onClick={() => setShowResults(!showResults)}
+                >
+                  <Icon name={showResults ? 'eyeOff' : 'eye'} style={{ width: '12px', height: '12px' }} />
+                  {showResults ? 'Hide' : 'Show'} ({ocrResult.total_blocks})
+                </button>
+              )}
             </div>
           </div>
         </>
@@ -1511,22 +1932,30 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
                 </div>
               )}
 
-              {/* Preview image */}
-              {bindingStatus.last_annotated_image && (
+              {/* Preview image with floating text overlay */}
+              {(bindingStatus.last_annotated_image || bindingStatus.last_image) && (
                 <div className="ocr-binding-preview">
-                  <img src={bindingStatus.last_annotated_image} alt="OCR Result" />
+                  <img src={bindingStatus.last_annotated_image || bindingStatus.last_image} alt="OCR Result" />
+                  {bindingStatus.last_full_text && (
+                    <div className="ocr-binding-text-container">
+                      <div className="ocr-binding-text">
+                        {bindingStatus.last_full_text}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Text content */}
-              <div className="ocr-binding-text-container">
-                <div className="ocr-binding-text-label">Recognized Text</div>
-                <div className="ocr-binding-text">
-                  {bindingStatus.last_full_text || 'No results'}
-                </div>
-              </div>
-
               <div className="ocr-binding-actions">
+                <button
+                  className="ocr-btn ocr-btn-sm"
+                  onClick={() => setRoiEditorDeviceId(bindingStatus.binding.device_id)}
+                  disabled={loading}
+                  title="Edit ROI regions"
+                >
+                  <Icon name="target" style={{ width: '12px', height: '12px' }} />
+                  ROI{bindingStatus.binding.roi_regions && bindingStatus.binding.roi_regions.length > 0 ? ` (${bindingStatus.binding.roi_regions.length})` : ''}
+                </button>
                 <button
                   className="ocr-btn ocr-btn-sm"
                   onClick={() => handleToggle(bindingStatus.binding.device_id, bindingStatus.binding.active)}
@@ -1544,6 +1973,24 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
                   Unbind
                 </button>
               </div>
+
+              {/* ROI Editor for this binding */}
+              {roiEditorDeviceId === bindingStatus.binding.device_id && (
+                <RoiEditor
+                  binding={bindingStatus.binding}
+                  imageUrl={bindingStatus.last_annotated_image || bindingStatus.last_image || undefined}
+                  onSave={async (regions, threshold) => {
+                    await executeCommand('update_roi', {
+                      device_id: bindingStatus.binding.device_id,
+                      roi_regions: regions,
+                      roi_overlap_threshold: threshold,
+                    })
+                    setRoiEditorDeviceId(null)
+                    refresh()
+                  }}
+                  onCancel={() => setRoiEditorDeviceId(null)}
+                />
+              )}
             </div>
           ))
         )}
