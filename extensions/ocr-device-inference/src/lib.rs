@@ -419,8 +419,12 @@ impl OcrEngine {
             }
             Language::English => {
                 if self.recognizer_english.is_none() {
-                    let config = usls::Config::ppocr_rec_v4_en()
+                    // English recognizer needs its own vocab (96 chars: 0-9, A-Z, a-z, punctuation)
+                    // Must override usls default remote path to prevent GitHub download
+                    let vocab_path = models_dir.join("en_dict.txt");
+                    let config = usls::Config::svtr()
                         .with_model_file(&models_dir.join("rec_en.onnx").to_string_lossy())
+                        .with_vocab_txt(&vocab_path.to_string_lossy())
                         .with_device_all(usls::Device::Cpu(0))
                         .with_model_ixx(0, 3, 960.into())
                         .commit()

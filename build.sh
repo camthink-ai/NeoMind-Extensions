@@ -564,10 +564,18 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
         # Copy models from extension directory if available
         EXT_MODELS_DIR="$EXT_DIR/models"
         if [ -d "$EXT_MODELS_DIR" ]; then
-            for model_file in "$EXT_MODELS_DIR"/*.onnx; do
+            # Copy model files (.onnx, .bin, .pt, etc.)
+            for model_file in "$EXT_MODELS_DIR"/*.onnx "$EXT_MODELS_DIR"/*.bin; do
                 if [ -f "$model_file" ]; then
                     cp "$model_file" "$PACKAGE_DIR/models/"
                     echo -e "    ${BLUE}→${NC} Including $(basename $model_file)"
+                fi
+            done
+            # Copy text resources (vocab.txt, labels.txt, etc.)
+            for txt_file in "$EXT_MODELS_DIR"/*.txt; do
+                if [ -f "$txt_file" ]; then
+                    cp "$txt_file" "$PACKAGE_DIR/models/"
+                    echo -e "    ${BLUE}→${NC} Including $(basename $txt_file)"
                 fi
             done
         fi
