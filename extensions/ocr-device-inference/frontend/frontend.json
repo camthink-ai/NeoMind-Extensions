@@ -11,7 +11,7 @@
       "icon": "file-text",
       "defaultSize": { "width": 450, "height": 500 },
       "minSize": { "width": 350, "height": 400 },
-      "maxSize": { "width": 600, "height": 700 },
+      "maxSize": { "width": 600, "height": 800 },
       "configSchema": {
         "drawBoxes": {
           "type": "boolean",

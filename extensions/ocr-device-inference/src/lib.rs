@@ -55,6 +55,14 @@ impl std::fmt::Display for Language {
     }
 }
 
+/// ROI polygon region for filtering text blocks
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoiPolygon {
+    pub label: Option<String>,
+    /// Vertices as [[x1,y1], [x2,y2], ...] in normalized coords (0.0-1.0)
+    pub points: Vec<[f32; 2]>,
+}
+
 /// Device binding configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceBinding {
@@ -66,6 +74,14 @@ pub struct DeviceBinding {
     pub active: bool,
     #[serde(default)]
     pub language: Language,
+    #[serde(default)]
+    pub roi_regions: Vec<RoiPolygon>,
+    #[serde(default = "default_overlap_threshold")]
+    pub roi_overlap_threshold: f32,
+}
+
+fn default_overlap_threshold() -> f32 {
+    0.5
 }
 
 impl Default for DeviceBinding {
@@ -78,6 +94,8 @@ impl Default for DeviceBinding {
             draw_boxes: true,
             active: true,
             language: Language::default(),
+            roi_regions: Vec::new(),
+            roi_overlap_threshold: default_overlap_threshold(),
         }
     }
 }
@@ -89,6 +107,53 @@ pub struct BoundingBox {
     pub y: f32,
     pub width: f32,
     pub height: f32,
+}
+
+/// Ray casting point-in-polygon test (works for convex and concave polygons)
+fn point_in_polygon(px: f32, py: f32, polygon: &[[f32; 2]]) -> bool {
+    let n = polygon.len();
+    if n < 3 {
+        return false;
+    }
+    let mut inside = false;
+    let mut j = n - 1;
+    for i in 0..n {
+        let xi = polygon[i][0];
+        let yi = polygon[i][1];
+        let xj = polygon[j][0];
+        let yj = polygon[j][1];
+        if ((yi > py) != (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi) {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+/// Sample 9 points (3x3 grid) from text bbox, check overlap with ROI polygon
+fn compute_overlap_ratio(text_bbox: &BoundingBox, roi: &RoiPolygon) -> f32 {
+    if roi.points.len() < 3 {
+        return 0.0;
+    }
+    let sample_points: [[f32; 2]; 9] = [
+        // 3x3 grid within the bounding box
+        [text_bbox.x, text_bbox.y],
+        [text_bbox.x + text_bbox.width * 0.5, text_bbox.y],
+        [text_bbox.x + text_bbox.width, text_bbox.y],
+        [text_bbox.x, text_bbox.y + text_bbox.height * 0.5],
+        [text_bbox.x + text_bbox.width * 0.5, text_bbox.y + text_bbox.height * 0.5],
+        [text_bbox.x + text_bbox.width, text_bbox.y + text_bbox.height * 0.5],
+        [text_bbox.x, text_bbox.y + text_bbox.height],
+        [text_bbox.x + text_bbox.width * 0.5, text_bbox.y + text_bbox.height],
+        [text_bbox.x + text_bbox.width, text_bbox.y + text_bbox.height],
+    ];
+    let hits = sample_points.iter().filter(|p| point_in_polygon(p[0], p[1], &roi.points)).count();
+    hits as f32 / 9.0
+}
+
+/// OR logic: matches if overlap with ANY region >= threshold
+fn text_block_matches_roi(text_bbox: &BoundingBox, regions: &[RoiPolygon], threshold: f32) -> bool {
+    regions.iter().any(|roi| compute_overlap_ratio(text_bbox, roi) >= threshold)
 }
 
 /// Single text block recognition result
@@ -130,6 +195,12 @@ pub struct BindingStatus {
     pub last_full_text: Option<String>,
     /// Last annotated image with bounding boxes (base64 data URI)
     pub last_annotated_image: Option<String>,
+}
+
+/// Persisted extension configuration
+#[derive(Serialize, Deserialize)]
+struct OcrConfig {
+    bindings: Vec<DeviceBinding>,
 }
 
 // ============================================================================
@@ -439,7 +510,7 @@ impl OcrEngine {
         Ok(())
     }
 
-    pub fn recognize(&mut self, image_data: &[u8], device_id: &str, language: &Language) -> Result<OcrResult> {
+    pub fn recognize(&mut self, image_data: &[u8], device_id: &str, language: &Language, roi_regions: &[RoiPolygon], roi_overlap_threshold: f32) -> Result<OcrResult> {
         let start = std::time::Instant::now();
 
         // Lazy load on first use
@@ -551,6 +622,18 @@ impl OcrEngine {
         }
 
         tracing::info!("[OcrDeviceInference] Total text blocks: {}, full text length: {}", text_blocks.len(), all_texts.join("\n").len());
+
+        // Apply ROI filtering if regions are defined
+        if !roi_regions.is_empty() {
+            let before_count = text_blocks.len();
+            text_blocks.retain(|b| text_block_matches_roi(&b.bbox, roi_regions, roi_overlap_threshold));
+            all_texts = text_blocks.iter().map(|b| b.text.clone()).collect();
+            total_confidence = text_blocks.iter().map(|b| b.confidence).sum();
+            tracing::info!(
+                "[OcrDeviceInference] ROI filter: {} -> {} text blocks ({} regions, threshold {:.2})",
+                before_count, text_blocks.len(), roi_regions.len(), roi_overlap_threshold
+            );
+        }
 
         let inference_time = start.elapsed().as_millis() as u64;
         let timestamp = Utc::now().timestamp();
@@ -704,6 +787,57 @@ impl OcrDeviceInference {
             total_inferences: Arc::new(AtomicU64::new(0)),
             total_text_blocks: Arc::new(AtomicU64::new(0)),
             total_errors: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    fn config_path(&self) -> std::path::PathBuf {
+        if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
+            std::path::PathBuf::from(ext_dir).join("config.json")
+        } else if let Ok(cwd) = std::env::current_dir() {
+            cwd.join("config.json")
+        } else {
+            std::path::PathBuf::from("config.json")
+        }
+    }
+
+    fn persist_config(&self) {
+        let bindings: Vec<DeviceBinding> = self.bindings.read().values().cloned().collect();
+        let config = OcrConfig { bindings };
+        let path = self.config_path();
+        match serde_json::to_string_pretty(&config) {
+            Ok(json_str) => {
+                if let Err(e) = std::fs::write(&path, json_str) {
+                    tracing::warn!("[OcrDeviceInference] Failed to persist config: {}", e);
+                } else {
+                    tracing::info!("[OcrDeviceInference] Config persisted to {:?}", path);
+                }
+            }
+            Err(e) => tracing::warn!("[OcrDeviceInference] Failed to serialize config: {}", e),
+        }
+    }
+
+    fn load_config_from_file(&self) -> Option<OcrConfig> {
+        let path = self.config_path();
+        if !path.exists() {
+            return None;
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                match serde_json::from_str::<OcrConfig>(&content) {
+                    Ok(config) => {
+                        tracing::info!("[OcrDeviceInference] Loaded config with {} bindings from {:?}", config.bindings.len(), path);
+                        Some(config)
+                    }
+                    Err(e) => {
+                        tracing::warn!("[OcrDeviceInference] Failed to parse config: {}", e);
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("[OcrDeviceInference] Failed to read config: {}", e);
+                None
+            }
         }
     }
 
@@ -1110,6 +1244,60 @@ impl Extension for OcrDeviceInference {
                 samples: vec![],
                 parameter_groups: Vec::new(),
             },
+            ExtensionCommand {
+                name: "update_roi".to_string(),
+                display_name: "Update ROI".to_string(),
+                description: "Update ROI polygon regions for a device binding".to_string(),
+                payload_template: String::new(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "device_id".to_string(),
+                        display_name: "Device ID".to_string(),
+                        description: "ID of the device binding".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "roi_regions".to_string(),
+                        display_name: "ROI Regions".to_string(),
+                        description: "JSON array of ROI polygon regions".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "roi_overlap_threshold".to_string(),
+                        display_name: "Overlap Threshold".to_string(),
+                        description: "Minimum overlap ratio (0.0-1.0) to match a region".to_string(),
+                        param_type: MetricDataType::Float,
+                        required: false,
+                        default_value: Some(ParamMetricValue::Float(0.5)),
+                        min: Some(0.1),
+                        max: Some(1.0),
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "configure".to_string(),
+                display_name: "Configure".to_string(),
+                description: "Load persisted configuration".to_string(),
+                payload_template: String::new(),
+                parameters: vec![],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                parameter_groups: Vec::new(),
+            },
         ]
     }
 
@@ -1203,6 +1391,11 @@ impl Extension for OcrDeviceInference {
                     .to_string();
                 let draw_boxes = args["draw_boxes"].as_bool().unwrap_or(true);
 
+                let roi_regions: Vec<RoiPolygon> = args["roi_regions"].as_array()
+                    .map(|arr| arr.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect())
+                    .unwrap_or_default();
+                let roi_overlap_threshold = args["roi_overlap_threshold"].as_f64().unwrap_or(0.5) as f32;
+
                 let binding = DeviceBinding {
                     device_id: device_id.clone(),
                     device_name,
@@ -1213,6 +1406,8 @@ impl Extension for OcrDeviceInference {
                     language: args["language"].as_str()
                         .and_then(|s| serde_json::from_str(&format!("\"{}\"", s)).ok())
                         .unwrap_or_default(),
+                    roi_regions,
+                    roi_overlap_threshold,
                 };
 
                 self.bindings.write().insert(device_id.clone(), binding.clone());
@@ -1228,6 +1423,7 @@ impl Extension for OcrDeviceInference {
                     last_annotated_image: None,
                 });
 
+                self.persist_config();
                 tracing::info!("[OcrDeviceInference] Bound device: {}", device_id);
                 Ok(json!({"success": true, "device_id": device_id}))
             }
@@ -1239,6 +1435,7 @@ impl Extension for OcrDeviceInference {
                 self.bindings.write().remove(device_id);
                 self.binding_stats.write().remove(device_id);
 
+                self.persist_config();
                 tracing::info!("[OcrDeviceInference] Unbound device: {}", device_id);
                 Ok(json!({"success": true}))
             }
@@ -1280,7 +1477,7 @@ impl Extension for OcrDeviceInference {
 
                     tracing::info!("[OcrDeviceInference] Calling recognize with language: {:?}", language);
                     let mut engine = self.ocr_engine.lock();
-                    let result = engine.recognize(&image_data, "manual", &language)?;
+                    let result = engine.recognize(&image_data, "manual", &language, &[], 0.5)?;
                     tracing::info!("[OcrDeviceInference] Recognize returned {} text blocks", result.text_blocks.len());
 
                     self.total_inferences.fetch_add(1, Ordering::Relaxed);
@@ -1310,11 +1507,71 @@ impl Extension for OcrDeviceInference {
                     stats.binding.active = active;
                 }
 
+                self.persist_config();
                 Ok(json!({"success": true, "device_id": device_id, "active": active}))
             }
 
             "get_status" => {
                 Ok(json!({"success": true, "data": self.get_status()}))
+            }
+
+            "update_roi" => {
+                let device_id = args["device_id"].as_str()
+                    .ok_or_else(|| ExtensionError::ExecutionFailed("device_id required".to_string()))?
+                    .to_string();
+
+                let roi_regions: Vec<RoiPolygon> = args["roi_regions"].as_array()
+                    .map(|arr| arr.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect())
+                    .unwrap_or_default();
+
+                let roi_overlap_threshold = args["roi_overlap_threshold"].as_f64().unwrap_or(0.5) as f32;
+
+                // Update bindings
+                if let Some(binding) = self.bindings.write().get_mut(&device_id) {
+                    binding.roi_regions = roi_regions.clone();
+                    binding.roi_overlap_threshold = roi_overlap_threshold;
+                } else {
+                    return Err(ExtensionError::ExecutionFailed(
+                        format!("Binding not found for device: {}", device_id)
+                    ));
+                }
+
+                // Update binding_stats
+                if let Some(stats) = self.binding_stats.write().get_mut(&device_id) {
+                    stats.binding.roi_regions = roi_regions;
+                    stats.binding.roi_overlap_threshold = roi_overlap_threshold;
+                }
+
+                self.persist_config();
+                tracing::info!("[OcrDeviceInference] Updated ROI for device: {}", device_id);
+                Ok(json!({"success": true, "device_id": device_id}))
+            }
+
+            "configure" => {
+                if let Some(config) = self.load_config_from_file() {
+                    let mut bindings = self.bindings.write();
+                    let mut stats = self.binding_stats.write();
+                    for binding in config.bindings {
+                        let device_id = binding.device_id.clone();
+                        let binding_clone = binding.clone();
+                        stats.entry(device_id.clone()).and_modify(|s| {
+                            s.binding = binding_clone;
+                        }).or_insert_with(|| BindingStatus {
+                            binding,
+                            last_inference: None,
+                            total_inferences: 0,
+                            total_text_blocks: 0,
+                            last_error: None,
+                            last_image: None,
+                            last_text_blocks: None,
+                            last_full_text: None,
+                            last_annotated_image: None,
+                        });
+                        bindings.insert(device_id.clone(), stats.get(&device_id).unwrap().binding.clone());
+                    }
+                    tracing::info!("[OcrDeviceInference] Loaded persisted config with {} bindings", bindings.len());
+                }
+                Ok(json!({"success": true}))
             }
 
             _ => Err(ExtensionError::ExecutionFailed(format!("Unknown command: {}", command))),
@@ -1402,7 +1659,7 @@ impl Extension for OcrDeviceInference {
                         {
                             // recognize() will call ensure_loaded() internally for lazy init
                             let mut engine = self.ocr_engine.lock();
-                            match engine.recognize(&image_data, device_id, &binding.language) {
+                            match engine.recognize(&image_data, device_id, &binding.language, &binding.roi_regions, binding.roi_overlap_threshold) {
                                 Ok(result) => {
                                     tracing::info!(
                                         "[OcrDeviceInference] Inference: device={}, blocks={}, time={}ms",
