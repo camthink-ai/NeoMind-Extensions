@@ -1,7 +1,7 @@
 {
   "id": "image-analyzer-v2",
   "name": "image analyzer",
-  "version": "2.4.16",
+  "version": "2.4.17",
   "description": "Image analysis extension using YOLOv8",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
@@ -14,19 +14,19 @@
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/image-analyzer-v2",
   "builds": {
     "darwin-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.16/image-analyzer-v2-2.4.16-darwin_aarch64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.17/image-analyzer-v2-2.4.17-darwin_aarch64.nep"
     },
     "darwin-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.16/image-analyzer-v2-2.4.16-darwin_x86_64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.17/image-analyzer-v2-2.4.17-darwin_x86_64.nep"
     },
     "linux-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.16/image-analyzer-v2-2.4.16-linux_amd64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.17/image-analyzer-v2-2.4.17-linux_amd64.nep"
     },
     "linux-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.16/image-analyzer-v2-2.4.16-linux_arm64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.17/image-analyzer-v2-2.4.17-linux_arm64.nep"
     },
     "windows-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.16/image-analyzer-v2-2.4.16-windows_x86_64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.4.17/image-analyzer-v2-2.4.17-windows_x86_64.nep"
     }
   },
   "frontend": {
