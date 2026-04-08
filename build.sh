@@ -415,6 +415,24 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             if [ -n "$ORT_LIB" ] && [ -f "$ORT_LIB" ]; then
                 cp "$ORT_LIB" "$BINARY_DIR/"
                 echo -e "    ${GREEN}→${NC} Bundled ONNX Runtime: $(basename $ORT_LIB)"
+
+                # Verify architecture matches the target platform
+                if [ "$OS" = "Darwin" ] && command -v file &> /dev/null; then
+                    BUNDLED_ORT_ARCH=$(file "$BINARY_DIR/$(basename $ORT_LIB)" 2>/dev/null | grep -oE 'x86_64|arm64' || echo "unknown")
+                    EXPECTED_ARCH=""
+                    case "$PLATFORM" in
+                        darwin_aarch64) EXPECTED_ARCH="arm64" ;;
+                        darwin_x86_64) EXPECTED_ARCH="x86_64" ;;
+                    esac
+                    if [ -n "$EXPECTED_ARCH" ] && [ "$BUNDLED_ORT_ARCH" != "$EXPECTED_ARCH" ]; then
+                        echo -e "    ${RED}✗ ERROR${NC} ORT architecture mismatch! Expected $EXPECTED_ARCH but got $BUNDLED_ORT_ARCH"
+                        echo -e "    ${RED}✗${NC} ORT source: $ORT_LIB"
+                        echo -e "    ${RED}✗${NC} ORT_LIB_PATH: $ORT_LIB_PATH"
+                        exit 1
+                    else
+                        echo -e "    ${GREEN}✓${NC} ORT architecture verified: $BUNDLED_ORT_ARCH"
+                    fi
+                fi
             fi
         fi
 
@@ -467,20 +485,42 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             # Get all dependent dylibs with absolute paths
             DEPS=$(otool -L "$BINARY_PATH" 2>/dev/null | \
                    grep -oE "/Users/[^ ]+\.dylib" || true)
-            
+
             if [ -n "$DEPS" ]; then
                 # Add @executable_path to rpath
                 install_name_tool -add_rpath "@executable_path" \
                     "$BINARY_PATH" 2>/dev/null || true
-                
+
                 # Calculate hash of source library
                 SOURCE_HASH=$(shasum -a 256 "$LIB_FILE" | cut -d' ' -f1)
-                
+
                 echo "$DEPS" | while read -r dep; do
                     if [ -f "$dep" ]; then
                         LIB_NAME=$(basename "$dep")
+
+                        # CRITICAL: Skip ONNX Runtime - we already bundled the correct
+                        # architecture version from ORT_LIB_PATH above. The otool path
+                        # points to the compile-time linked version which may have the
+                        # wrong architecture (e.g. x86_64 on arm64 runner via Rosetta).
+                        if [[ "$LIB_NAME" == *onnxruntime* ]]; then
+                            # Only fix the reference path, don't re-copy the file
+                            if [ -f "$BINARY_DIR/$LIB_NAME" ]; then
+                                install_name_tool -change "$dep" "@executable_path/$LIB_NAME" \
+                                    "$BINARY_PATH" 2>/dev/null && \
+                                    echo -e "    ${GREEN}→${NC} Fixed ORT reference (kept bundled version): $LIB_NAME"
+                            else
+                                # Fallback: if we somehow didn't bundle ORT, copy from build env
+                                DEP_HASH=$(shasum -a 256 "$dep" | cut -d' ' -f1)
+                                cp "$dep" "$BINARY_DIR/$LIB_NAME"
+                                install_name_tool -change "$dep" "@executable_path/$LIB_NAME" \
+                                    "$BINARY_PATH" 2>/dev/null && \
+                                    echo -e "    ${YELLOW}⚠${NC} Copied ORT from build env (no bundled version): $LIB_NAME"
+                            fi
+                            continue
+                        fi
+
                         DEP_HASH=$(shasum -a 256 "$dep" | cut -d' ' -f1)
-                        
+
                         if [ "$SOURCE_HASH" == "$DEP_HASH" ]; then
                             # Self-reference - copy to package and fix reference
                             cp "$dep" "$BINARY_DIR/$LIB_NAME"
