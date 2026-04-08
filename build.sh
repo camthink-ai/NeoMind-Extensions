@@ -805,16 +805,29 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             OUTPUT_FILE="dist/${ext}-${PACKAGE_VERSION}-${PLATFORM}.nep"
         fi
         # Resolve absolute output path BEFORE changing directory
+        # Create dist/ directory first to ensure it exists
+        mkdir -p "$(dirname "$OUTPUT_FILE")"
         OUTPUT_ABS="$(cd "$(dirname "$OUTPUT_FILE")" && pwd)/$(basename "$OUTPUT_FILE")"
 
+        # Save current directory to return to after packaging
+        PRE_PKG_DIR="$(pwd)"
+
         cd "$PACKAGE_DIR"
+
+        # Export output path for Python script (avoids shell string escaping issues)
+        export NEOMIND_OUTPUT_ABS="$OUTPUT_ABS"
 
         # Use Python zipfile for reliable CRC handling
         # macOS zip command has a known bug producing incorrect CRC32 for large files
         if command -v python3 &> /dev/null; then
-            python3 -c "
+            python3 << 'PYEOF'
 import zipfile, os, sys
-output = os.path.abspath(r'$OUTPUT_ABS')
+
+output = os.path.normpath(os.environ.get('NEOMIND_OUTPUT_ABS', ''))
+if not output:
+    print("ERROR: NEOMIND_OUTPUT_ABS not set", file=sys.stderr)
+    sys.exit(1)
+
 os.makedirs(os.path.dirname(output), exist_ok=True)
 with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zf:
     for root, dirs, files in os.walk('.'):
@@ -831,7 +844,8 @@ with zipfile.ZipFile(output, 'r') as zf:
     if bad is not None:
         print(f'ERROR: CRC check failed for: {bad}', file=sys.stderr)
         sys.exit(1)
-"
+print(f'Created: {output} ({os.path.getsize(output)} bytes)')
+PYEOF
         elif command -v zip &> /dev/null; then
             zip -r -q "$OLDPWD/$OUTPUT_FILE" .
         elif command -v pwsh &> /dev/null; then
@@ -843,20 +857,20 @@ with zipfile.ZipFile(output, 'r') as zf:
             echo -e "${RED}Error: No zip utility available${NC}"
             exit 1
         fi
-        cd - > /dev/null
+        cd "$PRE_PKG_DIR"
 
-        # Calculate checksum
+        # Calculate checksum using absolute path
         if command -v sha256sum &> /dev/null; then
-            CHECKSUM=$(sha256sum "$OUTPUT_FILE" | cut -d' ' -f1)
+            CHECKSUM=$(sha256sum "$OUTPUT_ABS" | cut -d' ' -f1)
         else
-            CHECKSUM=$(shasum -a 256 "$OUTPUT_FILE" | cut -d' ' -f1)
+            CHECKSUM=$(shasum -a 256 "$OUTPUT_ABS" | cut -d' ' -f1)
         fi
         echo "$CHECKSUM  $(basename $OUTPUT_FILE)" >> dist/checksums.txt
 
         # Cleanup
         rm -rf "$TEMP_DIR"
 
-        echo -e "  ${GREEN}✓${NC} $ext -> dist/$(basename $OUTPUT_FILE)"
+        echo -e "  ${GREEN}✓${NC} $ext -> $OUTPUT_FILE"
     done
 
     echo ""
