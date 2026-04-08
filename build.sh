@@ -422,7 +422,6 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                     EXPECTED_ARCH=""
                     case "$PLATFORM" in
                         darwin_aarch64) EXPECTED_ARCH="arm64" ;;
-                        darwin_x86_64) EXPECTED_ARCH="x86_64" ;;
                     esac
                     if [ -n "$EXPECTED_ARCH" ] && [ "$BUNDLED_ORT_ARCH" != "$EXPECTED_ARCH" ]; then
                         echo -e "    ${RED}✗ ERROR${NC} ORT architecture mismatch! Expected $EXPECTED_ARCH but got $BUNDLED_ORT_ARCH"
