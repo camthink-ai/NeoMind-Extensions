@@ -34,6 +34,7 @@ usls = { version = "0.1.11", default-features = false, features = ["yolo", "ort-
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 nokhwa = { version = "0.10", features = ["input-native"] }
 crossbeam-channel = "0.5"
+ffmpeg-next = { version = "7", default-features = false, features = ["codec", "format", "software-scaling"] }
 
 [features]
 default = []
