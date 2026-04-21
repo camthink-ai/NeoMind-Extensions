@@ -482,8 +482,9 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             fi
             
             # Get all dependent dylibs with absolute paths
+            # Match: /Users/ (build env), /opt/homebrew/ (Homebrew), /usr/local/ (Intel Homebrew)
             DEPS=$(otool -L "$BINARY_PATH" 2>/dev/null | \
-                   grep -oE "/Users/[^ ]+\.dylib" || true)
+                   grep -oE "(/Users/|/opt/homebrew/|/usr/local/)[^ ]+\.dylib" || true)
 
             if [ -n "$DEPS" ]; then
                 # Add @executable_path to rpath
