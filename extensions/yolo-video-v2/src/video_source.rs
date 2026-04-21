@@ -84,6 +84,13 @@ pub fn parse_source_url(url: &str) -> Result<SourceType, String> {
             width: 1920,
             height: 1080,
         })
+    } else if url.starts_with("http://") || url.starts_with("https://") {
+        // HTTP/HTTPS URLs: MP4, MKV, FLV, M3U8, etc. — FFmpeg handles them all
+        Ok(SourceType::File {
+            path: url.to_string(),
+            loop_: false,
+            start_time_secs: 0.0,
+        })
     } else {
         // Default to camera
         Ok(SourceType::Camera {
