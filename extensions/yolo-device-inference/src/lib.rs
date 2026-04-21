@@ -1467,13 +1467,11 @@ impl Extension for YoloDeviceInference {
         event_type: &str,
         payload: &serde_json::Value,
     ) -> Result<()> {
-        eprintln!("[YoloDeviceInference] handle_event called: event_type={}", event_type);
-        tracing::info!("[YoloDeviceInference] handle_event called: event_type={}", event_type);
-
-        eprintln!("[YoloDeviceInference] Checking event_type: {}", event_type);
         if event_type != "DeviceMetric" {
             return Ok(());
         }
+
+        tracing::debug!("[YoloDeviceInference] handle_event: type={}", event_type);
 
         // Extract event data from the standardized format
         let inner_payload = payload.get("payload").unwrap_or(payload);
@@ -1486,106 +1484,89 @@ impl Extension for YoloDeviceInference {
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
 
-        eprintln!("[YoloDeviceInference] Processing: device={}, metric={}", device_id, metric);
-        tracing::info!("[YoloDeviceInference] Processing: device={}, metric={}", device_id, metric);
+        tracing::debug!("[YoloDeviceInference] Processing: device={}, metric={}", device_id, metric);
 
         let value = inner_payload.get("value");
 
-        // Check if this device is bound
-        let bindings = self.bindings.read();
-        let binding = bindings.get(device_id).cloned();
-        eprintln!("[YoloDeviceInference] Looking up device {}, bindings map has {} entries", device_id, bindings.len());
-
-        eprintln!("[YoloDeviceInference] Checking binding for device: {}", device_id);
-        if binding.is_none() {
-            // Log available bindings for debugging
+        // Check if this device is bound - early return for unbound devices
+        let binding = {
             let bindings = self.bindings.read();
-            let bound_devices: Vec<&String> = bindings.keys().collect();
-            eprintln!("[YoloDeviceInference] Device {} not bound. Bound devices: {:?}", device_id, bound_devices);
+            bindings.get(device_id).cloned()
+        };
+
+        let Some(binding) = binding else {
+            return Ok(());
+        };
+
+        if !binding.active {
+            tracing::debug!("[YoloDeviceInference] Binding inactive for device: {}", device_id);
+            return Ok(());
         }
 
-        eprintln!("[YoloDeviceInference] Found binding for device: {}", device_id);
-        if let Some(binding) = binding {
-            eprintln!("[YoloDeviceInference] Binding active: {}", binding.active);
-            if !binding.active {
-                tracing::debug!("[YoloDeviceInference] Binding inactive for device: {}", device_id);
-                return Ok(());
-            }
+        // Check if metric matches
+        let exact_match = metric == binding.image_metric;
 
-            // Check if metric matches
-            let exact_match = metric == binding.image_metric;
+        let (top_level_metric, nested_path) = if binding.image_metric.contains('.') {
+            let parts: Vec<&str> = binding.image_metric.splitn(2, '.').collect();
+            (parts[0].to_string(), Some(parts[1].to_string()))
+        } else {
+            (binding.image_metric.clone(), None)
+        };
 
-            let (top_level_metric, nested_path) = if binding.image_metric.contains('.') {
-                let parts: Vec<&str> = binding.image_metric.splitn(2, '.').collect();
-                (parts[0].to_string(), Some(parts[1].to_string()))
-            } else {
-                (binding.image_metric.clone(), None)
-            };
+        let metric_matches = exact_match || metric == top_level_metric;
+        let nested_path = if exact_match { None } else { nested_path };
 
-            let metric_matches = exact_match || metric == top_level_metric;
-            let nested_path = if exact_match { None } else { nested_path };
+        tracing::debug!(
+            "[YoloDeviceInference] Event: device={}, metric={}, binding_metric={}, matches={}",
+            device_id, metric, binding.image_metric, metric_matches
+        );
 
-            eprintln!("[YoloDeviceInference] Event: device={}, metric={}, binding_metric={}, exact={}, top_level={}, matches={}",
-                device_id, metric, binding.image_metric, exact_match, top_level_metric, metric_matches);
-            tracing::info!(
-                "[YoloDeviceInference] Event: device={}, metric={}, binding_metric={}, exact={}, top_level={}, matches={}",
-                device_id, metric, binding.image_metric, exact_match, top_level_metric, metric_matches
-            );
+        if !metric_matches {
+            return Ok(());
+        }
 
-            if !metric_matches {
-                return Ok(());
-            }
+        // Extract image data from value
+        let image_b64 = self.extract_image_from_value(value, nested_path.as_deref());
 
-            eprintln!("[YoloDeviceInference] Metric matched! Extracting image data...");
-            
-            // Extract image data from value
-            let image_b64 = self.extract_image_from_value(value, nested_path.as_deref());
-            
-            eprintln!("[YoloDeviceInference] extract_image_from_value returned: {:?}", image_b64.as_ref().map(|s| format!("{} bytes", s.len())));
-
-            if let Some(image_data_b64) = image_b64 {
-                match base64::engine::general_purpose::STANDARD.decode(&image_data_b64) {
-                    Ok(image_data) => {
-                        eprintln!("[YoloDeviceInference] Base64 decoded successfully, image size: {} bytes", image_data.len());
-                        #[cfg(not(target_arch = "wasm32"))]
-                        {
-                            eprintln!("[YoloDeviceInference] Calling process_image...");
-                            match self.process_image(device_id, &image_data, binding.draw_boxes) {
-                                Ok(result) => {
-                                    eprintln!("[YoloDeviceInference] process_image returned {} detections", result.detections.len());
-                                    self.total_inferences.fetch_add(1, Ordering::SeqCst);
-                                    self.total_detections.fetch_add(result.detections.len() as u64, Ordering::SeqCst);
-                                    self.write_inference_results(
-                                        device_id,
-                                        &result,
-                                        &image_data_b64,
-                                        &binding.result_metric_prefix,
-                                    );
-                                    tracing::debug!(
-                                        "[YoloDeviceInference] Inference: device={}, detections={}, time={}ms",
-                                        device_id,
-                                        result.detections.len(),
-                                        result.inference_time_ms
-                                    );
-                                }
-                                Err(e) => {
-                                    self.total_errors.fetch_add(1, Ordering::SeqCst);
-                                    tracing::warn!("[YoloDeviceInference] Process failed: device={}, error={}", device_id, e);
-                                    if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
-                                        stats.last_error = Some(e.to_string());
-                                    }
+        if let Some(image_data_b64) = image_b64 {
+            match base64::engine::general_purpose::STANDARD.decode(&image_data_b64) {
+                Ok(image_data) => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        match self.process_image(device_id, &image_data, binding.draw_boxes) {
+                            Ok(result) => {
+                                self.total_inferences.fetch_add(1, Ordering::SeqCst);
+                                self.total_detections.fetch_add(result.detections.len() as u64, Ordering::SeqCst);
+                                self.write_inference_results(
+                                    device_id,
+                                    &result,
+                                    &image_data_b64,
+                                    &binding.result_metric_prefix,
+                                );
+                                tracing::debug!(
+                                    "[YoloDeviceInference] Inference: device={}, detections={}, time={}ms",
+                                    device_id,
+                                    result.detections.len(),
+                                    result.inference_time_ms
+                                );
+                            }
+                            Err(e) => {
+                                self.total_errors.fetch_add(1, Ordering::SeqCst);
+                                tracing::warn!("[YoloDeviceInference] Process failed: device={}, error={}", device_id, e);
+                                if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
+                                    stats.last_error = Some(e.to_string());
                                 }
                             }
                         }
+                    }
 
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            tracing::warn!("[YoloDeviceInference] Image processing not supported in WASM");
-                        }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        tracing::warn!("[YoloDeviceInference] Image processing not supported in WASM");
                     }
-                    Err(e) => {
-                        tracing::warn!("[YoloDeviceInference] Base64 decode failed: device={}, error={}", device_id, e);
-                    }
+                }
+                Err(e) => {
+                    tracing::warn!("[YoloDeviceInference] Base64 decode failed: device={}, error={}", device_id, e);
                 }
             }
         }
