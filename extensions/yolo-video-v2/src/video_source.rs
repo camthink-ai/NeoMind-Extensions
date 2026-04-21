@@ -1,7 +1,9 @@
 //! Video Source Abstraction Layer (V2)
 //!
 //! Supports multiple video stream protocols through a unified interface.
-//! Part of the unified NeoMind Extension SDK.
+//! FFmpeg-backed sources handle RTSP/RTMP/HLS/File decoding on dedicated threads.
+
+use ffmpeg_next as ff;
 
 /// Video source information
 #[derive(Debug, Clone)]
@@ -14,7 +16,7 @@ pub struct SourceInfo {
 }
 
 /// Frame from video source
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct VideoFrame {
     pub data: Vec<u8>,
     pub width: u32,
@@ -32,7 +34,7 @@ pub enum FrameResult {
 }
 
 /// Video source trait
-pub trait VideoSource: Send + Sync {
+pub trait VideoSource {
     fn info(&self) -> &SourceInfo;
     fn is_active(&self) -> bool;
 }
@@ -111,29 +113,204 @@ pub enum RtspTransport {
     Auto,
 }
 
+// ---------------------------------------------------------------------------
+// FFmpeg-based video source
+// ---------------------------------------------------------------------------
+
+/// FFmpeg-based video source for network streams and local files.
+///
+/// **Thread safety**: `next_frame()` is blocking I/O. Must be called from a
+/// dedicated OS thread, NOT from inside a tokio async context.
+pub struct FfmpegVideoSource {
+    info: SourceInfo,
+    input_ctx: ff::format::context::Input,
+    decoder: ff::decoder::Video,
+    scaler: ff::software::scaling::Context,
+    stream_index: usize,
+    active: bool,
+    frame_count: u64,
+    source_type: SourceType,
+}
+
+impl FfmpegVideoSource {
+    pub fn new(source_type: &SourceType) -> Result<Self, String> {
+        let url = match source_type {
+            SourceType::RTSP { url, .. } => url.as_str(),
+            SourceType::RTMP { url, .. } => url.as_str(),
+            SourceType::HLS { url, .. } => url.as_str(),
+            SourceType::File { path, .. } => path.as_str(),
+            _ => return Err("Unsupported source type for FFmpeg".to_string()),
+        };
+
+        // Build FFmpeg options for network streams
+        let mut input_opts = ff::Dictionary::new();
+        if matches!(source_type, SourceType::RTSP { .. }) {
+            input_opts.set("rtsp_transport", "tcp");
+            input_opts.set("stimeout", "5000000"); // 5s in microseconds
+        }
+        if matches!(source_type, SourceType::RTSP { .. } | SourceType::RTMP { .. } | SourceType::HLS { .. }) {
+            input_opts.set("analyzeduration", "2000000");
+            input_opts.set("probesize", "1000000");
+        }
+
+        let input_ctx = ff::format::input_with_dictionary(&url, input_opts)
+            .map_err(|e| format!("Failed to open stream '{}': {}", url, e))?;
+
+        // Find best video stream
+        let stream = input_ctx.streams().best(ff::media::Type::Video)
+            .ok_or("No video stream found")?;
+        let stream_index = stream.index();
+
+        let context = ff::codec::context::Context::from_parameters(stream.parameters())
+            .map_err(|e| format!("Failed to create codec context: {}", e))?;
+        let decoder = context.decoder().video()
+            .map_err(|e| format!("Failed to open video decoder: {}", e))?;
+
+        let width = decoder.width();
+        let height = decoder.height();
+        let fps = stream.avg_frame_rate();
+        let fps_float = if fps.numerator() > 0 && fps.denominator() > 0 {
+            fps.numerator() as f32 / fps.denominator() as f32
+        } else {
+            25.0
+        };
+
+        // Create scaler: decode format → RGB24
+        let scaler = ff::software::scaling::Context::get(
+            decoder.format(),
+            width, height,
+            ff::format::Pixel::RGB24,
+            width, height,
+            ff::software::scaling::flag::Flags::BILINEAR,
+        ).map_err(|e| format!("Failed to create scaler: {}", e))?;
+
+        let codec_name = stream.parameters().id().name().to_string();
+
+        Ok(Self {
+            info: SourceInfo {
+                width,
+                height,
+                fps: fps_float,
+                codec: codec_name,
+                is_live: !matches!(source_type, SourceType::File { .. }),
+            },
+            input_ctx,
+            decoder,
+            scaler,
+            stream_index,
+            active: true,
+            frame_count: 0,
+            source_type: source_type.clone(),
+        })
+    }
+
+    /// Decode next frame. **BLOCKING** — call from a dedicated thread only.
+    pub fn next_frame(&mut self) -> FrameResult {
+        let mut decoded = ff::frame::Video::empty();
+
+        while let Some((stream, pkt)) = self.input_ctx.packets().next() {
+            if stream.index() != self.stream_index {
+                continue;
+            }
+
+            if self.decoder.send_packet(&pkt).is_err() {
+                continue;
+            }
+
+            while self.decoder.receive_frame(&mut decoded).is_ok() {
+                // Scale decoded frame to RGB24
+                let mut rgb_frame = ff::frame::Video::empty();
+                if self.scaler.run(&decoded, &mut rgb_frame).is_err() {
+                    continue;
+                }
+
+                self.frame_count += 1;
+
+                let width = rgb_frame.width();
+                let height = rgb_frame.height();
+                let stride = rgb_frame.stride(0);
+                let row_bytes = (width as usize) * 3;
+
+                // Strip row padding if stride != width*3
+                let data = if stride == row_bytes {
+                    rgb_frame.data(0).to_vec()
+                } else {
+                    let raw = rgb_frame.data(0);
+                    let mut buf = Vec::with_capacity(row_bytes * height as usize);
+                    for row in 0..height as usize {
+                        let start = row * stride;
+                        buf.extend_from_slice(&raw[start..start + row_bytes]);
+                    }
+                    buf
+                };
+
+                return FrameResult::Frame(VideoFrame {
+                    data,
+                    width,
+                    height,
+                    timestamp: decoded.timestamp().unwrap_or(0),
+                    frame_number: self.frame_count,
+                });
+            }
+        }
+
+        // Iterator ended — either EOF or read error
+        self.active = false;
+        FrameResult::EndOfStream
+    }
+
+    /// Close and reopen the stream (for reconnection).
+    pub fn reconnect(&mut self) -> Result<(), String> {
+        self.active = false;
+        let new_source = Self::new(&self.source_type)?;
+        *self = new_source;
+        Ok(())
+    }
+
+    pub fn close(&mut self) {
+        self.active = false;
+    }
+}
+
+impl VideoSource for FfmpegVideoSource {
+    fn info(&self) -> &SourceInfo {
+        &self.info
+    }
+
+    fn is_active(&self) -> bool {
+        self.active
+    }
+}
+
+// Safety: FfmpegVideoSource is used from a single dedicated OS thread.
+// FFmpeg contexts are not thread-safe and must not be shared across threads.
+// The `Send` impl allows moving the source to the dedicated thread at creation time.
+unsafe impl Send for FfmpegVideoSource {}
+
+impl VideoFrame {
+    /// Convert raw RGB24 data to `image::RgbImage`.
+    /// Returns `None` if data length doesn't match `width * height * 3`.
+    pub fn to_rgb_image(self) -> Option<image::RgbImage> {
+        image::RgbImage::from_raw(self.width, self.height, self.data)
+    }
+}
+
 /// Factory for creating video sources
 pub struct SourceFactory;
 
 impl SourceFactory {
-    pub async fn create(source_type: SourceType) -> Result<Box<dyn VideoSource>, String> {
+    pub fn create(source_type: &SourceType) -> Result<Box<dyn VideoSource>, String> {
         match source_type {
-            SourceType::Camera { .. } => {
-                Err("Camera source not yet implemented".to_string())
-            }
-            SourceType::RTSP { .. } => {
-                Err("RTSP source not yet implemented".to_string())
-            }
-            SourceType::RTMP { .. } => {
-                Err("RTMP source not yet implemented".to_string())
-            }
-            SourceType::HLS { .. } => {
-                Err("HLS source not yet implemented".to_string())
-            }
+            SourceType::RTSP { .. } | SourceType::RTMP { .. } | SourceType::HLS { .. } |
             SourceType::File { .. } => {
-                Err("File source not yet implemented".to_string())
+                let source = FfmpegVideoSource::new(source_type)?;
+                Ok(Box::new(source))
+            }
+            SourceType::Camera { .. } => {
+                Err("Camera source uses frontend capture, not FFmpeg".to_string())
             }
             SourceType::Screen { .. } => {
-                Err("Screen source not yet implemented".to_string())
+                Err("Screen capture not yet supported".to_string())
             }
         }
     }
