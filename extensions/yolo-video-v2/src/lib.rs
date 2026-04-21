@@ -18,6 +18,7 @@
 
 pub mod detector;
 pub mod video_source;
+use video_source::FrameResult;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -154,7 +155,7 @@ struct ActiveStream {
     fps: f32,
     running: bool,
     detected_objects: HashMap<String, u32>,
-    push_task: Option<tokio::task::JoinHandle<()>>,
+    push_task: Option<std::thread::JoinHandle<()>>,
     last_process_time: Option<Instant>,  // Track last processing time
     dropped_frames: u64,  // Track dropped frames
 }
@@ -1103,7 +1104,9 @@ impl Extension for YoloVideoProcessorV2 {
                     old.running = false;
                     // Abort old push task if exists
                     if let Some(task) = old.push_task.take() {
-                        task.abort();
+                        // std::thread::JoinHandle has no abort();
+                        // thread will exit on next loop when running=false
+                        drop(task);
                     }
                 }
             }
@@ -1179,130 +1182,201 @@ impl Extension for YoloVideoProcessorV2 {
 
         tracing::info!("Starting network stream push for: {} ({})", sid, source_url);
 
-        // Spawn network stream processing task
-        let task_handle = tokio::spawn(async move {
+        // Parse source URL for FFmpeg
+        let source_type = match crate::video_source::parse_source_url(&source_url) {
+            Ok(st) => st,
+            Err(e) => {
+                tracing::error!("[Stream {}] Invalid source URL: {}", sid, e);
+                return Err(ExtensionError::ExecutionFailed(format!("Invalid source URL: {}", e)));
+            }
+        };
+
+        let target_fps = config.target_fps.max(1);
+
+        // Run FFmpeg decode + YOLO inference on a dedicated OS thread
+        // (FFmpeg is blocking I/O, must not run inside tokio)
+        let task_handle = std::thread::spawn(move || {
             let mut sequence = 0u64;
-            let frame_duration = Duration::from_millis(67); // ~15 FPS
+            let frame_duration = std::time::Duration::from_millis(1000 / target_fps as u64);
+            let mut reconnect_count = 0u32;
+            const MAX_RECONNECT: u32 = 3;
+
+            // Open the stream via FFmpeg
+            let mut video_source = match crate::video_source::FfmpegVideoSource::new(&source_type) {
+                Ok(vs) => {
+                    tracing::info!("[Stream {}] FFmpeg connected to: {}", sid, source_url);
+                    let _ = sender.try_send(
+                        PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                            "type": "status", "status": "streaming"
+                        })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                    );
+                    vs
+                }
+                Err(e) => {
+                    tracing::error!("[Stream {}] FFmpeg failed to connect: {}", sid, e);
+                    let _ = sender.try_send(
+                        PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                            "type": "error", "message": format!("Failed to connect: {}", e)
+                        })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                    );
+                    return;
+                }
+            };
 
             loop {
                 // Check if stream is still running
                 let should_continue = {
                     let registry = get_registry().lock();
-                    if let Some(stream) = registry.streams.get(&sid) {
-                        stream.lock().running
-                    } else {
-                        false
-                    }
+                    registry.streams.get(&sid).map_or(false, |s| s.lock().running)
                 };
-
                 if !should_continue {
                     break;
                 }
 
-                // Step 1: Increment frame count (quick lock)
-                let frame_count = {
-                    let registry = get_registry().lock();
-                    if let Some(stream) = registry.streams.get(&sid) {
-                        let mut s = stream.lock();
-                        s.frame_count += 1;
-                        s.frame_count
-                    } else {
+                let frame_start = std::time::Instant::now();
+
+                // Decode next frame from FFmpeg (blocking)
+                let frame_result = video_source.next_frame();
+
+                match frame_result {
+                    FrameResult::Frame(video_frame) => {
+                        reconnect_count = 0;
+
+                        // Convert FFmpeg RGB24 → RgbImage
+                        let original_image = match video_frame.to_rgb_image() {
+                            Some(img) => img,
+                            None => {
+                                tracing::warn!("[Stream {}] RgbImage conversion failed", sid);
+                                continue;
+                            }
+                        };
+
+                        let (orig_width, orig_height) = (original_image.width(), original_image.height());
+
+                        // Resize to 640x640 for YOLO inference
+                        let inference_image = image::imageops::resize(
+                            &original_image, 640, 640,
+                            image::imageops::FilterType::CatmullRom,
+                        );
+
+                        // Run YOLO detection
+                        let detections = match processor.get_detector() {
+                            Some(detector) if detector.is_loaded() => {
+                                let dets = detector.detect(&inference_image, confidence, max_obj);
+                                if !dets.is_empty() {
+                                    let scale_x = orig_width as f32 / 640.0;
+                                    let scale_y = orig_height as f32 / 640.0;
+                                    let scaled: Vec<_> = dets.into_iter().map(|mut d| {
+                                        d.bbox.x *= scale_x;
+                                        d.bbox.y *= scale_y;
+                                        d.bbox.width *= scale_x;
+                                        d.bbox.height *= scale_y;
+                                        d
+                                    }).collect();
+                                    detections_to_object_detection(scaled)
+                                } else {
+                                    vec![]
+                                }
+                            }
+                            _ => vec![],
+                        };
+
+                        // Draw detections on original-resolution image
+                        let mut output_image = original_image;
+                        draw_detections(&mut output_image, &detections);
+
+                        // Encode to JPEG
+                        let jpeg_data = encode_jpeg(&output_image, 75);
+
+                        // Update stream statistics (quick lock)
+                        {
+                            let registry = get_registry().lock();
+                            if let Some(stream) = registry.streams.get(&sid) {
+                                let mut s = stream.lock();
+                                s.frame_count += 1;
+                                s.total_detections += detections.len() as u64;
+                                s.last_detections = detections.clone();
+                                s.last_frame = Some(jpeg_data.clone());
+                                s.last_frame_time = Some(Instant::now());
+                                let elapsed = s.started_at.elapsed().as_secs_f32();
+                                if elapsed > 0.0 {
+                                    s.fps = s.frame_count as f32 / elapsed;
+                                }
+                                if s.frame_count % 30 == 0 {
+                                    s.detected_objects.clear();
+                                    s.last_frame = None;
+                                }
+                            }
+                        }
+
+                        // Push to frontend
+                        let output = PushOutputMessage::image_jpeg(&sid, sequence, jpeg_data)
+                            .with_metadata(serde_json::json!({ "detections": detections }));
+
+                        match sender.try_send(output) {
+                            Ok(_) => sequence += 1,
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                tracing::debug!("[Stream {}] Channel full, dropping frame {}", sid, sequence);
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                tracing::warn!("[Stream {}] Channel closed", sid);
+                                break;
+                            }
+                        }
+
+                        // Frame rate throttling
+                        let elapsed = frame_start.elapsed();
+                        if elapsed < frame_duration {
+                            std::thread::sleep(frame_duration - elapsed);
+                        }
+                    }
+                    FrameResult::NotReady => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    FrameResult::EndOfStream => {
+                        tracing::warn!("[Stream {}] Stream ended", sid);
                         break;
                     }
-                };
-
-                // Step 2: Generate simulated video frame (no lock needed)
-                let mut image = image::RgbImage::new(640, 480);
-                let time = chrono::Utc::now();
-
-                // Create a more realistic test pattern with gradients
-                for y in 0..480 {
-                    for x in 0..640 {
-                        let noise = ((x as f32 / 640.0 + y as f32 / 480.0
-                            + time.timestamp_millis() as f32 / 1000.0) * 30.0) as u8;
-                        let r = ((x as f32 / 640.0) * 255.0) as u8;
-                        let g = ((y as f32 / 480.0) * 255.0) as u8;
-                        let b = noise;
-                        image.put_pixel(x, y, image::Rgb([r, g, b]));
-                    }
-                }
-
-                // Step 3: Run YOLO detection (no stream lock, only detector lock)
-                let detections = {
-                    match processor.get_detector() {
-                        Some(detector) if detector.is_loaded() => {
-                            let yolo_dets = detector.detect(&image, confidence, max_obj);
-                            if !yolo_dets.is_empty() {
-                                tracing::debug!("YOLO detected {} objects in frame {}", yolo_dets.len(), frame_count);
-                                detections_to_object_detection(yolo_dets)
-                            } else {
-                                generate_fallback_detections(frame_count, max_obj)
-                            }
-                        }
-                        _ => generate_fallback_detections(frame_count, max_obj),
-                    }
-                };
-
-                // Step 4: Draw detection boxes (no lock needed)
-                draw_detections(&mut image, &detections);
-
-                // Step 5: Encode frame to JPEG (no lock needed)
-                let jpeg_data = encode_jpeg(&image, 75);
-
-                // Step 6: Update stream statistics (quick lock)
-                {
-                    let registry = get_registry().lock();
-                    if let Some(stream) = registry.streams.get(&sid) {
-                        let mut s = stream.lock();
-                        s.last_detections = detections.clone();
-                        s.total_detections += detections.len() as u64;
-
-                        // Update detected object counts
-                        for det in &detections {
-                            *s.detected_objects.entry(det.label.clone()).or_insert(0) += 1;
-                        }
-
-                        // Update FPS calculation
-                        if s.last_frame_time.is_some() {
-                            let elapsed = s.started_at.elapsed().as_secs_f32();
-                            if elapsed > 0.0 {
-                                s.fps = s.frame_count as f32 / elapsed;
-                            }
-                        }
-                        s.last_frame_time = Some(Instant::now());
-                        s.last_frame = Some(jpeg_data.clone());
-                    }
-                }
-
-                let frame_data = Some((jpeg_data, detections));
-
-                if let Some((data, detections)) = frame_data {
-                    // Step 5: Push frame to client via WebSocket with detections metadata
-                    let output = PushOutputMessage::image_jpeg(&sid, sequence, data)
-                        .with_metadata(serde_json::json!({
-                            "detections": detections
-                        }));
-
-                    // Use try_send to avoid blocking - drop frame if channel is full
-                    match sender.try_send(output) {
-                        Ok(_) => {
-                            sequence += 1;
-                        }
-                        Err(mpsc::error::TrySendError::Full(_)) => {
-                            tracing::debug!("Push channel full, dropping frame {} for session: {}", sequence, sid);
-                            // Skip this frame, continue with next
-                        }
-                        Err(mpsc::error::TrySendError::Closed(_)) => {
-                            tracing::warn!("Push channel closed for session: {}", sid);
+                    FrameResult::Error(e) => {
+                        tracing::error!("[Stream {}] Frame error: {}", sid, e);
+                        reconnect_count += 1;
+                        if reconnect_count > MAX_RECONNECT {
+                            tracing::error!("[Stream {}] Max reconnect attempts reached", sid);
+                            let _ = sender.try_send(
+                                PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                    "type": "error",
+                                    "message": format!("Stream error after {} retries: {}", MAX_RECONNECT, e)
+                                })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                            );
                             break;
                         }
+                        let backoff = std::time::Duration::from_secs(1 << (reconnect_count - 1));
+                        tracing::info!("[Stream {}] Reconnecting in {:?} ({}/{})", sid, backoff, reconnect_count, MAX_RECONNECT);
+                        let _ = sender.try_send(
+                            PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                "type": "status", "status": "reconnecting"
+                            })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                        );
+                        std::thread::sleep(backoff);
+
+                        match video_source.reconnect() {
+                            Ok(()) => {
+                                tracing::info!("[Stream {}] Reconnected", sid);
+                                let _ = sender.try_send(
+                                    PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                        "type": "status", "status": "streaming"
+                                    })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                                );
+                            }
+                            Err(re) => {
+                                tracing::error!("[Stream {}] Reconnect failed: {}", sid, re);
+                            }
+                        }
                     }
                 }
-
-                tokio::time::sleep(frame_duration).await;
             }
 
-            tracing::info!("Network stream push ended for: {}", sid);
+            tracing::info!("[Stream {}] Push task ended. Frames: {}", sid, sequence);
         });
 
         // Store task handle
@@ -1328,12 +1402,11 @@ impl Extension for YoloVideoProcessorV2 {
             }
         };
 
-        // Abort the task if it exists
+        // Drop the task handle if it exists
+        // (thread will exit on next loop when running=false)
         if let Some(handle) = task_handle {
-            handle.abort();
-            tracing::info!("Push task aborted for session: {}", session_id);
-            // Note: Task will exit on next loop iteration when it checks the running flag
-            // No need to wait - the abort signal is sufficient
+            drop(handle);
+            tracing::info!("Push task stopping for session: {}", session_id);
         }
 
         tracing::info!("Push stopped for session: {}", session_id);
