@@ -28,39 +28,65 @@ Add to `Cargo.toml`:
 ffmpeg-next = { version = "7", default-features = false, features = ["codec", "format", "software-scaling"] }
 ```
 
-### 2. New `StreamFetcher` Module
+### 2. Implement Existing `VideoSource` Trait in `video_source.rs`
 
-Encapsulates FFmpeg stream decoding:
+The project already has `video_source.rs` with a `VideoSource` trait, `SourceType` enum, and `SourceFactory` — but all implementations are stubs. We implement them using FFmpeg:
 
 ```rust
-struct StreamFetcher {
+/// FFmpeg-based stream fetcher implementing VideoSource
+pub struct FfmpegVideoSource {
+    info: SourceInfo,
+    input: ffmpeg_next::format::context::Input,
     decoder: ffmpeg_next::decoder::Video,
     scaler: ffmpeg_next::software::scaling::Context,
     stream_index: usize,
-    input: ffmpeg_next::format::context::Input,
+    active: bool,
 }
 
-impl StreamFetcher {
-    fn new(url: &str) -> Result<Self>;      // Open stream, find video stream, init decoder
-    fn next_frame(&mut self) -> Option<RgbImage>;  // Decode next frame → RgbImage
-    fn close(&mut self);                     // Clean up resources
+impl FfmpegVideoSource {
+    pub fn new(source_type: &SourceType) -> Result<Self>;  // Open stream based on SourceType config
+    pub fn next_frame(&mut self) -> FrameResult;            // Decode next frame → FrameResult
+}
+
+impl VideoSource for FfmpegVideoSource {
+    fn info(&self) -> &SourceInfo;
+    fn is_active(&self) -> bool;
+}
+```
+
+Then implement `SourceFactory::create()`:
+```rust
+impl SourceFactory {
+    pub async fn create(source_type: SourceType) -> Result<Box<dyn VideoSource>, String> {
+        match source_type {
+            SourceType::RTSP { .. } | SourceType::RTMP { .. } | SourceType::HLS { .. } |
+            SourceType::File { .. } => {
+                Ok(Box::new(FfmpegVideoSource::new(&source_type)?))
+            }
+            SourceType::Camera { .. } => Err("Camera source uses frontend capture".to_string()),
+            SourceType::Screen { .. } => Err("Screen capture not yet supported".to_string()),
+        }
+    }
 }
 ```
 
 Key behaviors:
 - Opens any URL FFmpeg supports (RTSP, RTMP, HLS, HTTP-FLV, local files)
 - Uses `software::scaling` to convert to RGB24
-- Returns `RgbImage` compatible with existing YOLO inference pipeline
-- Non-blocking: returns `None` when no frame is available yet
+- Returns frames via existing `FrameResult` enum
+- Non-blocking: returns `FrameResult::NotReady` when no frame is available yet
 
 ### 3. Modify `start_push` Network Stream Path
 
 Replace the simulated frame generation (lines 1215-1228) with:
 
 ```rust
-// Create StreamFetcher
-let mut fetcher = match StreamFetcher::new(&source_url) {
-    Ok(f) => f,
+// Parse source URL using existing parse_source_url()
+let source_type = parse_source_url(&source_url)?;
+
+// Create video source via existing SourceFactory
+let mut video_source = match SourceFactory::create(source_type).await {
+    Ok(s) => s,
     Err(e) => {
         sender.send(PushOutputMessage { type: "error", ... }).await;
         return;
@@ -71,14 +97,15 @@ loop {
     // Check if stream still running
     if !is_running(&sid) { break; }
 
-    // Fetch real frame
-    let frame = match fetcher.next_frame() {
-        Some(f) => f,
-        None => {
-            // Stream ended or temporary no-data
+    // Fetch real frame using VideoSource trait
+    let frame = match video_source.next_frame() {
+        FrameResult::Frame(f) => /* convert data to RgbImage */,
+        FrameResult::NotReady => {
             tokio::time::sleep(Duration::from_millis(10)).await;
             continue;
         }
+        FrameResult::EndOfStream => break,
+        FrameResult::Error(e) => { /* handle reconnect */ }
     };
 
     // Run YOLO inference (existing code)
