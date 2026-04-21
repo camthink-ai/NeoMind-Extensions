@@ -112,9 +112,15 @@ const STYLES = `
   background: var(--yolo-success);
   animation: yolo-pulse 2s ease-in-out infinite;
 }
+.yolo-status-dot.yolo-status-warning { background: var(--yolo-warning); animation: yolo-blink 1s infinite; }
+.yolo-status-dot.yolo-status-error { background: #ef4444; animation: none; }
 @keyframes yolo-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
+}
+@keyframes yolo-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 .yolo-btn {
   padding: 4px 10px;
@@ -374,6 +380,7 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
   const [detections, setDetections] = useState<Detection[]>([])
   const [frameData, setFrameData] = useState<string | null>(null)
   const [cameraPermission, setCameraPermission] = useState<'pending' | 'granted' | 'denied'>('pending')
+  const [streamStatus, setStreamStatus] = useState<'idle' | 'streaming' | 'reconnecting' | 'error'>('idle')
 
   // Refs
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -574,8 +581,22 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
             break
 
           case 'push_output':
-            // Network stream push mode
+            // Check for status/error JSON messages (backend stream status)
+            if (msg.data_type === 'application/json' && msg.data) {
+              try {
+                const statusData = typeof msg.data === 'string' ? JSON.parse(msg.data) : msg.data
+                if (statusData.type === 'status' && statusData.status) {
+                  setStreamStatus(statusData.status as any)
+                } else if (statusData.type === 'error') {
+                  setStreamStatus('error')
+                  setError(statusData.message || 'Stream error')
+                }
+              } catch { /* ignore parse errors */ }
+              break
+            }
+            // Image frame from backend stream
             if (msg.data && msg.data_type === 'image/jpeg') {
+              setStreamStatus('streaming')
               setFrameData(msg.data)
               updateFps()
               if (msg.metadata?.detections) {
@@ -644,6 +665,7 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
     ws.onclose = () => {
       wsRef.current = null
       setIsRunning(false)
+      setStreamStatus('idle')
       sessionIdRef.current = null
       sendingRef.current = false
 
@@ -720,6 +742,7 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
       stopCamera()
     }
     disconnectWebSocket()
+    setStreamStatus('idle')
     setDetections([])
     setFps(0)
     setFrameCount(0)
@@ -744,6 +767,8 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
   // Get mode label
   const getModeLabel = () => {
     if (mode === 'network') {
+      if (isRunning && streamStatus === 'reconnecting') return 'Reconnecting...'
+      if (isRunning && streamStatus === 'error') return 'Error'
       if (sourceUrl.startsWith('rtsp://')) return 'RTSP'
       if (sourceUrl.startsWith('rtmp://')) return 'RTMP'
       if (sourceUrl.startsWith('hls://') || sourceUrl.includes('.m3u8')) return 'HLS'
@@ -765,7 +790,7 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
           <div className="yolo-controls">
             {isRunning && (
               <div className="yolo-status">
-                <span className="yolo-status-dot" />
+                <span className={`yolo-status-dot${streamStatus === 'reconnecting' ? ' yolo-status-warning' : streamStatus === 'error' ? ' yolo-status-error' : ''}`} />
                 {getModeLabel()}
               </div>
             )}
