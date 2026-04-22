@@ -4,134 +4,16 @@
 //! Takes an aligned face crop (from the alignment module), runs it through the ArcFace model,
 //! and produces a 512-dimensional feature vector that is L2 normalized. The feature vector
 //! can then be compared against registered faces using cosine similarity.
+//!
+//! # Contract
+//!
+//! The `extract()` method expects the input to be raw image bytes of an **already aligned**
+//! 112x112 face crop. Callers (e.g., the recognition pipeline in `lib.rs`) are responsible
+//! for face alignment before calling this method. The method decodes the image, normalizes
+//! pixels to NCHW format, runs ONNX inference, and L2-normalizes the output.
 
-use std::path::PathBuf;
-
-// ============================================================================
-// Native Library Path Setup (same pattern as detector module)
-// ============================================================================
-
-/// Set up native library search paths before ONNX Runtime is loaded.
-/// Checks NEOMIND_EXTENSION_DIR/lib/ and common system paths.
 #[cfg(not(target_arch = "wasm32"))]
-fn setup_native_lib_paths() {
-    let lib_env = if cfg!(target_os = "macos") {
-        "DYLD_LIBRARY_PATH"
-    } else {
-        "LD_LIBRARY_PATH"
-    };
-
-    let mut paths = vec![];
-
-    // 1. Extension's bundled libraries
-    if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
-        let ext_path = std::path::Path::new(&ext_dir);
-
-        let lib_dir = ext_path.join("lib");
-        if lib_dir.is_dir() {
-            tracing::info!(
-                "[ArcFace] Adding extension lib dir: {}",
-                lib_dir.display()
-            );
-            paths.push(lib_dir.to_string_lossy().to_string());
-        }
-
-        let binaries_dir = ext_path.join("binaries");
-        if binaries_dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&binaries_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_dir() {
-                        tracing::info!("[ArcFace] Adding platform dir: {}", path.display());
-                        paths.push(path.to_string_lossy().to_string());
-
-                        if let Ok(files) = std::fs::read_dir(&path) {
-                            for file in files.flatten() {
-                                let file_path = file.path();
-                                let name =
-                                    file_path.file_name().unwrap_or_default().to_string_lossy();
-                                if let Some(base) = name
-                                    .strip_suffix(".dylib")
-                                    .or_else(|| name.strip_suffix(".so"))
-                                {
-                                    if base.contains('.') {
-                                        let unversioned = if cfg!(target_os = "macos") {
-                                            format!(
-                                                "{}.dylib",
-                                                base.split('.').next().unwrap_or(base)
-                                            )
-                                        } else {
-                                            format!("{}.so", base.split('.').next().unwrap_or(base))
-                                        };
-                                        let link_path = path.join(&unversioned);
-                                        if !link_path.exists() {
-                                            #[cfg(unix)]
-                                            let _ =
-                                                std::os::unix::fs::symlink(&file_path, &link_path);
-                                            #[cfg(not(unix))]
-                                            let _ = ();
-                                            tracing::info!(
-                                                "[ArcFace] Created symlink: {} -> {}",
-                                                unversioned,
-                                                name
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if let Ok(cwd) = std::env::current_dir() {
-        let lib_dir = cwd.join("lib");
-        if lib_dir.is_dir() {
-            paths.push(lib_dir.to_string_lossy().to_string());
-        }
-    }
-
-    if let Ok(existing) = std::env::var(lib_env) {
-        paths.push(existing);
-    }
-
-    for dir in ["/opt/homebrew/lib", "/usr/local/lib"] {
-        if std::path::Path::new(dir).is_dir() {
-            paths.push(dir.to_string());
-        }
-    }
-
-    if !paths.is_empty() {
-        let combined = paths.join(":");
-        tracing::info!("[ArcFace] Setting {} = {}", lib_env, combined);
-        std::env::set_var(lib_env, &combined);
-    }
-
-    // Set ORT_DYLIB_PATH to the exact location of libonnxruntime
-    if std::env::var("ORT_DYLIB_PATH").is_err() {
-        let ort_filename = if cfg!(target_os = "macos") {
-            "libonnxruntime.dylib"
-        } else if cfg!(target_os = "windows") {
-            "onnxruntime.dll"
-        } else {
-            "libonnxruntime.so"
-        };
-
-        for dir in &paths {
-            let ort_path = std::path::Path::new(dir).join(ort_filename);
-            if ort_path.exists() {
-                tracing::info!(
-                    "[ArcFace] Setting ORT_DYLIB_PATH = {}",
-                    ort_path.display()
-                );
-                std::env::set_var("ORT_DYLIB_PATH", &ort_path);
-                break;
-            }
-        }
-    }
-}
+use crate::onnx_utils::{setup_native_lib_paths, find_model_path};
 
 // ============================================================================
 // Trait Definition
@@ -251,10 +133,12 @@ impl ArcFaceRecognizer {
         Ok(session)
     }
 
-    /// Extract a feature vector from a single face crop image.
+    /// Extract a feature vector from an aligned face crop image.
     ///
-    /// Pipeline: decode image -> align face to 112x112 -> preprocess (NCHW, normalize)
-    /// -> run ONNX inference -> L2 normalize output vector.
+    /// **Contract:** The input must be raw image bytes of an already-aligned 112x112
+    /// face crop. Callers are responsible for face alignment before invoking this
+    /// method. The pipeline is: decode image -> preprocess (NCHW, normalize) ->
+    /// run ONNX inference -> L2 normalize output vector.
     pub fn extract_impl(&mut self, face_crop: &[u8]) -> Result<Vec<f32>, String> {
         self.ensure_loaded();
 
@@ -264,31 +148,16 @@ impl ArcFaceRecognizer {
                 .unwrap_or_else(|| "ArcFace model not loaded".to_string())
         })?;
 
-        // Decode image
+        // Decode image (expected to be an aligned 112x112 face crop)
         let img = image::load_from_memory(face_crop)
             .map_err(|e| format!("Failed to decode face crop image: {}", e))?;
         let img = img.to_rgb8();
-
-        // Create a FaceBox covering the full image for alignment
-        let face_box = crate::FaceBox {
-            x: 0.0,
-            y: 0.0,
-            width: img.width() as f64,
-            height: img.height() as f64,
-            confidence: 1.0,
-            landmarks: None,
-        };
-
-        // Align face to 112x112 using the alignment module
-        let dynamic_img = image::DynamicImage::ImageRgb8(img);
-        let aligned = crate::alignment::align_face(&dynamic_img, &face_box);
-        let aligned_rgb = aligned.to_rgb8();
 
         // Preprocess: (pixel - 127.5) / 128.0, NCHW layout (1, 3, 112, 112)
         let input_tensor = ndarray::Array4::from_shape_fn(
             (1, 3, 112, 112),
             |(_, c, y, x)| {
-                let pixel = aligned_rgb.get_pixel(x as u32, y as u32);
+                let pixel = img.get_pixel(x as u32, y as u32);
                 (pixel[c] as f32 - 127.5) / 128.0
             },
         );
@@ -400,46 +269,7 @@ impl FaceExtract for ArcFaceRecognizer {
     }
 }
 
-// ============================================================================
-// Model Path Discovery
-// ============================================================================
-
-/// Find ArcFace model file by searching common locations.
-fn find_model_path(filename: &str) -> Result<PathBuf, String> {
-    // If NEOMIND_EXTENSION_DIR is set, use it exclusively
-    if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
-        let path = PathBuf::from(&ext_dir).join("models").join(filename);
-        if path.exists() {
-            return Ok(path);
-        }
-        return Err(format!("Model file '{}' not found in NEOMIND_EXTENSION_DIR/models ({})", filename, ext_dir));
-    }
-
-    // Fallback: Check current working directory
-    if let Ok(cwd) = std::env::current_dir() {
-        let path = cwd.join("models").join(filename);
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-
-    // Additional fallback paths
-    let fallback_paths = vec![
-        PathBuf::from("models").join(filename),
-        PathBuf::from("../models").join(filename),
-    ];
-
-    for path in fallback_paths {
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-
-    Err(format!(
-        "Model file '{}' not found in extension models directory",
-        filename
-    ))
-}
+// Model path discovery is now in crate::onnx_utils::find_model_path
 
 // ============================================================================
 // L2 Normalization
@@ -465,6 +295,7 @@ fn l2_normalize(vec: &[f32]) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::onnx_utils::find_model_path;
 
     /// Verify FaceExtract trait compiles by creating a trait object.
     #[test]

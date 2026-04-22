@@ -209,6 +209,19 @@ impl FaceDatabase {
         self.faces_by_id.is_empty()
     }
 
+    /// Update the cosine similarity threshold for matching.
+    ///
+    /// This allows runtime reconfiguration of the matching threshold
+    /// without rebuilding the database.
+    pub fn set_threshold(&mut self, threshold: f64) {
+        self.threshold = threshold;
+    }
+
+    /// Update the maximum number of faces allowed.
+    pub fn set_max_faces(&mut self, max_faces: usize) {
+        self.max_faces = max_faces;
+    }
+
     /// Get a face entry by ID.
     pub fn get(&self, face_id: &str) -> Option<&FaceEntry> {
         self.faces_by_id.get(face_id)
