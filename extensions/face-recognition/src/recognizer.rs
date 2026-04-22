@@ -159,6 +159,9 @@ pub trait FaceExtract {
     /// # Returns
     /// A vector of 512-dimensional L2-normalized feature vectors, one per input face
     fn extract_batch(&mut self, faces: Vec<&[u8]>) -> Result<Vec<Vec<f32>>, String>;
+
+    /// Downcast to Any for type-specific access (e.g., model status checks).
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 // ============================================================================
@@ -343,6 +346,10 @@ impl FaceExtract for ArcFaceRecognizer {
         }
         Ok(results)
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // ============================================================================
@@ -386,6 +393,10 @@ impl FaceExtract for ArcFaceRecognizer {
 
     fn extract_batch(&mut self, _faces: Vec<&[u8]>) -> Result<Vec<Vec<f32>>, String> {
         Err("ArcFace recognizer not available in WASM".to_string())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
