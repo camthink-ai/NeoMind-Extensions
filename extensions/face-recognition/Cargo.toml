@@ -1,0 +1,34 @@
+[package]
+name = "face-recognition"
+version = "0.1.0"
+edition = "2021"
+authors = ["NeoMind Team"]
+license = "Apache-2.0"
+description = "Real-time face recognition with device binding, face registration, and identity matching"
+
+[lib]
+name = "neomind_extension_face_recognition"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neomind-extension-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+chrono = "0.4"
+base64 = "0.22"
+parking_lot = "0.12"
+tracing = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+uuid = { version = "1.0", features = ["v4"] }
+image = "0.25"
+imageproc = "0.24"
+ab_glyph = "0.2"
+ndarray = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ort = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "test-util"] }
