@@ -487,8 +487,8 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                    grep -oE "(/Users/|/opt/homebrew/|/usr/local/)[^ ]+\.dylib" || true)
 
             if [ -n "$DEPS" ]; then
-                # Add @executable_path to rpath
-                install_name_tool -add_rpath "@executable_path" \
+                # Add @loader_path to rpath so dylibs resolve from their own directory
+                install_name_tool -add_rpath "@loader_path" \
                     "$BINARY_PATH" 2>/dev/null || true
 
                 # Calculate hash of source library
@@ -505,14 +505,14 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                         if [[ "$LIB_NAME" == *onnxruntime* ]]; then
                             # Only fix the reference path, don't re-copy the file
                             if [ -f "$BINARY_DIR/$LIB_NAME" ]; then
-                                install_name_tool -change "$dep" "@executable_path/$LIB_NAME" \
+                                install_name_tool -change "$dep" "@loader_path/$LIB_NAME" \
                                     "$BINARY_PATH" 2>/dev/null && \
                                     echo -e "    ${GREEN}→${NC} Fixed ORT reference (kept bundled version): $LIB_NAME"
                             else
                                 # Fallback: if we somehow didn't bundle ORT, copy from build env
                                 DEP_HASH=$(shasum -a 256 "$dep" | cut -d' ' -f1)
                                 cp "$dep" "$BINARY_DIR/$LIB_NAME"
-                                install_name_tool -change "$dep" "@executable_path/$LIB_NAME" \
+                                install_name_tool -change "$dep" "@loader_path/$LIB_NAME" \
                                     "$BINARY_PATH" 2>/dev/null && \
                                     echo -e "    ${YELLOW}⚠${NC} Copied ORT from build env (no bundled version): $LIB_NAME"
                             fi
@@ -524,19 +524,103 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                         if [ "$SOURCE_HASH" == "$DEP_HASH" ]; then
                             # Self-reference - copy to package and fix reference
                             cp "$dep" "$BINARY_DIR/$LIB_NAME"
-                            install_name_tool -change "$dep" "@executable_path/$LIB_NAME" \
+                            install_name_tool -change "$dep" "@loader_path/$LIB_NAME" \
                                 "$BINARY_PATH" 2>/dev/null && \
                                 echo -e "    ${GREEN}→${NC} Copied and fixed: $LIB_NAME"
                         else
                             # Different library - copy to package
                             cp "$dep" "$BINARY_DIR/$LIB_NAME"
-                            install_name_tool -change "$dep" "@executable_path/$LIB_NAME" \
+                            install_name_tool -change "$dep" "@loader_path/$LIB_NAME" \
                                 "$BINARY_PATH" 2>/dev/null && \
                                 echo -e "    ${GREEN}→${NC} Copied dependency: $LIB_NAME"
                         fi
                     fi
                 done
             fi
+
+            # Phase 2: Iteratively fix inter-dependencies among ALL bundled dylibs
+            # FFmpeg/ORT/etc have deep transitive dep trees. Loop until no changes.
+            echo -e "    ${BLUE}→${NC} Fixing transitive dylib dependencies..."
+
+            CHANGED=true
+            ITER=0
+            while [ "$CHANGED" = true ] && [ $ITER -lt 10 ]; do
+                CHANGED=false
+                ITER=$((ITER + 1))
+
+                for BUNDLED_LIB in "$BINARY_DIR"/*.dylib; do
+                    [ -f "$BUNDLED_LIB" ] || continue
+                    LIB_BASE=$(basename "$BUNDLED_LIB")
+
+                    # Fix the dylib's own ID to use @loader_path
+                    install_name_tool -id "@loader_path/$LIB_BASE" "$BUNDLED_LIB" 2>/dev/null
+
+                    # Find all absolute-path dependencies
+                    TRAN_DEPS=$(otool -L "$BUNDLED_LIB" 2>/dev/null | \
+                               grep -oE "(/Users/|/opt/homebrew/|/usr/local/)[^ ]+\.dylib" || true)
+
+                    if [ -n "$TRAN_DEPS" ]; then
+                        install_name_tool -add_rpath "@loader_path" "$BUNDLED_LIB" 2>/dev/null || true
+
+                        echo "$TRAN_DEPS" | while read -r tdep; do
+                            if [ -f "$tdep" ]; then
+                                TDEP_NAME=$(basename "$tdep")
+                                if [ ! -f "$BINARY_DIR/$TDEP_NAME" ]; then
+                                    cp "$tdep" "$BINARY_DIR/$TDEP_NAME"
+                                fi
+                                install_name_tool -change "$tdep" "@loader_path/$TDEP_NAME" \
+                                    "$BUNDLED_LIB" 2>/dev/null
+                            fi
+                        done
+                        CHANGED=true
+                    fi
+
+                    # Also find @rpath/ dependencies and rewrite to @loader_path
+                    RPATH_DEPS=$(otool -L "$BUNDLED_LIB" 2>/dev/null | \
+                                 grep -oE "@rpath/[^ ]+\.dylib" || true)
+
+                    if [ -n "$RPATH_DEPS" ]; then
+                        echo "$RPATH_DEPS" | while read -r rdep; do
+                            RDEP_NAME=$(echo "$rdep" | sed 's/@rpath\///')
+
+                            # If already bundled, just fix the reference
+                            if [ -f "$BINARY_DIR/$RDEP_NAME" ]; then
+                                install_name_tool -change "$rdep" "@loader_path/$RDEP_NAME" \
+                                    "$BUNDLED_LIB" 2>/dev/null
+                            else
+                                # Try to find the library on the system
+                                FOUND_LIB=""
+                                for search_dir in /opt/homebrew/lib /opt/homebrew/opt/*/lib /usr/local/lib; do
+                                    if [ -f "$search_dir/$RDEP_NAME" ]; then
+                                        FOUND_LIB="$search_dir/$RDEP_NAME"
+                                        break
+                                    fi
+                                done
+
+                                if [ -n "$FOUND_LIB" ] && [ -f "$FOUND_LIB" ]; then
+                                    cp "$FOUND_LIB" "$BINARY_DIR/$RDEP_NAME"
+                                    install_name_tool -change "$rdep" "@loader_path/$RDEP_NAME" \
+                                        "$BUNDLED_LIB" 2>/dev/null
+                                    echo -e "    ${GREEN}→${NC} Resolved @rpath dep: $RDEP_NAME"
+                                fi
+                            fi
+                        done
+                        CHANGED=true
+                    fi
+
+                    codesign --force --sign - "$BUNDLED_LIB" 2>/dev/null || true
+                done
+            done
+
+            # Count bundled dylibs
+            DYLIB_COUNT=$(ls "$BINARY_DIR"/*.dylib 2>/dev/null | wc -l | tr -d ' ')
+            echo -e "    ${GREEN}✓${NC} Fixed $DYLIB_COUNT dylibs ($ITER iterations)"
+
+            # CRITICAL: Re-sign the main extension binary AFTER all install_name_tool changes.
+            # install_name_tool modifies load commands which invalidates the code signature.
+            # Without this, macOS kills the runner process with SIGKILL (Code Signature Invalid).
+            codesign --force --sign - "$BINARY_PATH" 2>/dev/null && \
+                echo -e "    ${GREEN}✓${NC} Re-signed main binary after dependency fixes"
         fi
 
 

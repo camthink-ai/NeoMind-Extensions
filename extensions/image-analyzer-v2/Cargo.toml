@@ -1,6 +1,6 @@
 [package]
 name = "image-analyzer-v2"
-version = "2.4.18"
+version = "2.5.0"
 edition = "2021"
 authors = ["NeoMind Team"]
 license = "Apache-2.0"
@@ -28,7 +28,7 @@ tracing = "0.1"
 chrono = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 ort = { workspace = true }
-usls = { version = "0.1.11", default-features = false, features = ["yolo", "ort-load-dynamic"] }
+usls = { version = "0.1.11", default-features = false, features = ["yolo", "ort-load-dynamic", "coreml", "cuda"] }
 reqwest = { version = "0.12", features = ["blocking"] }
 
 # WASM-only dependencies

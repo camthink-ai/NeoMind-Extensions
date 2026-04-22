@@ -19,7 +19,40 @@ use parking_lot::Mutex;
 #[cfg(not(target_arch = "wasm32"))]
 
 #[cfg(not(target_arch = "wasm32"))]
-use usls::{models::YOLO, Config, DataLoader, Version as YOLOVersion};
+use usls::{models::YOLO, Config, DataLoader, Device, Version as YOLOVersion};
+
+/// Auto-detect best available inference device.
+/// macOS → CoreML, Linux → CUDA, others → CPU.
+#[cfg(not(target_arch = "wasm32"))]
+fn auto_device() -> Device {
+    #[cfg(target_os = "macos")]
+    { Device::CoreMl }
+    #[cfg(all(not(target_os = "macos"), target_os = "linux"))]
+    { Device::Cuda(0) }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    { Device::Cpu(0) }
+}
+
+/// Try building a model with the auto-detected device, fall back to CPU on failure.
+#[cfg(not(target_arch = "wasm32"))]
+fn with_device_fallback<M, F>(try_build: F) -> std::result::Result<M, String>
+where
+    F: Fn(Device) -> std::result::Result<M, String>,
+{
+    let device = auto_device();
+    eprintln!("[HW] Trying device: {:?}", device);
+    match try_build(device) {
+        Ok(model) => {
+            eprintln!("[HW] Model loaded with device: {:?}", device);
+            Ok(model)
+        }
+        Err(e) if !matches!(device, Device::Cpu(_)) => {
+            eprintln!("[HW] {:?} failed ({}), falling back to CPU", device, e);
+            try_build(Device::Cpu(0))
+        }
+        Err(e) => Err(e),
+    }
+}
 
 // ============================================================================
 // Types
@@ -503,13 +536,17 @@ impl YOLODetector {
             .with_model_file(model_path.to_str().unwrap())
             .with_version(YOLOVersion(version_num, 0, None))
             .with_class_confs(&[conf])
-            .with_iou(iou)
-            .commit()
-            .map_err(|e| format!("Failed to commit config: {:?}", e))?;
+            .with_iou(iou);
 
-        // Create YOLO model
-        let model = YOLO::new(config)
-            .map_err(|e| format!("Failed to create YOLO model: {:?}", e))?;
+        // Create YOLO model with hardware acceleration + CPU fallback
+        let model = with_device_fallback(|device| {
+            let cfg = config.clone()
+                .with_device_all(device)
+                .commit()
+                .map_err(|e| format!("Config failed: {:?}", e))?;
+            YOLO::new(cfg)
+                .map_err(|e| format!("Model failed: {:?}", e))
+        })?;
 
         tracing::info!("✓ YOLO model loaded successfully");
 

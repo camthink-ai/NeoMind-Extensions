@@ -17,7 +17,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "2.5.0"
 edition = "2021"
 authors = ["NeoMind"]
 license = "MIT"
@@ -38,12 +38,7 @@ async-trait = "0.1"
 # Use load-dynamic: ORT is loaded at runtime from bundled dylib/so/dll
 ort = { version = "2.0.0-rc.10", default-features = false, features = ["half", "load-dynamic"] }
 
-# Use crates.io version for ABI isolation
-# When SDK is published, extensions don't need to recompile when main project updates
-neomind-extension-sdk = "0.6"
-
-# Note: For local development, you can temporarily use path dependency:
-# neomind-extension-sdk = { path = "../NeoMind/crates/neomind-extension-sdk" }
+neomind-extension-sdk = "0.6.2"
 
 [profile.release]
 opt-level = 3

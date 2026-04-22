@@ -28,12 +28,12 @@ use async_trait::async_trait;
 use neomind_extension_sdk::{
     Extension, ExtensionMetadata, ExtensionError, ExtensionMetricValue,
     MetricDescriptor, ExtensionCommand, MetricDataType, ParameterDefinition,
-    ParamMetricValue, Result,
+    ParamMetricValue, Result, send_push_output,
 };
 use neomind_extension_sdk::prelude::{
     FlowControl, StreamCapability, StreamMode, StreamDirection, StreamDataType,
     StreamSession, SessionStats, StreamError, StreamResult,
-    PushOutputMessage, mpsc,
+    PushOutputMessage,
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -99,14 +99,62 @@ pub struct ObjectDetection {
     pub class_id: u32,
 }
 
+/// ROI Region definition (polygon)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoiRegion {
+    pub id: String,
+    pub name: String,
+    /// Polygon vertices as normalized coordinates (0.0-1.0)
+    pub points: Vec<(f32, f32)>,
+    /// Optional: only count these classes in this ROI (empty = all)
+    #[serde(default)]
+    pub class_filter: Vec<String>,
+    /// Display color (hex, e.g. "#FF6600")
+    #[serde(default)]
+    pub color: String,
+}
+
+/// Line crossing definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossLine {
+    pub id: String,
+    pub name: String,
+    /// Line endpoints as normalized coordinates (0.0-1.0)
+    pub start: (f32, f32),
+    pub end: (f32, f32),
+    /// Display color (hex)
+    #[serde(default)]
+    pub color: String,
+}
+
+/// Per-ROI frame statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoiStat {
+    pub id: String,
+    pub name: String,
+    pub count: u32,
+}
+
+/// Per-line crossing statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LineStat {
+    pub id: String,
+    pub name: String,
+    pub forward_count: u64,
+    pub backward_count: u64,
+}
+
 /// Stream configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StreamConfig {
     pub source_url: String,
     pub confidence_threshold: f32,
     pub max_objects: u32,
     pub target_fps: u32,
     pub draw_boxes: bool,
+    pub rois: Vec<RoiRegion>,
+    pub lines: Vec<CrossLine>,
 }
 
 impl Default for StreamConfig {
@@ -117,6 +165,8 @@ impl Default for StreamConfig {
             max_objects: 20,
             target_fps: 15,
             draw_boxes: true,
+            rois: Vec::new(),
+            lines: Vec::new(),
         }
     }
 }
@@ -156,15 +206,38 @@ struct ActiveStream {
     running: bool,
     detected_objects: HashMap<String, u32>,
     push_task: Option<std::thread::JoinHandle<()>>,
-    last_process_time: Option<Instant>,  // Track last processing time
-    dropped_frames: u64,  // Track dropped frames
+    last_process_time: Option<Instant>,
+    dropped_frames: u64,
+    /// Object tracker for line crossing detection
+    tracker: ObjectTracker,
+    /// Cumulative line crossing counts: line_id → (A→B count, B→A count)
+    line_counts: HashMap<String, (u64, u64)>,
 }
 
-/// Color palette for drawing boxes
-const BOX_COLORS: [(u8, u8, u8); 10] = [
-    (239, 68, 68), (34, 197, 94), (59, 130, 246), (234, 179, 8), (6, 182, 212),
-    (139, 92, 246), (236, 72, 153), (249, 115, 22), (132, 204, 22), (20, 184, 166),
+/// Standard COCO 80-class color palette (each class gets a unique, consistent color)
+const COCO_COLORS: [(u8, u8, u8); 80] = [
+    (38, 70, 83),   (40, 116, 74),  (117, 79, 12), (115, 53, 88), (192, 41, 66),
+    (11, 121, 175), (232, 168, 124),(211, 212, 211),(232, 212, 77),(32, 169, 199),
+    (57, 94, 121),  (237, 139, 0),  (133, 160, 131),(174, 30, 70),(255, 183, 59),
+    (197, 198, 53), (166, 207, 213),(136, 86, 82), (119, 104, 174),(51, 159, 160),
+    (166, 59, 111), (197, 166, 137),(108, 118, 135),(38, 131, 116),(233, 126, 67),
+    (255, 179, 71), (48, 96, 106),  (197, 104, 80),(227, 105, 145),(229, 193, 175),
+    (141, 176, 191),(68, 58, 90),   (138, 142, 72), (248, 162, 162),(115, 145, 144),
+    (72, 46, 64),   (77, 84, 156),  (55, 104, 56), (238, 113, 119),(246, 198, 76),
+    (79, 128, 165), (167, 188, 196),(176, 84, 97), (47, 139, 110),(42, 110, 152),
+    (197, 114, 60), (134, 82, 60),  (73, 131, 103),(101, 146, 85),(219, 138, 80),
+    (118, 156, 145),(164, 182, 204),(129, 173, 129),(113, 107, 91),(145, 54, 140),
+    (161, 166, 98), (230, 144, 133),(199, 144, 106),(48, 109, 140),(195, 100, 118),
+    (93, 155, 112), (160, 137, 173),(109, 59, 105), (212, 128, 93),(231, 172, 112),
+    (78, 131, 137), (227, 133, 117),(189, 187, 169),(78, 78, 103), (139, 78, 107),
+    (123, 140, 63), (161, 158, 131),(104, 112, 115),(109, 122, 65),(150, 131, 104),
+    (180, 181, 195),(112, 98, 114), (157, 130, 166),(129, 129, 106),(67, 102, 130),
 ];
+
+/// Get color for a class ID using COCO palette
+fn class_color(class_id: u32) -> (u8, u8, u8) {
+    COCO_COLORS[(class_id as usize) % COCO_COLORS.len()]
+}
 
 // ============================================================================
 // Helper Functions
@@ -222,89 +295,114 @@ fn generate_fallback_detections(frame_count: u64, max_objects: u32) -> Vec<Objec
         .collect()
 }
 
-/// Draw detections on an image
+/// Draw detections on an image with standard object detection visualization
 pub fn draw_detections(image: &mut image::RgbImage, detections: &[ObjectDetection]) {
     use imageproc::drawing::{draw_hollow_rect_mut, draw_filled_rect_mut, draw_text_mut};
     use imageproc::rect::Rect;
-    use ab_glyph::{FontRef, PxScale};
+    use ab_glyph::{FontRef, PxScale, Font as AbFont, ScaleFont as _};
 
-    // ✨ OPTIMIZATION: Cache font loading result to avoid repeated failures
+    // Cache font loading
     static FONT_RESULT: std::sync::OnceLock<std::result::Result<FontRef<'static>, ab_glyph::InvalidFont>> = std::sync::OnceLock::new();
-    
+
     let font = FONT_RESULT.get_or_init(|| {
-        FontRef::try_from_slice(include_bytes!("../fonts/NotoSans-Regular.ttf"))
+        let result = FontRef::try_from_slice(include_bytes!("../fonts/NotoSans-Regular.ttf"));
+        if let Err(ref e) = result {
+            eprintln!("[YOLO-Draw] Font load FAILED: {:?}", e);
+        } else {
+            eprintln!("[YOLO-Draw] Font loaded OK");
+        }
+        result
     });
 
-    match font {
-        Ok(font) => {
-            // Draw with labels
-            for (i, det) in detections.iter().enumerate() {
-                let color = BOX_COLORS[i % BOX_COLORS.len()];
-                let image_color = image::Rgb([color.0, color.1, color.2]);
-
-                let x = det.bbox.x.max(0.0).min(image.width() as f32 - 2.0) as i32;
-                let y = det.bbox.y.max(0.0).min(image.height() as f32 - 2.0) as i32;
-                let w = det.bbox.width.min(image.width() as f32 - x as f32 - 1.0) as u32;
-                let h = det.bbox.height.min(image.height() as f32 - y as f32 - 1.0) as u32;
-
-                if w < 2 || h < 2 {
-                    continue;
-                }
-
-                // Draw bounding box (2px thick)
-                draw_hollow_rect_mut(image, Rect::at(x, y).of_size(w, h), image_color);
-                draw_hollow_rect_mut(image, Rect::at(x + 1, y + 1).of_size(w.saturating_sub(2), h.saturating_sub(2)), image_color);
-
-                // Draw label background and text at top-left corner
-                let label_text = format!("{} {:.0}%", det.label, det.confidence * 100.0);
-                let scale = PxScale::from(14.0);
-                let label_height = 20u32;
-                let label_width = ((label_text.len() * 8) + 8).min(w as usize) as u32;
-
-                // Position label above the box if possible, otherwise inside
-                let label_y = if y >= label_height as i32 {
-                    y - label_height as i32
-                } else {
-                    y
-                };
-
-                if label_width >= 20 && label_y >= 0 && (label_y as u32) + label_height <= image.height() {
-                    // Draw filled background for label
-                    draw_filled_rect_mut(
-                        image,
-                        Rect::at(x, label_y).of_size(label_width, label_height),
-                        image_color,
-                    );
-
-                    // Draw white text on colored background
-                    draw_text_mut(
-                        image,
-                        image::Rgb([255, 255, 255]),
-                        x + 4,
-                        label_y + 3,
-                        scale,
-                        font,
-                        &label_text,
-                    );
-                }
-            }
-        }
+    let font = match font {
+        Ok(f) => f,
         Err(_) => {
-            // Draw boxes without labels
-            for (i, det) in detections.iter().enumerate() {
-                let color = BOX_COLORS[i % BOX_COLORS.len()];
+            // Font failed — just draw boxes
+            for det in detections {
+                let color = class_color(det.class_id);
                 let image_color = image::Rgb([color.0, color.1, color.2]);
-
                 let x = det.bbox.x.max(0.0).min(image.width() as f32 - 2.0) as i32;
                 let y = det.bbox.y.max(0.0).min(image.height() as f32 - 2.0) as i32;
                 let w = det.bbox.width.min(image.width() as f32 - x as f32 - 1.0) as u32;
                 let h = det.bbox.height.min(image.height() as f32 - y as f32 - 1.0) as u32;
-
                 if w >= 2 && h >= 2 {
                     draw_hollow_rect_mut(image, Rect::at(x, y).of_size(w, h), image_color);
-                    draw_hollow_rect_mut(image, Rect::at(x + 1, y + 1).of_size(w.saturating_sub(2), h.saturating_sub(2)), image_color);
+                    draw_hollow_rect_mut(image, Rect::at(x+1, y+1).of_size(w.saturating_sub(2), h.saturating_sub(2)), image_color);
                 }
             }
+            return;
+        }
+    };
+
+    let img_w = image.width();
+    let img_h = image.height();
+
+    // Log first detection for debugging
+    if let Some(first) = detections.first() {
+        eprintln!("[YOLO-Draw] img={}x{} det0: x={:.0} y={:.0} w={:.0} h={:.0} label={}",
+            img_w, img_h, first.bbox.x, first.bbox.y, first.bbox.width, first.bbox.height, first.label);
+    }
+
+    for det in detections {
+        let color = class_color(det.class_id);
+        let image_color = image::Rgb([color.0, color.1, color.2]);
+
+        let x = det.bbox.x.max(0.0).min(img_w as f32 - 2.0) as i32;
+        let y = det.bbox.y.max(0.0).min(img_h as f32 - 2.0) as i32;
+        let w = det.bbox.width.min(img_w as f32 - x as f32 - 1.0) as u32;
+        let h = det.bbox.height.min(img_h as f32 - y as f32 - 1.0) as u32;
+
+        if w < 4 || h < 4 {
+            continue;
+        }
+
+        // Draw bounding box (2px thick)
+        draw_hollow_rect_mut(image, Rect::at(x, y).of_size(w, h), image_color);
+        draw_hollow_rect_mut(image, Rect::at(x + 1, y + 1).of_size(w.saturating_sub(2), h.saturating_sub(2)), image_color);
+
+        // Build label: "ClassName 87%"
+        let label_text = format!("{} {:.0}%", det.label, det.confidence * 100.0);
+
+        // Scale font proportionally to image resolution
+        // For 1920x1080: ~24px, for 640x480: ~16px, for small: ~11px
+        let font_size = if img_w > 1200 { 24.0 } else if img_w > 800 { 18.0 } else if w > 100 { 14.0 } else { 11.0 };
+        let scale = PxScale::from(font_size);
+
+        // Measure text width using glyph advance widths
+        let scaled_font = font.as_scaled(scale);
+        let mut text_width: f32 = 0.0;
+        for c in label_text.chars() {
+            let glyph_id = scaled_font.glyph_id(c);
+            text_width += scaled_font.h_advance(glyph_id);
+        }
+        let label_width = (text_width.ceil() as u32 + 12).min(img_w - x as u32);
+        let label_height = (font_size as u32) + 8;
+
+        // Position label above the box, or inside if no room above
+        let label_y = if y >= label_height as i32 {
+            y - label_height as i32
+        } else {
+            y
+        };
+
+        if label_y >= 0 && (label_y as u32) + label_height <= img_h {
+            // Filled background for label
+            draw_filled_rect_mut(
+                image,
+                Rect::at(x, label_y).of_size(label_width, label_height),
+                image_color,
+            );
+
+            // White text on colored background
+            draw_text_mut(
+                image,
+                image::Rgb([255, 255, 255]),
+                x + 5,
+                label_y + 3,
+                scale,
+                font,
+                &label_text,
+            );
         }
     }
 }
@@ -518,6 +616,8 @@ impl StreamProcessor {
             push_task: None,
             last_process_time: None,
             dropped_frames: 0,
+            tracker: ObjectTracker::new(),
+            line_counts: HashMap::new(),
         }));
 
         {
@@ -738,6 +838,8 @@ impl YoloVideoProcessorV2 {
             push_task: None,
             last_process_time: None,
             dropped_frames: 0,
+            tracker: ObjectTracker::new(),
+            line_counts: HashMap::new(),
         };
 
         // Register the recovered session
@@ -933,6 +1035,16 @@ impl Extension for YoloVideoProcessorV2 {
                 samples: vec![],
                 parameter_groups: Vec::new(),
             },
+            ExtensionCommand {
+                name: "update_stream_config".into(),
+                display_name: "Update Stream Config".into(),
+                description: "Hot-update ROI and line config on a running stream".into(),
+                payload_template: r#"{"stream_id": "...", "rois": [], "lines": []}"#.into(),
+                parameters: vec![],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                parameter_groups: Vec::new(),
+            },
         ]
     }
 
@@ -991,6 +1103,36 @@ impl Extension for YoloVideoProcessorV2 {
                 self.processor.cleanup_memory();
                 Ok(json!({"success": true, "message": "Memory cleanup triggered"}))
             }
+            "update_stream_config" => {
+                let stream_id = args.get("stream_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing stream_id".into()))?;
+
+                // Deserialize BEFORE acquiring lock to minimize lock hold time
+                let new_rois: Vec<RoiRegion> = args.get("rois")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                let new_lines: Vec<CrossLine> = args.get("lines")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+
+                let registry = get_registry().lock();
+                match registry.streams.get(stream_id) {
+                    Some(stream) => {
+                        let mut s = stream.lock();
+                        s._config.rois = new_rois;
+                        s._config.lines = new_lines;
+                        // Prune stale line_counts for removed lines
+                        let active_ids: std::collections::HashSet<String> =
+                            s._config.lines.iter().map(|l| l.id.clone()).collect();
+                        s.line_counts.retain(|id, _| active_ids.contains(id));
+                        let roi_count = s._config.rois.len();
+                        let line_count = s._config.lines.len();
+                        Ok(json!({"success": true, "roi_count": roi_count, "line_count": line_count}))
+                    }
+                    None => Err(ExtensionError::SessionNotFound(stream_id.into())),
+                }
+            }
             _ => Err(ExtensionError::CommandNotFound(command.to_string())),
         }
     }
@@ -999,13 +1141,16 @@ impl Extension for YoloVideoProcessorV2 {
         let now = chrono::Utc::now().timestamp_millis();
         let registry = get_registry().lock();
 
-        // Get model status
-        let (model_loaded, model_size) = self.processor.get_detector()
-            .map(|d| {
-                let size = d.model_size() as f32 / (1024.0 * 1024.0); // Convert to MB
-                (d.is_loaded(), size)
-            })
-            .unwrap_or((false, 0.0));
+        // Get model status (peek-only: do NOT trigger lazy loading,
+        // otherwise produce_metrics blocks the runner's IPC loop during
+        // the multi-second ONNX/CoreML model initialization)
+        let (model_loaded, model_size) = {
+            let lock = self.processor.detector.lock();
+            match lock.as_ref() {
+                Some(d) => (d.is_loaded(), d.model_size() as f32 / (1024.0 * 1024.0)),
+                None => (false, 0.0),
+            }
+        };
 
         Ok(vec![
             ExtensionMetricValue {
@@ -1037,16 +1182,13 @@ impl Extension for YoloVideoProcessorV2 {
     }
 
     // ========================================================================
-    // Streaming Support - Hybrid Mode (Stateful + Push)
+    // Streaming Support - Push Mode
     // ========================================================================
 
     fn stream_capability(&self) -> Option<StreamCapability> {
-        // Support both modes:
-        // - Bidirectional (Stateful): for local camera, client sends frames
-        // - Download (Push): for RTSP/RTMP/HLS, server pushes frames
         Some(StreamCapability {
             direction: StreamDirection::Bidirectional,
-            mode: StreamMode::Stateful,
+            mode: StreamMode::Push,
             supported_data_types: vec![
                 StreamDataType::Image { format: "jpeg".to_string() },
             ],
@@ -1059,22 +1201,24 @@ impl Extension for YoloVideoProcessorV2 {
     }
 
     async fn init_session(&self, session: &StreamSession) -> Result<()> {
-        eprintln!("[YOLO] init_session called for session: {}", session.id);
-
+        eprintln!("[YOLO] init_session called: id={}", session.id);
         let config: StreamConfig = serde_json::from_value(session.config.clone())
             .unwrap_or_default();
 
         let stream_id = session.id.clone();
         let source_url = config.source_url.clone();
 
-        eprintln!("[YOLO] Session config: source_url={}, confidence={}, max_objects={}",
+        tracing::info!("Session config: source_url={}, confidence={}, max_objects={}",
             source_url, config.confidence_threshold, config.max_objects);
 
         // Determine if this is a network stream (RTSP/RTMP/HLS) or local camera
         let is_network_stream = source_url.starts_with("rtsp://")
             || source_url.starts_with("rtmp://")
             || source_url.starts_with("hls://")
-            || source_url.contains(".m3u8");
+            || source_url.contains(".m3u8")
+            || source_url.starts_with("http://")
+            || source_url.starts_with("https://")
+            || source_url.starts_with("file://");
 
         let stream = ActiveStream {
             _id: stream_id.clone(),
@@ -1091,6 +1235,8 @@ impl Extension for YoloVideoProcessorV2 {
             push_task: None,
             last_process_time: None,
             dropped_frames: 0,
+            tracker: ObjectTracker::new(),
+            line_counts: HashMap::new(),
         };
 
         {
@@ -1100,7 +1246,7 @@ impl Extension for YoloVideoProcessorV2 {
             if let Some(old_stream) = registry.streams.get(&stream_id) {
                 let mut old = old_stream.lock();
                 if old.running {
-                    eprintln!("[YOLO] Session {} already exists, stopping old session", stream_id);
+                    eprintln!("[YOLO] Session {} already exists, stopping", stream_id);
                     old.running = false;
                     // Abort old push task if exists
                     if let Some(task) = old.push_task.take() {
@@ -1112,26 +1258,24 @@ impl Extension for YoloVideoProcessorV2 {
             }
             
             registry.streams.insert(stream_id.clone(), Arc::new(Mutex::new(stream)));
-            eprintln!("[YOLO] Session registered, total sessions: {}", registry.streams.len());
         }
 
         if is_network_stream {
             tracing::info!("Network stream session initialized: {} ({})", stream_id, source_url);
-            eprintln!("[YOLO] Network stream session initialized: {} ({})", stream_id, source_url);
         } else {
             tracing::info!("Local camera session initialized: {}", stream_id);
-            eprintln!("[YOLO] Local camera session initialized: {}", stream_id);
         }
+        eprintln!("[YOLO] init_session completed OK: id={}", stream_id);
 
         Ok(())
     }
 
-    fn set_output_sender(&self, sender: Arc<mpsc::Sender<PushOutputMessage>>) {
-        let _ = PUSH_SENDER.set(sender);
+    fn set_output_sender(&self, _sender: Arc<tokio::sync::mpsc::Sender<PushOutputMessage>>) {
+        // No-op: Push mode uses send_push_output() directly via FFI
     }
 
     async fn start_push(&self, session_id: &str) -> Result<()> {
-        // Check if push task already running
+        tracing::info!("start_push called for session: {}", session_id);
         {
             let registry = get_registry().lock();
             if let Some(stream) = registry.streams.get(session_id) {
@@ -1160,25 +1304,21 @@ impl Extension for YoloVideoProcessorV2 {
         let is_network_stream = source_url.starts_with("rtsp://")
             || source_url.starts_with("rtmp://")
             || source_url.starts_with("hls://")
-            || source_url.contains(".m3u8");
+            || source_url.contains(".m3u8")
+            || source_url.starts_with("http://")
+            || source_url.starts_with("https://")
+            || source_url.starts_with("file://");
 
         if !is_network_stream {
-            tracing::info!("Not a network stream, skipping push mode for: {}", session_id);
+            tracing::info!("Not a network stream, camera mode will use process_session_chunk: {}", session_id);
             return Ok(());
         }
-
-        let sender: Arc<mpsc::Sender<PushOutputMessage>> = match PUSH_SENDER.get().cloned() {
-            Some(s) => s,
-            None => {
-                tracing::warn!("Push sender not configured");
-                return Ok(());
-            }
-        };
 
         let sid = session_id.to_string();
         let processor = self.processor.clone();
         let confidence = config.confidence_threshold;
         let max_obj = config.max_objects;
+        let draw_boxes = config.draw_boxes;
 
         tracing::info!("Starting network stream push for: {} ({})", sid, source_url);
 
@@ -1205,8 +1345,8 @@ impl Extension for YoloVideoProcessorV2 {
             let mut video_source = match crate::video_source::FfmpegVideoSource::new(&source_type) {
                 Ok(vs) => {
                     tracing::info!("[Stream {}] FFmpeg connected to: {}", sid, source_url);
-                    let _ = sender.try_send(
-                        PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                    let _ = send_push_output(
+                        &PushOutputMessage::json(&sid, sequence, serde_json::json!({
                             "type": "status", "status": "streaming"
                         })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
                     );
@@ -1214,8 +1354,8 @@ impl Extension for YoloVideoProcessorV2 {
                 }
                 Err(e) => {
                     tracing::error!("[Stream {}] FFmpeg failed to connect: {}", sid, e);
-                    let _ = sender.try_send(
-                        PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                    let _ = send_push_output(
+                        &PushOutputMessage::json(&sid, sequence, serde_json::json!({
                             "type": "error", "message": format!("Failed to connect: {}", e)
                         })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
                     );
@@ -1263,6 +1403,7 @@ impl Extension for YoloVideoProcessorV2 {
                         let detections = match processor.get_detector() {
                             Some(detector) if detector.is_loaded() => {
                                 let dets = detector.detect(&inference_image, confidence, max_obj);
+                                eprintln!("[YOLO-Detect] raw detections: {}", dets.len());
                                 if !dets.is_empty() {
                                     let scale_x = orig_width as f32 / 640.0;
                                     let scale_y = orig_height as f32 / 640.0;
@@ -1283,7 +1424,87 @@ impl Extension for YoloVideoProcessorV2 {
 
                         // Draw detections on original-resolution image
                         let mut output_image = original_image;
-                        draw_detections(&mut output_image, &detections);
+                        if draw_boxes {
+                            draw_detections(&mut output_image, &detections);
+                        }
+
+                        // ROI counting and line crossing detection
+                        let (roi_stats, line_stats) = {
+                            let stream_arc = {
+                                let registry = get_registry().lock();
+                                match registry.streams.get(&sid).cloned() {
+                                    Some(s) => s,
+                                    None => {
+                                        eprintln!("[YOLO-Push] Stream {} lost during ROI processing", sid);
+                                        break;
+                                    }
+                                }
+                            };
+                            let mut s = stream_arc.lock();
+
+                            let norm_dets: Vec<(f32, f32, &str)> = detections.iter()
+                                .filter_map(|d| {
+                                    let cx = (d.bbox.x + d.bbox.width / 2.0) / orig_width as f32;
+                                    let cy = (d.bbox.y + d.bbox.height / 2.0) / orig_height as f32;
+                                    if cx >= 0.0 && cx <= 1.0 && cy >= 0.0 && cy <= 1.0 {
+                                        Some((cx, cy, d.label.as_str()))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+
+                            let roi_stats = count_roi_detections(&norm_dets, &s._config.rois);
+
+                            let lines_cfg = s._config.lines.clone();
+                            let line_stats = if !lines_cfg.is_empty() {
+                                let track_dets: Vec<(f32, f32, u32, &str)> = detections.iter()
+                                    .filter_map(|d| {
+                                        let cx = (d.bbox.x + d.bbox.width / 2.0) / orig_width as f32;
+                                        let cy = (d.bbox.y + d.bbox.height / 2.0) / orig_height as f32;
+                                        Some((cx, cy, d.class_id as u32, d.label.as_str()))
+                                    })
+                                    .collect();
+                                let matches = s.tracker.update(&track_dets);
+
+                                // Pre-collect prev/curr centers for matched tracks
+                                let track_movements: Vec<(u32, (f32, f32), (f32, f32))> = matches.iter()
+                                    .filter_map(|(track_id, _det_idx)| {
+                                        let prev = s.tracker.get_prev_center(*track_id)?;
+                                        let curr = s.tracker.objects.iter().find(|t| t.id == *track_id).map(|t| t.center)?;
+                                        Some((*track_id, prev, curr))
+                                    })
+                                    .collect();
+
+                                for line in &lines_cfg {
+                                    let entry = s.line_counts.entry(line.id.clone()).or_insert((0u64, 0u64));
+                                    for (_track_id, prev, curr) in &track_movements {
+                                        let dir = line_crossing_direction(*prev, *curr, line.start, line.end);
+                                        if dir > 0 { entry.0 += 1; }
+                                        else if dir < 0 { entry.1 += 1; }
+                                    }
+                                }
+
+                                lines_cfg.iter().map(|line| {
+                                    let (fwd, bwd) = s.line_counts.get(&line.id).copied().unwrap_or((0, 0));
+                                    LineStat { id: line.id.clone(), name: line.name.clone(), forward_count: fwd, backward_count: bwd }
+                                }).collect()
+                            } else {
+                                Vec::new()
+                            };
+
+                            if !s._config.rois.is_empty() || !lines_cfg.is_empty() {
+                                draw_roi_and_lines(
+                                    &mut output_image,
+                                    &s._config.rois,
+                                    &roi_stats,
+                                    &lines_cfg,
+                                    &s.line_counts,
+                                );
+                            }
+
+                            (roi_stats, line_stats)
+                        };
 
                         // Encode to JPEG
                         let jpeg_data = encode_jpeg(&output_image, 75);
@@ -1309,17 +1530,23 @@ impl Extension for YoloVideoProcessorV2 {
                             }
                         }
 
-                        // Push to frontend
+                        // Push to frontend via FFI
                         let output = PushOutputMessage::image_jpeg(&sid, sequence, jpeg_data)
-                            .with_metadata(serde_json::json!({ "detections": detections }));
+                            .with_metadata(serde_json::json!({
+                                "detections": detections,
+                                "roi_stats": roi_stats,
+                                "line_stats": line_stats,
+                            }));
 
-                        match sender.try_send(output) {
+                        if sequence % 30 == 0 {
+                            eprintln!("[YOLO-Push] frame {} detections={} size={}KB", sequence, detections.len(), output.data.len() / 1024);
+                        }
+
+                        match send_push_output(&output) {
                             Ok(_) => sequence += 1,
-                            Err(mpsc::error::TrySendError::Full(_)) => {
-                                tracing::debug!("[Stream {}] Channel full, dropping frame {}", sid, sequence);
-                            }
-                            Err(mpsc::error::TrySendError::Closed(_)) => {
-                                tracing::warn!("[Stream {}] Channel closed", sid);
+                            Err(e) => {
+                                eprintln!("[YOLO-Push] send_push_output FAILED: {}", e);
+                                tracing::warn!("[Stream {}] Push output failed: {}", sid, e);
                                 break;
                             }
                         }
@@ -1334,6 +1561,32 @@ impl Extension for YoloVideoProcessorV2 {
                         std::thread::sleep(std::time::Duration::from_millis(5));
                     }
                     FrameResult::EndOfStream => {
+                        // For local files (MP4), reconnect to loop playback
+                        let is_file = source_url.starts_with('/') || source_url.ends_with(".mp4")
+                            || source_url.ends_with(".avi") || source_url.ends_with(".mkv")
+                            || source_url.ends_with(".mov");
+                        if is_file {
+                            tracing::info!("[Stream {}] File ended, reconnecting to loop", sid);
+                            match video_source.reconnect() {
+                                Ok(()) => {
+                                    let _ = send_push_output(
+                                        &PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                            "type": "status", "status": "looping"
+                                        })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                                    );
+                                    continue;
+                                }
+                                Err(e) => {
+                                    tracing::error!("[Stream {}] Reconnect failed: {}", sid, e);
+                                }
+                            }
+                        }
+                        // Notify frontend that stream ended
+                        let _ = send_push_output(
+                            &PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                "type": "status", "status": "ended"
+                            })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                        );
                         tracing::warn!("[Stream {}] Stream ended", sid);
                         break;
                     }
@@ -1342,8 +1595,8 @@ impl Extension for YoloVideoProcessorV2 {
                         reconnect_count += 1;
                         if reconnect_count > MAX_RECONNECT {
                             tracing::error!("[Stream {}] Max reconnect attempts reached", sid);
-                            let _ = sender.try_send(
-                                PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                            let _ = send_push_output(
+                                &PushOutputMessage::json(&sid, sequence, serde_json::json!({
                                     "type": "error",
                                     "message": format!("Stream error after {} retries: {}", MAX_RECONNECT, e)
                                 })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
@@ -1352,8 +1605,8 @@ impl Extension for YoloVideoProcessorV2 {
                         }
                         let backoff = std::time::Duration::from_secs(1 << (reconnect_count - 1));
                         tracing::info!("[Stream {}] Reconnecting in {:?} ({}/{})", sid, backoff, reconnect_count, MAX_RECONNECT);
-                        let _ = sender.try_send(
-                            PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                        let _ = send_push_output(
+                            &PushOutputMessage::json(&sid, sequence, serde_json::json!({
                                 "type": "status", "status": "reconnecting"
                             })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
                         );
@@ -1362,8 +1615,8 @@ impl Extension for YoloVideoProcessorV2 {
                         match video_source.reconnect() {
                             Ok(()) => {
                                 tracing::info!("[Stream {}] Reconnected", sid);
-                                let _ = sender.try_send(
-                                    PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                let _ = send_push_output(
+                                    &PushOutputMessage::json(&sid, sequence, serde_json::json!({
                                         "type": "status", "status": "streaming"
                                     })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
                                 );
@@ -1413,16 +1666,14 @@ impl Extension for YoloVideoProcessorV2 {
         Ok(())
     }
 
-    /// Process frame from local camera (Stateful mode)
+    /// Process frame from local camera, or poll for network stream frame (Stateful mode)
+    /// Process frame from local camera (Push mode: results pushed via send_push_output)
     async fn process_session_chunk(
         &self,
         session_id: &str,
         chunk: neomind_extension_sdk::DataChunk,
     ) -> Result<StreamResult> {
         let start = Instant::now();
-
-        eprintln!("[YOLO] Processing chunk for session {}, sequence {}, data size: {}",
-            session_id, chunk.sequence, chunk.data.len());
 
         // Get stream state
         let stream = {
@@ -1647,38 +1898,84 @@ impl Extension for YoloVideoProcessorV2 {
         eprintln!("[YOLO] Drawing detections on original {}x{} image", orig_width, orig_height);
         draw_detections(&mut original_image, &detections);
 
-        // Update stream stats
-        {
+        // ROI counting and line crossing detection (camera mode)
+        let (roi_stats, line_stats) = {
             let mut s = stream.lock();
+
+            // Update frame stats
             s.frame_count += 1;
             s.total_detections += detections.len() as u64;
             s.last_detections = detections.clone();
-
-            // Update object counts (limit HashMap size to prevent unbounded growth)
             for det in &detections {
                 *s.detected_objects.entry(det.label.clone()).or_insert(0) += 1;
             }
-
-            // Clear detection history every 30 frames (~1.5 seconds at 20 FPS)
-            // This prevents memory from growing indefinitely
             if s.frame_count % 30 == 0 {
                 s.detected_objects.clear();
-            }
-            
-            // Clear last_frame cache every 30 frames to save memory
-            // The frame is already in MJPEG queue, so we don't need to cache it
-            if s.frame_count % 30 == 0 {
                 s.last_frame = None;
             }
-            
-            // Force memory cleanup every 50 frames (more aggressive cleanup)
-            // This helps trigger Rust's drop checker and release temporary allocations
-            if s.frame_count % 50 == 0 {
-                eprintln!("[YOLO] Memory cleanup at frame {}", s.frame_count);
-                // Trigger ONNX Runtime memory cleanup
-                // Note: This is a workaround for ONNX Runtime memory leak in video streaming
+
+            // Normalize detections for ROI/Line processing
+            let norm_dets: Vec<(f32, f32, &str)> = detections.iter()
+                .filter_map(|d| {
+                    let cx = (d.bbox.x + d.bbox.width / 2.0) / orig_width as f32;
+                    let cy = (d.bbox.y + d.bbox.height / 2.0) / orig_height as f32;
+                    if cx >= 0.0 && cx <= 1.0 && cy >= 0.0 && cy <= 1.0 {
+                        Some((cx, cy, d.label.as_str()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            let roi_stats = count_roi_detections(&norm_dets, &s._config.rois);
+
+            let lines_cfg = s._config.lines.clone();
+            let line_stats = if !lines_cfg.is_empty() {
+                let track_dets: Vec<(f32, f32, u32, &str)> = detections.iter()
+                    .filter_map(|d| {
+                        let cx = (d.bbox.x + d.bbox.width / 2.0) / orig_width as f32;
+                        let cy = (d.bbox.y + d.bbox.height / 2.0) / orig_height as f32;
+                        Some((cx, cy, d.class_id as u32, d.label.as_str()))
+                    })
+                    .collect();
+                let matches = s.tracker.update(&track_dets);
+                let track_movements: Vec<(u32, (f32, f32), (f32, f32))> = matches.iter()
+                    .filter_map(|(track_id, _det_idx)| {
+                        let prev = s.tracker.get_prev_center(*track_id)?;
+                        let curr = s.tracker.objects.iter().find(|t| t.id == *track_id).map(|t| t.center)?;
+                        Some((*track_id, prev, curr))
+                    })
+                    .collect();
+
+                for line in &lines_cfg {
+                    let entry = s.line_counts.entry(line.id.clone()).or_insert((0u64, 0u64));
+                    for (_track_id, prev, curr) in &track_movements {
+                        let dir = line_crossing_direction(*prev, *curr, line.start, line.end);
+                        if dir > 0 { entry.0 += 1; }
+                        else if dir < 0 { entry.1 += 1; }
+                    }
+                }
+
+                lines_cfg.iter().map(|line| {
+                    let (fwd, bwd) = s.line_counts.get(&line.id).copied().unwrap_or((0, 0));
+                    LineStat { id: line.id.clone(), name: line.name.clone(), forward_count: fwd, backward_count: bwd }
+                }).collect()
+            } else {
+                Vec::new()
+            };
+
+            if !s._config.rois.is_empty() || !lines_cfg.is_empty() {
+                draw_roi_and_lines(
+                    &mut original_image,
+                    &s._config.rois,
+                    &roi_stats,
+                    &lines_cfg,
+                    &s.line_counts,
+                );
             }
-        }
+
+            (roi_stats, line_stats)
+        };
 
         eprintln!("[YOLO] Encoding image to JPEG (quality=75)");
         // Encode result as JPEG with dynamic quality based on processing time
@@ -1714,7 +2011,9 @@ impl Extension for YoloVideoProcessorV2 {
             StreamDataType::Image { format: "jpeg".to_string() },
             start.elapsed().as_secs_f32() * 1000.0,
         ).with_metadata(serde_json::json!({
-            "detections": detections
+            "detections": detections,
+            "roi_stats": roi_stats,
+            "line_stats": line_stats,
         }));
 
         eprintln!("[YOLO] Returning result for sequence {}, data size: {}, detections: {}",
@@ -1771,9 +2070,6 @@ impl Extension for YoloVideoProcessorV2 {
         self
     }
 }
-
-// Global push sender for network stream mode
-static PUSH_SENDER: std::sync::OnceLock<Arc<mpsc::Sender<PushOutputMessage>>> = std::sync::OnceLock::new();
 
 // ============================================================================
 // Public API for HTTP handlers
@@ -1833,6 +2129,333 @@ pub fn create_placeholder_jpeg(width: u32, height: u32, _message: &str) -> Vec<u
     // Create a simple dark gray placeholder
     let img = image::RgbImage::from_pixel(width, height, image::Rgb([40, 44, 52]));
     encode_jpeg(&img, 70)
+}
+
+// ============================================================================
+// Object Tracker (centroid-based nearest neighbor)
+// ============================================================================
+
+/// A tracked object across frames
+#[derive(Debug, Clone)]
+struct TrackedObject {
+    id: u32,
+    class_id: u32,
+    label: String,
+    center: (f32, f32),  // normalized (0.0-1.0)
+    prev_center: (f32, f32),
+    missing_frames: u32,
+}
+
+/// Simple centroid-based object tracker
+#[derive(Debug)]
+struct ObjectTracker {
+    objects: Vec<TrackedObject>,
+    next_id: u32,
+    max_distance: f32,   // normalized distance threshold
+    max_missing: u32,     // frames before removal
+}
+
+impl ObjectTracker {
+    fn new() -> Self {
+        Self {
+            objects: Vec::new(),
+            next_id: 1,
+            max_distance: 0.05, // 5% of frame diagonal
+            max_missing: 5,      // tolerate 5 missing frames
+        }
+    }
+
+    /// Update tracker with new detections. Returns matched pairs (tracker_id, detection_index).
+    fn update(&mut self, detections: &[(f32, f32, u32, &str)]) -> Vec<(u32, usize)> {
+        let mut matches: Vec<(u32, usize)> = Vec::new();
+        let mut used_detections: Vec<bool> = vec![false; detections.len()];
+        let mut used_tracks: Vec<bool> = vec![false; self.objects.len()];
+
+        // Build cost matrix: (track_idx, det_idx, distance)
+        let mut candidates: Vec<(usize, usize, f32)> = Vec::new();
+        for (ti, track) in self.objects.iter().enumerate() {
+            for (di, (cx, cy, _, _)) in detections.iter().enumerate() {
+                let dx = track.center.0 - cx;
+                let dy = track.center.1 - cy;
+                let dist = (dx * dx + dy * dy).sqrt();
+                if dist < self.max_distance {
+                    candidates.push((ti, di, dist));
+                }
+            }
+        }
+
+        // Greedy matching: closest first
+        candidates.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+        for (ti, di, _) in candidates {
+            if used_tracks[ti] || used_detections[di] { continue; }
+            used_tracks[ti] = true;
+            used_detections[di] = true;
+            let track = &mut self.objects[ti];
+            track.prev_center = track.center;
+            track.center = (detections[di].0, detections[di].1);
+            track.class_id = detections[di].2;
+            track.label = detections[di].3.to_string();
+            track.missing_frames = 0;
+            matches.push((track.id, di));
+        }
+
+        // Increment missing for unmatched tracks
+        for (i, used) in used_tracks.iter_mut().enumerate() {
+            if !*used {
+                self.objects[i].missing_frames += 1;
+            }
+        }
+
+        // Remove tracks that have been missing too long
+        self.objects.retain(|t| t.missing_frames <= self.max_missing);
+
+        // Create new tracks for unmatched detections
+        for (di, used) in used_detections.iter().enumerate() {
+            if !*used {
+                let (cx, cy, class_id, label) = detections[di];
+                let id = self.next_id;
+                self.next_id += 1;
+                self.objects.push(TrackedObject {
+                    id,
+                    class_id,
+                    label: label.to_string(),
+                    center: (cx, cy),
+                    prev_center: (cx, cy),
+                    missing_frames: 0,
+                });
+                matches.push((id, di));
+            }
+        }
+
+        matches
+    }
+
+    /// Get previous center for a tracked object
+    fn get_prev_center(&self, track_id: u32) -> Option<(f32, f32)> {
+        self.objects.iter().find(|t| t.id == track_id).map(|t| t.prev_center)
+    }
+}
+
+// ============================================================================
+// ROI & Line Crossing Algorithms
+// ============================================================================
+
+/// Point-in-polygon test using ray casting algorithm.
+/// Points are normalized coordinates (0.0-1.0).
+fn point_in_polygon(px: f32, py: f32, polygon: &[(f32, f32)]) -> bool {
+    if polygon.len() < 3 { return false; }
+    let n = polygon.len();
+    let mut inside = false;
+    let mut j = n - 1;
+    for i in 0..n {
+        let (xi, yi) = polygon[i];
+        let (xj, yj) = polygon[j];
+        if ((yi > py) != (yj > py))
+            && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)
+        {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+/// Check if a line segment (p1→p2) crosses line (a→b) and return direction.
+/// Returns: +1 for A→B side crossing, -1 for B→A side, 0 for no crossing.
+fn line_crossing_direction(
+    p1: (f32, f32), p2: (f32, f32),
+    a: (f32, f32), b: (f32, f32),
+) -> i8 {
+    let d1 = cross_product(a, b, p1);
+    let d2 = cross_product(a, b, p2);
+    let d3 = cross_product(p1, p2, a);
+    let d4 = cross_product(p1, p2, b);
+
+    // Check if segments intersect
+    if ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0))
+        && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
+    {
+        // Direction: if d1 > 0 → d2 < 0, the object moved from left to right of line A→B
+        if d1 > 0.0 { 1 } else { -1 }
+    } else {
+        0
+    }
+}
+
+/// 2D cross product of vectors (a→b) × (a→p)
+fn cross_product(a: (f32, f32), b: (f32, f32), p: (f32, f32)) -> f32 {
+    (b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0)
+}
+
+/// Count detections inside each ROI with optional class filtering.
+/// Detections are normalized centers (0.0-1.0) with labels.
+fn count_roi_detections(
+    detections: &[(f32, f32, &str)],  // (cx, cy, label) normalized
+    rois: &[RoiRegion],
+) -> Vec<RoiStat> {
+    rois.iter().map(|roi| {
+        let count = detections.iter()
+            .filter(|(cx, cy, label)| {
+                if !point_in_polygon(*cx, *cy, &roi.points) {
+                    return false;
+                }
+                // Class filter: empty = accept all
+                if roi.class_filter.is_empty() {
+                    return true;
+                }
+                roi.class_filter.iter().any(|c| c == label)
+            })
+            .count() as u32;
+        RoiStat {
+            id: roi.id.clone(),
+            name: roi.name.clone(),
+            count,
+        }
+    }).collect()
+}
+
+/// Draw ROI polygons and line crossings on the image.
+fn draw_roi_and_lines(
+    image: &mut image::RgbImage,
+    rois: &[RoiRegion],
+    roi_stats: &[RoiStat],
+    lines: &[CrossLine],
+    line_counts: &HashMap<String, (u64, u64)>,
+) {
+    use imageproc::drawing::{draw_line_segment_mut, draw_text_mut};
+    use imageproc::rect::Rect;
+    use ab_glyph::{FontRef, PxScale};
+
+    let (w, h) = (image.width() as f32, image.height() as f32);
+
+    // Load font for labels
+    let font_data = include_bytes!("../fonts/NotoSans-Regular.ttf");
+    let font = match FontRef::try_from_slice(font_data) {
+        Ok(f) => f,
+        Err(_) => return, // can't draw without font
+    };
+
+    let c = |color: (u8, u8, u8)| image::Rgb([color.0, color.1, color.2]);
+
+    // Draw ROI polygons
+    for roi in rois {
+        let color = parse_hex_color(&roi.color).unwrap_or((0, 255, 128));
+        let points: Vec<(f32, f32)> = roi.points.iter()
+            .map(|(x, y)| (*x * w, *y * h))
+            .collect();
+
+        if points.len() >= 3 {
+            // Draw outline
+            for i in 0..points.len() {
+                let next = (i + 1) % points.len();
+                draw_line_segment_mut(image, points[i], points[next], c(color));
+            }
+            // Semi-transparent fill
+            let i32_points: Vec<imageproc::point::Point<i32>> = points.iter()
+                .map(|(x, y)| imageproc::point::Point::new(*x as i32, *y as i32))
+                .collect();
+            blend_polygon_fill(image, &i32_points, (color.0, color.1, color.2, 40u8));
+        }
+
+        // Draw ROI name + count
+        let stat = roi_stats.iter().find(|s| s.id == roi.id);
+        let label = if let Some(s) = stat {
+            format!("{}: {}", roi.name, s.count)
+        } else {
+            roi.name.clone()
+        };
+
+        let min_x = points.iter().map(|p| p.0 as i32).min().unwrap_or(10);
+        let min_y = points.iter().map(|p| p.1 as i32).min().unwrap_or(10);
+        let label_x = min_x.max(2);
+        let label_y = min_y.max(2).saturating_sub(18);
+
+        let scale = PxScale::from(if w > 1200.0 { 18.0 } else { 14.0 });
+        let text_w = (label.len() as u32 * 8 + 8).min(image.width().saturating_sub(label_x as u32));
+        let label_rect = Rect::at(label_x, label_y).of_size(text_w, 18);
+        imageproc::drawing::draw_filled_rect_mut(image, label_rect, c(color));
+        draw_text_mut(image, c((255, 255, 255)), label_x + 4, label_y + 2, scale, &font, &label);
+    }
+
+    // Draw crossing lines
+    for line in lines {
+        let color = parse_hex_color(&line.color).unwrap_or((255, 165, 0));
+        let ax = line.start.0 * w;
+        let ay = line.start.1 * h;
+        let bx = line.end.0 * w;
+        let by = line.end.1 * h;
+
+        // Draw the line (thick)
+        for offset in -1i32..=1 {
+            let o = offset as f32;
+            draw_line_segment_mut(image, (ax + o, ay + o), (bx + o, by + o), c(color));
+        }
+
+        // Draw arrow head at B end
+        let dx = bx - ax;
+        let dy = by - ay;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len > 0.0 {
+            let ndx = dx / len;
+            let ndy = dy / len;
+            let arrow_len = 12.0;
+            let arrow_w = 6.0;
+            draw_line_segment_mut(image, (bx, by), (bx - ndx * arrow_len - ndy * arrow_w, by - ndy * arrow_len + ndx * arrow_w), c(color));
+            draw_line_segment_mut(image, (bx, by), (bx - ndx * arrow_len + ndy * arrow_w, by - ndy * arrow_len - ndx * arrow_w), c(color));
+        }
+
+        // Draw count labels
+        let counts = line_counts.get(&line.id).copied().unwrap_or((0, 0));
+        let label_fwd = format!("{} ->: {}", line.name, counts.0);
+        let label_bwd = format!("{} <-: {}", line.name, counts.1);
+
+        let scale = PxScale::from(if w > 1200.0 { 16.0 } else { 12.0 });
+        let mid_x = ((ax + bx) / 2.0) as i32;
+        let mid_y = ((ay + by) / 2.0) as i32;
+
+        let lx = mid_x.max(4);
+        draw_text_mut(image, c(color), lx, mid_y.saturating_sub(22).max(2), scale, &font, &label_fwd);
+        draw_text_mut(image, c(color), lx, mid_y + 6, scale, &font, &label_bwd);
+    }
+}
+
+/// Parse hex color string like "#FF6600" to RGB tuple
+fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() != 6 { return None; }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some((r, g, b))
+}
+
+/// Blend-fill a polygon with semi-transparent color
+fn blend_polygon_fill(image: &mut image::RgbImage, points: &[imageproc::point::Point<i32>], color: (u8, u8, u8, u8)) {
+    let (w, h) = (image.width() as i32, image.height() as i32);
+    if points.is_empty() { return; }
+
+    // Bounding box
+    let min_x = points.iter().map(|p| p.x).fold(i32::MAX, |a, b| a.min(b)).max(0);
+    let max_x = points.iter().map(|p| p.x).fold(i32::MIN, |a, b| a.max(b)).min(w - 1);
+    let min_y = points.iter().map(|p| p.y).fold(i32::MAX, |a, b| a.min(b)).max(0);
+    let max_y = points.iter().map(|p| p.y).fold(i32::MIN, |a, b| a.max(b)).min(h - 1);
+
+    let alpha = color.3 as f32 / 255.0;
+    let inv_alpha = 1.0 - alpha;
+
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            let poly_pts: Vec<(f32, f32)> = points.iter().map(|p| (p.x as f32, p.y as f32)).collect();
+            if point_in_polygon(px, py, &poly_pts) {
+                let pixel = image.get_pixel_mut(x as u32, y as u32);
+                pixel.0[0] = (color.0 as f32 * alpha + pixel.0[0] as f32 * inv_alpha) as u8;
+                pixel.0[1] = (color.1 as f32 * alpha + pixel.0[1] as f32 * inv_alpha) as u8;
+                pixel.0[2] = (color.2 as f32 * alpha + pixel.0[2] as f32 * inv_alpha) as u8;
+            }
+        }
+    }
 }
 
 // ============================================================================

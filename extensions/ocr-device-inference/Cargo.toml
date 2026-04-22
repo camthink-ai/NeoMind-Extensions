@@ -1,6 +1,6 @@
 [package]
 name = "ocr-device-inference"
-version = "2.4.18"
+version = "2.5.0"
 edition = "2021"
 authors = ["NeoMind Team"]
 license = "MIT"
@@ -28,7 +28,7 @@ uuid = { version = "1.0", features = ["v4"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ort = { workspace = true }
-usls = { version = "0.1.11", default-features = false, features = ["yolo", "db", "svtr", "ort-load-dynamic"] }
+usls = { version = "0.1.11", default-features = false, features = ["yolo", "db", "svtr", "ort-load-dynamic", "coreml", "cuda"] }
 
 [features]
 default = []

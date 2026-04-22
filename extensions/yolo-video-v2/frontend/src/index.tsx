@@ -30,7 +30,37 @@ interface Detection {
   class_id: number
 }
 
+interface RoiRegion {
+  id: string
+  name: string
+  points: [number, number][]  // normalized 0.0-1.0
+  class_filter: string[]
+  color: string
+}
+
+interface CrossLine {
+  id: string
+  name: string
+  start: [number, number]  // normalized 0.0-1.0
+  end: [number, number]
+  color: string
+}
+
+interface RoiStat {
+  id: string
+  name: string
+  count: number
+}
+
+interface LineStat {
+  id: string
+  name: string
+  forward_count: number
+  backward_count: number
+}
+
 type StreamMode = 'camera' | 'network'
+type DrawingTool = 'none' | 'roi' | 'line'
 
 // ============================================================================
 // Constants & Styles
@@ -96,7 +126,8 @@ const STYLES = `
 .yolo-controls {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  flex-wrap: wrap;
 }
 .yolo-status {
   display: flex;
@@ -150,11 +181,15 @@ const STYLES = `
   min-height: 200px;
 }
 .yolo-video-frame {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  display: block;
 }
 .yolo-video-placeholder {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -163,6 +198,7 @@ const STYLES = `
   gap: 8px;
   padding: 20px;
   text-align: center;
+  z-index: 2;
 }
 .yolo-video-icon {
   width: 48px;
@@ -182,6 +218,8 @@ const STYLES = `
   justify-content: center;
   background: rgba(0,0,0,0.7);
   color: white;
+  gap: 8px;
+  z-index: 3;
   gap: 8px;
 }
 .yolo-spinner {
@@ -296,6 +334,126 @@ const STYLES = `
 .dark .yolo-detections::-webkit-scrollbar-thumb {
   background: rgba(255,255,255,0.1);
 }
+
+/* Drawing Toolbar */
+.yolo-draw-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-top: 1px solid var(--yolo-border);
+  border-bottom: 1px solid var(--yolo-border);
+  background: var(--yolo-card);
+}
+.yolo-draw-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--yolo-muted);
+  background: var(--yolo-card);
+  border: 1px solid var(--yolo-border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.yolo-draw-btn:hover {
+  color: var(--yolo-fg);
+  border-color: var(--yolo-accent);
+}
+.yolo-draw-btn.yolo-draw-active {
+  color: white;
+  background: var(--yolo-accent);
+  border-color: var(--yolo-accent);
+}
+.yolo-draw-btn.yolo-draw-danger {
+  color: #ef4444;
+  border-color: rgba(239,68,68,0.3);
+}
+.yolo-draw-btn.yolo-draw-danger:hover {
+  background: #ef4444;
+  color: white;
+}
+
+/* ROI / Line List */
+.yolo-regions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 10px;
+  border-top: 1px solid var(--yolo-border);
+  max-height: 80px;
+  overflow-y: auto;
+}
+.yolo-region-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px 2px 4px;
+  font-size: 10px;
+  background: var(--yolo-card);
+  border: 1px solid var(--yolo-border);
+  border-radius: 4px;
+}
+.yolo-region-color {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.yolo-region-name {
+  flex: 1;
+  color: var(--yolo-fg);
+  font-weight: 500;
+}
+.yolo-region-stat {
+  color: var(--yolo-muted);
+  font-size: 9px;
+}
+.yolo-region-del {
+  padding: 0 3px;
+  font-size: 10px;
+  color: var(--yolo-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  line-height: 1;
+}
+.yolo-region-del:hover {
+  color: #ef4444;
+}
+
+/* ROI Stats */
+.yolo-roi-stats {
+  display: flex;
+  gap: 6px;
+  padding: 4px 10px;
+  border-top: 1px solid var(--yolo-border);
+  flex-wrap: wrap;
+}
+.yolo-roi-stat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 600;
+  border-radius: 3px;
+}
+.yolo-line-stat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 5px;
+  font-size: 9px;
+  border-radius: 3px;
+}
 `
 
 function injectStyles() {
@@ -320,6 +478,11 @@ const ICONS: Record<string, string> = {
   eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
   layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
   alert: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
+  polygon: '<polygon points="12 2 22 8.5 18 20 6 20 2 8.5 12 2"/>',
+  line: '<line x1="4" y1="20" x2="20" y2="4"/><polyline points="16 4 20 4 20 8"/>',
+  trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+  arrowRight: '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>',
+  arrowLeft: '<line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 5 5 12 12 19"/>',
 }
 
 const Icon = ({ name, className = '', style }: { name: string; className?: string; style?: React.CSSProperties }) => (
@@ -329,21 +492,39 @@ const Icon = ({ name, className = '', style }: { name: string; className?: strin
 )
 
 // ============================================================================
-// Detection Colors
+// Detection Colors (COCO palette - matches backend, keyed by class_id)
 // ============================================================================
 
-const DETECTION_COLORS = [
-  { bg: 'rgba(239, 68, 68, 0.15)', fg: '#ef4444', border: '#ef4444' },   // red
-  { bg: 'rgba(34, 197, 94, 0.15)', fg: '#22c55e', border: '#22c55e' },   // green
-  { bg: 'rgba(59, 130, 246, 0.15)', fg: '#3b82f6', border: '#3b82f6' },  // blue
-  { bg: 'rgba(249, 115, 22, 0.15)', fg: '#f97316', border: '#f97316' },  // orange
-  { bg: 'rgba(168, 85, 247, 0.15)', fg: '#a855f7', border: '#a855f7' },  // purple
-  { bg: 'rgba(6, 182, 212, 0.15)', fg: '#06b6d4', border: '#06b6d4' },   // cyan
-  { bg: 'rgba(236, 72, 153, 0.15)', fg: '#ec4899', border: '#ec4899' },  // pink
-  { bg: 'rgba(234, 179, 8, 0.15)', fg: '#eab308', border: '#eab308' },   // yellow
-  { bg: 'rgba(20, 184, 166, 0.15)', fg: '#14b8a6', border: '#14b8a6' },  // teal
-  { bg: 'rgba(244, 63, 94, 0.15)', fg: '#f43f5e', border: '#f43f5e' },   // rose
+const COCO_COLORS_RGB: [number, number, number][] = [
+  [38, 70, 83],   [40, 116, 74],  [117, 79, 12],  [115, 53, 88],  [192, 41, 66],
+  [11, 121, 175], [232, 168, 124],[211, 212, 211],[232, 212, 77], [32, 169, 199],
+  [57, 94, 121],  [237, 139, 0],  [133, 160, 131],[174, 30, 70],  [255, 183, 59],
+  [197, 198, 53], [166, 207, 213],[136, 86, 82],  [119, 104, 174],[51, 159, 160],
+  [166, 59, 111], [197, 166, 137],[108, 118, 135],[38, 131, 116], [233, 126, 67],
+  [255, 179, 71], [48, 96, 106],  [197, 104, 80], [227, 105, 145],[229, 193, 175],
 ]
+
+function getClassColor(classId: number) {
+  const [r, g, b] = COCO_COLORS_RGB[classId % COCO_COLORS_RGB.length]
+  // Use high contrast: dark background with white text
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  return {
+    bg: `rgba(${r}, ${g}, ${b}, 0.85)`,
+    fg: luminance > 0.5 ? '#000' : '#fff',
+    border: `rgb(${r}, ${g}, ${b})`,
+  }
+}
+
+const ROI_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316']
+let _idCounter = 0
+function uid() { return `r${Date.now().toString(36)}_${(++_idCounter)}` }
+
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
 
 // ============================================================================
 // Component
@@ -356,20 +537,17 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
   confidenceThreshold = 0.5,
   maxObjects = 20,
   sourceUrl = 'camera://0',
+  fps: fpsProp = 15,
+  drawBoxes = true,
 }: ExtensionComponentProps & {
   sourceUrl?: string
   confidenceThreshold?: number
   maxObjects?: number
+  fps?: number
+  drawBoxes?: boolean
 }) {
   // Setup
   useEffect(() => { injectStyles() }, [])
-
-  // Determine mode
-  const isNetworkStream = sourceUrl.startsWith('rtsp://')
-    || sourceUrl.startsWith('rtmp://')
-    || sourceUrl.startsWith('hls://')
-    || sourceUrl.includes('.m3u8')
-  const mode: StreamMode = isNetworkStream ? 'network' : 'camera'
 
   // State
   const [isRunning, setIsRunning] = useState(false)
@@ -380,13 +558,39 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
   const [detections, setDetections] = useState<Detection[]>([])
   const [frameData, setFrameData] = useState<string | null>(null)
   const [cameraPermission, setCameraPermission] = useState<'pending' | 'granted' | 'denied'>('pending')
-  const [streamStatus, setStreamStatus] = useState<'idle' | 'streaming' | 'reconnecting' | 'error'>('idle')
+  const [streamStatus, setStreamStatus] = useState<'idle' | 'streaming' | 'reconnecting' | 'error' | 'connecting'>('idle')
 
-  // Refs
+  // ROI / Line state
+  const [drawingTool, setDrawingTool] = useState<DrawingTool>('none')
+  const [rois, setRois] = useState<RoiRegion[]>([])
+  const [lines, setLines] = useState<CrossLine[]>([])
+  const [roiStats, setRoiStats] = useState<RoiStat[]>([])
+  const [lineStats, setLineStats] = useState<LineStat[]>([])
+  const [drawingPoints, setDrawingPoints] = useState<[number, number][]>([])  // in-progress polygon
+  const [lineStart, setLineStart] = useState<[number, number] | null>(null)  // in-progress line start
+  const [lineEnd, setLineEnd] = useState<[number, number] | null>(null)      // in-progress line end (preview)
+
+  // Determine mode based on source URL
+  const isNetworkStream = sourceUrl.startsWith('rtsp://')
+    || sourceUrl.startsWith('rtmp://')
+    || sourceUrl.startsWith('hls://')
+    || sourceUrl.includes('.m3u8')
+    || sourceUrl.startsWith('http://')
+    || sourceUrl.startsWith('https://')
+    || sourceUrl.startsWith('file://')
+  const mode: StreamMode = isNetworkStream ? 'network' : 'camera'
+
+  // Refs for latest rois/lines (avoids stale closure in connectWebSocket restart)
+  const roisRef = useRef<RoiRegion[]>(rois)
+  roisRef.current = rois
+  const linesRef = useRef<CrossLine[]>(lines)
+  linesRef.current = lines
+
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const isManualCloseRef = useRef(false)
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const frameTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const fpsCounterRef = useRef({ frames: 0, lastTime: Date.now() })
@@ -396,15 +600,59 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
   const isFrameSendingRef = useRef(false)  // Lock for frame sending
   const lastFrameTimeRef = useRef(0)  // Last frame send time for throttling
   const lockTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)  // Safety timeout for lock
+  const displayCanvasRef = useRef<HTMLCanvasElement>(null)  // Single canvas: frame + overlays
+  const videoWrapRef = useRef<HTMLDivElement>(null)
+  const frameImgRef = useRef<HTMLImageElement | null>(null)  // Cached decoded frame
+
+  // Config update: debounced hot-update via REST API (no stream restart)
+  const configUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const extensionId = dataSource?.extensionId || EXTENSION_ID
 
-  // WebSocket URL
+  // WebSocket URL (with auth token)
   const getWebSocketUrl = useCallback(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.host
-    return `${protocol}//${host}/api/extensions/${extensionId}/stream`
+    const isTauri = !!(window as any).__TAURI_INTERNALS__
+    const protocol = (isTauri ? false : window.location.protocol === 'https:') ? 'wss:' : 'ws:'
+    const host = isTauri ? 'localhost:9375' : window.location.host
+    const baseUrl = `${protocol}//${host}/api/extensions/${extensionId}/stream`
+    // Read auth token from NeoMind's tokenManager storage
+    const token = localStorage.getItem('neomind_token')
+      || sessionStorage.getItem('neomind_token_session')
+    if (token) {
+      return `${baseUrl}?token=${encodeURIComponent(token)}`
+    }
+    return baseUrl
   }, [extensionId])
+
+  // REST API base URL for command calls
+  const getApiBaseUrl = useCallback(() => {
+    const isTauri = !!(window as any).__TAURI_INTERNALS__
+    const protocol = isTauri ? 'http:' : window.location.protocol === 'https:' ? 'https:' : 'http:'
+    const host = isTauri ? 'localhost:9375' : window.location.host
+    return `${protocol}//${host}`
+  }, [])
+
+  // Hot-update ROI/Line config on running stream (no restart)
+  const sendConfigUpdate = useCallback(async () => {
+    const sessionId = sessionIdRef.current
+    if (!sessionId) return
+    try {
+      await fetch(`${getApiBaseUrl()}/api/extensions/${extensionId}/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          command: 'update_stream_config',
+          args: { stream_id: sessionId, rois: roisRef.current, lines: linesRef.current },
+        }),
+      })
+    } catch (e) { console.warn('[YOLO] Config update failed:', e) }
+  }, [getApiBaseUrl, extensionId])
+
+  // Debounced: coalesce rapid clicks into one REST call
+  const debouncedConfigUpdate = useCallback(() => {
+    if (configUpdateTimerRef.current) clearTimeout(configUpdateTimerRef.current)
+    configUpdateTimerRef.current = setTimeout(() => { sendConfigUpdate(); configUpdateTimerRef.current = null }, 150)
+  }, [sendConfigUpdate])
 
   // Capture and send frame (camera mode)
   const captureAndSendFrame = useCallback(() => {
@@ -545,9 +793,14 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
         config: {
           source_url: sourceUrl,
           confidence_threshold: confidenceThreshold,
-          max_objects: maxObjects
+          max_objects: maxObjects,
+          target_fps: fpsProp,
+          draw_boxes: drawBoxes,
+          rois: roisRef.current,
+          lines: linesRef.current,
         }
       }
+      console.log('[YOLO] Sending init:', JSON.stringify(initMsg))
       ws.send(JSON.stringify(initMsg))
     }
 
@@ -573,10 +826,14 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
             setSessionTime(0)
             sessionTimerRef.current = setInterval(() => setSessionTime(t => t + 1), 1000)
 
-            // For camera mode, start capture loop (50ms interval for max 20 FPS)
             if (mode === 'camera') {
+              // Camera mode: capture and send frames
               sendingRef.current = true
               frameTimerRef.current = setInterval(captureAndSendFrame, 50)
+            } else {
+              // Network/Push mode: server pushes frames via push_output messages
+              // No polling needed - just wait for push_output messages
+              setStreamStatus('connecting')
             }
             break
 
@@ -602,37 +859,44 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
               if (msg.metadata?.detections) {
                 setDetections(msg.metadata.detections)
               }
+              if (msg.metadata?.roi_stats) {
+                setRoiStats(msg.metadata.roi_stats)
+              }
+              if (msg.metadata?.line_stats) {
+                setLineStats(msg.metadata.line_stats)
+              }
             }
             break
 
           case 'result':
-            // Processing result from server - data is already base64 encoded
+            // Processing result from server - data is base64 encoded
             if (msg.data) {
-              // ✨ FIX: Check if frame was skipped before setting image data
-              // Skipped frames return JSON metadata instead of image data
               const isSkipped = msg.skipped === true ||
                                 (typeof msg.data === 'string' &&
                                  (msg.data.startsWith('{') ||
                                   msg.metadata?.skipped === true));
+              const isWaiting = msg.metadata?.status === 'waiting'
 
               if (isSkipped) {
-                // Frame was skipped (rate limiting), keep displaying last frame
-                console.debug('[YOLO] Frame skipped by backend, keeping previous frame')
-                // Don't update frameData - keep showing the last valid frame
                 if (msg.metadata?.detections) {
                   setDetections(msg.metadata.detections)
                 }
+              } else if (isWaiting) {
+                // No frame yet from FFmpeg, keep waiting
               } else if (typeof msg.data === 'string' && msg.data.length > 0) {
-                // Valid image data (base64 string)
                 setFrameData(msg.data)
                 updateFps()
-                setFrameCount(prev => prev + 1)
-
+                if (msg.metadata?.frame_count) {
+                  setFrameCount(msg.metadata.frame_count)
+                } else {
+                  setFrameCount(prev => prev + 1)
+                }
+                if (msg.metadata?.fps) {
+                  setFps(msg.metadata.fps)
+                }
                 if (msg.metadata?.detections) {
                   setDetections(msg.metadata.detections)
                 }
-              } else {
-                console.warn('[YOLO] Received invalid frame data:', typeof msg.data, msg.data?.substring(0, 100))
               }
             }
             break
@@ -658,16 +922,25 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
     }
 
     ws.onerror = (e) => {
+      // Ignore errors from manual close - onclose will handle cleanup
+      if (isManualCloseRef.current) return
       console.error('[YOLO] WebSocket error:', e)
       setError('WebSocket connection error')
     }
 
     ws.onclose = () => {
+      const wasManual = isManualCloseRef.current
       wsRef.current = null
       setIsRunning(false)
       setStreamStatus('idle')
       sessionIdRef.current = null
       sendingRef.current = false
+      isManualCloseRef.current = false
+
+      // Clear error on manual close
+      if (wasManual) {
+        setError(null)
+      }
 
       if (sessionTimerRef.current) {
         clearInterval(sessionTimerRef.current)
@@ -681,7 +954,7 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
     }
 
     wsRef.current = ws
-  }, [getWebSocketUrl, sourceUrl, confidenceThreshold, maxObjects, mode, captureAndSendFrame])
+  }, [getWebSocketUrl, sourceUrl, confidenceThreshold, maxObjects, mode, captureAndSendFrame, fpsProp, drawBoxes])
 
   // Update FPS
   const updateFps = () => {
@@ -695,29 +968,30 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
     }
   }
 
-  // Disconnect WebSocket
+  // Disconnect WebSocket (simple synchronous close)
   const disconnectWebSocket = useCallback(() => {
     if (wsRef.current) {
+      isManualCloseRef.current = true
       if (wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: 'close' }))
       }
       wsRef.current.close()
       wsRef.current = null
-    }
 
-    if (sessionTimerRef.current) {
-      clearInterval(sessionTimerRef.current)
-      sessionTimerRef.current = null
-    }
+      if (sessionTimerRef.current) {
+        clearInterval(sessionTimerRef.current)
+        sessionTimerRef.current = null
+      }
 
-    if (frameTimerRef.current) {
-      clearInterval(frameTimerRef.current)
-      frameTimerRef.current = null
-    }
+      if (frameTimerRef.current) {
+        clearInterval(frameTimerRef.current)
+        frameTimerRef.current = null
+      }
 
-    setIsRunning(false)
-    sessionIdRef.current = null
-    setDetections([])
+      setIsRunning(false)
+      sessionIdRef.current = null
+      setDetections([])
+    }
   }, [])
 
   // Start stream
@@ -748,12 +1022,413 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
     setFrameCount(0)
     setSessionTime(0)
     setFrameData(null)
+    setRoiStats([])
+    setLineStats([])
   }, [mode, stopCamera, disconnectWebSocket])
+
+  // Drawing tool handlers
+
+  const finishRoi = useCallback(() => {
+    if (drawingPoints.length < 3) return
+    const newRoi: RoiRegion = {
+      id: uid(),
+      name: `ROI ${rois.length + 1}`,
+      points: drawingPoints as [number, number][],
+      class_filter: [],
+      color: ROI_COLORS[(rois.length + lines.length) % ROI_COLORS.length],
+    }
+    setRois(prev => [...prev, newRoi])
+    setDrawingPoints([])
+    setDrawingTool('none')
+    if (isRunning) {
+      debouncedConfigUpdate()
+    }
+  }, [drawingPoints, rois.length, lines.length, isRunning, debouncedConfigUpdate])
+
+  const saveLine = useCallback(() => {
+    if (!lineStart || !lineEnd) return
+    const newLine: CrossLine = {
+      id: uid(),
+      name: `Line ${lines.length + 1}`,
+      start: lineStart,
+      end: lineEnd,
+      color: ROI_COLORS[(rois.length + lines.length) % ROI_COLORS.length],
+    }
+    const newLines = [...lines, newLine]
+    setLines(newLines)
+    setLineStart(null)
+    setLineEnd(null)
+    setDrawingTool('none')
+    // Hot-update config without restarting stream
+    if (isRunning) {
+      debouncedConfigUpdate()
+    }
+  }, [lineStart, lineEnd, lines, rois.length, isRunning, debouncedConfigUpdate])
+
+  // Click-to-close threshold (distance from first point, in normalized coords)
+  const CLOSE_THRESHOLD = 0.03
+
+  const handleDrawCanvasClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (drawingTool === 'none') return
+    const canvas = displayCanvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const nx = (e.clientX - rect.left) / rect.width
+    const ny = (e.clientY - rect.top) / rect.height
+
+    if (drawingTool === 'roi') {
+      // If >= 3 points and click is near the first point → close polygon
+      if (drawingPoints.length >= 3) {
+        const first = drawingPoints[0]
+        const dist = Math.sqrt((nx - first[0]) ** 2 + (ny - first[1]) ** 2)
+        if (dist < CLOSE_THRESHOLD) {
+          finishRoi()
+          return
+        }
+      }
+      setDrawingPoints(prev => [...prev, [nx, ny]])
+    } else if (drawingTool === 'line') {
+      if (!lineStart) {
+        setLineStart([nx, ny])
+      } else if (!lineEnd) {
+        // Second click: show preview, wait for save
+        setLineEnd([nx, ny])
+      }
+      // If both start and end are set, do nothing (waiting for Save)
+    }
+  }, [drawingTool, lineStart, lineEnd, drawingPoints, finishRoi])
+
+  const cancelDrawing = useCallback(() => {
+    setDrawingPoints([])
+    setLineStart(null)
+    setLineEnd(null)
+    setDrawingTool('none')
+  }, [])
+
+  const removeRoi = useCallback((id: string) => {
+    setRois(prev => prev.filter(r => r.id !== id))
+    setRoiStats(prev => prev.filter(s => s.id !== id))
+    if (isRunning) {
+      debouncedConfigUpdate()
+    }
+  }, [isRunning, debouncedConfigUpdate])
+
+  const removeLine = useCallback((id: string) => {
+    setLines(prev => prev.filter(l => l.id !== id))
+    setLineStats(prev => prev.filter(s => s.id !== id))
+    if (isRunning) {
+      debouncedConfigUpdate()
+    }
+  }, [isRunning, debouncedConfigUpdate])
+
+  // Render frame + overlays to the single display canvas
+  const renderCanvas = useCallback(() => {
+    const canvas = displayCanvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const wrap = videoWrapRef.current
+    if (!wrap) return
+    const cw = wrap.clientWidth
+    const ch = wrap.clientHeight
+    canvas.width = cw
+    canvas.height = ch
+
+    ctx.clearRect(0, 0, cw, ch)
+
+    const w = cw
+    const h = ch
+
+    // Draw the video frame as background
+    const img = frameImgRef.current
+    if (img && img.complete && img.naturalWidth > 0) {
+      // Cover-fit: scale to fill while maintaining aspect ratio
+      const imgAspect = img.naturalWidth / img.naturalHeight
+      const canvasAspect = w / h
+      let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight
+      if (imgAspect > canvasAspect) {
+        sw = img.naturalHeight * canvasAspect
+        sx = (img.naturalWidth - sw) / 2
+      } else {
+        sh = img.naturalWidth / canvasAspect
+        sy = (img.naturalHeight - sh) / 2
+      }
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h)
+    }
+
+    // Draw existing ROIs
+    for (const roi of rois) {
+      if (roi.points.length < 3) continue
+      ctx.beginPath()
+      ctx.moveTo(roi.points[0][0] * w, roi.points[0][1] * h)
+      for (let i = 1; i < roi.points.length; i++) {
+        ctx.lineTo(roi.points[i][0] * w, roi.points[i][1] * h)
+      }
+      ctx.closePath()
+      ctx.fillStyle = hexToRgba(roi.color, 0.15)
+      ctx.fill()
+      ctx.strokeStyle = roi.color
+      ctx.lineWidth = 2
+      ctx.stroke()
+      // Label
+      const cx = roi.points.reduce((s, p) => s + p[0], 0) / roi.points.length * w
+      const cy = roi.points.reduce((s, p) => s + p[1], 0) / roi.points.length * h
+      ctx.font = 'bold 12px -apple-system, sans-serif'
+      const stat = roiStats.find(s => s.id === roi.id)
+      const nameTm = ctx.measureText(roi.name)
+      if (stat) {
+        const countLabel = String(stat.count)
+        const countTm = ctx.measureText(countLabel)
+        const gap = 6
+        const totalW = nameTm.width + gap + countTm.width + 16
+        const bgX = cx - totalW / 2
+        const bgY = cy - 9
+        const bgH = 18
+        // Background pill
+        ctx.fillStyle = hexToRgba(roi.color, 0.9)
+        ctx.beginPath()
+        ctx.roundRect(bgX, bgY, totalW, bgH, 3)
+        ctx.fill()
+        // Name text
+        ctx.fillStyle = 'rgba(255,255,255,0.8)'
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(roi.name, bgX + 6, cy)
+        // Count text with emphasis
+        ctx.fillStyle = '#fff'
+        ctx.font = 'bold 12px -apple-system, sans-serif'
+        ctx.fillText(countLabel, bgX + nameTm.width + gap + 6, cy)
+        ctx.font = 'bold 12px -apple-system, sans-serif'
+      } else {
+        const totalW = nameTm.width + 12
+        const bgX = cx - totalW / 2
+        const bgY = cy - 9
+        ctx.fillStyle = hexToRgba(roi.color, 0.9)
+        ctx.beginPath()
+        ctx.roundRect(bgX, bgY, totalW, 18, 3)
+        ctx.fill()
+        ctx.fillStyle = '#fff'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(roi.name, cx, cy)
+      }
+    }
+
+    // Draw existing lines
+    for (const line of lines) {
+      const sx = line.start[0] * w, sy = line.start[1] * h
+      const ex = line.end[0] * w, ey = line.end[1] * h
+      ctx.beginPath()
+      ctx.moveTo(sx, sy)
+      ctx.lineTo(ex, ey)
+      ctx.strokeStyle = line.color
+      ctx.lineWidth = 2
+      ctx.setLineDash([6, 3])
+      ctx.stroke()
+      ctx.setLineDash([])
+      // Perpendicular arrows (crossing direction indicators)
+      const lineAngle = Math.atan2(ey - sy, ex - sx)
+      const perpAngle = lineAngle + Math.PI / 2  // perpendicular to line
+      const mx = (sx + ex) / 2, my = (sy + ey) / 2
+      const aOffset = 12  // distance from line midpoint
+      const aHeadLen = 5
+      // Forward arrow (one side of line)
+      const fwdX = mx + Math.cos(perpAngle) * aOffset
+      const fwdY = my + Math.sin(perpAngle) * aOffset
+      ctx.beginPath()
+      ctx.moveTo(mx + Math.cos(perpAngle) * 4, my + Math.sin(perpAngle) * 4)
+      ctx.lineTo(fwdX, fwdY)
+      ctx.strokeStyle = '#4ade80'
+      ctx.lineWidth = 2
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(fwdX, fwdY)
+      ctx.lineTo(fwdX - aHeadLen * Math.cos(perpAngle - 0.5), fwdY - aHeadLen * Math.sin(perpAngle - 0.5))
+      ctx.moveTo(fwdX, fwdY)
+      ctx.lineTo(fwdX - aHeadLen * Math.cos(perpAngle + 0.5), fwdY - aHeadLen * Math.sin(perpAngle + 0.5))
+      ctx.stroke()
+      // Backward arrow (other side of line)
+      const bwdX = mx - Math.cos(perpAngle) * aOffset
+      const bwdY = my - Math.sin(perpAngle) * aOffset
+      ctx.beginPath()
+      ctx.moveTo(mx - Math.cos(perpAngle) * 4, my - Math.sin(perpAngle) * 4)
+      ctx.lineTo(bwdX, bwdY)
+      ctx.strokeStyle = '#60a5fa'
+      ctx.lineWidth = 2
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(bwdX, bwdY)
+      ctx.lineTo(bwdX + aHeadLen * Math.cos(perpAngle - 0.5), bwdY + aHeadLen * Math.sin(perpAngle - 0.5))
+      ctx.moveTo(bwdX, bwdY)
+      ctx.lineTo(bwdX + aHeadLen * Math.cos(perpAngle + 0.5), bwdY + aHeadLen * Math.sin(perpAngle + 0.5))
+      ctx.stroke()
+      // Restore line color
+      ctx.strokeStyle = line.color
+      ctx.lineWidth = 2
+      // Label (mx/my already defined above)
+      const stat = lineStats.find(s => s.id === line.id)
+      ctx.font = 'bold 11px -apple-system, sans-serif'
+      if (stat) {
+        const nameTm = ctx.measureText(line.name)
+        const fwdLabel = `→${stat.forward_count}`
+        const bwdLabel = `←${stat.backward_count}`
+        const fwdTm = ctx.measureText(fwdLabel)
+        const bwdTm = ctx.measureText(bwdLabel)
+        const gap = 5
+        const totalW = nameTm.width + gap + fwdTm.width + gap + bwdTm.width + 14
+        const bgX = mx - totalW / 2
+        const bgY = my - 18
+        // Background pill
+        ctx.fillStyle = hexToRgba(line.color, 0.9)
+        ctx.beginPath()
+        ctx.roundRect(bgX, bgY, totalW, 18, 3)
+        ctx.fill()
+        let textX = bgX + 7
+        // Name
+        ctx.fillStyle = 'rgba(255,255,255,0.8)'
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(line.name, textX, bgY + 9)
+        textX += nameTm.width + gap
+        // Forward
+        ctx.fillStyle = '#4ade80'
+        ctx.fillText(fwdLabel, textX, bgY + 9)
+        textX += fwdTm.width + gap
+        // Backward
+        ctx.fillStyle = '#60a5fa'
+        ctx.fillText(bwdLabel, textX, bgY + 9)
+      } else {
+        const nameTm = ctx.measureText(line.name)
+        const totalW = nameTm.width + 12
+        const bgX = mx - totalW / 2
+        const bgY = my - 18
+        ctx.fillStyle = hexToRgba(line.color, 0.9)
+        ctx.beginPath()
+        ctx.roundRect(bgX, bgY, totalW, 18, 3)
+        ctx.fill()
+        ctx.fillStyle = '#fff'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(line.name, mx, bgY + 9)
+      }
+    }
+
+    // Draw in-progress polygon
+    if (drawingTool === 'roi' && drawingPoints.length > 0) {
+      ctx.beginPath()
+      ctx.moveTo(drawingPoints[0][0] * w, drawingPoints[0][1] * h)
+      for (let i = 1; i < drawingPoints.length; i++) {
+        ctx.lineTo(drawingPoints[i][0] * w, drawingPoints[i][1] * h)
+      }
+      ctx.strokeStyle = '#3b82f6'
+      ctx.lineWidth = 2
+      ctx.setLineDash([4, 4])
+      ctx.stroke()
+      ctx.setLineDash([])
+      // Draw vertices
+      for (let i = 0; i < drawingPoints.length; i++) {
+        const p = drawingPoints[i]
+        const isFirst = i === 0
+        ctx.beginPath()
+        ctx.arc(p[0] * w, p[1] * h, isFirst ? 6 : 4, 0, Math.PI * 2)
+        ctx.fillStyle = isFirst ? '#22c55e' : '#3b82f6'
+        ctx.fill()
+        ctx.strokeStyle = '#fff'
+        ctx.lineWidth = 1
+        ctx.stroke()
+      }
+      // When >= 3 points, highlight first point as close target
+      if (drawingPoints.length >= 3) {
+        const fp = drawingPoints[0]
+        // Pulsing ring around first point
+        ctx.beginPath()
+        ctx.arc(fp[0] * w, fp[1] * h, 12, 0, Math.PI * 2)
+        ctx.strokeStyle = 'rgba(34,197,94,0.5)'
+        ctx.lineWidth = 2
+        ctx.setLineDash([3, 3])
+        ctx.stroke()
+        ctx.setLineDash([])
+        // Hint text
+        ctx.fillStyle = 'rgba(0,0,0,0.6)'
+        ctx.font = '10px -apple-system, sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText('Click green point to close', w / 2, h - 10)
+      }
+    }
+
+    // Draw in-progress line
+    if (drawingTool === 'line' && lineStart) {
+      const sx = lineStart[0] * w, sy = lineStart[1] * h
+      // Start point
+      ctx.beginPath()
+      ctx.arc(sx, sy, 4, 0, Math.PI * 2)
+      ctx.fillStyle = '#22c55e'
+      ctx.fill()
+      ctx.strokeStyle = '#fff'
+      ctx.lineWidth = 1
+      ctx.stroke()
+
+      if (lineEnd) {
+        // Preview line
+        const ex = lineEnd[0] * w, ey = lineEnd[1] * h
+        ctx.beginPath()
+        ctx.moveTo(sx, sy)
+        ctx.lineTo(ex, ey)
+        ctx.strokeStyle = '#22c55e'
+        ctx.lineWidth = 2
+        ctx.setLineDash([6, 3])
+        ctx.stroke()
+        ctx.setLineDash([])
+        // End point
+        ctx.beginPath()
+        ctx.arc(ex, ey, 4, 0, Math.PI * 2)
+        ctx.fillStyle = '#22c55e'
+        ctx.fill()
+        ctx.strokeStyle = '#fff'
+        ctx.lineWidth = 1
+        ctx.stroke()
+        // Hint
+        ctx.fillStyle = 'rgba(0,0,0,0.6)'
+        ctx.font = '10px -apple-system, sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText('Click Save to confirm', w / 2, h - 10)
+      } else {
+        ctx.fillStyle = 'rgba(0,0,0,0.6)'
+        ctx.font = '10px -apple-system, sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText('Click to set end point', w / 2, h - 10)
+      }
+    }
+  }, [rois, lines, roiStats, lineStats, drawingPoints, lineStart, lineEnd, drawingTool])
+
+  // Decode frame data into Image and trigger canvas redraw
+  useEffect(() => {
+    if (!frameData) {
+      frameImgRef.current = null
+      renderCanvas()
+      return
+    }
+    const img = new Image()
+    img.onload = () => {
+      frameImgRef.current = img
+      renderCanvas()
+    }
+    img.src = `data:image/jpeg;base64,${frameData}`
+  }, [frameData, renderCanvas])
+
+  // Redraw when overlays change (without new frame)
+  useEffect(() => {
+    renderCanvas()
+  }, [rois, lines, roiStats, lineStats, drawingPoints, lineStart, drawingTool, renderCanvas])
+
+  // Double-click removed: click-to-close on first point is the primary close mechanism
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopStream()
+      if (configUpdateTimerRef.current) clearTimeout(configUpdateTimerRef.current)
     }
   }, [stopStream])
 
@@ -788,6 +1463,51 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
             {title}
           </div>
           <div className="yolo-controls">
+            {/* Drawing tools - icon only */}
+            <button
+              className={`yolo-draw-btn${drawingTool === 'roi' ? ' yolo-draw-active' : ''}`}
+              onClick={() => {
+                if (drawingTool === 'roi') { cancelDrawing() }
+                else { setDrawingTool('roi'); setLineStart(null) }
+              }}
+              title="Draw ROI polygon"
+            >
+              <Icon name="polygon" style={{ width: 12, height: 12 }} />
+            </button>
+            <button
+              className={`yolo-draw-btn${drawingTool === 'line' ? ' yolo-draw-active' : ''}`}
+              onClick={() => {
+                if (drawingTool === 'line') { cancelDrawing() }
+                else { setDrawingTool('line'); setDrawingPoints([]) }
+              }}
+              title="Draw crossing line"
+            >
+              <Icon name="line" style={{ width: 12, height: 12 }} />
+            </button>
+            {drawingTool === 'roi' && drawingPoints.length >= 3 && (
+              <button className="yolo-draw-btn" onClick={finishRoi} title="Finish ROI">
+                <Icon name="play" style={{ width: 10, height: 10 }} />
+              </button>
+            )}
+            {drawingTool === 'line' && lineStart && lineEnd && (
+              <button className="yolo-draw-btn" style={{ background: '#22c55e', borderColor: '#22c55e', color: '#fff' }} onClick={saveLine} title="Save line">
+                <Icon name="play" style={{ width: 10, height: 10 }} />
+              </button>
+            )}
+            {drawingTool !== 'none' && (
+              <button className="yolo-draw-btn yolo-draw-danger" onClick={cancelDrawing} title="Cancel">
+                &times;
+              </button>
+            )}
+            {rois.length + lines.length > 0 && drawingTool === 'none' && (
+              <button className="yolo-draw-btn yolo-draw-danger"
+                onClick={() => { setRois([]); setLines([]); setRoiStats([]); setLineStats([]); if (isRunning) debouncedConfigUpdate() }}
+                title="Clear all"
+              >
+                <Icon name="trash" style={{ width: 10, height: 10 }} />
+              </button>
+            )}
+            <span style={{ width: 1, height: 12, background: 'var(--yolo-border)', margin: '0 2px' }} />
             {isRunning && (
               <div className="yolo-status">
                 <span className={`yolo-status-dot${streamStatus === 'reconnecting' ? ' yolo-status-warning' : streamStatus === 'error' ? ' yolo-status-error' : ''}`} />
@@ -809,7 +1529,7 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
         </div>
 
         {/* Video Display */}
-        <div className="yolo-video-wrap">
+        <div className="yolo-video-wrap" ref={videoWrapRef}>
           {/* Hidden elements for camera capture */}
           {mode === 'camera' && (
             <>
@@ -818,14 +1538,13 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
             </>
           )}
 
-          {/* Display processed frame */}
-          {frameData && (
-            <img
-              src={`data:image/jpeg;base64,${frameData}`}
-              alt="Detection Frame"
-              className="yolo-video-frame"
-            />
-          )}
+          {/* Single canvas: frame + ROI/Line overlays */}
+          <canvas
+            ref={displayCanvasRef}
+            className="yolo-video-frame"
+            style={{ cursor: drawingTool !== 'none' ? 'crosshair' : 'default' }}
+            onClick={handleDrawCanvasClick}
+          />
 
           {/* Error overlay */}
           {error && (
@@ -885,31 +1604,80 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
           </div>
         )}
 
-        {/* Detections */}
+        {/* Detections - aggregated by class */}
         {isRunning && detections.length > 0 && (
           <div className="yolo-detections">
             <div className="yolo-detections-title">Detected Objects</div>
             <div className="yolo-detections-list">
-              {detections.slice(0, 8).map((det, i) => {
-                const color = DETECTION_COLORS[i % DETECTION_COLORS.length]
-                return (
-                  <span
-                    key={det.id || i}
-                    className="yolo-detection-tag"
-                    style={{
-                      backgroundColor: color.bg,
-                      color: color.fg,
-                      border: `1px solid ${color.border}33`
-                    }}
-                  >
-                    {det.label}
-                    <span style={{ opacity: 0.7 }}>
-                      {Math.round(det.confidence * 100)}%
+              {(() => {
+                const classMap = new Map<number, { label: string; count: number }>()
+                for (const det of detections) {
+                  const cid = det.class_id || 0
+                  const entry = classMap.get(cid)
+                  if (entry) { entry.count++ }
+                  else { classMap.set(cid, { label: det.label, count: 1 }) }
+                }
+                const sorted = [...classMap.entries()].sort((a, b) => b[1].count - a[1].count)
+                return sorted.map(([classId, { label, count }]) => {
+                  const color = getClassColor(classId)
+                  return (
+                    <span key={classId} className="yolo-detection-tag"
+                      style={{ backgroundColor: color.bg, color: color.fg, border: `1px solid ${color.border}` }}>
+                      {label}
+                      <span style={{ opacity: 0.8, fontWeight: 700 }}>x{count}</span>
                     </span>
-                  </span>
-                )
-              })}
+                  )
+                })
+              })()}
             </div>
+          </div>
+        )}
+
+        {/* ROI / Line Stats + List (below detections) */}
+        {(roiStats.length > 0 || lineStats.length > 0 || rois.length > 0 || lines.length > 0) && (
+          <div className="yolo-regions">
+            {roiStats.map(stat => {
+              const roi = rois.find(r => r.id === stat.id)
+              const color = roi?.color || '#3b82f6'
+              return (
+                <div key={stat.id} className="yolo-region-item">
+                  <span className="yolo-region-color" style={{ background: color }} />
+                  <span className="yolo-region-name">{stat.name}</span>
+                  <span className="yolo-roi-stat-chip"
+                    style={{ background: hexToRgba(color, 0.2), color, fontWeight: 700 }}>
+                    {stat.count}
+                  </span>
+                  <button className="yolo-region-del" onClick={() => removeRoi(stat.id)}>×</button>
+                </div>
+              )
+            })}
+            {rois.filter(r => !roiStats.some(s => s.id === r.id)).map(roi => (
+              <div key={roi.id} className="yolo-region-item">
+                <span className="yolo-region-color" style={{ background: roi.color }} />
+                <span className="yolo-region-name">{roi.name}</span>
+                <button className="yolo-region-del" onClick={() => removeRoi(roi.id)}>×</button>
+              </div>
+            ))}
+            {lineStats.map(stat => {
+              const line = lines.find(l => l.id === stat.id)
+              const color = line?.color || '#22c55e'
+              return (
+                <div key={stat.id} className="yolo-region-item">
+                  <span className="yolo-region-color" style={{ background: color }} />
+                  <span className="yolo-region-name">{stat.name}</span>
+                  <span className="yolo-line-stat-chip" style={{ background: 'rgba(34,197,94,0.15)', color: '#22c55e', fontWeight: 700 }}>→{stat.forward_count}</span>
+                  <span className="yolo-line-stat-chip" style={{ background: 'rgba(59,130,246,0.15)', color: '#3b82f6', fontWeight: 700 }}>←{stat.backward_count}</span>
+                  <button className="yolo-region-del" onClick={() => removeLine(stat.id)}>×</button>
+                </div>
+              )
+            })}
+            {lines.filter(l => !lineStats.some(s => s.id === l.id)).map(line => (
+              <div key={line.id} className="yolo-region-item">
+                <span className="yolo-region-color" style={{ background: line.color }} />
+                <span className="yolo-region-name">{line.name}</span>
+                <button className="yolo-region-del" onClick={() => removeLine(line.id)}>×</button>
+              </div>
+            ))}
           </div>
         )}
       </div>
