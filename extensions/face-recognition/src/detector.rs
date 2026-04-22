@@ -145,6 +145,9 @@ pub trait FaceDetect {
     /// # Returns
     /// A vector of detected face bounding boxes with optional landmarks.
     fn detect(&mut self, image_data: &[u8], confidence: f32) -> Result<Vec<FaceBox>, String>;
+
+    /// Downcast to Any for type-specific access (e.g., model status checks).
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 // ============================================================================
@@ -474,6 +477,10 @@ impl FaceDetect for ScrfdDetector {
     fn detect(&mut self, image_data: &[u8], confidence: f32) -> Result<Vec<FaceBox>, String> {
         self.detect_impl(image_data, confidence)
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // ============================================================================
@@ -513,6 +520,10 @@ impl Default for ScrfdDetector {
 impl FaceDetect for ScrfdDetector {
     fn detect(&mut self, _image_data: &[u8], _confidence: f32) -> Result<Vec<FaceBox>, String> {
         Err("SCRFD detector not available in WASM".to_string())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
