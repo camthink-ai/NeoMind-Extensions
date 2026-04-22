@@ -7,6 +7,7 @@ members = [
     "extensions/yolo-video-v2",
     "extensions/yolo-device-inference",
     "extensions/ocr-device-inference",
+    "extensions/face-recognition",
     "extensions/wasm-demo",
     # "extensions/final-test",
     # "extensions/cli-test-ext",
@@ -37,6 +38,8 @@ async-trait = "0.1"
 # usls 0.1.11 pins ort = "=2.0.0-rc.10"
 # Use load-dynamic: ORT is loaded at runtime from bundled dylib/so/dll
 ort = { version = "2.0.0-rc.10", default-features = false, features = ["half", "load-dynamic"] }
+
+ndarray = "0.16"
 
 # Use crates.io version for ABI isolation
 # When SDK is published, extensions don't need to recompile when main project updates

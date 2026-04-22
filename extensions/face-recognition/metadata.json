@@ -1,0 +1,32 @@
+{
+  "id": "face-recognition",
+  "name": "face recognition",
+  "version": "0.1.0",
+  "description": "Real-time face recognition with device binding, face registration, and identity matching",
+  "author": "NeoMind Team",
+  "license": "Apache-2.0",
+  "type": "native",
+  "categories": ["ai", "vision", "face-recognition"],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/face-recognition",
+  "builds": {
+    "darwin-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v0.1.0/face-recognition-0.1.0-darwin_aarch64.nep"
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v0.1.0/face-recognition-0.1.0-darwin_x86_64.nep"
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v0.1.0/face-recognition-0.1.0-linux_amd64.nep"
+    },
+    "linux-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v0.1.0/face-recognition-0.1.0-linux_arm64.nep"
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v0.1.0/face-recognition-0.1.0-windows_x86_64.nep"
+    }
+  },
+  "frontend": {
+    "components": ["FaceRecognitionCard"],
+    "entrypoint": "face-recognition-components.umd.cjs"
+  }
+}
