@@ -1,0 +1,34 @@
+{
+  "id": "face-recognition",
+  "version": "1.0.0",
+  "entrypoint": "face-recognition-components.umd.cjs",
+  "components": [
+    {
+      "name": "FaceRecognitionCard",
+      "type": "widget",
+      "displayName": "Face Recognition",
+      "description": "Real-time face recognition display card with device binding, face registration, and recognition results",
+      "icon": "face",
+      "defaultSize": { "width": 400, "height": 350 },
+      "minSize": { "width": 300, "height": 250 },
+      "maxSize": { "width": 600, "height": 500 },
+      "configSchema": {
+        "defaultCollapsed": {
+          "type": "boolean",
+          "required": false,
+          "default": false,
+          "description": "默认折叠"
+        }
+      },
+      "refreshable": false,
+      "refreshInterval": 0
+    }
+  ],
+  "i18n": {
+    "defaultLanguage": "en",
+    "supportedLanguages": ["en", "zh"]
+  },
+  "dependencies": {
+    "react": ">=18.0.0"
+  }
+}
