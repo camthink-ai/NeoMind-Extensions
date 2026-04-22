@@ -19,6 +19,7 @@ pub mod alignment;
 pub mod database;
 pub mod detector;
 pub mod drawing;
+pub mod onnx_utils;
 pub mod recognizer;
 
 use async_trait::async_trait;
@@ -1250,15 +1251,24 @@ impl Extension for FaceRecognition {
 
             // 5. register_face
             "register_face" => {
-                let name = args
+                let raw_name = args
                     .get("name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
-                if name.is_empty() {
+                // Validate name: trim whitespace, check length, reject control characters
+                let name = raw_name.trim();
+                if name.is_empty() || name.len() > 100 {
                     return Ok(json!({
                         "success": false,
-                        "error": "name is required and cannot be empty",
+                        "error": "name is required, cannot be empty, and must not exceed 100 characters",
+                        "error_code": "INVALID_ARGUMENTS"
+                    }));
+                }
+                if name.chars().any(|c| c.is_control()) {
+                    return Ok(json!({
+                        "success": false,
+                        "error": "name contains invalid control characters",
                         "error_code": "INVALID_ARGUMENTS"
                     }));
                 }
@@ -1312,6 +1322,7 @@ impl Extension for FaceRecognition {
                 // Run detection to find faces
                 let config = self.config.read();
                 let confidence = config.confidence_threshold as f32;
+                let max_faces = config.max_faces;
 
                 let faces = {
                     let mut detector = self.detector.lock();
@@ -1421,10 +1432,12 @@ impl Extension for FaceRecognition {
                     }
                 };
 
-                // Check for duplicate name
-                {
-                    let db = self.face_db.read();
-                    // We need to check by trying to find the name in the list
+                // Acquire a single write lock and perform all checks + registration atomically
+                // to prevent TOCTOU race conditions (e.g., concurrent duplicate name registration).
+                let entry = {
+                    let mut db = self.face_db.write();
+
+                    // Check for duplicate name (atomic with registration)
                     let existing = db.list_faces();
                     if existing.iter().any(|e| e.name == name) {
                         return Ok(json!({
@@ -1433,23 +1446,17 @@ impl Extension for FaceRecognition {
                             "error_code": "DUPLICATE_NAME"
                         }));
                     }
-                }
 
-                // Check max faces limit
-                {
-                    let db = self.face_db.read();
-                    if db.len() >= config.max_faces {
+                    // Check max faces limit (atomic with registration)
+                    if db.len() >= max_faces {
                         return Ok(json!({
                             "success": false,
-                            "error": format!("Maximum face limit of {} reached", config.max_faces),
+                            "error": format!("Maximum face limit of {} reached", max_faces),
                             "error_code": "MAX_FACES_EXCEEDED"
                         }));
                     }
-                }
 
-                // Register in database
-                let entry = {
-                    let mut db = self.face_db.write();
+                    // Register in database under the same lock
                     match db.register(name, feature, &thumbnail) {
                         Ok(entry) => entry,
                         Err(e) => {
@@ -1549,11 +1556,16 @@ impl Extension for FaceRecognition {
                     .and_then(|v| v.as_f64())
                 {
                     self.config.write().recognition_threshold = threshold;
+                    // Sync threshold with FaceDatabase
+                    self.face_db.write().set_threshold(threshold);
                 }
                 if let Some(max_faces) =
                     config_value.get("max_faces").and_then(|v| v.as_u64())
                 {
-                    self.config.write().max_faces = max_faces as usize;
+                    let max_faces_usize = max_faces as usize;
+                    self.config.write().max_faces = max_faces_usize;
+                    // Sync max_faces with FaceDatabase
+                    self.face_db.write().set_max_faces(max_faces_usize);
                 }
                 if let Some(auto_detect) =
                     config_value.get("auto_detect").and_then(|v| v.as_bool())
@@ -1711,6 +1723,10 @@ impl Extension for FaceRecognition {
             cfg.auto_detect = file_config.auto_detect;
             drop(cfg);
 
+            // Sync with FaceDatabase
+            self.face_db.write().set_threshold(file_config.recognition_threshold);
+            self.face_db.write().set_max_faces(file_config.max_faces);
+
             // Restore persisted bindings
             self.restore_bindings(&file_config);
         }
@@ -1732,6 +1748,10 @@ impl Extension for FaceRecognition {
                 cfg.auto_detect = parsed_config.auto_detect;
                 drop(cfg);
 
+                // Sync with FaceDatabase
+                self.face_db.write().set_threshold(parsed_config.recognition_threshold);
+                self.face_db.write().set_max_faces(parsed_config.max_faces);
+
                 self.restore_bindings(&parsed_config);
             }
         }
@@ -1742,9 +1762,12 @@ impl Extension for FaceRecognition {
         }
         if let Some(threshold) = config.get("recognition_threshold").and_then(|v| v.as_f64()) {
             self.config.write().recognition_threshold = threshold;
+            self.face_db.write().set_threshold(threshold);
         }
         if let Some(max_faces) = config.get("max_faces").and_then(|v| v.as_u64()) {
-            self.config.write().max_faces = max_faces as usize;
+            let max_faces_usize = max_faces as usize;
+            self.config.write().max_faces = max_faces_usize;
+            self.face_db.write().set_max_faces(max_faces_usize);
         }
         if let Some(auto_detect) = config.get("auto_detect").and_then(|v| v.as_bool()) {
             self.config.write().auto_detect = auto_detect;
