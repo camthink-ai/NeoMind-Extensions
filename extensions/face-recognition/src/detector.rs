@@ -314,7 +314,7 @@ impl ScrfdDetector {
         .map_err(|e| format!("Failed to create input tensor: {}", e))?;
 
         // Discover output tensor names and group by stride BEFORE mutably borrowing session for run.
-        let stride_groups = discover_stride_groups(session);
+        let stride_groups = discover_stride_groups(session, input_size);
 
         // Run inference
         let outputs = session
@@ -359,10 +359,19 @@ impl ScrfdDetector {
             };
 
             // Determine number of anchors and bbox dimension from tensor shapes.
-            // Scores shape: [1, num_anchors, 1] or [1, num_anchors]
-            // Bboxes shape: [1, num_anchors, 4]
-            let num_anchors = if scores_shape.len() >= 2 {
+            // Scores shape can be:
+            //   [num_anchors, 1] or [num_anchors]       (no batch dim)
+            //   [1, num_anchors, 1] or [1, num_anchors]  (with batch dim)
+            // Bboxes shape follows the same pattern with last dim = 4.
+            let num_anchors = if scores_shape.len() >= 3 {
+                // [1, num_anchors, 1] -> take dim 1
                 scores_shape[1] as usize
+            } else if scores_shape.len() == 2 {
+                // [num_anchors, 1] -> take dim 0
+                scores_shape[0] as usize
+            } else if scores_shape.len() == 1 {
+                // [num_anchors] -> take dim 0
+                scores_shape[0] as usize
             } else {
                 0
             };
@@ -373,6 +382,8 @@ impl ScrfdDetector {
             // Bbox element stride: number of f32 values per anchor in the bbox tensor
             let bbox_dim = if bboxes_shape.len() >= 3 {
                 bboxes_shape[2] as usize
+            } else if bboxes_shape.len() == 2 {
+                bboxes_shape[1] as usize
             } else {
                 4
             };
@@ -383,6 +394,8 @@ impl ScrfdDetector {
                 .map(|(shape, _)| {
                     if shape.len() >= 3 {
                         shape[2] as usize
+                    } else if shape.len() == 2 {
+                        shape[1] as usize
                     } else {
                         10
                     }
@@ -391,48 +404,68 @@ impl ScrfdDetector {
 
             // Compute feature map size for this stride
             let feat_size = input_size as usize / stride_val;
+            let num_positions = feat_size * feat_size;
+            // Some SCRFD models use multiple anchors per grid position.
+            // Detect anchors per cell by dividing total anchors by grid positions.
+            let anchors_per_cell = if num_positions > 0 {
+                (num_anchors + num_positions - 1) / num_positions // ceil division
+            } else {
+                1
+            };
+            let effective_feat_size = if anchors_per_cell > 1 {
+                feat_size
+            } else {
+                feat_size
+            };
 
             // Decode anchors and collect candidates
             for anchor_idx in 0..num_anchors {
-                // Score: squeeze last dim if present
-                let score = scores_slice[anchor_idx];
+                // Score: the tensor is [num_anchors, 1] or [num_anchors], so index directly
+                let score = if scores_shape.len() >= 2 && scores_shape[1] == 1 {
+                    scores_slice[anchor_idx]
+                } else if scores_shape.len() == 1 {
+                    scores_slice[anchor_idx]
+                } else {
+                    scores_slice[anchor_idx]
+                };
                 if score < confidence {
                     continue;
                 }
 
                 // Compute anchor center from grid position
+                // Layout: [y * feat_size * anchors_per_cell + x * anchors_per_cell + k]
+                // So grid position = anchor_idx / anchors_per_cell
                 let (cx, cy) = {
-                    let row = anchor_idx / feat_size;
-                    let col = anchor_idx % feat_size;
+                    let cell_idx = anchor_idx / anchors_per_cell;
+                    let row = cell_idx / effective_feat_size;
+                    let col = cell_idx % effective_feat_size;
                     (
                         (col as f64 + 0.5) * stride_val as f64,
                         (row as f64 + 0.5) * stride_val as f64,
                     )
                 };
 
-                // Decode bbox: distances from anchor center to edges
+                // Decode bbox: distances from anchor center to edges (in stride units)
                 let bbox_offset = anchor_idx * bbox_dim;
-                let dl = bboxes_slice[bbox_offset] as f64;
-                let dt = bboxes_slice[bbox_offset + 1] as f64;
-                let dr = bboxes_slice[bbox_offset + 2] as f64;
-                let db = bboxes_slice[bbox_offset + 3] as f64;
+                let stride_f = stride_val as f64;
+                let dl = bboxes_slice[bbox_offset] as f64 * stride_f;
+                let dt = bboxes_slice[bbox_offset + 1] as f64 * stride_f;
+                let dr = bboxes_slice[bbox_offset + 2] as f64 * stride_f;
+                let db = bboxes_slice[bbox_offset + 3] as f64 * stride_f;
 
                 let x = cx - dl;
                 let y = cy - dt;
                 let w = dl + dr;
                 let h = dt + db;
 
-                // Extract landmarks
+                // Extract landmarks (offsets from anchor center in stride units)
                 let landmarks = kps_slice.as_ref().map(|(_, kps_data)| {
                     let kps_offset = anchor_idx * kps_dim;
                     let mut pts = Vec::with_capacity(5);
                     for k in 0..5 {
-                        let kx = kps_data[kps_offset + k * 2] as f64;
-                        let ky = kps_data[kps_offset + k * 2 + 1] as f64;
-                        pts.push(Landmark {
-                            x: kx * scale_w,
-                            y: ky * scale_h,
-                        });
+                        let kx = (cx + kps_data[kps_offset + k * 2] as f64 * stride_f) * scale_w;
+                        let ky = (cy + kps_data[kps_offset + k * 2 + 1] as f64 * stride_f) * scale_h;
+                        pts.push(Landmark { x: kx, y: ky });
                     }
                     pts
                 });
@@ -585,43 +618,128 @@ struct StrideGroup {
 
 /// Discover stride groups from ONNX session output names.
 ///
-/// SCRFD model outputs are named with a stride suffix (e.g., "score_8", "bbox_8", "kps_8").
-/// This function dynamically discovers available strides and groups the outputs.
+/// Strategy 1: Named outputs with stride suffix (e.g., "score_8", "bbox_8", "kps_8").
+/// Strategy 2: Shape-based grouping for models with numeric-only output names.
+///     Outputs are grouped by their first dimension (num_anchors). Within each group,
+///     the tensor with last dim 1 is scores, last dim 4 is bboxes, and last dim 10 is kps.
+///     Stride is derived from input_size / sqrt(num_anchors).
 #[cfg(not(target_arch = "wasm32"))]
-fn discover_stride_groups(session: &ort::session::Session) -> Vec<(usize, StrideGroup)> {
-    let output_names: Vec<&str> = session.outputs.iter().map(|o| o.name.as_str()).collect();
+fn discover_stride_groups(session: &ort::session::Session, input_size: u32) -> Vec<(usize, StrideGroup)> {
+    use ort::value::ValueType;
 
-    // Collect all unique stride numbers found in output names
+    // Build output info: (name, num_anchors, last_dim)
+    let output_info: Vec<(&str, usize, usize)> = session
+        .outputs
+        .iter()
+        .map(|o| {
+            let name = o.name.as_str();
+            let dims: Vec<i64> = match &o.output_type {
+                ValueType::Tensor { shape, .. } => shape.to_vec(),
+                _ => Vec::new(),
+            };
+            // Shape can be [N, 1], [N, 4], [N, 10] etc.
+            // Take first non-1 dimension as num_anchors, last dimension as channel.
+            let num_anchors = dims.iter().find(|&&d| d > 1).copied().unwrap_or(0) as usize;
+            let last_dim = dims.last().copied().unwrap_or(0) as usize;
+            (name, num_anchors, last_dim)
+        })
+        .collect();
+
+    let output_names: Vec<&str> = output_info.iter().map(|(n, _, _): &(&str, usize, usize)| *n).collect();
+
+    // --- Strategy 1: Try named output pattern ---
     let mut strides: Vec<usize> = Vec::new();
     for name in &output_names {
         if let Some(stride) = extract_stride_from_name(name) {
-            if stride > 0 && !strides.contains(&stride) {
+            if stride > 0 && stride <= 256 && !strides.contains(&stride) {
                 strides.push(stride);
             }
         }
     }
 
-    strides.sort();
+    if !strides.is_empty() {
+        // Check that the named pattern actually produces valid tensor lookups.
+        let mut valid = true;
+        for stride in &strides {
+            let stride_str = stride.to_string();
+            let has_score = output_names.iter().any(|n: &&str| n.contains("score") && n.contains(&stride_str));
+            let has_bbox = output_names.iter().any(|n: &&str| n.contains("bbox") && n.contains(&stride_str));
+            if !has_score || !has_bbox {
+                valid = false;
+                break;
+            }
+        }
+
+        if valid {
+            strides.sort();
+            let mut groups = Vec::new();
+            for stride in strides {
+                let score_name = find_tensor_by_stride(&output_names, stride, &["score"])
+                    .unwrap_or_else(|| format!("score_{}", stride));
+                let bbox_name = find_tensor_by_stride(&output_names, stride, &["bbox"])
+                    .unwrap_or_else(|| format!("bbox_{}", stride));
+                let kps_name = find_tensor_by_stride(&output_names, stride, &["kps", "keypoint"]);
+
+                groups.push((
+                    stride,
+                    StrideGroup {
+                        score_name,
+                        bbox_name,
+                        kps_name,
+                    },
+                ));
+            }
+            return groups;
+        }
+    }
+
+    // --- Strategy 2: Shape-based grouping ---
+    let input_size = input_size as usize;
+
+    // Collect unique anchor counts.
+    let mut anchor_counts: Vec<usize> = output_info
+        .iter()
+        .filter_map(|(_, na, _)| if *na > 0 { Some(*na) } else { None })
+        .collect();
+    anchor_counts.sort();
+    anchor_counts.dedup();
 
     let mut groups = Vec::new();
 
-    for stride in strides {
-        let score_name = find_tensor_by_stride(&output_names, stride, &["score"])
-            .unwrap_or_else(|| format!("score_{}", stride));
-        let bbox_name = find_tensor_by_stride(&output_names, stride, &["bbox"])
-            .unwrap_or_else(|| format!("bbox_{}", stride));
-        let kps_name = find_tensor_by_stride(&output_names, stride, &["kps", "keypoint"]);
+    for num_anchors in &anchor_counts {
+        let score_name = output_info
+            .iter()
+            .find(|(_, na, ld)| *na == *num_anchors && *ld == 1)
+            .map(|(n, _, _): &(&str, usize, usize)| n.to_string());
+        let bbox_name = output_info
+            .iter()
+            .find(|(_, na, ld)| *na == *num_anchors && *ld == 4)
+            .map(|(n, _, _): &(&str, usize, usize)| n.to_string());
+        let kps_name = output_info
+            .iter()
+            .find(|(_, na, ld)| *na == *num_anchors && *ld == 10)
+            .map(|(n, _, _): &(&str, usize, usize)| n.to_string());
 
-        groups.push((
-            stride,
-            StrideGroup {
-                score_name,
-                bbox_name,
-                kps_name,
-            },
-        ));
+        if let (Some(sname), Some(bname)) = (score_name, bbox_name) {
+            let feat_size = (*num_anchors as f64).sqrt().round() as usize;
+            let stride = if feat_size > 0 {
+                input_size / feat_size
+            } else {
+                continue;
+            };
+
+            groups.push((
+                stride,
+                StrideGroup {
+                    score_name: sname,
+                    bbox_name: bname,
+                    kps_name,
+                },
+            ));
+        }
     }
 
+    groups.sort_by_key(|(stride, _)| *stride);
     groups
 }
 
