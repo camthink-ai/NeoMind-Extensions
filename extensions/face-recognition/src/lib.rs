@@ -14,6 +14,7 @@ pub mod alignment;
 pub mod database;
 pub mod detector;
 pub mod drawing;
+pub mod recognizer;
 
 use async_trait::async_trait;
 use neomind_extension_sdk::{
