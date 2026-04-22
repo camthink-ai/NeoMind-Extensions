@@ -10,6 +10,9 @@
 //! - Event-driven face recognition on device data updates
 //! - Store recognition results as virtual metrics on the device
 
+pub mod alignment;
+pub mod database;
+
 use async_trait::async_trait;
 use neomind_extension_sdk::{
     Extension, ExtensionMetadata, ExtensionError, ExtensionMetricValue,
