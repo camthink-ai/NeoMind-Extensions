@@ -154,6 +154,27 @@ impl FaceRecognition {
         }
     }
 
+    /// Create a new instance with custom detector and recognizer implementations.
+    ///
+    /// This is intended for testing, allowing mock implementations to be injected
+    /// instead of the real ONNX-based models.
+    pub fn with_models(
+        detector: Box<dyn FaceDetect + Send>,
+        recognizer: Box<dyn FaceExtract + Send>,
+    ) -> Self {
+        Self {
+            detector: Mutex::new(detector),
+            recognizer: Mutex::new(recognizer),
+            bindings: Arc::new(RwLock::new(HashMap::new())),
+            binding_stats: Arc::new(RwLock::new(HashMap::new())),
+            face_db: Arc::new(RwLock::new(FaceDatabase::new(0.45, 10))),
+            config: Arc::new(RwLock::new(FaceRecConfig::default())),
+            total_inferences: Arc::new(AtomicU64::new(0)),
+            total_recognized: Arc::new(AtomicU64::new(0)),
+            total_unknown: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
     /// Invoke a host capability synchronously via the capability context.
     fn invoke_capability_sync(
         &self,
