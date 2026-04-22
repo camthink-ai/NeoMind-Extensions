@@ -4,6 +4,7 @@
  */
 
 import { forwardRef, useEffect, useState, useRef, useCallback, useMemo } from 'react'
+import { FaceRegistrationCard } from './FaceRegistrationCard'
 
 // ============================================================================
 // Types
@@ -156,14 +157,6 @@ async function deleteRegisteredFace(
   faceId: string
 ): Promise<{ success: boolean; error?: string }> {
   return executeCommand(extensionId, 'delete_face', { face_id: faceId })
-}
-
-async function registerFace(
-  extensionId: string,
-  name: string,
-  imageBase64: string
-): Promise<{ success: boolean; error?: string }> {
-  return executeCommand(extensionId, 'register_face', { name, image: imageBase64 })
 }
 
 async function fetchDevices(): Promise<Device[]> {
@@ -633,83 +626,6 @@ const STYLES = `
   opacity: 1;
 }
 
-/* Registration dialog */
-.frc-reg-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0,0,0,0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.frc-reg-dialog {
-  background: var(--frc-card);
-  backdrop-filter: blur(16px);
-  border: 1px solid var(--frc-border);
-  border-radius: 12px;
-  padding: 20px;
-  width: 320px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.frc-reg-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--frc-fg);
-}
-
-.frc-reg-input {
-  width: 100%;
-  padding: 8px 12px;
-  border: 1px solid var(--frc-border);
-  border-radius: 6px;
-  background: var(--frc-card);
-  color: var(--frc-fg);
-  font-size: 12px;
-  box-sizing: border-box;
-}
-.frc-reg-input:focus {
-  outline: none;
-  border-color: var(--frc-accent);
-}
-
-.frc-reg-file-label {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 12px;
-  border: 2px dashed var(--frc-border);
-  border-radius: 6px;
-  cursor: pointer;
-  color: var(--frc-muted);
-  font-size: 11px;
-  transition: border-color 0.15s;
-}
-.frc-reg-file-label:hover {
-  border-color: var(--frc-accent);
-  color: var(--frc-accent);
-}
-
-.frc-reg-preview {
-  width: 100%;
-  max-height: 120px;
-  object-fit: contain;
-  border-radius: 4px;
-}
-
-.frc-reg-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
 `
 
 function injectStyles(): void {
@@ -881,122 +797,7 @@ function drawFaceDetections(
   })
 }
 
-// ============================================================================
-// Registration Dialog
-// ============================================================================
-
-interface RegistrationDialogProps {
-  extensionId: string
-  onClose: () => void
-  onRegistered: () => void
-}
-
-const RegistrationDialog = ({ extensionId, onClose, onRegistered }: RegistrationDialogProps) => {
-  const [name, setName] = useState('')
-  const [imageData, setImageData] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    const reader = new FileReader()
-    reader.onload = () => {
-      const result = reader.result as string
-      setImageData(result)
-    }
-    reader.readAsDataURL(file)
-  }
-
-  const handleSubmit = async () => {
-    if (!name.trim() || !imageData) return
-    setLoading(true)
-    setError(null)
-
-    const result = await registerFace(extensionId, name.trim(), imageData)
-    if (result.success) {
-      onRegistered()
-      onClose()
-    } else {
-      setError(result.error || 'Registration failed')
-    }
-    setLoading(false)
-  }
-
-  return (
-    <div className="frc-reg-overlay" onClick={onClose}>
-      <div className="frc-reg-dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="frc-reg-title">Register Face</div>
-
-        <input
-          className="frc-reg-input"
-          type="text"
-          placeholder="Name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          autoFocus
-        />
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          style={{ display: 'none' }}
-          onChange={handleFileChange}
-        />
-
-        {imageData ? (
-          <img className="frc-reg-preview" src={imageData} alt="Preview" />
-        ) : (
-          <div
-            className="frc-reg-file-label"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Icon name="upload" style={{ width: '16px', height: '16px' }} />
-            <span>Select image</span>
-          </div>
-        )}
-
-        {imageData && (
-          <div
-            className="frc-reg-file-label"
-            onClick={() => fileInputRef.current?.click()}
-            style={{ fontSize: '10px', padding: '6px' }}
-          >
-            <span>Change image</span>
-          </div>
-        )}
-
-        {error && (
-          <div style={{ color: 'hsl(0 72% 51%)', fontSize: '11px' }}>{error}</div>
-        )}
-
-        <div className="frc-reg-actions">
-          <button className="frc-btn" onClick={onClose}>Cancel</button>
-          <button
-            className="frc-btn frc-btn-primary"
-            onClick={handleSubmit}
-            disabled={loading || !name.trim() || !imageData}
-          >
-            {loading ? (
-              <>
-                <div className="frc-spinner" style={{ width: '14px', height: '14px' }} />
-                Registering...
-              </>
-            ) : (
-              <>
-                <Icon name="check" style={{ width: '14px', height: '14px' }} />
-                Register
-              </>
-            )}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
+// (Registration dialog is now provided by FaceRegistrationCard component)
 
 // ============================================================================
 // Main Component
@@ -1348,7 +1149,7 @@ export const FaceRecognitionCard = forwardRef<HTMLDivElement, ExtensionComponent
 
         {/* Registration dialog */}
         {showRegistration && (
-          <RegistrationDialog
+          <FaceRegistrationCard
             extensionId={extensionId}
             onClose={() => setShowRegistration(false)}
             onRegistered={() => refresh()}
@@ -1360,4 +1161,5 @@ export const FaceRecognitionCard = forwardRef<HTMLDivElement, ExtensionComponent
 )
 
 FaceRecognitionCard.displayName = 'FaceRecognitionCard'
-export default { FaceRecognitionCard }
+export { FaceRegistrationCard }
+export default { FaceRecognitionCard, FaceRegistrationCard }
