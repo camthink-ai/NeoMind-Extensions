@@ -31,6 +31,37 @@ use parking_lot::{Mutex, RwLock};
 use chrono::Utc;
 use base64::Engine;
 
+/// Auto-detect best available inference device.
+/// macOS → CoreML, Linux → CUDA, others → CPU.
+fn auto_device() -> usls::Device {
+    #[cfg(target_os = "macos")]
+    { usls::Device::CoreMl }
+    #[cfg(all(not(target_os = "macos"), target_os = "linux"))]
+    { usls::Device::Cuda(0) }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    { usls::Device::Cpu(0) }
+}
+
+/// Try building a model with the auto-detected device, fall back to CPU on failure.
+fn with_device_fallback<M, F>(try_build: F) -> Result<M>
+where
+    F: Fn(usls::Device) -> Result<M>,
+{
+    let device = auto_device();
+    eprintln!("[HW] Trying device: {:?}", device);
+    match try_build(device) {
+        Ok(model) => {
+            eprintln!("[HW] Model loaded with device: {:?}", device);
+            Ok(model)
+        }
+        Err(_) if !matches!(device, usls::Device::Cpu(_)) => {
+            eprintln!("[HW] {:?} failed, falling back to CPU", device);
+            try_build(usls::Device::Cpu(0))
+        }
+        Err(e) => Err(e),
+    }
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -440,14 +471,17 @@ impl OcrEngine {
 
     /// Try to load the detector model
     fn try_load_detector(models_dir: &std::path::Path) -> Result<usls::models::DB> {
-        let detector_config = usls::Config::ppocr_det_v5_mobile()
-            .with_model_file(&models_dir.join("det_mv3_db.onnx").to_string_lossy())
-            .with_device_all(usls::Device::Cpu(0))
-            .commit()
-            .map_err(|e| ExtensionError::ExecutionFailed(format!("Detector config failed: {}", e)))?;
+        let config = usls::Config::ppocr_det_v5_mobile()
+            .with_model_file(&models_dir.join("det_mv3_db.onnx").to_string_lossy());
 
-        usls::models::DB::new(detector_config)
-            .map_err(|e| ExtensionError::ExecutionFailed(format!("Detector init failed: {}", e)))
+        with_device_fallback(|device| {
+            let cfg = config.clone()
+                .with_device_all(device)
+                .commit()
+                .map_err(|e| ExtensionError::ExecutionFailed(format!("Detector config failed: {}", e)))?;
+            usls::models::DB::new(cfg)
+                .map_err(|e| ExtensionError::ExecutionFailed(format!("Detector init failed: {}", e)))
+        })
     }
 
     /// Initialize the engine (delegates to ensure_loaded for lazy loading)
@@ -478,13 +512,16 @@ impl OcrEngine {
                     let config = usls::Config::svtr()
                         .with_model_file(&models_dir.join("rec_svtr.onnx").to_string_lossy())
                         .with_vocab_txt(&vocab_path.to_string_lossy())
-                        .with_device_all(usls::Device::Cpu(0))
-                        .with_model_ixx(0, 3, 960.into())  // max text length
-                        .commit()
-                        .map_err(|e| ExtensionError::ExecutionFailed(format!("Chinese recognizer config failed: {}", e)))?;
+                        .with_model_ixx(0, 3, 960.into());  // max text length
 
-                    let recognizer = usls::models::SVTR::new(config)
-                        .map_err(|e| ExtensionError::ExecutionFailed(format!("Chinese recognizer init failed: {}", e)))?;
+                    let recognizer = with_device_fallback(|device| {
+                        let cfg = config.clone()
+                            .with_device_all(device)
+                            .commit()
+                            .map_err(|e| ExtensionError::ExecutionFailed(format!("Chinese recognizer config failed: {}", e)))?;
+                        usls::models::SVTR::new(cfg)
+                            .map_err(|e| ExtensionError::ExecutionFailed(format!("Chinese recognizer init failed: {}", e)))
+                    })?;
                     self.recognizer_chinese = Some(recognizer);
                 }
             }
@@ -496,13 +533,16 @@ impl OcrEngine {
                     let config = usls::Config::svtr()
                         .with_model_file(&models_dir.join("rec_en.onnx").to_string_lossy())
                         .with_vocab_txt(&vocab_path.to_string_lossy())
-                        .with_device_all(usls::Device::Cpu(0))
-                        .with_model_ixx(0, 3, 960.into())
-                        .commit()
-                        .map_err(|e| ExtensionError::ExecutionFailed(format!("English recognizer config failed: {}", e)))?;
+                        .with_model_ixx(0, 3, 960.into());
 
-                    let recognizer = usls::models::SVTR::new(config)
-                        .map_err(|e| ExtensionError::ExecutionFailed(format!("English recognizer init failed: {}", e)))?;
+                    let recognizer = with_device_fallback(|device| {
+                        let cfg = config.clone()
+                            .with_device_all(device)
+                            .commit()
+                            .map_err(|e| ExtensionError::ExecutionFailed(format!("English recognizer config failed: {}", e)))?;
+                        usls::models::SVTR::new(cfg)
+                            .map_err(|e| ExtensionError::ExecutionFailed(format!("English recognizer init failed: {}", e)))
+                    })?;
                     self.recognizer_english = Some(recognizer);
                 }
             }
@@ -868,44 +908,6 @@ impl OcrDeviceInference {
                 })
             }).collect::<Vec<_>>()
         })
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn find_models_dir(&self) -> Result<std::path::PathBuf> {
-        // Try NEOMIND_EXTENSION_DIR first (set by NeoMind runtime)
-        if let Ok(ext_dir) = std::env::var("NEOMIND_EXTENSION_DIR") {
-            let models_dir = std::path::PathBuf::from(&ext_dir).join("models");
-            if models_dir.exists() {
-                tracing::info!("[OcrDeviceInference] Found models at: {:?}", models_dir);
-                return Ok(models_dir);
-            }
-        }
-
-        // Fallback: Check current working directory
-        if let Ok(cwd) = std::env::current_dir() {
-            let models_dir = cwd.join("models");
-            if models_dir.exists() {
-                tracing::info!("[OcrDeviceInference] Found models at: {:?}", models_dir);
-                return Ok(models_dir);
-            }
-        }
-
-        // Additional fallback paths
-        let fallback_paths = vec![
-            std::path::PathBuf::from("models"),
-            std::path::PathBuf::from("../models"),
-        ];
-
-        for models_dir in fallback_paths {
-            if models_dir.exists() {
-                tracing::info!("[OcrDeviceInference] Found models at: {:?}", models_dir);
-                return Ok(models_dir);
-            }
-        }
-
-        Err(ExtensionError::ExecutionFailed(
-            "Models directory not found. Please ensure OCR models are installed.".to_string()
-        ))
     }
 
     /// Invoke a capability synchronously (for use in handle_event)

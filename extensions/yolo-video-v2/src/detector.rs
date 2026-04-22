@@ -10,7 +10,40 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(target_arch = "wasm32"))]
-use usls::{models::YOLO, Config, Version};
+use usls::{models::YOLO, Config, Device, Version};
+
+/// Auto-detect best available inference device.
+/// macOS → CoreML, Linux → CUDA, others → CPU.
+#[cfg(not(target_arch = "wasm32"))]
+fn auto_device() -> Device {
+    #[cfg(target_os = "macos")]
+    { Device::CoreMl }
+    #[cfg(all(not(target_os = "macos"), target_os = "linux"))]
+    { Device::Cuda(0) }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    { Device::Cpu(0) }
+}
+
+/// Try building a model with the auto-detected device, fall back to CPU on failure.
+#[cfg(not(target_arch = "wasm32"))]
+fn with_device_fallback<M, F>(try_build: F) -> std::result::Result<M, String>
+where
+    F: Fn(Device) -> std::result::Result<M, String>,
+{
+    let device = auto_device();
+    eprintln!("[HW] Trying device: {:?}", device);
+    match try_build(device) {
+        Ok(model) => {
+            eprintln!("[HW] Model loaded with device: {:?}", device);
+            Ok(model)
+        }
+        Err(e) if !matches!(device, Device::Cpu(_)) => {
+            eprintln!("[HW] {:?} failed ({}), falling back to CPU", device, e);
+            try_build(Device::Cpu(0))
+        }
+        Err(e) => Err(e),
+    }
+}
 
 // Re-export BoundingBox from parent module to avoid duplication
 pub use crate::BoundingBox;
@@ -145,13 +178,12 @@ fn setup_native_lib_paths() {
 /// YOLOv11 detector using usls
 pub struct YoloDetector {
     #[cfg(not(target_arch = "wasm32"))]
-    model: Option<Arc<std::sync::Mutex<YOLO>>>,
+    model: Option<Arc<parking_lot::Mutex<YOLO>>>,
     #[cfg(target_arch = "wasm32")]
     model_loaded: bool,
     model_size: usize,
     /// Config for lazy loading
     conf: f32,
-    iou: f32,
     version: String,
     scale: String,
     /// Whether we've attempted to load the model
@@ -171,7 +203,6 @@ impl YoloDetector {
                 model: None,
                 model_size: 0,
                 conf: 0.25,
-                iou: 0.45,
                 version: "11".to_string(),
                 scale: "n".to_string(),
                 load_attempted: false,
@@ -186,7 +217,6 @@ impl YoloDetector {
                 model_loaded: false,
                 model_size: 0,
                 conf: 0.25,
-                iou: 0.45,
                 version: "11".to_string(),
                 scale: "n".to_string(),
                 load_attempted: false,
@@ -234,7 +264,7 @@ impl YoloDetector {
 
     /// Try to load the model (called by ensure_loaded)
     #[cfg(not(target_arch = "wasm32"))]
-    fn try_load_model(version: &str, conf: f32) -> Result<(Arc<std::sync::Mutex<YOLO>>, usize), String> {
+    fn try_load_model(version: &str, conf: f32) -> Result<(Arc<parking_lot::Mutex<YOLO>>, usize), String> {
         eprintln!("[YOLO-Detector] Loading YOLO model v{}", version);
 
         let model_data = Self::load_model_data()?;
@@ -271,17 +301,17 @@ impl YoloDetector {
         let config = Config::yolo()
             .with_model_file(model_path.to_str().unwrap())
             .with_version(Version(version_num, 0, None))
-            .with_class_confs(&[conf])
-            .commit()
-            .map_err(|e| format!("Failed to commit config: {:?}", e))?;
+            .with_class_confs(&[conf]);
 
-        // Create YOLO model from config
-        eprintln!("[YOLO-Detector] Creating YOLO runtime...");
-        let model = YOLO::new(config)
-            .map_err(|e| {
-                eprintln!("[YOLO-Detector] Failed to create YOLO model: {:?}", e);
-                format!("Failed to create YOLO model: {:?}", e)
-            })?;
+        // Create YOLO model with hardware acceleration + CPU fallback
+        let model = with_device_fallback(|device| {
+            let cfg = config.clone()
+                .with_device_all(device)
+                .commit()
+                .map_err(|e| format!("Config failed: {:?}", e))?;
+            YOLO::new(cfg)
+                .map_err(|e| format!("Model failed: {:?}", e))
+        })?;
 
         eprintln!("[YOLO-Detector] YOLO model loaded successfully!");
         eprintln!("[YOLO-Detector] Model: YOLOv{}n, Confidence: {}", version_num, conf);
@@ -289,7 +319,7 @@ impl YoloDetector {
         // Clean up temp file
         let _ = std::fs::remove_file(&model_path);
 
-        Ok((Arc::new(std::sync::Mutex::new(model)), model_size))
+        Ok((Arc::new(parking_lot::Mutex::new(model)), model_size))
     }
 
     /// Load model data from disk
@@ -446,7 +476,7 @@ impl YoloDetector {
                     // ✨ CRITICAL: Convert Arc into a raw pointer and leak it
                     // This ensures the Arc AND its data are never dropped
                     // The memory will be reclaimed by the OS when the process exits
-                    let leaked: *const Arc<std::sync::Mutex<YOLO>> =
+                    let leaked: *const Arc<parking_lot::Mutex<YOLO>> =
                         Box::into_raw(Box::new(model));
 
                     // Intentionally leak the pointer - never dereference it
@@ -460,7 +490,7 @@ impl YoloDetector {
     /// Run YOLO inference using usls with proper API
     #[cfg(not(target_arch = "wasm32"))]
     fn run_inference(
-        model: &Arc<std::sync::Mutex<YOLO>>,
+        model: &Arc<parking_lot::Mutex<YOLO>>,
         image: &RgbImage,
         max_detections: u32,
     ) -> Vec<Detection> {
@@ -477,7 +507,7 @@ impl YoloDetector {
         };
 
         // Run inference using Model::forward()
-        let mut model_guard = model.lock().unwrap();
+        let mut model_guard = model.lock();
         let ys = match model_guard.forward(&[usls_image]) {
             Ok(results) => results,
             Err(e) => {
@@ -586,7 +616,7 @@ impl Drop for YoloDetector {
         {
             if let Some(model) = self.model.take() {
                 // Leak the model to prevent usls::Runtime from being dropped
-                let leaked: *const Arc<std::sync::Mutex<YOLO>> =
+                let leaked: *const Arc<parking_lot::Mutex<YOLO>> =
                     Box::into_raw(Box::new(model));
                 let _ = leaked;
                 

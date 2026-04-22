@@ -32,7 +32,40 @@ use parking_lot::{Mutex, RwLock};
 use std::sync::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
-use usls::{models::YOLO, Config, DataLoader, Version as YOLOVersion};
+use usls::{models::YOLO, Config, DataLoader, Device, Version as YOLOVersion};
+
+/// Auto-detect best available inference device.
+/// macOS → CoreML, Linux → CUDA, others → CPU.
+#[cfg(not(target_arch = "wasm32"))]
+fn auto_device() -> Device {
+    #[cfg(target_os = "macos")]
+    { Device::CoreMl }
+    #[cfg(all(not(target_os = "macos"), target_os = "linux"))]
+    { Device::Cuda(0) }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    { Device::Cpu(0) }
+}
+
+/// Try building a model with the auto-detected device, fall back to CPU on failure.
+#[cfg(not(target_arch = "wasm32"))]
+fn with_device_fallback<M, F>(try_build: F) -> std::result::Result<M, String>
+where
+    F: Fn(Device) -> std::result::Result<M, String>,
+{
+    let device = auto_device();
+    eprintln!("[HW] Trying device: {:?}", device);
+    match try_build(device) {
+        Ok(model) => {
+            eprintln!("[HW] Model loaded with device: {:?}", device);
+            Ok(model)
+        }
+        Err(e) if !matches!(device, Device::Cpu(_)) => {
+            eprintln!("[HW] {:?} failed ({}), falling back to CPU", device, e);
+            try_build(Device::Cpu(0))
+        }
+        Err(e) => Err(e),
+    }
+}
 
 // ============================================================================
 // Types
@@ -356,8 +389,6 @@ struct YOLODetector {
     load_error: Option<String>,
     /// Confidence threshold (stored for lazy loading)
     conf: f32,
-    /// IoU / NMS threshold (stored for lazy loading)
-    iou: f32,
     /// Model version string, e.g. "v8"
     version: String,
     /// Model scale, e.g. "n"
@@ -374,7 +405,6 @@ impl YOLODetector {
             model: None,
             load_error: None,
             conf,
-            iou: _iou,
             version: version.to_string(),
             scale: scale.to_string(),
             load_attempted: false,
@@ -422,12 +452,16 @@ impl YOLODetector {
         let config = Config::yolo()
             .with_model_file(model_path.to_str().unwrap())
             .with_version(YOLOVersion(version_num, 0, None))
-            .with_class_confs(&[conf])
-            .commit()
-            .map_err(|e| format!("Failed to commit config: {:?}", e))?;
+            .with_class_confs(&[conf]);
 
-        let model = YOLO::new(config)
-            .map_err(|e| format!("Failed to create YOLO model: {:?}", e))?;
+        let model = with_device_fallback(|device| {
+            let cfg = config.clone()
+                .with_device_all(device)
+                .commit()
+                .map_err(|e| format!("Config failed: {:?}", e))?;
+            YOLO::new(cfg)
+                .map_err(|e| format!("Model failed: {:?}", e))
+        })?;
 
         Ok(model)
     }
@@ -541,20 +575,6 @@ impl YoloDeviceInference {
         })
     }
 
-    /// Initialize the YOLO model (native only) - ensures lazy loading
-    #[cfg(not(target_arch = "wasm32"))]
-    fn init_model(&self) -> Result<()> {
-        let mut detector = self.detector.lock();
-        detector.ensure_loaded();
-
-        if detector.model.is_none() {
-            let err = detector.load_error.clone()
-                .unwrap_or_else(|| "Model not loaded".to_string());
-            return Err(ExtensionError::LoadFailed(err));
-        }
-        Ok(())
-    }
-
     /// Reload model with new configuration
     #[cfg(not(target_arch = "wasm32"))]
     pub fn reload_model(&self) -> std::result::Result<(), String> {
@@ -600,11 +620,6 @@ impl YoloDeviceInference {
             "loaded": false,
             "error": "YOLO not available in WASM"
         })
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn find_model_path(&self, filename: &str) -> std::result::Result<std::path::PathBuf, String> {
-        YOLODetector::find_model_path_static(filename)
     }
 
     /// Validate device exists (native only)
