@@ -32,3 +32,4 @@ ort = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "test-util"] }
+tempfile = "3"
