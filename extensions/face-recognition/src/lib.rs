@@ -12,6 +12,7 @@
 
 pub mod alignment;
 pub mod database;
+pub mod drawing;
 
 use async_trait::async_trait;
 use neomind_extension_sdk::{
