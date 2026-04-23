@@ -3,7 +3,7 @@
  * Matches NeoMind dashboard design system with compact, elegant layout
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 
 // ============================================================================
 // Types
@@ -57,6 +57,31 @@ interface LineStat {
   name: string
   forward_count: number
   backward_count: number
+}
+
+interface CaptureCondition {
+  type: 'threshold' | 'presence' | 'absence'
+  class_name: string
+  threshold?: number
+}
+
+interface CaptureRule {
+  id: string
+  name: string
+  roi_id: string
+  condition: CaptureCondition
+  cooldown_seconds: number
+  quality: number
+}
+
+interface CaptureEvent {
+  rule_id: string
+  rule_name: string
+  roi_id: string
+  condition: string
+  roi_counts: Record<string, number>
+  image_base64: string
+  timestamp: number
 }
 
 type StreamMode = 'camera' | 'network'
@@ -382,78 +407,317 @@ const STYLES = `
 }
 
 /* ROI / Line List */
+/* Regions & Lines Panel — grid card layout */
 .yolo-regions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 4px 10px;
+  padding: 6px 8px;
   border-top: 1px solid var(--yolo-border);
-  max-height: 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 160px;
   overflow-y: auto;
 }
-.yolo-region-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 6px 2px 4px;
-  font-size: 10px;
+.yolo-regions::-webkit-scrollbar { width: 3px; }
+.yolo-regions::-webkit-scrollbar-thumb { background: var(--yolo-border); border-radius: 2px; }
+
+/* Grid for cards */
+.yolo-section-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px;
+}
+
+/* Individual card */
+.yolo-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 5px;
   background: var(--yolo-card);
   border: 1px solid var(--yolo-border);
-  border-radius: 4px;
+  border-radius: 6px;
+  transition: box-shadow 0.15s;
 }
-.yolo-region-color {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
+.yolo-card:hover {
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+.yolo-card-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.yolo-card-name {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--yolo-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+.yolo-card-data {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.yolo-card-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 8px;
+  line-height: 1;
+}
+.yolo-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  margin-left: auto;
   flex-shrink: 0;
 }
-.yolo-region-name {
-  flex: 1;
-  color: var(--yolo-fg);
-  font-weight: 500;
-}
-.yolo-region-stat {
-  color: var(--yolo-muted);
-  font-size: 9px;
-}
-.yolo-region-del {
-  padding: 0 3px;
-  font-size: 10px;
-  color: var(--yolo-muted);
+.yolo-card-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  padding: 0;
   background: none;
   border: none;
   cursor: pointer;
-  line-height: 1;
+  color: var(--yolo-muted);
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  flex-shrink: 0;
+  border-radius: 3px;
 }
-.yolo-region-del:hover {
-  color: #ef4444;
+.yolo-card:hover .yolo-card-btn { opacity: 0.7; }
+.yolo-card-btn:hover { opacity: 1 !important; color: #ef4444; background: rgba(0,0,0,0.04); }
+.yolo-card-btn-edit:hover { color: var(--yolo-accent) !important; }
+
+/* Rules inside card */
+.yolo-card-rules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.yolo-rule-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px 0 5px;
+  font-size: 9px;
+  background: rgba(59,130,246,0.08);
+  border-radius: 6px;
+  color: var(--yolo-muted);
+  line-height: 15px;
+}
+.yolo-rule-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  width: 10px;
+  height: 10px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--yolo-muted);
+  padding: 0;
+  opacity: 0.6;
+}
+.yolo-rule-pill-btn:hover { opacity: 1; color: #ef4444; }
+
+/* Line direction chips */
+.yolo-line-dir {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 3px;
+  line-height: 14px;
 }
 
-/* ROI Stats */
-.yolo-roi-stats {
+/* Captures strip — no title */
+.yolo-captures {
   display: flex;
-  gap: 6px;
-  padding: 4px 10px;
-  border-top: 1px solid var(--yolo-border);
-  flex-wrap: wrap;
-}
-.yolo-roi-stat-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 5px;
-  font-size: 9px;
-  font-weight: 600;
-  border-radius: 3px;
-}
-.yolo-line-stat-chip {
-  display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 1px 5px;
-  font-size: 9px;
-  border-radius: 3px;
+  padding: 3px 8px;
+  border-top: 1px solid var(--yolo-border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-shrink: 0;
+  height: 50px;
+  min-height: 50px;
+  max-height: 50px;
 }
+.yolo-captures::-webkit-scrollbar { height: 3px; }
+.yolo-captures::-webkit-scrollbar-thumb { background: var(--yolo-border); border-radius: 2px; }
+.yolo-capture-item {
+  position: relative;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--yolo-border);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.yolo-capture-item:hover { opacity: 0.85; }
+.yolo-capture-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.yolo-capture-label {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0,0,0,0.65);
+  color: #fff;
+  font-size: 7px;
+  padding: 1px 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Rule Editor Popup — self-contained, no CSS variable dependency */
+.yolo-rule-popup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.yolo-rule-popup {
+  background: hsl(0 0% 100%);
+  border: 1px solid hsl(0 0% 90%);
+  border-radius: 12px;
+  padding: 20px;
+  min-width: 280px;
+  max-width: 340px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05);
+  font-size: 13px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: hsl(0 0% 9%);
+  animation: yolo-popup-in 0.15s ease-out;
+}
+.dark .yolo-rule-popup {
+  background: hsl(0 0% 14%);
+  border-color: hsl(0 0% 22%);
+  color: hsl(0 0% 95%);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.06);
+}
+@keyframes yolo-popup-in {
+  from { opacity: 0; transform: scale(0.95) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.yolo-rule-popup-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid hsl(0 0% 90%);
+  color: inherit;
+}
+.dark .yolo-rule-popup-title { border-bottom-color: hsl(0 0% 22%); }
+.yolo-rule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.yolo-rule-field > span {
+  font-size: 11px;
+  font-weight: 500;
+  color: hsl(0 0% 45%);
+}
+.dark .yolo-rule-field > span { color: hsl(0 0% 60%); }
+.yolo-rule-field select,
+.yolo-rule-field input[type="number"],
+.yolo-rule-field input[type="text"] {
+  width: 100%;
+  font-size: 13px;
+  padding: 8px 10px;
+  border: 1px solid hsl(0 0% 82%);
+  border-radius: 6px;
+  background: hsl(0 0% 100%);
+  color: hsl(0 0% 9%);
+  outline: none;
+  min-height: 36px;
+  box-sizing: border-box;
+  font-family: inherit;
+  transition: border-color 0.15s;
+  appearance: auto;
+}
+.dark .yolo-rule-field select,
+.dark .yolo-rule-field input {
+  background: hsl(0 0% 18%);
+  border-color: hsl(0 0% 28%);
+  color: hsl(0 0% 95%);
+}
+.yolo-rule-field select:focus,
+.yolo-rule-field input:focus {
+  border-color: hsl(221 83% 53%);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+}
+.yolo-rule-popup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid hsl(0 0% 90%);
+}
+.dark .yolo-rule-popup-actions { border-top-color: hsl(0 0% 22%); }
+.yolo-rule-popup-cancel {
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid hsl(0 0% 82%);
+  border-radius: 6px;
+  background: hsl(0 0% 100%);
+  color: hsl(0 0% 40%);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.dark .yolo-rule-popup-cancel {
+  background: hsl(0 0% 18%);
+  border-color: hsl(0 0% 28%);
+  color: hsl(0 0% 65%);
+}
+.yolo-rule-popup-cancel:hover { background: hsl(0 0% 96%); }
+.dark .yolo-rule-popup-cancel:hover { background: hsl(0 0% 22%); }
+.yolo-rule-popup-save {
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  border-radius: 6px;
+  background: hsl(221 83% 53%);
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity 0.15s;
+}
+.yolo-rule-popup-save:hover { opacity: 0.9; }
+
 `
 
 function injectStyles() {
@@ -483,6 +747,10 @@ const ICONS: Record<string, string> = {
   trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
   arrowRight: '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>',
   arrowLeft: '<line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 5 5 12 12 19"/>',
+  zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+  plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+  edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
+  x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
 }
 
 const Icon = ({ name, className = '', style }: { name: string; className?: string; style?: React.CSSProperties }) => (
@@ -570,6 +838,12 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
   const [lineStart, setLineStart] = useState<[number, number] | null>(null)  // in-progress line start
   const [lineEnd, setLineEnd] = useState<[number, number] | null>(null)      // in-progress line end (preview)
 
+  // Capture rules state
+  const [captureRules, setCaptureRules] = useState<CaptureRule[]>([])
+  const [captureEvents, setCaptureEvents] = useState<CaptureEvent[]>([])
+  const [editingRuleRoiId, setEditingRuleRoiId] = useState<string | null>(null)  // which ROI is being configured
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)  // capture image lightbox
+
   // Determine mode based on source URL
   const isNetworkStream = sourceUrl.startsWith('rtsp://')
     || sourceUrl.startsWith('rtmp://')
@@ -585,6 +859,8 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
   roisRef.current = rois
   const linesRef = useRef<CrossLine[]>(lines)
   linesRef.current = lines
+  const captureRulesRef = useRef<CaptureRule[]>(captureRules)
+  captureRulesRef.current = captureRules
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -642,7 +918,7 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           command: 'update_stream_config',
-          args: { stream_id: sessionId, rois: roisRef.current, lines: linesRef.current },
+          args: { stream_id: sessionId, rois: roisRef.current, lines: linesRef.current, capture_rules: captureRulesRef.current },
         }),
       })
     } catch (e) { console.warn('[YOLO] Config update failed:', e) }
@@ -865,6 +1141,9 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
               if (msg.metadata?.line_stats) {
                 setLineStats(msg.metadata.line_stats)
               }
+              if (msg.metadata?.capture_events && msg.metadata.capture_events.length > 0) {
+                setCaptureEvents(prev => [...msg.metadata.capture_events, ...prev].slice(0, 10))
+              }
             }
             break
 
@@ -896,6 +1175,9 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
                 }
                 if (msg.metadata?.detections) {
                   setDetections(msg.metadata.detections)
+                }
+                if (msg.metadata?.capture_events && msg.metadata.capture_events.length > 0) {
+                  setCaptureEvents(prev => [...msg.metadata.capture_events, ...prev].slice(0, 10))
                 }
               }
             }
@@ -1024,6 +1306,7 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
     setFrameData(null)
     setRoiStats([])
     setLineStats([])
+    setCaptureEvents([])
   }, [mode, stopCamera, disconnectWebSocket])
 
   // Drawing tool handlers
@@ -1118,6 +1401,35 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
     setLineStats(prev => prev.filter(s => s.id !== id))
     if (isRunning) {
       debouncedConfigUpdate()
+    }
+  }, [isRunning, debouncedConfigUpdate])
+
+  // Capture rule management
+  const addCaptureRule = useCallback((roiId: string, condition: CaptureCondition, cooldown: number) => {
+    const roi = rois.find(r => r.id === roiId)
+    const condLabel = condition.type === 'threshold'
+      ? `${condition.class_name}≥${condition.threshold}`
+      : condition.type === 'presence' ? `${condition.class_name} appears` : `${condition.class_name} gone`
+    const rule: CaptureRule = {
+      id: uid(),
+      name: roi ? `${roi.name}: ${condLabel}` : condLabel,
+      roi_id: roiId,
+      condition,
+      cooldown_seconds: cooldown,
+      quality: 80,
+    }
+    setCaptureRules(prev => [...prev, rule])
+    setEditingRuleRoiId(null)
+    if (isRunning) {
+      // Delay to let state flush to ref
+      setTimeout(() => debouncedConfigUpdate(), 50)
+    }
+  }, [rois, isRunning, debouncedConfigUpdate])
+
+  const removeCaptureRule = useCallback((id: string) => {
+    setCaptureRules(prev => prev.filter(r => r.id !== id))
+    if (isRunning) {
+      setTimeout(() => debouncedConfigUpdate(), 50)
     }
   }, [isRunning, debouncedConfigUpdate])
 
@@ -1633,53 +1945,287 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
           </div>
         )}
 
-        {/* ROI / Line Stats + List (below detections) */}
+        {/* ROI & Line Cards */}
         {(roiStats.length > 0 || lineStats.length > 0 || rois.length > 0 || lines.length > 0) && (
           <div className="yolo-regions">
-            {roiStats.map(stat => {
-              const roi = rois.find(r => r.id === stat.id)
-              const color = roi?.color || '#3b82f6'
-              return (
-                <div key={stat.id} className="yolo-region-item">
-                  <span className="yolo-region-color" style={{ background: color }} />
-                  <span className="yolo-region-name">{stat.name}</span>
-                  <span className="yolo-roi-stat-chip"
-                    style={{ background: hexToRgba(color, 0.2), color, fontWeight: 700 }}>
-                    {stat.count}
-                  </span>
-                  <button className="yolo-region-del" onClick={() => removeRoi(stat.id)}>×</button>
+            <div className="yolo-section-grid">
+              {/* ROI with stats */}
+              {roiStats.map(stat => {
+                const roi = rois.find(r => r.id === stat.id)
+                const color = roi?.color || '#3b82f6'
+                const rulesForRoi = captureRules.filter(r => r.roi_id === stat.id)
+                return (
+                  <div key={stat.id} className="yolo-card">
+                    <div className="yolo-card-row">
+                      <span className="yolo-card-name">{stat.name}</span>
+                      <span className="yolo-card-actions">
+                        <button className="yolo-card-btn yolo-card-btn-edit" onClick={() => setEditingRuleRoiId(editingRuleRoiId === stat.id ? null : stat.id)} title="Edit capture rules"><Icon name="edit" style={{ width: 10, height: 10 }} /></button>
+                        <button className="yolo-card-btn" onClick={() => removeRoi(stat.id)} title="Delete"><Icon name="x" style={{ width: 10, height: 10 }} /></button>
+                      </span>
+                    </div>
+                    {(stat.count > 0 || rulesForRoi.length > 0) && (
+                      <div className="yolo-card-data">
+                        <span className="yolo-card-badge" style={{ background: hexToRgba(color, 0.15), color }}>{stat.count}</span>
+                        {rulesForRoi.map(rule => (
+                          <span key={rule.id} className="yolo-rule-pill">
+                            {rule.condition.type === 'threshold' ? `${rule.condition.class_name}≥${rule.condition.threshold}` : rule.condition.type === 'presence' ? `${rule.condition.class_name}↑` : `${rule.condition.class_name}↓`}
+                            <button className="yolo-rule-pill-btn" onClick={() => removeCaptureRule(rule.id)}><Icon name="x" style={{ width: 8, height: 8 }} /></button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+              {/* ROI without stats */}
+              {rois.filter(r => !roiStats.some(s => s.id === r.id)).map(roi => {
+                const rulesForRoi = captureRules.filter(r => r.roi_id === roi.id)
+                return (
+                  <div key={roi.id} className="yolo-card">
+                    <div className="yolo-card-row">
+                      <span className="yolo-card-name">{roi.name}</span>
+                      <span className="yolo-card-actions">
+                        <button className="yolo-card-btn yolo-card-btn-edit" onClick={() => setEditingRuleRoiId(editingRuleRoiId === roi.id ? null : roi.id)} title="Edit capture rules"><Icon name="edit" style={{ width: 10, height: 10 }} /></button>
+                        <button className="yolo-card-btn" onClick={() => removeRoi(roi.id)} title="Delete"><Icon name="x" style={{ width: 10, height: 10 }} /></button>
+                      </span>
+                    </div>
+                    {rulesForRoi.length > 0 && (
+                      <div className="yolo-card-data">
+                        {rulesForRoi.map(rule => (
+                          <span key={rule.id} className="yolo-rule-pill">
+                            {rule.condition.type === 'threshold' ? `${rule.condition.class_name}≥${rule.condition.threshold}` : rule.condition.type === 'presence' ? `${rule.condition.class_name}↑` : `${rule.condition.class_name}↓`}
+                            <button className="yolo-rule-pill-btn" onClick={() => removeCaptureRule(rule.id)}><Icon name="x" style={{ width: 8, height: 8 }} /></button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+              {/* Lines with stats */}
+              {lineStats.map(stat => {
+                const line = lines.find(l => l.id === stat.id)
+                const color = line?.color || '#22c55e'
+                return (
+                  <div key={stat.id} className="yolo-card">
+                    <div className="yolo-card-row">
+                      <span className="yolo-card-name">{stat.name}</span>
+                      <span className="yolo-card-actions">
+                        <button className="yolo-card-btn" onClick={() => removeLine(stat.id)} title="Delete"><Icon name="x" style={{ width: 10, height: 10 }} /></button>
+                      </span>
+                    </div>
+                    <div className="yolo-card-data">
+                      <span className="yolo-line-dir" style={{ background: 'rgba(34,197,94,0.12)', color: '#22c55e' }}>→{stat.forward_count}</span>
+                      <span className="yolo-line-dir" style={{ background: 'rgba(59,130,246,0.12)', color: '#3b82f6' }}>←{stat.backward_count}</span>
+                    </div>
+                  </div>
+                )
+              })}
+              {/* Lines without stats */}
+              {lines.filter(l => !lineStats.some(s => s.id === l.id)).map(line => (
+                <div key={line.id} className="yolo-card">
+                  <div className="yolo-card-row">
+                    <span className="yolo-card-name">{line.name}</span>
+                    <span className="yolo-card-actions">
+                      <button className="yolo-card-btn" onClick={() => removeLine(line.id)} title="Delete"><Icon name="x" style={{ width: 10, height: 10 }} /></button>
+                    </span>
+                  </div>
                 </div>
-              )
-            })}
-            {rois.filter(r => !roiStats.some(s => s.id === r.id)).map(roi => (
-              <div key={roi.id} className="yolo-region-item">
-                <span className="yolo-region-color" style={{ background: roi.color }} />
-                <span className="yolo-region-name">{roi.name}</span>
-                <button className="yolo-region-del" onClick={() => removeRoi(roi.id)}>×</button>
-              </div>
-            ))}
-            {lineStats.map(stat => {
-              const line = lines.find(l => l.id === stat.id)
-              const color = line?.color || '#22c55e'
-              return (
-                <div key={stat.id} className="yolo-region-item">
-                  <span className="yolo-region-color" style={{ background: color }} />
-                  <span className="yolo-region-name">{stat.name}</span>
-                  <span className="yolo-line-stat-chip" style={{ background: 'rgba(34,197,94,0.15)', color: '#22c55e', fontWeight: 700 }}>→{stat.forward_count}</span>
-                  <span className="yolo-line-stat-chip" style={{ background: 'rgba(59,130,246,0.15)', color: '#3b82f6', fontWeight: 700 }}>←{stat.backward_count}</span>
-                  <button className="yolo-region-del" onClick={() => removeLine(stat.id)}>×</button>
-                </div>
-              )
-            })}
-            {lines.filter(l => !lineStats.some(s => s.id === l.id)).map(line => (
-              <div key={line.id} className="yolo-region-item">
-                <span className="yolo-region-color" style={{ background: line.color }} />
-                <span className="yolo-region-name">{line.name}</span>
-                <button className="yolo-region-del" onClick={() => removeLine(line.id)}>×</button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Capture Rule Editor Popup */}
+        {editingRuleRoiId && (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 10000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
+          }} onClick={() => setEditingRuleRoiId(null)}>
+            <CaptureRuleEditor roiId={editingRuleRoiId} onAdd={addCaptureRule} onCancel={() => setEditingRuleRoiId(null)} />
+          </div>
+        )}
+
+        {/* Capture Events Strip — no title */}
+        {captureEvents.length > 0 && (
+          <div className="yolo-captures">
+            {captureEvents.map((evt, i) => (
+              <div key={`${evt.rule_id}-${evt.timestamp}-${i}`} className="yolo-capture-item"
+                title={`${evt.rule_name}\n${evt.condition}\n${new Date(evt.timestamp).toLocaleTimeString()}`}
+                onClick={() => setLightboxSrc(`data:image/jpeg;base64,${evt.image_base64}`)}>
+                <img src={`data:image/jpeg;base64,${evt.image_base64}`} alt={evt.rule_name} />
+                <span className="yolo-capture-label">{evt.rule_name}</span>
               </div>
             ))}
           </div>
         )}
+
+        {/* Lightbox */}
+        {lightboxSrc && (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 20000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
+            cursor: 'zoom-out',
+          }} onClick={() => setLightboxSrc(null)}>
+            <img src={lightboxSrc} alt="capture" style={{
+              maxWidth: '90vw', maxHeight: '85vh', borderRadius: '8px',
+              boxShadow: '0 8px 40px rgba(0,0,0,0.4)',
+            }} onClick={e => e.stopPropagation()} />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ============================================================================
+// Custom Dropdown (shadcn/ui-inspired)
+// ============================================================================
+
+function CustomDropdown({ value, options, open, onToggle, onChange }: {
+  value: string
+  options: { value: string; label: string }[]
+  open: boolean
+  onToggle: () => void
+  onChange: (value: string) => void
+}) {
+  const selected = options.find(o => o.value === value)
+  const triggerStyle: React.CSSProperties = {
+    width: '100%', height: '36px', fontSize: '13px', padding: '0 10px',
+    border: open ? '1px solid hsl(221 83% 53%)' : '1px solid hsl(0 0% 82%)',
+    borderRadius: '6px', background: '#fff', color: 'hsl(0 0% 9%)',
+    boxSizing: 'border-box', fontFamily: 'inherit', cursor: 'pointer',
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    outline: 'none', transition: 'border-color 0.15s',
+    boxShadow: open ? '0 0 0 3px rgba(59,130,246,0.12)' : 'none',
+  }
+  const panelStyle: React.CSSProperties = {
+    position: 'absolute', left: 0, right: 0, top: '100%', marginTop: '4px',
+    background: '#fff', border: '1px solid hsl(0 0% 90%)', borderRadius: '6px',
+    boxShadow: '0 4px 20px rgba(0,0,0,0.1)', maxHeight: '180px', overflowY: 'auto',
+    zIndex: 100, padding: '4px',
+  }
+  const optionStyle = (active: boolean): React.CSSProperties => ({
+    padding: '6px 10px', fontSize: '13px', cursor: 'pointer', borderRadius: '4px',
+    background: active ? 'hsl(221 83% 53%)' : 'transparent',
+    color: active ? '#fff' : 'hsl(0 0% 9%)',
+    transition: 'background 0.1s',
+  })
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button type="button" style={triggerStyle} onClick={onToggle}>
+        <span>{selected?.label || value}</span>
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ opacity: 0.5, flexShrink: 0 }}>
+          <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
+      {open && (
+        <div style={panelStyle}>
+          {options.map(opt => (
+            <div key={opt.value}
+              style={optionStyle(opt.value === value)}
+              onClick={() => onChange(opt.value)}
+              onMouseEnter={e => { if (opt.value !== value) (e.currentTarget.style.background = 'hsl(0 0% 95%)') }}
+              onMouseLeave={e => { if (opt.value !== value) (e.currentTarget.style.background = 'transparent') }}>
+              {opt.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============================================================================
+// Capture Rule Editor (inline component)
+// ============================================================================
+
+function CaptureRuleEditor({ roiId, onAdd, onCancel }: {
+  roiId: string
+  onAdd: (roiId: string, condition: CaptureCondition, cooldown: number) => void
+  onCancel: () => void
+}) {
+  const [condType, setCondType] = useState<'threshold' | 'presence' | 'absence'>('threshold')
+  const [className, setClassName] = useState('person')
+  const [threshold, setThreshold] = useState(3)
+  const [cooldown, setCooldown] = useState(5)
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null)
+
+  const condOptions = [
+    { value: 'threshold' as const, label: 'Threshold (count ≥ N)' },
+    { value: 'presence' as const, label: 'Presence (appears)' },
+    { value: 'absence' as const, label: 'Absence (disappears)' },
+  ]
+  const classOptions = ['person','car','truck','bus','bicycle','motorcycle','dog','cat','bird','chair','bottle','cell phone','backpack','umbrella','handbag','suitcase']
+
+  const labelStyle: React.CSSProperties = { fontSize: '12px', fontWeight: 500, color: 'hsl(0 0% 45%)' }
+  const fieldStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '14px' }
+  const inputStyle: React.CSSProperties = {
+    width: '100%', height: '36px', fontSize: '13px', padding: '0 10px',
+    border: '1px solid hsl(0 0% 82%)', borderRadius: '6px',
+    background: '#fff', color: 'hsl(0 0% 9%)', outline: 'none',
+    boxSizing: 'border-box', fontFamily: 'inherit',
+  }
+
+  return (
+    <div style={{
+      background: '#fff', border: '1px solid hsl(0 0% 90%)', borderRadius: '12px',
+      padding: '20px', minWidth: '300px', maxWidth: '360px',
+      boxShadow: '0 20px 60px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05)',
+      fontSize: '13px', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      color: 'hsl(0 0% 9%)',
+    }} onClick={e => e.stopPropagation()}>
+      <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid hsl(0 0% 90%)' }}>Add Capture Rule</div>
+
+      {/* Condition Type */}
+      <label style={fieldStyle}>
+        <span style={labelStyle}>Condition</span>
+        <CustomDropdown
+          value={condType} options={condOptions}
+          open={openDropdown === 'cond'} onToggle={() => setOpenDropdown(openDropdown === 'cond' ? null : 'cond')}
+          onChange={v => { setCondType(v as any); setOpenDropdown(null) }}
+        />
+      </label>
+
+      {/* Class */}
+      <label style={fieldStyle}>
+        <span style={labelStyle}>Class</span>
+        <CustomDropdown
+          value={className} options={classOptions.map(c => ({ value: c, label: c }))}
+          open={openDropdown === 'class'} onToggle={() => setOpenDropdown(openDropdown === 'class' ? null : 'class')}
+          onChange={v => { setClassName(v); setOpenDropdown(null) }}
+        />
+      </label>
+
+      {condType === 'threshold' && (
+        <label style={fieldStyle}>
+          <span style={labelStyle}>Threshold</span>
+          <input style={inputStyle} type="number" min={1} max={100} value={threshold}
+            onChange={e => setThreshold(Number(e.target.value))} />
+        </label>
+      )}
+      <label style={fieldStyle}>
+        <span style={labelStyle}>Cooldown (s)</span>
+        <input style={inputStyle} type="number" min={1} max={300} value={cooldown}
+          onChange={e => setCooldown(Number(e.target.value))} />
+      </label>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '18px', paddingTop: '14px', borderTop: '1px solid hsl(0 0% 90%)' }}>
+        <button style={{ height: '34px', padding: '0 16px', fontSize: '13px', fontWeight: 500, border: '1px solid hsl(0 0% 82%)', borderRadius: '6px', background: '#fff', color: 'hsl(0 0% 40%)', cursor: 'pointer', fontFamily: 'inherit' }}
+          onClick={onCancel}
+          onMouseEnter={e => (e.currentTarget.style.background = 'hsl(0 0% 96%)')}
+          onMouseLeave={e => (e.currentTarget.style.background = '#fff')}>Cancel</button>
+        <button style={{ height: '34px', padding: '0 16px', fontSize: '13px', fontWeight: 500, border: 'none', borderRadius: '6px', background: 'hsl(221 83% 53%)', color: '#fff', cursor: 'pointer', fontFamily: 'inherit' }}
+          onClick={() => {
+            const condition: CaptureCondition = condType === 'threshold'
+              ? { type: 'threshold', class_name: className, threshold }
+              : { type: condType, class_name: className }
+            onAdd(roiId, condition, cooldown)
+          }}
+          onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
+          onMouseLeave={e => (e.currentTarget.style.opacity = '1')}>Add Rule</button>
       </div>
     </div>
   )

@@ -264,6 +264,9 @@ mod tests {
             max_objects: 50,
             target_fps: 30,
             draw_boxes: false,
+            rois: Vec::new(),
+            lines: Vec::new(),
+            capture_rules: Vec::new(),
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -426,6 +429,9 @@ mod tests {
             max_objects: 1,
             target_fps: 1,
             draw_boxes: true,
+            rois: Vec::new(),
+            lines: Vec::new(),
+            capture_rules: Vec::new(),
         };
 
         // Test maximum values
@@ -435,6 +441,9 @@ mod tests {
             max_objects: 1000,
             target_fps: 120,
             draw_boxes: false,
+            rois: Vec::new(),
+            lines: Vec::new(),
+            capture_rules: Vec::new(),
         };
 
         // Both should serialize/deserialize correctly

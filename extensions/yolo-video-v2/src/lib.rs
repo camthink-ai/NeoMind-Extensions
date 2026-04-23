@@ -144,6 +144,60 @@ pub struct LineStat {
     pub backward_count: u64,
 }
 
+// ============================================================================
+// ROI Smart Capture Rules
+// ============================================================================
+
+/// Trigger condition for a capture rule (serde tag = "type", JSON-friendly)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum CaptureCondition {
+    /// Fire when class count exceeds threshold (rising edge)
+    #[serde(rename = "threshold")]
+    Threshold { class_name: String, threshold: u32 },
+    /// Fire when class appears (rising edge: absent → present)
+    #[serde(rename = "presence")]
+    Presence { class_name: String },
+    /// Fire when class disappears (falling edge: present → absent)
+    #[serde(rename = "absence")]
+    Absence { class_name: String },
+}
+
+/// A capture rule definition (configuration item on StreamConfig)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureRule {
+    pub id: String,
+    pub name: String,
+    pub roi_id: String,
+    pub condition: CaptureCondition,
+    #[serde(default = "default_cooldown")]
+    pub cooldown_seconds: f64,
+    #[serde(default = "default_quality")]
+    pub quality: u8,
+}
+
+fn default_cooldown() -> f64 { 5.0 }
+fn default_quality() -> u8 { 80 }
+
+/// Per-rule runtime state (stored on ActiveStream)
+#[derive(Debug)]
+struct CaptureRuleState {
+    last_triggered: Option<Instant>,
+    prev_condition_met: bool,
+}
+
+/// A capture event output
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureEvent {
+    pub rule_id: String,
+    pub rule_name: String,
+    pub roi_id: String,
+    pub condition: String,
+    pub roi_counts: HashMap<String, u32>,
+    pub image_base64: String,
+    pub timestamp: i64,
+}
+
 /// Stream configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -155,6 +209,8 @@ pub struct StreamConfig {
     pub draw_boxes: bool,
     pub rois: Vec<RoiRegion>,
     pub lines: Vec<CrossLine>,
+    #[serde(default)]
+    pub capture_rules: Vec<CaptureRule>,
 }
 
 impl Default for StreamConfig {
@@ -167,6 +223,7 @@ impl Default for StreamConfig {
             draw_boxes: true,
             rois: Vec::new(),
             lines: Vec::new(),
+            capture_rules: Vec::new(),
         }
     }
 }
@@ -212,6 +269,10 @@ struct ActiveStream {
     tracker: ObjectTracker,
     /// Cumulative line crossing counts: line_id → (A→B count, B→A count)
     line_counts: HashMap<String, (u64, u64)>,
+    /// Runtime state per capture rule
+    capture_rule_states: HashMap<String, CaptureRuleState>,
+    /// Pending capture events (max 10)
+    pending_captures: Vec<CaptureEvent>,
 }
 
 /// Standard COCO 80-class color palette (each class gets a unique, consistent color)
@@ -427,16 +488,14 @@ pub fn encode_jpeg(image: &image::RgbImage, quality: u8) -> Vec<u8> {
 
 struct StreamRegistry {
     streams: HashMap<String, Arc<Mutex<ActiveStream>>>,
-    total_frames: u64,
-    _total_detections: u64,
+    capture_events_count: u64,
 }
 
 impl StreamRegistry {
     fn new() -> Self {
         Self {
             streams: HashMap::new(),
-            total_frames: 0,
-            _total_detections: 0,
+            capture_events_count: 0,
         }
     }
 }
@@ -618,6 +677,8 @@ impl StreamProcessor {
             dropped_frames: 0,
             tracker: ObjectTracker::new(),
             line_counts: HashMap::new(),
+            capture_rule_states: HashMap::new(),
+            pending_captures: Vec::new(),
         }));
 
         {
@@ -840,6 +901,8 @@ impl YoloVideoProcessorV2 {
             dropped_frames: 0,
             tracker: ObjectTracker::new(),
             line_counts: HashMap::new(),
+            capture_rule_states: HashMap::new(),
+            pending_captures: Vec::new(),
         };
 
         // Register the recovered session
@@ -913,29 +976,29 @@ impl Extension for YoloVideoProcessorV2 {
                 required: false,
             },
             MetricDescriptor {
-                name: "avg_fps".to_string(),
-                display_name: "Average FPS".to_string(),
-                data_type: MetricDataType::Float,
-                unit: "fps".to_string(),
+                name: "total_detections".to_string(),
+                display_name: "Total Detections".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "count".to_string(),
                 min: Some(0.0),
                 max: None,
                 required: false,
             },
             MetricDescriptor {
-                name: "model_loaded".to_string(),
-                display_name: "Model Loaded".to_string(),
-                data_type: MetricDataType::Boolean,
+                name: "total_roi_alerts".to_string(),
+                display_name: "ROI Alerts".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "count".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "latest_capture".to_string(),
+                display_name: "Latest Capture".to_string(),
+                data_type: MetricDataType::String,
                 unit: "".to_string(),
                 min: None,
-                max: None,
-                required: false,
-            },
-            MetricDescriptor {
-                name: "model_size_mb".to_string(),
-                display_name: "Model Size (MB)".to_string(),
-                data_type: MetricDataType::Float,
-                unit: "MB".to_string(),
-                min: Some(0.0),
                 max: None,
                 required: false,
             },
@@ -1115,6 +1178,9 @@ impl Extension for YoloVideoProcessorV2 {
                 let new_lines: Vec<CrossLine> = args.get("lines")
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default();
+                let new_capture_rules: Vec<CaptureRule> = args.get("capture_rules")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
 
                 let registry = get_registry().lock();
                 match registry.streams.get(stream_id) {
@@ -1122,13 +1188,19 @@ impl Extension for YoloVideoProcessorV2 {
                         let mut s = stream.lock();
                         s._config.rois = new_rois;
                         s._config.lines = new_lines;
+                        s._config.capture_rules = new_capture_rules;
                         // Prune stale line_counts for removed lines
                         let active_ids: std::collections::HashSet<String> =
                             s._config.lines.iter().map(|l| l.id.clone()).collect();
                         s.line_counts.retain(|id, _| active_ids.contains(id));
+                        // Prune stale capture rule states
+                        let active_rule_ids: std::collections::HashSet<String> =
+                            s._config.capture_rules.iter().map(|r| r.id.clone()).collect();
+                        s.capture_rule_states.retain(|id, _| active_rule_ids.contains(id));
                         let roi_count = s._config.rois.len();
                         let line_count = s._config.lines.len();
-                        Ok(json!({"success": true, "roi_count": roi_count, "line_count": line_count}))
+                        let rule_count = s._config.capture_rules.len();
+                        Ok(json!({"success": true, "roi_count": roi_count, "line_count": line_count, "capture_rule_count": rule_count}))
                     }
                     None => Err(ExtensionError::SessionNotFound(stream_id.into())),
                 }
@@ -1141,18 +1213,23 @@ impl Extension for YoloVideoProcessorV2 {
         let now = chrono::Utc::now().timestamp_millis();
         let registry = get_registry().lock();
 
-        // Get model status (peek-only: do NOT trigger lazy loading,
-        // otherwise produce_metrics blocks the runner's IPC loop during
-        // the multi-second ONNX/CoreML model initialization)
-        let (model_loaded, model_size) = {
-            let lock = self.processor.detector.lock();
-            match lock.as_ref() {
-                Some(d) => (d.is_loaded(), d.model_size() as f32 / (1024.0 * 1024.0)),
-                None => (false, 0.0),
+        // Aggregate from all active streams
+        let mut total_frames: i64 = 0;
+        let mut total_detections: i64 = 0;
+        let mut latest_capture_json = String::new();
+        for stream_arc in registry.streams.values() {
+            let s = stream_arc.lock();
+            total_frames += s.frame_count as i64;
+            total_detections += s.total_detections as i64;
+            // Take the latest capture event from any stream
+            if latest_capture_json.is_empty() {
+                if let Some(evt) = s.pending_captures.last() {
+                    latest_capture_json = serde_json::to_string(evt).unwrap_or_default();
+                }
             }
-        };
+        }
 
-        Ok(vec![
+        let mut metrics = vec![
             ExtensionMetricValue {
                 name: "active_streams".to_string(),
                 value: ParamMetricValue::Integer(registry.streams.len() as i64),
@@ -1160,25 +1237,30 @@ impl Extension for YoloVideoProcessorV2 {
             },
             ExtensionMetricValue {
                 name: "total_frames_processed".to_string(),
-                value: ParamMetricValue::Integer(registry.total_frames as i64),
+                value: ParamMetricValue::Integer(total_frames),
                 timestamp: now,
             },
             ExtensionMetricValue {
-                name: "avg_fps".to_string(),
-                value: ParamMetricValue::Float(0.0),
+                name: "total_detections".to_string(),
+                value: ParamMetricValue::Integer(total_detections),
                 timestamp: now,
             },
             ExtensionMetricValue {
-                name: "model_loaded".to_string(),
-                value: ParamMetricValue::Boolean(model_loaded),
+                name: "total_roi_alerts".to_string(),
+                value: ParamMetricValue::Integer(registry.capture_events_count as i64),
                 timestamp: now,
             },
-            ExtensionMetricValue {
-                name: "model_size_mb".to_string(),
-                value: ParamMetricValue::Float(model_size.into()),
+        ];
+
+        if !latest_capture_json.is_empty() {
+            metrics.push(ExtensionMetricValue {
+                name: "latest_capture".to_string(),
+                value: ParamMetricValue::String(latest_capture_json),
                 timestamp: now,
-            },
-        ])
+            });
+        }
+
+        Ok(metrics)
     }
 
     // ========================================================================
@@ -1237,6 +1319,8 @@ impl Extension for YoloVideoProcessorV2 {
             dropped_frames: 0,
             tracker: ObjectTracker::new(),
             line_counts: HashMap::new(),
+            capture_rule_states: HashMap::new(),
+            pending_captures: Vec::new(),
         };
 
         {
@@ -1429,6 +1513,18 @@ impl Extension for YoloVideoProcessorV2 {
                         }
 
                         // ROI counting and line crossing detection
+                        let norm_dets: Vec<(f32, f32, &str)> = detections.iter()
+                            .filter_map(|d| {
+                                let cx = (d.bbox.x + d.bbox.width / 2.0) / orig_width as f32;
+                                let cy = (d.bbox.y + d.bbox.height / 2.0) / orig_height as f32;
+                                if cx >= 0.0 && cx <= 1.0 && cy >= 0.0 && cy <= 1.0 {
+                                    Some((cx, cy, d.label.as_str()))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+
                         let (roi_stats, line_stats) = {
                             let stream_arc = {
                                 let registry = get_registry().lock();
@@ -1441,18 +1537,6 @@ impl Extension for YoloVideoProcessorV2 {
                                 }
                             };
                             let mut s = stream_arc.lock();
-
-                            let norm_dets: Vec<(f32, f32, &str)> = detections.iter()
-                                .filter_map(|d| {
-                                    let cx = (d.bbox.x + d.bbox.width / 2.0) / orig_width as f32;
-                                    let cy = (d.bbox.y + d.bbox.height / 2.0) / orig_height as f32;
-                                    if cx >= 0.0 && cx <= 1.0 && cy >= 0.0 && cy <= 1.0 {
-                                        Some((cx, cy, d.label.as_str()))
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect();
 
                             let roi_stats = count_roi_detections(&norm_dets, &s._config.rois);
 
@@ -1499,12 +1583,35 @@ impl Extension for YoloVideoProcessorV2 {
                             (roi_stats, line_stats)
                         };
 
+                        // Evaluate capture rules (separate borrow scope from stream lock)
+                        let capture_events = {
+                            let stream_arc = {
+                                let registry = get_registry().lock();
+                                match registry.streams.get(&sid).cloned() {
+                                    Some(s) => s,
+                                    None => break,
+                                }
+                            };
+                            let mut s = stream_arc.lock();
+                            let detailed_counts = count_roi_detections_detailed(&norm_dets, &s._config.rois);
+                            let rules = s._config.capture_rules.clone();
+                            let rois = s._config.rois.clone();
+                            evaluate_capture_rules(
+                                &rules,
+                                &mut s.capture_rule_states,
+                                &detailed_counts,
+                                &output_image,
+                                &rois,
+                                chrono::Utc::now().timestamp_millis(),
+                            )
+                        };
+
                         // Encode to JPEG
                         let jpeg_data = encode_jpeg(&output_image, 75);
 
                         // Update stream statistics (quick lock)
                         {
-                            let registry = get_registry().lock();
+                            let mut registry = get_registry().lock();
                             if let Some(stream) = registry.streams.get(&sid) {
                                 let mut s = stream.lock();
                                 s.frame_count += 1;
@@ -1521,6 +1628,7 @@ impl Extension for YoloVideoProcessorV2 {
                                     s.last_frame = None;
                                 }
                             }
+                            registry.capture_events_count += capture_events.len() as u64;
                         }
 
                         // Push to frontend via FFI
@@ -1529,6 +1637,7 @@ impl Extension for YoloVideoProcessorV2 {
                                 "detections": detections,
                                 "roi_stats": roi_stats,
                                 "line_stats": line_stats,
+                                "capture_events": capture_events,
                             }));
 
                         if sequence % 30 == 0 {
@@ -1892,6 +2001,18 @@ impl Extension for YoloVideoProcessorV2 {
         draw_detections(&mut original_image, &detections);
 
         // ROI counting and line crossing detection (camera mode)
+        let norm_dets: Vec<(f32, f32, &str)> = detections.iter()
+            .filter_map(|d| {
+                let cx = (d.bbox.x + d.bbox.width / 2.0) / orig_width as f32;
+                let cy = (d.bbox.y + d.bbox.height / 2.0) / orig_height as f32;
+                if cx >= 0.0 && cx <= 1.0 && cy >= 0.0 && cy <= 1.0 {
+                    Some((cx, cy, d.label.as_str()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         let (roi_stats, line_stats) = {
             let mut s = stream.lock();
 
@@ -1906,19 +2027,6 @@ impl Extension for YoloVideoProcessorV2 {
                 s.detected_objects.clear();
                 s.last_frame = None;
             }
-
-            // Normalize detections for ROI/Line processing
-            let norm_dets: Vec<(f32, f32, &str)> = detections.iter()
-                .filter_map(|d| {
-                    let cx = (d.bbox.x + d.bbox.width / 2.0) / orig_width as f32;
-                    let cy = (d.bbox.y + d.bbox.height / 2.0) / orig_height as f32;
-                    if cx >= 0.0 && cx <= 1.0 && cy >= 0.0 && cy <= 1.0 {
-                        Some((cx, cy, d.label.as_str()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
 
             let roi_stats = count_roi_detections(&norm_dets, &s._config.rois);
 
@@ -1963,6 +2071,33 @@ impl Extension for YoloVideoProcessorV2 {
             (roi_stats, line_stats)
         };
 
+        // Evaluate capture rules (camera mode)
+        let capture_events = {
+            let mut s = stream.lock();
+            let detailed_counts = count_roi_detections_detailed(&norm_dets, &s._config.rois);
+            let rules = s._config.capture_rules.clone();
+            let rois = s._config.rois.clone();
+            let events = evaluate_capture_rules(
+                &rules,
+                &mut s.capture_rule_states,
+                &detailed_counts,
+                &original_image,
+                &rois,
+                chrono::Utc::now().timestamp_millis(),
+            );
+            // Store in pending_captures (max 10)
+            s.pending_captures.extend(events.clone());
+            while s.pending_captures.len() > 10 {
+                s.pending_captures.remove(0);
+            }
+            // Update registry counter
+            {
+                let mut registry = get_registry().lock();
+                registry.capture_events_count += events.len() as u64;
+            }
+            events
+        };
+
         eprintln!("[YOLO] Encoding image to JPEG (quality=75)");
         // Encode result as JPEG with dynamic quality based on processing time
         // Faster processing = higher quality, slower processing = lower quality
@@ -2000,6 +2135,7 @@ impl Extension for YoloVideoProcessorV2 {
             "detections": detections,
             "roi_stats": roi_stats,
             "line_stats": line_stats,
+            "capture_events": capture_events,
         }));
 
         eprintln!("[YOLO] Returning result for sequence {}, data size: {}, detections: {}",
@@ -2298,6 +2434,164 @@ fn count_roi_detections(
             count,
         }
     }).collect()
+}
+
+/// Count detections inside each ROI, broken down by class name.
+/// Returns: HashMap<roi_id, HashMap<class_name, count>>
+fn count_roi_detections_detailed(
+    detections: &[(f32, f32, &str)],
+    rois: &[RoiRegion],
+) -> HashMap<String, HashMap<String, u32>> {
+    let mut result: HashMap<String, HashMap<String, u32>> = HashMap::new();
+    for roi in rois {
+        let mut class_counts: HashMap<String, u32> = HashMap::new();
+        for (cx, cy, label) in detections {
+            if !point_in_polygon(*cx, *cy, &roi.points) {
+                continue;
+            }
+            if !roi.class_filter.is_empty() && !roi.class_filter.iter().any(|c| c == label) {
+                continue;
+            }
+            *class_counts.entry(label.to_string()).or_insert(0) += 1;
+        }
+        result.insert(roi.id.clone(), class_counts);
+    }
+    result
+}
+
+/// Crop the axis-aligned bounding box of a ROI polygon from the image,
+/// encode as JPEG, and return base64.
+fn crop_roi_region(
+    image: &image::RgbImage,
+    roi: &RoiRegion,
+    quality: u8,
+) -> String {
+    let (w, h) = (image.width() as f32, image.height() as f32);
+
+    // Compute AABB of the polygon in pixel coordinates
+    let mut min_x = f32::MAX;
+    let mut min_y = f32::MAX;
+    let mut max_x = f32::MIN;
+    let mut max_y = f32::MIN;
+    for (px, py) in &roi.points {
+        min_x = min_x.min(*px);
+        min_y = min_y.min(*py);
+        max_x = max_x.max(*px);
+        max_y = max_y.max(*py);
+    }
+
+    // Clamp to image bounds
+    let x = (min_x * w).max(0.0) as u32;
+    let y = (min_y * h).max(0.0) as u32;
+    let x2 = ((max_x * w).min(w) as u32).min(image.width());
+    let y2 = ((max_y * h).min(h) as u32).min(image.height());
+    let crop_w = x2.saturating_sub(x);
+    let crop_h = y2.saturating_sub(y);
+
+    if crop_w == 0 || crop_h == 0 {
+        return String::new();
+    }
+
+    let cropped = image::imageops::crop_imm(image, x, y, crop_w, crop_h).to_image();
+    let jpeg_data = encode_jpeg(&cropped, quality);
+    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg_data)
+}
+
+/// Evaluate all capture rules against current detection state.
+/// Returns a list of newly triggered CaptureEvents.
+fn evaluate_capture_rules(
+    rules: &[CaptureRule],
+    states: &mut HashMap<String, CaptureRuleState>,
+    detailed_counts: &HashMap<String, HashMap<String, u32>>,
+    image: &image::RgbImage,
+    rois: &[RoiRegion],
+    timestamp: i64,
+) -> Vec<CaptureEvent> {
+    let mut events = Vec::new();
+    let now = Instant::now();
+
+    for rule in rules {
+        // Get per-class counts for this rule's ROI
+        let roi_counts = match detailed_counts.get(&rule.roi_id) {
+            Some(c) => c,
+            None => continue,
+        };
+
+        // Evaluate condition
+        let condition_met = match &rule.condition {
+            CaptureCondition::Threshold { class_name, threshold } => {
+                let count = roi_counts.get(class_name).copied().unwrap_or(0);
+                count >= *threshold
+            }
+            CaptureCondition::Presence { class_name } => {
+                roi_counts.get(class_name).copied().unwrap_or(0) > 0
+            }
+            CaptureCondition::Absence { class_name } => {
+                roi_counts.get(class_name).copied().unwrap_or(0) == 0
+            }
+        };
+
+        // Get or create state for this rule
+        let state = states.entry(rule.id.clone()).or_insert(CaptureRuleState {
+            last_triggered: None,
+            prev_condition_met: false,
+        });
+
+        // Edge detection + cooldown
+        let is_rising_edge = condition_met && !state.prev_condition_met;
+        let is_falling_edge = !condition_met && state.prev_condition_met;
+
+        let should_trigger = match &rule.condition {
+            CaptureCondition::Threshold { .. } | CaptureCondition::Presence { .. } => is_rising_edge,
+            CaptureCondition::Absence { .. } => is_falling_edge,
+        };
+
+        // Update state for next frame
+        state.prev_condition_met = condition_met;
+
+        if !should_trigger {
+            continue;
+        }
+
+        // Check cooldown
+        if let Some(last) = state.last_triggered {
+            if last.elapsed().as_secs_f64() < rule.cooldown_seconds {
+                continue;
+            }
+        }
+
+        // Find the ROI for cropping
+        let roi = match rois.iter().find(|r| r.id == rule.roi_id) {
+            Some(r) => r,
+            None => continue,
+        };
+
+        // Crop and encode
+        let image_base64 = crop_roi_region(image, roi, rule.quality);
+
+        let condition_str = match &rule.condition {
+            CaptureCondition::Threshold { class_name, threshold } =>
+                format!("threshold:{class_name}>={threshold}"),
+            CaptureCondition::Presence { class_name } =>
+                format!("presence:{class_name}"),
+            CaptureCondition::Absence { class_name } =>
+                format!("absence:{class_name}"),
+        };
+
+        events.push(CaptureEvent {
+            rule_id: rule.id.clone(),
+            rule_name: rule.name.clone(),
+            roi_id: rule.roi_id.clone(),
+            condition: condition_str,
+            roi_counts: roi_counts.clone(),
+            image_base64,
+            timestamp,
+        });
+
+        state.last_triggered = Some(now);
+    }
+
+    events
 }
 
 /// Draw ROI polygons and line crossings on the image.
