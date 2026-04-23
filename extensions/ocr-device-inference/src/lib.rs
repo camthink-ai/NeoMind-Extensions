@@ -645,6 +645,9 @@ impl OcrEngine {
 
                     tracing::info!("[OcrDeviceInference] Recognized: '{}' (confidence: {:.2})", text_str, conf);
 
+                    // Draw bounding box + OCR text label on annotated image
+                    Self::draw_bbox_with_text(&mut annotated_img, &bbox, &text_str, conf, img_width, img_height);
+
                     text_blocks.push(TextBlock {
                         text: text_str.clone(),
                         confidence: conf,
@@ -652,9 +655,6 @@ impl OcrEngine {
                     });
                     all_texts.push(text_str);
                     total_confidence += conf;
-
-                    // Draw bounding box on annotated image
-                    Self::draw_bbox_static(&mut annotated_img, &bbox, img_width, img_height);
                 }
             } else {
                 tracing::warn!("[OcrDeviceInference] Recognition returned no results for crop");
@@ -746,15 +746,24 @@ impl OcrEngine {
         }
     }
 
-    fn draw_bbox_static(img: &mut image::RgbaImage, bbox: &BoundingBox, img_w: u32, img_h: u32) {
-        use imageproc::drawing::draw_hollow_rect_mut;
+    fn draw_bbox_with_text(img: &mut image::RgbaImage, bbox: &BoundingBox, text: &str, confidence: f32, img_w: u32, img_h: u32) {
+        use imageproc::drawing::{draw_hollow_rect_mut, draw_filled_rect_mut, draw_text_mut};
         use imageproc::rect::Rect;
+        use ab_glyph::{FontRef, PxScale, Font as AbFont, ScaleFont as _};
+
+        // Cache font loading
+        static FONT_RESULT: std::sync::OnceLock<std::result::Result<FontRef<'static>, ab_glyph::InvalidFont>> = std::sync::OnceLock::new();
+
+        let font = FONT_RESULT.get_or_init(|| {
+            FontRef::try_from_slice(include_bytes!("../fonts/NotoSans-Regular.ttf"))
+        });
 
         let x = (bbox.x * img_w as f32) as i32;
         let y = (bbox.y * img_h as f32) as i32;
         let w = (bbox.width * img_w as f32) as u32;
         let h = (bbox.height * img_h as f32) as u32;
 
+        // Green bounding box
         let color = image::Rgba([0u8, 255u8, 0u8, 255u8]);
 
         let x = x.max(0).min(img_w as i32 - 1);
@@ -768,6 +777,48 @@ impl OcrEngine {
             if w > 2 && h > 2 {
                 let rect2 = Rect::at(x + 1, y + 1).of_size(w - 2, h - 2);
                 draw_hollow_rect_mut(img, rect2, color);
+            }
+        }
+
+        // Draw text label above bounding box
+        if let Ok(font) = font {
+            let label_text = format!("{} {:.0}%", text, confidence * 100.0);
+            let font_size = if img_w > 1200 { 24.0 } else if img_w > 800 { 18.0 } else if w > 100 { 14.0 } else { 11.0 };
+            let scale = PxScale::from(font_size);
+
+            let scaled_font = font.as_scaled(scale);
+            let mut text_width: f32 = 0.0;
+            for c in label_text.chars() {
+                let glyph_id = scaled_font.glyph_id(c);
+                text_width += scaled_font.h_advance(glyph_id);
+            }
+            let label_width = (text_width.ceil() as u32 + 12).min(img_w.saturating_sub(x as u32));
+            let label_height = (font_size as u32) + 8;
+
+            // Position label above the box, or inside if no room above
+            let label_y = if y >= label_height as i32 {
+                y - label_height as i32
+            } else {
+                y
+            };
+
+            if label_y >= 0 && (label_y as u32) + label_height <= img_h {
+                // Filled background for label (green)
+                draw_filled_rect_mut(
+                    img,
+                    Rect::at(x, label_y).of_size(label_width, label_height),
+                    image::Rgba([0u8, 180u8, 0u8, 220u8]),
+                );
+                // White text on colored background
+                draw_text_mut(
+                    img,
+                    image::Rgba([255u8, 255u8, 255u8, 255u8]),
+                    x + 5,
+                    label_y + 3,
+                    scale,
+                    font,
+                    &label_text,
+                );
             }
         }
     }

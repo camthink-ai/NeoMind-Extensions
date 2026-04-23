@@ -194,26 +194,36 @@ fn draw_detections_on_image(
     image_data: &[u8],
     detections: &[Detection],
 ) -> Result<String> {
-    use imageproc::drawing::{draw_hollow_rect_mut, draw_filled_rect_mut};
+    use imageproc::drawing::{draw_hollow_rect_mut, draw_filled_rect_mut, draw_text_mut};
     use imageproc::rect::Rect;
+    use ab_glyph::{FontRef, PxScale, Font as AbFont, ScaleFont as _};
+
+    // Cache font loading
+    static FONT_RESULT: std::sync::OnceLock<std::result::Result<FontRef<'static>, ab_glyph::InvalidFont>> = std::sync::OnceLock::new();
+    let font = FONT_RESULT.get_or_init(|| {
+        FontRef::try_from_slice(include_bytes!("../fonts/NotoSans-Regular.ttf"))
+    });
 
     // Decode image
     let mut img = image::load_from_memory(image_data)
         .map_err(|e| ExtensionError::ExecutionFailed(format!("Failed to load image: {}", e)))?
         .to_rgb8();
 
+    let img_w = img.width();
+    let img_h = img.height();
+
     tracing::debug!("[YoloDeviceInference] Drawing {} detections on image {}x{}",
-        detections.len(), img.width(), img.height());
+        detections.len(), img_w, img_h);
 
     for (i, det) in detections.iter().enumerate() {
         let color = BOX_COLORS[i % BOX_COLORS.len()];
         let image_color = image::Rgb([color.0, color.1, color.2]);
 
         // Clip coordinates to image bounds
-        let x = det.bbox.x.max(0.0).min(img.width() as f32 - 2.0) as i32;
-        let y = det.bbox.y.max(0.0).min(img.height() as f32 - 2.0) as i32;
-        let w = det.bbox.width.min(img.width() as f32 - x as f32 - 1.0) as u32;
-        let h = det.bbox.height.min(img.height() as f32 - y as f32 - 1.0) as u32;
+        let x = det.bbox.x.max(0.0).min(img_w as f32 - 2.0) as i32;
+        let y = det.bbox.y.max(0.0).min(img_h as f32 - 2.0) as i32;
+        let w = det.bbox.width.min(img_w as f32 - x as f32 - 1.0) as u32;
+        let h = det.bbox.height.min(img_h as f32 - y as f32 - 1.0) as u32;
 
         if w < 2 || h < 2 {
             continue;
@@ -223,17 +233,46 @@ fn draw_detections_on_image(
         draw_hollow_rect_mut(&mut img, Rect::at(x, y).of_size(w, h), image_color);
         draw_hollow_rect_mut(&mut img, Rect::at(x + 1, y + 1).of_size(w.saturating_sub(2), h.saturating_sub(2)), image_color);
 
-        // Draw label background
-        let label = format!("{} {:.0}%", det.label, det.confidence * 100.0);
-        let text_width = (label.len() as u32) * 8;
-        let text_height = 14u32;
+        // Draw label with text using font (matching yolo-video-v2 style)
+        if let Ok(font) = font {
+            let label_text = format!("{} {:.0}%", det.label, det.confidence * 100.0);
+            let font_size = if img_w > 1200 { 24.0 } else if img_w > 800 { 18.0 } else if w > 100 { 14.0 } else { 11.0 };
+            let scale = PxScale::from(font_size);
 
-        if y >= text_height as i32 {
-            draw_filled_rect_mut(
-                &mut img,
-                Rect::at(x, y - text_height as i32).of_size(text_width, text_height),
-                image_color,
-            );
+            let scaled_font = font.as_scaled(scale);
+            let mut text_width: f32 = 0.0;
+            for c in label_text.chars() {
+                let glyph_id = scaled_font.glyph_id(c);
+                text_width += scaled_font.h_advance(glyph_id);
+            }
+            let label_width = (text_width.ceil() as u32 + 12).min(img_w.saturating_sub(x as u32));
+            let label_height = (font_size as u32) + 8;
+
+            // Position label above the box, or inside if no room above
+            let label_y = if y >= label_height as i32 {
+                y - label_height as i32
+            } else {
+                y
+            };
+
+            if label_y >= 0 && (label_y as u32) + label_height <= img_h {
+                // Filled background for label
+                draw_filled_rect_mut(
+                    &mut img,
+                    Rect::at(x, label_y).of_size(label_width, label_height),
+                    image_color,
+                );
+                // White text on colored background
+                draw_text_mut(
+                    &mut img,
+                    image::Rgb([255, 255, 255]),
+                    x + 5,
+                    label_y + 3,
+                    scale,
+                    font,
+                    &label_text,
+                );
+            }
         }
     }
 

@@ -766,19 +766,36 @@ export const DeviceInferenceCard = forwardRef<HTMLDivElement, ExtensionComponent
       return () => clearInterval(interval)
     }, [refresh])
 
-    // Draw detections when annotated image is available
+    // Draw detections: prefer annotated image from backend (already has boxes drawn)
+    // Only fall back to frontend drawing when no annotated image is available
     useEffect(() => {
-      if (binding?.last_annotated_image && binding?.last_detections && canvasRef.current) {
-        drawDetections(canvasRef.current, binding.last_annotated_image, binding.last_detections)
-      }
-    }, [binding?.last_annotated_image, binding?.last_detections])
+      if (!canvasRef.current) return
 
-    // Draw from raw image if no annotated version
-    useEffect(() => {
-      if (binding?.last_image && !binding?.last_annotated_image && binding?.last_detections && canvasRef.current) {
+      if (binding?.last_annotated_image) {
+        // Backend already drew detections — just show the annotated image
+        const img = new Image()
+        img.onload = () => {
+          const canvas = canvasRef.current!
+          const parent = canvas.parentElement
+          const maxW = parent?.clientWidth || 400
+          const maxH = parent?.clientHeight || 300
+          const scale = Math.min(maxW / img.width, maxH / img.height)
+          canvas.width = img.width * scale
+          canvas.height = img.height * scale
+          const ctx = canvas.getContext('2d')
+          if (ctx) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height)
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+          }
+        }
+        img.src = binding.last_annotated_image.startsWith("data:")
+          ? binding.last_annotated_image
+          : `data:image/jpeg;base64,${binding.last_annotated_image}`
+      } else if (binding?.last_image && binding?.last_detections) {
+        // No annotated image — draw detections on frontend
         drawDetections(canvasRef.current, binding.last_image, binding.last_detections)
       }
-    }, [binding?.last_image, binding?.last_annotated_image, binding?.last_detections])
+    }, [binding?.last_annotated_image, binding?.last_image, binding?.last_detections])
 
     // Bind device
     const handleBind = async () => {

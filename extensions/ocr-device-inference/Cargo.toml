@@ -20,7 +20,7 @@ chrono = "0.4"
 base64 = "0.22"
 image = "0.25"
 imageproc = "0.24"
-rusttype = "0.9"
+ab_glyph = "0.2"
 parking_lot = "0.12"
 tracing = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
