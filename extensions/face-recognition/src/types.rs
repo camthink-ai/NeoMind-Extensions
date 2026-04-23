@@ -42,12 +42,18 @@ pub struct DeviceBinding {
     pub created_at: i64,
 }
 
-/// Statistics for a device binding
+/// Statistics and latest results for a device binding
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BindingStats {
     pub total_inferences: u64,
     pub total_recognized: u64,
     pub total_unknown: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_faces: Option<Vec<FaceResult>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
 }
 
 /// Extension configuration for persistence

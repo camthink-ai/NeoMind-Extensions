@@ -143,7 +143,15 @@ async function fetchStatus(extensionId: string): Promise<ExtensionStatus | null>
 async function fetchBindings(extensionId: string): Promise<BindingStatus[]> {
   const result = await executeCommand(extensionId, 'get_bindings', {})
   if (!result.success || !result.data?.bindings) return []
-  return result.data.bindings
+  return result.data.bindings.map((b: any) => ({
+    binding: { device_id: b.device_id, metric_name: b.metric_name, active: b.active, created_at: b.created_at },
+    total_inferences: b.stats?.total_inferences ?? 0,
+    total_recognized: b.stats?.total_recognized ?? 0,
+    total_unknown: b.stats?.total_unknown ?? 0,
+    last_image: b.last_image,
+    last_faces: b.last_faces,
+    last_error: b.last_error,
+  }))
 }
 
 async function fetchRegisteredFaces(extensionId: string): Promise<FaceEntrySummary[]> {

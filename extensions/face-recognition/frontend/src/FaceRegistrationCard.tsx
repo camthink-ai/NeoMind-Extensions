@@ -1,10 +1,57 @@
 /**
  * FaceRegistrationCard — Standalone face registration dialog component.
- * Supports drag-and-drop image upload, Chinese localized error messages,
+ * Supports drag-and-drop image upload, i18n (en/zh) via localStorage detection,
  * and can be used independently or embedded in FaceRecognitionCard.
  */
 
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
+
+// ============================================================================
+// i18n — lightweight locale detection + translation map
+// ============================================================================
+
+type Locale = 'en' | 'zh'
+
+function detectLocale(): Locale {
+  const stored = localStorage.getItem('i18nextLng') || ''
+  if (stored.startsWith('zh')) return 'zh'
+  if (stored.startsWith('en')) return 'en'
+  const nav = navigator.language || ''
+  return nav.startsWith('zh') ? 'zh' : 'en'
+}
+
+const T: Record<string, Record<Locale, string>> = {
+  dialogTitle:        { en: 'Register Face', zh: '注册人脸' },
+  namePlaceholder:    { en: 'Enter name', zh: '输入姓名' },
+  nameAriaLabel:      { en: 'Name', zh: '姓名' },
+  dropzoneHint:       { en: 'Click or drag image here', zh: '点击或拖拽图片到此处' },
+  dropzoneActive:     { en: 'Drop to upload', zh: '释放以上传图片' },
+  dropzoneFormats:    { en: 'JPG, PNG supported, max 10MB', zh: '支持 JPG、PNG 格式，最大 10MB' },
+  changeImage:        { en: 'Change Image', zh: '更换图片' },
+  cancel:             { en: 'Cancel', zh: '取消' },
+  register:           { en: 'Register', zh: '注册' },
+  registering:        { en: 'Registering...', zh: '注册中...' },
+  notImageFile:       { en: 'Please select an image file', zh: '请选择图片文件' },
+  readFailed:         { en: 'Failed to read file', zh: '读取文件失败' },
+  registerFailed:     { en: 'Registration failed', zh: '注册失败' },
+  uploadAriaLabel:    { en: 'Upload face image', zh: '上传人脸图片' },
+  previewAlt:         { en: 'Preview', zh: '预览' },
+  errDuplicateName:   { en: 'Name already exists', zh: '姓名已存在' },
+  errMultipleFaces:   { en: 'Multiple faces detected', zh: '图片包含多张人脸' },
+  errNoFace:          { en: 'No face detected', zh: '未检测到人脸' },
+  errImageTooLarge:   { en: 'Image too large (max 10MB)', zh: '图片过大（最大10MB）' },
+  errMaxFaces:        { en: 'Face database is full', zh: '人脸库已满' },
+  errModelNotLoaded:  { en: 'Model not loaded', zh: '模型未加载' },
+}
+
+const ERR_MSG: Record<string, Record<Locale, string>> = {
+  DUPLICATE_NAME:     { en: T.errDuplicateName.en, zh: T.errDuplicateName.zh },
+  MULTIPLE_FACES:     { en: T.errMultipleFaces.en, zh: T.errMultipleFaces.zh },
+  NO_FACE_DETECTED:   { en: T.errNoFace.en, zh: T.errNoFace.zh },
+  IMAGE_TOO_LARGE:    { en: T.errImageTooLarge.en, zh: T.errImageTooLarge.zh },
+  MAX_FACES_EXCEEDED: { en: T.errMaxFaces.en, zh: T.errMaxFaces.zh },
+  MODEL_NOT_LOADED:   { en: T.errModelNotLoaded.en, zh: T.errModelNotLoaded.zh },
+}
 
 // ============================================================================
 // Types
@@ -61,28 +108,22 @@ async function registerFace(
   name: string,
   imageBase64: string
 ): Promise<{ success: boolean; error?: string; error_code?: string }> {
-  return executeCommand(extensionId, 'register_face', {
+  const result = await executeCommand(extensionId, 'register_face', {
     name,
     image: imageBase64,
   })
+  // Unwrap: API wraps extension response in { success, data: { success, error, error_code } }
+  if (!result.success) return { success: false, error: result.error }
+  const inner = result.data
+  if (inner && typeof inner.success === 'boolean') {
+    return { success: inner.success, error: inner.error, error_code: inner.error_code }
+  }
+  return { success: true }
 }
 
-// ============================================================================
-// Error code mapping
-// ============================================================================
-
-const ERROR_MESSAGES: Record<string, string> = {
-  DUPLICATE_NAME: '姓名已存在',
-  MULTIPLE_FACES: '图片包含多张人脸',
-  NO_FACE_DETECTED: '未检测到人脸',
-  IMAGE_TOO_LARGE: '图片过大（最大10MB）',
-  MAX_FACES_EXCEEDED: '人脸库已满',
-  MODEL_NOT_LOADED: '模型未加载',
-}
-
-function mapErrorMessage(errorCode?: string, fallback?: string): string {
-  if (errorCode && ERROR_MESSAGES[errorCode]) return ERROR_MESSAGES[errorCode]
-  return fallback || '注册失败'
+function mapErrorMessage(locale: Locale, errorCode?: string, fallback?: string): string {
+  if (errorCode && ERR_MSG[errorCode]) return ERR_MSG[errorCode][locale]
+  return fallback || T.registerFailed[locale]
 }
 
 // ============================================================================
@@ -338,6 +379,8 @@ export const FaceRegistrationCard = ({
   onRegistered,
   onClose,
 }: FaceRegistrationCardProps) => {
+  const locale = useMemo(() => detectLocale(), [])
+  const t = useCallback((key: string): string => T[key]?.[locale] ?? key, [locale])
   const [name, setName] = useState('')
   const [imageData, setImageData] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -349,19 +392,33 @@ export const FaceRegistrationCard = ({
 
   // ---- File handling ----
 
-  const readFileAsDataUrl = useCallback((file: File): void => {
+  const compressAndRead = useCallback((file: File): void => {
     if (!file.type.startsWith('image/')) {
-      setError('请选择图片文件')
+      setError(t('notImageFile'))
       return
     }
-    const reader = new FileReader()
-    reader.onload = () => {
-      setImageData(reader.result as string)
+    const img = new Image()
+    img.onload = () => {
+      const MAX_DIM = 1280
+      let { width, height } = img
+      if (width > MAX_DIM || height > MAX_DIM) {
+        const scale = MAX_DIM / Math.max(width, height)
+        width = Math.round(width * scale)
+        height = Math.round(height * scale)
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      canvas.getContext('2d')!.drawImage(img, 0, 0, width, height)
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+      setImageData(dataUrl)
       setError(null)
     }
-    reader.onerror = () => setError('读取文件失败')
-    reader.readAsDataURL(file)
-  }, [])
+    img.onerror = () => setError(t('readFailed'))
+    img.src = URL.createObjectURL(file)
+  }, [t])
+
+  const readFileAsDataUrl = compressAndRead
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -409,10 +466,10 @@ export const FaceRegistrationCard = ({
       onRegistered?.()
       onClose?.()
     } else {
-      setError(mapErrorMessage(result.error_code, result.error))
+      setError(mapErrorMessage(locale, result.error_code, result.error))
     }
     setLoading(false)
-  }, [name, imageData, extensionId, onRegistered, onClose])
+  }, [name, imageData, extensionId, onRegistered, onClose, locale])
 
   // ---- Close ----
 
@@ -431,17 +488,17 @@ export const FaceRegistrationCard = ({
     <div className="frc-reg-overlay" onClick={handleOverlayClick}>
       <div className="frc-reg-dialog" onClick={handleDialogClick}>
         {/* Title */}
-        <div className="frc-reg-title">注册人脸</div>
+        <div className="frc-reg-title">{t('dialogTitle')}</div>
 
         {/* Name input */}
         <input
           className="frc-reg-input"
           type="text"
-          placeholder="输入姓名"
+          placeholder={t('namePlaceholder')}
           value={name}
           onChange={(e) => setName(e.target.value)}
           autoFocus
-          aria-label="姓名"
+          aria-label={t('nameAriaLabel')}
         />
 
         {/* Hidden file input */}
@@ -457,14 +514,14 @@ export const FaceRegistrationCard = ({
         {/* Drop zone / preview */}
         {imageData ? (
           <div className="frc-reg-preview-container">
-            <img className="frc-reg-preview" src={imageData} alt="预览" />
+            <img className="frc-reg-preview" src={imageData} alt={t('previewAlt')} />
             <button
               className="frc-reg-change-btn"
               onClick={() => fileInputRef.current?.click()}
               type="button"
             >
               <SvgIcon name="upload" style={{ width: '12px', height: '12px' }} />
-              更换图片
+              {t('changeImage')}
             </button>
           </div>
         ) : (
@@ -476,7 +533,7 @@ export const FaceRegistrationCard = ({
             onDrop={handleDrop}
             role="button"
             tabIndex={0}
-            aria-label="上传人脸图片"
+            aria-label={t('uploadAriaLabel')}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault()
@@ -489,10 +546,10 @@ export const FaceRegistrationCard = ({
               style={{ width: '24px', height: '24px', opacity: 0.5 }}
             />
             <span>
-              {isDragging ? '释放以上传图片' : '点击或拖拽图片到此处'}
+              {isDragging ? t('dropzoneActive') : t('dropzoneHint')}
             </span>
             <span style={{ fontSize: '10px', opacity: 0.6 }}>
-              支持 JPG、PNG 格式，最大 10MB
+              {t('dropzoneFormats')}
             </span>
           </div>
         )}
@@ -503,7 +560,7 @@ export const FaceRegistrationCard = ({
         {/* Actions */}
         <div className="frc-reg-actions">
           <button className="frc-reg-btn" onClick={onClose} type="button">
-            取消
+            {t('cancel')}
           </button>
           <button
             className="frc-reg-btn frc-reg-btn-primary"
@@ -514,12 +571,12 @@ export const FaceRegistrationCard = ({
             {loading ? (
               <>
                 <div className="frc-reg-spinner" />
-                注册中...
+                {t('registering')}
               </>
             ) : (
               <>
                 <SvgIcon name="check" style={{ width: '14px', height: '14px' }} />
-                注册
+                {t('register')}
               </>
             )}
           </button>

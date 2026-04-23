@@ -141,8 +141,6 @@ impl FaceRecognition {
         // to get accurate model status
         #[cfg(not(target_arch = "wasm32"))]
         {
-            // We probe the models by attempting to use them (they will fail on empty input
-            // but that's fine for status checking). The ensure_loaded happens internally.
             let _ = self.detector.lock().detect(&[], 0.5);
             let _ = self.recognizer.lock().extract(&[]);
         }
@@ -150,12 +148,20 @@ impl FaceRecognition {
         let face_db = self.face_db.read();
         let config = self.config.read();
 
+        let detector_loaded = self.detector.lock().as_any().downcast_ref::<crate::detector::ScrfdDetector>()
+            .map(|d| d.is_loaded())
+            .unwrap_or(false);
+        let recognizer_loaded = self.recognizer.lock().as_any().downcast_ref::<crate::recognizer::ArcFaceRecognizer>()
+            .map(|r| r.is_loaded())
+            .unwrap_or(false);
+
         json!({
             "total_bindings": self.bindings.read().len(),
             "total_inferences": self.total_inferences.load(Ordering::SeqCst),
             "total_recognized": self.total_recognized.load(Ordering::SeqCst),
             "total_unknown": self.total_unknown.load(Ordering::SeqCst),
             "registered_faces": face_db.len(),
+            "model_loaded": detector_loaded && recognizer_loaded,
             "config": *config,
         })
     }
@@ -581,6 +587,9 @@ impl Extension for FaceRecognition {
                                         stats.total_inferences += 1;
                                         stats.total_recognized += recognized_count as u64;
                                         stats.total_unknown += unknown_count as u64;
+                                        stats.last_image = if annotated_b64.is_empty() { None } else { Some(format!("data:image/jpeg;base64,{}", annotated_b64)) };
+                                        stats.last_faces = if results.is_empty() { None } else { Some(results.clone()) };
+                                        stats.last_error = None;
                                     }
 
                                     // Build face names list
@@ -607,7 +616,7 @@ impl Extension for FaceRecognition {
                                         0.0
                                     };
 
-                                    let timestamp = chrono::Utc::now().timestamp();
+                                    let timestamp = chrono::Utc::now().timestamp_millis();
 
                                     // Write virtual metrics
                                     if !annotated_b64.is_empty() {
@@ -635,6 +644,9 @@ impl Extension for FaceRecognition {
                                         device_id,
                                         e
                                     );
+                                    if let Some(stats) = self.binding_stats.write().get_mut(device_id) {
+                                        stats.last_error = Some(e.to_string());
+                                    }
                                 }
                             }
                         }
@@ -753,22 +765,16 @@ impl Extension for FaceRecognition {
             self.config.read().max_faces
         );
 
-        Ok(())
-    }
-
-    fn start(&mut self) -> Result<()> {
-        tracing::info!("[FaceRecognition] start called");
-
         // Load face database from faces.json
-        // First create the database with correct thresholds
+        // Note: This MUST be in configure() because the SDK's neomind_export! macro
+        // does NOT export a start() FFI function for isolated extensions.
+        // The start() method is never called by the extension runner.
         let config = self.config.read();
-        *self.face_db.write() = FaceDatabase::new(
-            config.recognition_threshold,
-            config.max_faces,
-        );
+        let (threshold, max_faces) = (config.recognition_threshold, config.max_faces);
         drop(config);
 
-        // Then load from file (this replaces the empty db with persisted data)
+        *self.face_db.write() = FaceDatabase::new(threshold, max_faces);
+
         if let Some(path) = Self::get_faces_db_path() {
             if path.exists() {
                 match FaceDatabase::load_from_file(&path) {
@@ -791,19 +797,23 @@ impl Extension for FaceRecognition {
                     "[FaceRecognition] No faces.json found. Starting with empty database."
                 );
             }
+        } else {
+            tracing::warn!(
+                "[FaceRecognition] NEOMIND_EXTENSION_DIR not set, cannot load face database"
+            );
         }
 
-        // Models load lazily on first inference
         tracing::info!(
-            "[FaceRecognition] Models will be loaded on first inference (lazy loading)"
-        );
-
-        tracing::info!(
-            "[FaceRecognition] Extension started: {} bindings, {} faces registered",
+            "[FaceRecognition] Extension configured: {} bindings, {} faces registered",
             self.bindings.read().len(),
             self.face_db.read().len()
         );
 
+        Ok(())
+    }
+
+    fn start(&mut self) -> Result<()> {
+        tracing::info!("[FaceRecognition] start called (no-op, loading done in configure)");
         Ok(())
     }
 
@@ -1008,6 +1018,9 @@ mod tests {
             total_inferences: 10,
             total_recognized: 5,
             total_unknown: 5,
+            last_image: None,
+            last_faces: None,
+            last_error: None,
         };
         let json = serde_json::to_string(&stats).unwrap();
         let deserialized: BindingStats = serde_json::from_str(&json).unwrap();
