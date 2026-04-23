@@ -176,7 +176,10 @@ jobs:
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install zip jq ffmpeg
+          brew install zip jq ffmpeg pkg-config
+          # Verify pkg-config can find FFmpeg
+          export PKG_CONFIG_PATH="/opt/homebrew/opt/ffmpeg/lib/pkgconfig"
+          pkg-config --cflags-only-I libavcodec
           # Set FFmpeg paths for ffmpeg-sys-next crate
           echo "FFMPEG_DIR=/opt/homebrew/opt/ffmpeg" >> $GITHUB_ENV
           echo "CPATH=/opt/homebrew/opt/ffmpeg/include:$CPATH" >> $GITHUB_ENV
@@ -189,21 +192,21 @@ jobs:
         run: |
           choco install zip -y
           choco install jq -y
-          # Install FFmpeg shared dev build (includes headers + import libs)
-          $FFMPEG_VERSION = "7.1.1"
-          $FFMPEG_ARCH = if ("${{ matrix.platform }}" -eq "windows_amd64") { "x64" } else { "x86" }
-          $FFMPEG_URL = "https://github.com/Btbn/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip"
-          if ($FFMPEG_ARCH -eq "x86") {
-            $FFMPEG_URL = "https://github.com/Btbn/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win32-gpl-shared.zip"
+          # BtbN only provides win64 shared builds; skip FFmpeg for x86
+          if ("${{ matrix.platform }}" -eq "windows_amd64") {
+            $FFMPEG_URL = "https://github.com/Btbn/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip"
+            Write-Host "Downloading FFmpeg shared build from: $FFMPEG_URL"
+            Invoke-WebRequest -Uri $FFMPEG_URL -OutFile "C:\ffmpeg.zip"
+            Expand-Archive -Path "C:\ffmpeg.zip" -DestinationPath "C:\ffmpeg" -Force
+            $ffmpegDir = Get-ChildItem "C:\ffmpeg" -Directory | Select-Object -First 1
+            Write-Host "FFmpeg dir: $($ffmpegDir.FullName)"
+            echo "FFMPEG_DIR=$($ffmpegDir.FullName)" >> $env:GITHUB_ENV
+            echo "$($ffmpegDir.FullName)\bin" >> $env:GITHUB_PATH
+            # Tell bindgen/clang where FFmpeg headers are
+            echo "BINDGEN_EXTRA_CLANG_ARGS=-I$($ffmpegDir.FullName)\include" >> $env:GITHUB_ENV
+          } else {
+            Write-Host "Skipping FFmpeg for windows_x86 (no shared build available; yolo-video-v2 will not be built)"
           }
-          Write-Host "Downloading FFmpeg shared build from: $FFMPEG_URL"
-          Invoke-WebRequest -Uri $FFMPEG_URL -OutFile "C:\ffmpeg.zip"
-          Expand-Archive -Path "C:\ffmpeg.zip" -DestinationPath "C:\ffmpeg" -Force
-          # Find the extracted directory
-          $ffmpegDir = Get-ChildItem "C:\ffmpeg" -Directory | Select-Object -First 1
-          Write-Host "FFmpeg dir: $($ffmpegDir.FullName)"
-          echo "FFMPEG_DIR=$($ffmpegDir.FullName)" >> $env:GITHUB_ENV
-          echo "$($ffmpegDir.FullName)\bin" >> $env:GITHUB_PATH
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -218,6 +221,24 @@ jobs:
       - name: Build extensions
         run: |
           chmod +x build.sh
+          # Create /usr/include symlinks for ffmpeg-sys-next's hardcoded fallback path
+          if [ "$RUNNER_OS" = "macOS" ] && [ -d "/opt/homebrew/opt/ffmpeg/include" ]; then
+            sudo mkdir -p /usr/local/include
+            for dir in /opt/homebrew/opt/ffmpeg/include/libav*; do
+              sudo ln -sf "$dir" "/usr/local/include/$(basename "$dir")"
+            done
+            # Also symlink to /usr/include since that's the actual fallback
+            sudo mkdir -p /usr/include
+            for dir in /opt/homebrew/opt/ffmpeg/include/libav*; do
+              sudo ln -sf "$dir" "/usr/include/$(basename "$dir")"
+            done
+          fi
+          if [ "$RUNNER_OS" = "Windows" ] && [ -n "$FFMPEG_DIR" ] && [ -d "$FFMPEG_DIR/include" ]; then
+            mkdir -p /usr/include
+            for dir in "$FFMPEG_DIR"/include/libav*; do
+              cp -r "$dir" "/usr/include/$(basename "$dir")"
+            done
+          fi
           ./build.sh --yes --skip-install
         shell: bash
 
