@@ -1493,15 +1493,8 @@ impl Extension for YoloVideoProcessorV2 {
                                 Vec::new()
                             };
 
-                            if !s._config.rois.is_empty() || !lines_cfg.is_empty() {
-                                draw_roi_and_lines(
-                                    &mut output_image,
-                                    &s._config.rois,
-                                    &roi_stats,
-                                    &lines_cfg,
-                                    &s.line_counts,
-                                );
-                            }
+                            // ROI/Line overlay drawing is handled by the frontend canvas
+                            // to avoid double-drawing (backend JPEG + frontend canvas overlay)
 
                             (roi_stats, line_stats)
                         };
@@ -1964,15 +1957,8 @@ impl Extension for YoloVideoProcessorV2 {
                 Vec::new()
             };
 
-            if !s._config.rois.is_empty() || !lines_cfg.is_empty() {
-                draw_roi_and_lines(
-                    &mut original_image,
-                    &s._config.rois,
-                    &roi_stats,
-                    &lines_cfg,
-                    &s.line_counts,
-                );
-            }
+            // ROI/Line overlay drawing is handled by the frontend canvas
+            // to avoid double-drawing (backend JPEG + frontend canvas overlay)
 
             (roi_stats, line_stats)
         };
