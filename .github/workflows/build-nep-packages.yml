@@ -175,7 +175,13 @@ jobs:
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install zip jq ffmpeg
+        run: |
+          brew install zip jq ffmpeg
+          # Set FFmpeg paths for ffmpeg-sys-next crate
+          echo "FFMPEG_DIR=/opt/homebrew/opt/ffmpeg" >> $GITHUB_ENV
+          echo "CPATH=/opt/homebrew/opt/ffmpeg/include:$CPATH" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=/opt/homebrew/opt/ffmpeg/lib:$LIBRARY_PATH" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
@@ -183,7 +189,21 @@ jobs:
         run: |
           choco install zip -y
           choco install jq -y
-          choco install ffmpeg -y
+          # Install FFmpeg shared dev build (includes headers + import libs)
+          $FFMPEG_VERSION = "7.1.1"
+          $FFMPEG_ARCH = if ("${{ matrix.platform }}" -eq "windows_amd64") { "x64" } else { "x86" }
+          $FFMPEG_URL = "https://github.com/Btbn/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip"
+          if ($FFMPEG_ARCH -eq "x86") {
+            $FFMPEG_URL = "https://github.com/Btbn/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win32-gpl-shared.zip"
+          }
+          Write-Host "Downloading FFmpeg shared build from: $FFMPEG_URL"
+          Invoke-WebRequest -Uri $FFMPEG_URL -OutFile "C:\ffmpeg.zip"
+          Expand-Archive -Path "C:\ffmpeg.zip" -DestinationPath "C:\ffmpeg" -Force
+          # Find the extracted directory
+          $ffmpegDir = Get-ChildItem "C:\ffmpeg" -Directory | Select-Object -First 1
+          Write-Host "FFmpeg dir: $($ffmpegDir.FullName)"
+          echo "FFMPEG_DIR=$($ffmpegDir.FullName)" >> $env:GITHUB_ENV
+          echo "$($ffmpegDir.FullName)\bin" >> $env:GITHUB_PATH
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
