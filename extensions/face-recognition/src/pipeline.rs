@@ -20,7 +20,7 @@ impl FaceRecognition {
         // Write face count
         let params = json!({
             "device_id": device_id,
-            "metric": "face_recognition.face_count",
+            "metric": "virtual.face_recognition.face_count",
             "value": face_count,
             "timestamp": timestamp,
         });
@@ -33,7 +33,7 @@ impl FaceRecognition {
         let names_str = face_names.join(",");
         let params = json!({
             "device_id": device_id,
-            "metric": "face_recognition.face_names",
+            "metric": "virtual.face_recognition.face_names",
             "value": names_str,
             "timestamp": timestamp,
         });
@@ -46,7 +46,7 @@ impl FaceRecognition {
         let data_uri = format!("data:image/jpeg;base64,{}", annotated_image_b64);
         let params = json!({
             "device_id": device_id,
-            "metric": "face_recognition.annotated_image",
+            "metric": "virtual.face_recognition.annotated_image",
             "value": data_uri,
             "timestamp": timestamp,
         });
@@ -58,7 +58,7 @@ impl FaceRecognition {
         // Write confidence
         let params = json!({
             "device_id": device_id,
-            "metric": "face_recognition.confidence",
+            "metric": "virtual.face_recognition.confidence",
             "value": avg_confidence,
             "timestamp": timestamp,
         });

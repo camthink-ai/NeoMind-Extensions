@@ -560,12 +560,33 @@ fn discover_stride_groups(session: &ort::session::Session, input_size: u32) -> V
             .map(|(n, _, _): &(&str, usize, usize)| n.to_string());
 
         if let (Some(sname), Some(bname)) = (score_name, bbox_name) {
-            let feat_size = (*num_anchors as f64).sqrt().round() as usize;
-            let stride = if feat_size > 0 {
-                input_size / feat_size
-            } else {
+            // Derive stride by trying common anchor-per-cell counts (1 and 2).
+            // SCRFD models may use 1 or 2 anchors per grid position, so
+            // sqrt(num_anchors) alone is incorrect when anchors_per_cell > 1.
+            let stride = [1usize, 2, 3, 4]
+                .iter()
+                .filter_map(|&apc| {
+                    let positions = num_anchors / apc;
+                    if positions * apc != *num_anchors {
+                        return None;
+                    }
+                    let feat_size = (positions as f64).sqrt().round() as usize;
+                    if feat_size == 0 {
+                        return None;
+                    }
+                    let s = input_size / feat_size;
+                    // Accept only power-of-2 strides in [4, 256]
+                    if s >= 4 && s <= 256 && (s & (s - 1)) == 0 {
+                        Some(s)
+                    } else {
+                        None
+                    }
+                })
+                .min()
+                .unwrap_or(0);
+            if stride == 0 {
                 continue;
-            };
+            }
 
             groups.push((
                 stride,

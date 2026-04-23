@@ -114,6 +114,9 @@ impl FaceRecognition {
                     total_inferences: 0,
                     total_recognized: 0,
                     total_unknown: 0,
+                    last_image: None,
+                    last_faces: None,
+                    last_error: None,
                 },
             );
             tracing::info!(

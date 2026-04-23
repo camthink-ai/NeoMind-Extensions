@@ -66,6 +66,9 @@ impl FaceRecognition {
                         total_inferences: 0,
                         total_recognized: 0,
                         total_unknown: 0,
+                        last_image: None,
+                        last_faces: None,
+                        last_error: None,
                     },
                 );
 
@@ -188,13 +191,23 @@ impl FaceRecognition {
                                 total_inferences: 0,
                                 total_recognized: 0,
                                 total_unknown: 0,
+                                last_image: None,
+                                last_faces: None,
+                                last_error: None,
                             });
                         json!({
                             "device_id": b.device_id,
                             "metric_name": b.metric_name,
                             "active": b.active,
                             "created_at": b.created_at,
-                            "stats": stats,
+                            "stats": {
+                                "total_inferences": stats.total_inferences,
+                                "total_recognized": stats.total_recognized,
+                                "total_unknown": stats.total_unknown,
+                            },
+                            "last_image": stats.last_image,
+                            "last_faces": stats.last_faces,
+                            "last_error": stats.last_error,
                         })
                     })
                     .collect();
@@ -618,6 +631,9 @@ impl FaceRecognition {
                         total_inferences: 0,
                         total_recognized: 0,
                         total_unknown: 0,
+                        last_image: None,
+                        last_faces: None,
+                        last_error: None,
                     },
                 );
                 Ok(json!({"success": true, "device_id": device_id}))
