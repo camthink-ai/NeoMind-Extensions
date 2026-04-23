@@ -481,10 +481,10 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                 BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
             fi
             
-            # Get all dependent dylibs with absolute paths
-            # Match: /Users/ (build env), /opt/homebrew/ (Homebrew), /usr/local/ (Intel Homebrew)
+            # Get all dependent dylibs with absolute paths or @rpath references
+            # Match: /Users/ (build env), /opt/homebrew/ (Homebrew), /usr/local/ (Intel Homebrew), @rpath/
             DEPS=$(otool -L "$BINARY_PATH" 2>/dev/null | \
-                   grep -oE "(/Users/|/opt/homebrew/|/usr/local/)[^ ]+\.dylib" || true)
+                   grep -oE "(/Users/|/opt/homebrew/|/usr/local/|@rpath/)[^ ]+\.dylib" || true)
 
             if [ -n "$DEPS" ]; then
                 # Add @loader_path to rpath so dylibs resolve from their own directory
@@ -495,8 +495,26 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                 SOURCE_HASH=$(shasum -a 256 "$LIB_FILE" | cut -d' ' -f1)
 
                 echo "$DEPS" | while read -r dep; do
-                    if [ -f "$dep" ]; then
-                        LIB_NAME=$(basename "$dep")
+                    # Resolve @rpath/ references to actual file paths
+                    REAL_DEP="$dep"
+                    if [[ "$dep" == @rpath/* ]]; then
+                        LIB_BASE=$(echo "$dep" | sed 's/@rpath\///')
+                        # Try ORT_LIB_PATH first, then standard search paths
+                        if [ -n "$ORT_LIB_PATH" ] && [ -f "$ORT_LIB_PATH/$LIB_BASE" ]; then
+                            REAL_DEP="$ORT_LIB_PATH/$LIB_BASE"
+                        else
+                            # Try to resolve via rpath search
+                            for search_dir in /opt/homebrew/lib /usr/local/lib; do
+                                if [ -f "$search_dir/$LIB_BASE" ]; then
+                                    REAL_DEP="$search_dir/$LIB_BASE"
+                                    break
+                                fi
+                            done
+                        fi
+                    fi
+
+                    if [ -f "$REAL_DEP" ]; then
+                        LIB_NAME=$(basename "$REAL_DEP")
 
                         # CRITICAL: Skip ONNX Runtime - we already bundled the correct
                         # architecture version from ORT_LIB_PATH above. The otool path
@@ -509,9 +527,8 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                                     "$BINARY_PATH" 2>/dev/null && \
                                     echo -e "    ${GREEN}→${NC} Fixed ORT reference (kept bundled version): $LIB_NAME"
                             else
-                                # Fallback: if we somehow didn't bundle ORT, copy from build env
-                                DEP_HASH=$(shasum -a 256 "$dep" | cut -d' ' -f1)
-                                cp "$dep" "$BINARY_DIR/$LIB_NAME"
+                                # Fallback: if we somehow didn't bundle ORT, copy from resolved path
+                                cp "$REAL_DEP" "$BINARY_DIR/$LIB_NAME"
                                 install_name_tool -change "$dep" "@loader_path/$LIB_NAME" \
                                     "$BINARY_PATH" 2>/dev/null && \
                                     echo -e "    ${YELLOW}⚠${NC} Copied ORT from build env (no bundled version): $LIB_NAME"
@@ -519,17 +536,17 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                             continue
                         fi
 
-                        DEP_HASH=$(shasum -a 256 "$dep" | cut -d' ' -f1)
+                        DEP_HASH=$(shasum -a 256 "$REAL_DEP" | cut -d' ' -f1)
 
                         if [ "$SOURCE_HASH" == "$DEP_HASH" ]; then
                             # Self-reference - copy to package and fix reference
-                            cp "$dep" "$BINARY_DIR/$LIB_NAME"
+                            cp "$REAL_DEP" "$BINARY_DIR/$LIB_NAME"
                             install_name_tool -change "$dep" "@loader_path/$LIB_NAME" \
                                 "$BINARY_PATH" 2>/dev/null && \
                                 echo -e "    ${GREEN}→${NC} Copied and fixed: $LIB_NAME"
                         else
                             # Different library - copy to package
-                            cp "$dep" "$BINARY_DIR/$LIB_NAME"
+                            cp "$REAL_DEP" "$BINARY_DIR/$LIB_NAME"
                             install_name_tool -change "$dep" "@loader_path/$LIB_NAME" \
                                 "$BINARY_PATH" 2>/dev/null && \
                                 echo -e "    ${GREEN}→${NC} Copied dependency: $LIB_NAME"
@@ -590,7 +607,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                             else
                                 # Try to find the library on the system
                                 FOUND_LIB=""
-                                for search_dir in /opt/homebrew/lib /opt/homebrew/opt/*/lib /usr/local/lib; do
+                                for search_dir in "$ORT_LIB_PATH" /opt/homebrew/lib /opt/homebrew/opt/*/lib /usr/local/lib; do
                                     if [ -f "$search_dir/$RDEP_NAME" ]; then
                                         FOUND_LIB="$search_dir/$RDEP_NAME"
                                         break

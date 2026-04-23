@@ -119,13 +119,31 @@ jobs:
           curl -L -o /tmp/onnxruntime.tgz "$ORT_URL"
           tar -xzf /tmp/onnxruntime.tgz -C /tmp
 
+          ORT_DIR="/tmp/onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}"
+
           # Set library path for ort crate to find the library
-          echo "ORT_LIB_PATH=/tmp/onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}/lib" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=/tmp/onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          echo "ORT_LIB_PATH=$ORT_DIR/lib" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$ORT_DIR/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+
+          # Create pkg-config file so ort-sys links against the correct version
+          mkdir -p $ORT_DIR/lib/pkgconfig
+          cat > $ORT_DIR/lib/pkgconfig/libonnxruntime.pc << EOF
+          prefix=$ORT_DIR
+          exec_prefix=\${prefix}
+          libdir=\${exec_prefix}/lib
+          includedir=\${prefix}/include
+
+          Name: libonnxruntime
+          Description: ONNX Runtime
+          Version: $ORT_VERSION
+          Libs: -L\${libdir} -lonnxruntime
+          Cflags: -I\${includedir}
+          EOF
+          echo "PKG_CONFIG_PATH=$ORT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
           # Verify no __isoc23_ symbols (glibc 2.38+)
           echo "Verifying glibc compatibility..."
-          if nm -D /tmp/onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}/lib/libonnxruntime.so | grep -q __isoc23; then
+          if nm -D $ORT_DIR/lib/libonnxruntime.so | grep -q __isoc23; then
             echo "ERROR: ONNX Runtime contains __isoc23_ symbols (requires glibc 2.38+)"
             exit 1
           fi
@@ -144,9 +162,27 @@ jobs:
           curl -L -o /tmp/onnxruntime.tgz "$ORT_URL"
           tar -xzf /tmp/onnxruntime.tgz -C /tmp
 
+          ORT_DIR="/tmp/onnxruntime-osx-${ORT_ARCH}-${ORT_VERSION}"
+
           # Set library path for ort crate
-          echo "ORT_LIB_PATH=/tmp/onnxruntime-osx-${ORT_ARCH}-${ORT_VERSION}/lib" >> $GITHUB_ENV
-          echo "DYLD_LIBRARY_PATH=/tmp/onnxruntime-osx-${ORT_ARCH}-${ORT_VERSION}/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
+          echo "ORT_LIB_PATH=$ORT_DIR/lib" >> $GITHUB_ENV
+          echo "DYLD_LIBRARY_PATH=$ORT_DIR/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
+
+          # Create pkg-config file so ort-sys links against the correct version
+          mkdir -p $ORT_DIR/lib/pkgconfig
+          cat > $ORT_DIR/lib/pkgconfig/libonnxruntime.pc << EOF
+          prefix=$ORT_DIR
+          exec_prefix=\${prefix}
+          libdir=\${exec_prefix}/lib
+          includedir=\${prefix}/include
+
+          Name: libonnxruntime
+          Description: ONNX Runtime
+          Version: $ORT_VERSION
+          Libs: -L\${libdir} -lonnxruntime
+          Cflags: -I\${includedir}
+          EOF
+          echo "PKG_CONFIG_PATH=$ORT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
       - name: Install ONNX Runtime (Windows)
         if: runner.os == 'Windows'
@@ -221,16 +257,12 @@ jobs:
       - name: Build extensions
         run: |
           chmod +x build.sh
-          # Create /usr/include symlinks for ffmpeg-sys-next's hardcoded fallback path
+          # Create /usr/local/include symlinks for ffmpeg-sys-next's hardcoded fallback path
+          # Note: /usr/include is read-only on macOS CI (SIP), but /usr/local/include works
           if [ "$RUNNER_OS" = "macOS" ] && [ -d "/opt/homebrew/opt/ffmpeg/include" ]; then
             sudo mkdir -p /usr/local/include
             for dir in /opt/homebrew/opt/ffmpeg/include/libav*; do
               sudo ln -sf "$dir" "/usr/local/include/$(basename "$dir")"
-            done
-            # Also symlink to /usr/include since that's the actual fallback
-            sudo mkdir -p /usr/include
-            for dir in /opt/homebrew/opt/ffmpeg/include/libav*; do
-              sudo ln -sf "$dir" "/usr/include/$(basename "$dir")"
             done
           fi
           if [ "$RUNNER_OS" = "Windows" ] && [ -n "$FFMPEG_DIR" ] && [ -d "$FFMPEG_DIR/include" ]; then
