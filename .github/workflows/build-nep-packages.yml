@@ -212,15 +212,16 @@ jobs:
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install zip jq ffmpeg pkg-config
+          # Pin FFmpeg 7.x — ffmpeg-sys-next 7.1.3 requires avfft.h (removed in FFmpeg 8)
+          brew install zip jq ffmpeg@7 pkg-config
           # Verify pkg-config can find FFmpeg
-          export PKG_CONFIG_PATH="/opt/homebrew/opt/ffmpeg/lib/pkgconfig"
+          export PKG_CONFIG_PATH="/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig"
           pkg-config --cflags-only-I libavcodec
           # Set FFmpeg paths for ffmpeg-sys-next crate
-          echo "FFMPEG_DIR=/opt/homebrew/opt/ffmpeg" >> $GITHUB_ENV
-          echo "CPATH=/opt/homebrew/opt/ffmpeg/include:$CPATH" >> $GITHUB_ENV
-          echo "LIBRARY_PATH=/opt/homebrew/opt/ffmpeg/lib:$LIBRARY_PATH" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          echo "FFMPEG_DIR=/opt/homebrew/opt/ffmpeg@7" >> $GITHUB_ENV
+          echo "CPATH=/opt/homebrew/opt/ffmpeg@7/include:$CPATH" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=/opt/homebrew/opt/ffmpeg@7/lib:$LIBRARY_PATH" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
@@ -230,10 +231,11 @@ jobs:
           choco install jq -y
           # BtbN only provides win64 shared builds; skip FFmpeg for x86
           if ("${{ matrix.platform }}" -eq "windows_amd64") {
-            $FFMPEG_URL = "https://github.com/Btbn/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip"
-            Write-Host "Downloading FFmpeg shared build from: $FFMPEG_URL"
-            Invoke-WebRequest -Uri $FFMPEG_URL -OutFile "C:\ffmpeg.zip"
-            Expand-Archive -Path "C:\ffmpeg.zip" -DestinationPath "C:\ffmpeg" -Force
+            # Use gyan.dev FFmpeg 7.1 shared build — ffmpeg-sys-next 7.x requires avfft.h (removed in FFmpeg 8)
+            $FFMPEG_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-7.1-full_shared-with-bin.7z"
+            Write-Host "Downloading FFmpeg 7.1 shared build from: $FFMPEG_URL"
+            Invoke-WebRequest -Uri $FFMPEG_URL -OutFile "C:\ffmpeg.7z"
+            7z x "C:\ffmpeg.7z" -o"C:\ffmpeg" -y
             $ffmpegDir = Get-ChildItem "C:\ffmpeg" -Directory | Select-Object -First 1
             Write-Host "FFmpeg dir: $($ffmpegDir.FullName)"
             echo "FFMPEG_DIR=$($ffmpegDir.FullName)" >> $env:GITHUB_ENV
