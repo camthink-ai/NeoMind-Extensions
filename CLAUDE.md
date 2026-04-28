@@ -289,9 +289,19 @@ int _neomind_extension_shutdown();
 - This enables safe extension unloading and panic recovery
 
 ### Frontend Components
+
+> **Full specification:** [`FRONTEND_DESIGN_SPEC.md`](FRONTEND_DESIGN_SPEC.md) — MUST read before any extension frontend work.
+
+Key rules:
 - Build to UMD format (`.umd.cjs`) for browser compatibility
+- React/ReactDOM are external — provided by host app, NOT bundled
+- **NEVER use Tailwind CSS** — extensions don't have Tailwind. Use NeoMind CSS variables (`var(--foreground)`, `var(--card)`, etc.) for all colors
+- **NEVER hardcode colors** (`#fff`, `rgb(...)`) — use CSS variables for automatic light/dark mode support
 - Component names in `index.json` must be string array, not objects
 - Entry point file must match `frontend.json` entrypoint
+- Every component must use `forwardRef` and handle loading/error/empty states
+- Use scoped CSS with extension-prefixed class names (e.g., `.weather-`, `.yolo-`)
+- Use inline SVG icons, not icon libraries
 
 ### CDN Caching
 - Main project uses timestamp-based cache-busting (`?t=timestamp`)
@@ -345,7 +355,9 @@ npm run build
 
 ## Documentation
 
+- **`FRONTEND_DESIGN_SPEC.md`** - Extension frontend design & component standards
 - `EXTENSION_GUIDE.md` - Detailed extension development guide
 - `EXTENSION_GUIDE.zh.md` - Chinese version
 - `QUICKSTART.md` - Quick start guide
 - `DEPLOYMENT.md` - Deployment documentation
+- **NeoMind Design Spec**: `../NeoMind/web/DESIGN_SPEC.md` - Main platform design system
