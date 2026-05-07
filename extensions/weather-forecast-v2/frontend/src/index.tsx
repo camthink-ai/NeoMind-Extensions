@@ -95,20 +95,14 @@ const CSS_ID = 'wfc-styles-v2'
 
 const STYLES = `
 .wfc {
-  --wfc-fg: hsl(240 10% 10%);
-  --wfc-muted: hsl(240 5% 45%);
-  --wfc-accent: hsl(221 83% 53%);
-  --wfc-card: rgba(255,255,255,0.5);
-  --wfc-border: rgba(0,0,0,0.06);
+  --wfc-fg: var(--foreground);
+  --wfc-muted: var(--muted-foreground);
+  --wfc-accent: var(--primary);
+  --wfc-card: var(--card);
+  --wfc-border: var(--border);
   width: 100%;
   height: 100%;
   font-size: 12px;
-}
-.dark .wfc {
-  --wfc-fg: hsl(0 0% 95%);
-  --wfc-muted: hsl(0 0% 60%);
-  --wfc-card: rgba(30,30,30,0.5);
-  --wfc-border: rgba(255,255,255,0.08);
 }
 .wfc-card {
   display: flex;
@@ -176,8 +170,8 @@ const STYLES = `
   font-size: 9px;
   color: var(--wfc-muted);
 }
-.wfc-dot { width: 5px; height: 5px; border-radius: 50%; background: #22c55e; }
-.wfc-dot.stale { background: #f59e0b; }
+.wfc-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--color-success); }
+.wfc-dot.stale { background: var(--color-warning); }
 
 .wfc-loading, .wfc-error {
   display: flex;

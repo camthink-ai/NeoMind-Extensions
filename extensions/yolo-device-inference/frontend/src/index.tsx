@@ -160,22 +160,20 @@ const CSS_ID = 'ydi-styles-v3'
 
 const STYLES = `
 .ydi {
-  --ydi-fg: hsl(240 10% 10%);
-  --ydi-muted: hsl(240 5% 45%);
-  --ydi-accent: hsl(142 70% 55%);
-  --ydi-card: rgba(255,255,255,0.5);
-  --ydi-border: rgba(0,0,0,0.06);
+  --ydi-fg: var(--foreground);
+  --ydi-muted: var(--muted-foreground);
+  --ydi-accent: var(--primary);
+  --ydi-card: var(--card);
+  --ydi-border: var(--border);
   --ydi-hover: rgba(0,0,0,0.03);
+  --ydi-on-primary: var(--primary-foreground, #ffffff);
   width: 100%;
   height: 100%;
   font-size: 12px;
 }
 .dark .ydi {
-  --ydi-fg: hsl(0 0% 95%);
-  --ydi-muted: hsl(0 0% 60%);
-  --ydi-card: rgba(30,30,30,0.5);
-  --ydi-border: rgba(255,255,255,0.08);
   --ydi-hover: rgba(255,255,255,0.03);
+  --ydi-on-primary: var(--primary-foreground, #17172a);
 }
 
 .ydi-card {
@@ -483,7 +481,7 @@ const STYLES = `
 .ydi-btn-primary {
   background: var(--ydi-accent);
   border-color: var(--ydi-accent);
-  color: #000;
+  color: var(--ydi-on-primary);
 }
 .ydi-btn-primary:hover {
   opacity: 0.9;
@@ -748,7 +746,8 @@ export const DeviceInferenceCard = forwardRef<HTMLDivElement, ExtensionComponent
       loadMetrics()
     }, [selectedDevice, getDeviceMetrics, selectedMetric])
 
-    // Fetch status and bindings
+    // Fetch status and bindings — with error backoff polling
+    const consecutiveFailures = useRef(0)
     const refresh = useCallback(async () => {
       const [s, b] = await Promise.all([
         getStatus(extensionId),
@@ -758,13 +757,32 @@ export const DeviceInferenceCard = forwardRef<HTMLDivElement, ExtensionComponent
 
       const found = b.find(x => x.binding.device_id === selectedDevice)
       setBinding(found || null)
+
+      // Track failures for backoff (null status means command failed)
+      if (s === null) {
+        consecutiveFailures.current = Math.min(consecutiveFailures.current + 1, 10)
+      } else {
+        consecutiveFailures.current = 0
+      }
     }, [extensionId, selectedDevice])
 
     useEffect(() => {
-      refresh()
-      const interval = setInterval(refresh, 3000)
-      return () => clearInterval(interval)
-    }, [refresh])
+      let cancelled = false
+
+      const poll = async () => {
+        if (cancelled) return
+        await refresh()
+        if (cancelled) return
+        // Only keep polling when a device is bound (has active inference running)
+        if (!binding?.binding?.active) return
+        // Exponential backoff: 5s → 10s → 20s → 30s (max), resets on success
+        const delay = Math.min(5000 * Math.pow(2, consecutiveFailures.current), 30000)
+        setTimeout(poll, delay)
+      }
+
+      poll()
+      return () => { cancelled = true }
+    }, [refresh, binding?.binding?.active])
 
     // Draw detections: prefer annotated image from backend (already has boxes drawn)
     // Only fall back to frontend drawing when no annotated image is available

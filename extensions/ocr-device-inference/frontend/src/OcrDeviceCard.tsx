@@ -5,7 +5,7 @@
  * Matches the styling pattern of yolo-device-inference.
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { forwardRef, useState, useEffect, useRef, useCallback } from 'react'
 
 // ============================================================================
 // Types
@@ -96,14 +96,15 @@ const CSS_ID = 'ocr-styles-v2'
 
 const STYLES = `
 .ocr {
-  --ocr-fg: hsl(240 10% 10%);
-  --ocr-muted: hsl(240 5% 45%);
-  --ocr-accent: hsl(200 70% 55%);
-  --ocr-card: rgba(255,255,255,0.5);
-  --ocr-border: rgba(0,0,0,0.06);
+  --ocr-fg: var(--foreground);
+  --ocr-muted: var(--muted-foreground);
+  --ocr-accent: var(--primary);
+  --ocr-card: var(--card);
+  --ocr-border: var(--border);
   --ocr-hover: rgba(0,0,0,0.03);
-  --ocr-danger: hsl(0 72% 51%);
-  --ocr-success: hsl(200 70% 45%);
+  --ocr-danger: var(--color-error);
+  --ocr-success: var(--color-success);
+  --ocr-on-primary: var(--primary-foreground, #ffffff);
   width: 100%;
   height: 100%;
   font-size: 12px;
@@ -111,11 +112,8 @@ const STYLES = `
 }
 
 .dark .ocr {
-  --ocr-fg: hsl(0 0% 95%);
-  --ocr-muted: hsl(0 0% 60%);
-  --ocr-card: rgba(30,30,30,0.5);
-  --ocr-border: rgba(255,255,255,0.08);
   --ocr-hover: rgba(255,255,255,0.03);
+  --ocr-on-primary: var(--primary-foreground, #17172a);
 }
 
 .ocr-card {
@@ -513,7 +511,7 @@ const STYLES = `
 .ocr-btn-primary {
   background: var(--ocr-accent);
   border-color: var(--ocr-accent);
-  color: #fff;
+  color: var(--ocr-on-primary);
 }
 
 .ocr-btn-primary:hover {
@@ -1395,9 +1393,10 @@ const RoiEditor: React.FC<RoiEditorProps> = ({ binding, imageUrl, onSave, onCanc
 // Main Component
 // ============================================================================
 
-export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
-  executeCommand = executeCommandApi
-}) => {
+export const OcrDeviceCard = forwardRef<HTMLDivElement, OcrDeviceCardProps>(
+  function OcrDeviceCard({
+    executeCommand = executeCommandApi,
+  }, ref) {
   useEffect(() => injectStyles(), [])
 
   // Tab state
@@ -1504,7 +1503,8 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
     }
   }, [deviceDropdownOpen])
 
-  // Refresh bindings and status
+  // Refresh bindings and status with error backoff
+  const consecutiveFailures = useRef(0)
   const refresh = useCallback(async () => {
     const statusResult = await executeCommand('get_status', {})
     if (statusResult.success && statusResult.data) {
@@ -1515,12 +1515,31 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
     if (bindingsResult.success && bindingsResult.data?.bindings) {
       setBindings(bindingsResult.data.bindings)
     }
+
+    // Track failures for backoff
+    const failed = !statusResult.success || !bindingsResult.success
+    if (failed) {
+      consecutiveFailures.current = Math.min(consecutiveFailures.current + 1, 10)
+    } else {
+      consecutiveFailures.current = 0
+    }
   }, [executeCommand])
 
+  // Recursive setTimeout with exponential backoff
   useEffect(() => {
-    refresh()
-    const interval = setInterval(refresh, 3000)
-    return () => clearInterval(interval)
+    let cancelled = false
+
+    const poll = async () => {
+      if (cancelled) return
+      await refresh()
+      if (cancelled) return
+      // 3s → 6s → 12s → 24s → 30s (max), resets on success
+      const delay = Math.min(3000 * Math.pow(2, consecutiveFailures.current), 30000)
+      setTimeout(poll, delay)
+    }
+
+    poll()
+    return () => { cancelled = true }
   }, [refresh])
 
   // Image upload handlers
@@ -1999,7 +2018,7 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
   )
 
   return (
-    <div className="ocr">
+    <div ref={ref} className="ocr">
       <div className="ocr-card">
         {/* Header */}
         <div className="ocr-header">
@@ -2036,5 +2055,6 @@ export const OcrDeviceCard: React.FC<OcrDeviceCardProps> = ({
     </div>
   )
 }
+)
 
 export default { OcrDeviceCard }

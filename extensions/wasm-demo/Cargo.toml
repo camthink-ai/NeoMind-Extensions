@@ -1,10 +1,10 @@
 [package]
 name = "wasm-demo"
-version = "2.5.0"
+version = "2.6.0"
 edition = "2021"
 authors = ["NeoMind Team"]
-license = "MIT"
-description = "Demo WASM extension for the NeoMind extension runtime"
+license = "Apache-2.0"
+description = "WASM sandbox demo extension showcasing NeoMind extension SDK capabilities with counter, greeting, and echo commands"
 
 [lib]
 name = "neomind_extension_wasm_demo"

@@ -1,10 +1,10 @@
 [package]
 name = "face-recognition"
-version = "0.1.0"
+version = "2.6.0"
 edition = "2021"
 authors = ["NeoMind Team"]
 license = "Apache-2.0"
-description = "Real-time face recognition with device binding, face registration, and identity matching"
+description = "Real-time face recognition with ArcFace embeddings, device camera binding, face registration gallery, and identity matching for NeoMind Edge AI"
 
 [lib]
 name = "neomind_extension_face_recognition"

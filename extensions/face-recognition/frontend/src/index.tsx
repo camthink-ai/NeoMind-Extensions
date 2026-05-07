@@ -206,26 +206,20 @@ const CSS_ID = 'frc-styles-v1'
 
 const STYLES = `
 .frc {
-  --frc-fg: hsl(240 10% 10%);
-  --frc-muted: hsl(240 5% 45%);
-  --frc-accent: hsl(210 80% 55%);
-  --frc-card: rgba(255,255,255,0.5);
-  --frc-border: rgba(0,0,0,0.06);
+  --frc-fg: var(--foreground);
+  --frc-muted: var(--muted-foreground);
+  --frc-accent: var(--primary);
+  --frc-card: var(--card);
+  --frc-border: var(--border);
   --frc-hover: rgba(0,0,0,0.03);
-  --frc-green: hsl(142 70% 45%);
-  --frc-yellow: hsl(45 90% 50%);
+  --frc-on-primary: var(--primary-foreground, #ffffff);
   width: 100%;
   height: 100%;
   font-size: 12px;
 }
 .dark .frc {
-  --frc-fg: hsl(0 0% 95%);
-  --frc-muted: hsl(0 0% 60%);
-  --frc-card: rgba(30,30,30,0.5);
-  --frc-border: rgba(255,255,255,0.08);
   --frc-hover: rgba(255,255,255,0.03);
-  --frc-green: hsl(142 70% 55%);
-  --frc-yellow: hsl(45 90% 60%);
+  --frc-on-primary: var(--primary-foreground, #17172a);
 }
 
 .frc-card {
@@ -537,7 +531,7 @@ const STYLES = `
 .frc-btn-primary {
   background: var(--frc-accent);
   border-color: var(--frc-accent);
-  color: #fff;
+  color: var(--frc-on-primary);
 }
 .frc-btn-primary:hover {
   opacity: 0.9;
@@ -880,7 +874,8 @@ export const FaceRecognitionCard = forwardRef<HTMLDivElement, ExtensionComponent
       loadMetrics()
     }, [selectedDevice, getDeviceMetrics, selectedMetric])
 
-    // ---- Refresh status, bindings, faces (3-second polling) ----
+    // ---- Refresh status, bindings, faces (with error backoff) ----
+    const consecutiveFailures = useRef(0)
     const refresh = useCallback(async () => {
       const [s, b, faces] = await Promise.all([
         fetchStatus(extensionId),
@@ -892,12 +887,29 @@ export const FaceRecognitionCard = forwardRef<HTMLDivElement, ExtensionComponent
 
       const found = b.find((x: BindingStatus) => x.binding.device_id === selectedDevice)
       setBinding(found || null)
+
+      // Track failures for backoff (null status means command failed)
+      if (s === null) {
+        consecutiveFailures.current = Math.min(consecutiveFailures.current + 1, 10)
+      } else {
+        consecutiveFailures.current = 0
+      }
     }, [extensionId, selectedDevice])
 
     useEffect(() => {
-      refresh()
-      const interval = setInterval(refresh, 3000)
-      return () => clearInterval(interval)
+      let cancelled = false
+
+      const poll = async () => {
+        if (cancelled) return
+        await refresh()
+        if (cancelled) return
+        // Exponential backoff: 3s → 6s → 12s → 24s → 30s (max), resets on success
+        const delay = Math.min(3000 * Math.pow(2, consecutiveFailures.current), 30000)
+        setTimeout(poll, delay)
+      }
+
+      poll()
+      return () => { cancelled = true }
     }, [refresh])
 
     // ---- Draw face detections when image updates ----

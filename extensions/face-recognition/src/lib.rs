@@ -185,7 +185,7 @@ impl Extension for FaceRecognition {
             ExtensionMetadata::new(
                 "face-recognition",
                 "Face Recognition",
-                "0.1.0",
+                "2.6.0",
             )
             .with_description("Real-time face recognition with device binding, face registration, and identity matching")
             .with_author("NeoMind Team")
@@ -858,7 +858,7 @@ mod tests {
         let meta = ext.metadata();
         assert_eq!(meta.id, "face-recognition");
         assert_eq!(meta.name, "Face Recognition");
-        assert_eq!(meta.version, "0.1.0");
+        assert_eq!(meta.version, "2.6.0");
     }
 
     #[test]

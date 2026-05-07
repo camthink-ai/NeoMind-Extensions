@@ -1,10 +1,10 @@
 [package]
 name = "image-analyzer-v2"
-version = "2.5.0"
+version = "2.6.0"
 edition = "2021"
 authors = ["NeoMind Team"]
 license = "Apache-2.0"
-description = "Image analysis extension using YOLOv8"
+description = "Standalone image object detection using YOLOv11 with ONNX Runtime, CoreML/CUDA acceleration, and annotated bounding box visualization"
 
 [lib]
 name = "neomind_extension_image_analyzer_v2"

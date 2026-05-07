@@ -4,7 +4,7 @@
  * and can be used independently or embedded in FaceRecognitionCard.
  */
 
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
+import { forwardRef, useState, useRef, useCallback, useEffect, useMemo } from 'react'
 
 // ============================================================================
 // i18n — lightweight locale detection + translation map
@@ -185,12 +185,13 @@ const STYLES = `
 }
 
 .frc-reg-dialog {
-  --frc-fg: hsl(240 10% 10%);
-  --frc-muted: hsl(240 5% 45%);
-  --frc-accent: hsl(210 80% 55%);
-  --frc-card: rgba(255,255,255,0.85);
-  --frc-border: rgba(0,0,0,0.08);
+  --frc-fg: var(--foreground);
+  --frc-muted: var(--muted-foreground);
+  --frc-accent: var(--primary);
+  --frc-card: var(--card);
+  --frc-border: var(--border);
   --frc-hover: rgba(0,0,0,0.03);
+  --frc-on-primary: var(--primary-foreground, #ffffff);
   background: var(--frc-card);
   backdrop-filter: blur(16px);
   border: 1px solid var(--frc-border);
@@ -208,11 +209,8 @@ const STYLES = `
   to { transform: scale(1); opacity: 1; }
 }
 .dark .frc-reg-dialog {
-  --frc-fg: hsl(0 0% 95%);
-  --frc-muted: hsl(0 0% 60%);
-  --frc-card: rgba(30,30,30,0.85);
-  --frc-border: rgba(255,255,255,0.08);
   --frc-hover: rgba(255,255,255,0.03);
+  --frc-on-primary: var(--primary-foreground, #17172a);
 }
 
 .frc-reg-title {
@@ -338,7 +336,7 @@ const STYLES = `
 .frc-reg-btn-primary {
   background: var(--frc-accent);
   border-color: var(--frc-accent);
-  color: #fff;
+  color: var(--frc-on-primary);
 }
 .frc-reg-btn-primary:hover {
   opacity: 0.9;
@@ -374,11 +372,12 @@ function injectStyles(): void {
 // Component
 // ============================================================================
 
-export const FaceRegistrationCard = ({
-  extensionId,
-  onRegistered,
-  onClose,
-}: FaceRegistrationCardProps) => {
+export const FaceRegistrationCard = forwardRef<HTMLDivElement, FaceRegistrationCardProps>(
+  function FaceRegistrationCard({
+    extensionId,
+    onRegistered,
+    onClose,
+  }, ref) {
   const locale = useMemo(() => detectLocale(), [])
   const t = useCallback((key: string): string => T[key]?.[locale] ?? key, [locale])
   const [name, setName] = useState('')
@@ -485,7 +484,7 @@ export const FaceRegistrationCard = ({
   const canSubmit = name.trim().length > 0 && imageData !== null && !loading
 
   return (
-    <div className="frc-reg-overlay" onClick={handleOverlayClick}>
+    <div ref={ref} className="frc-reg-overlay" onClick={handleOverlayClick}>
       <div className="frc-reg-dialog" onClick={handleDialogClick}>
         {/* Title */}
         <div className="frc-reg-title">{t('dialogTitle')}</div>
@@ -585,6 +584,7 @@ export const FaceRegistrationCard = ({
     </div>
   )
 }
+)
 
 FaceRegistrationCard.displayName = 'FaceRegistrationCard'
 

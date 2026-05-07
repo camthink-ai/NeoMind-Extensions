@@ -73,22 +73,20 @@ const CSS_ID = 'ia-styles-v2'
 
 const STYLES = `
 .ia {
-  --ia-fg: hsl(240 10% 10%);
-  --ia-muted: hsl(240 5% 45%);
-  --ia-accent: hsl(142 70% 65%);
-  --ia-card: rgba(255,255,255,0.5);
-  --ia-border: rgba(0,0,0,0.06);
+  --ia-fg: var(--foreground);
+  --ia-muted: var(--muted-foreground);
+  --ia-accent: var(--primary);
+  --ia-card: var(--card);
+  --ia-border: var(--border);
   --ia-hover: rgba(0,0,0,0.03);
+  --ia-on-primary: var(--primary-foreground, #ffffff);
   width: 100%;
   height: 100%;
   font-size: 12px;
 }
 .dark .ia {
-  --ia-fg: hsl(0 0% 95%);
-  --ia-muted: hsl(0 0% 60%);
-  --ia-card: rgba(30,30,30,0.5);
-  --ia-border: rgba(255,255,255,0.08);
   --ia-hover: rgba(255,255,255,0.03);
+  --ia-on-primary: var(--primary-foreground, #17172a);
 }
 .ia-card {
   display: flex;
@@ -309,7 +307,7 @@ const STYLES = `
 .ia-btn-primary {
   background: var(--ia-accent);
   border-color: var(--ia-accent);
-  color: #000;
+  color: var(--ia-on-primary);
 }
 .ia-btn-primary:hover {
   opacity: 0.9;
@@ -322,10 +320,10 @@ const STYLES = `
 
 .ia-error {
   padding: 8px;
-  background: rgba(239, 68, 68, 0.1);
+  background: var(--color-error-bg, rgba(239, 68, 68, 0.1));
   border: 1px solid rgba(239, 68, 68, 0.2);
   border-radius: 6px;
-  color: #ef4444;
+  color: var(--color-error, #ef4444);
   font-size: 10px;
   flex-shrink: 0;
 }

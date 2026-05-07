@@ -1,10 +1,10 @@
 [package]
 name = "yolo-device-inference"
-version = "2.5.0"
+version = "2.6.0"
 edition = "2021"
 authors = ["NeoMind Team"]
-license = "MIT"
-description = "YOLOv8 device inference extension with automatic detection on data source updates"
+license = "Apache-2.0"
+description = "Automatic YOLOv11 object detection bound to device image streams with ROI monitoring, line crossing analytics, and annotated output"
 
 [lib]
 name = "neomind_extension_yolo_device_inference"

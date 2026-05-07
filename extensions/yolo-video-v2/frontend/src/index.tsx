@@ -3,7 +3,7 @@
  * Matches NeoMind dashboard design system with compact, elegant layout
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { forwardRef, useState, useEffect, useRef, useCallback } from 'react'
 
 // ============================================================================
 // Types
@@ -96,23 +96,22 @@ const CSS_ID = 'yolo-styles-v2'
 
 const STYLES = `
 .yolo {
-  --yolo-fg: hsl(240 10% 10%);
-  --yolo-muted: hsl(240 5% 45%);
-  --yolo-accent: hsl(221 83% 53%);
-  --yolo-success: #22c55e;
-  --yolo-warning: #f59e0b;
-  --yolo-card: rgba(255,255,255,0.5);
-  --yolo-border: rgba(0,0,0,0.06);
+  --yolo-fg: var(--foreground);
+  --yolo-muted: var(--muted-foreground);
+  --yolo-accent: var(--primary);
+  --yolo-success: var(--color-success);
+  --yolo-warning: var(--color-warning);
+  --yolo-error: var(--color-error, #ef4444);
+  --yolo-card: var(--card);
+  --yolo-border: var(--border);
+  --yolo-on-primary: var(--primary-foreground, #ffffff);
   width: 100%;
   height: 100%;
   font-size: 12px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 .dark .yolo {
-  --yolo-fg: hsl(0 0% 95%);
-  --yolo-muted: hsl(0 0% 60%);
-  --yolo-card: rgba(30,30,30,0.5);
-  --yolo-border: rgba(255,255,255,0.08);
+  --yolo-on-primary: var(--primary-foreground, #17172a);
 }
 
 .yolo-card {
@@ -169,7 +168,7 @@ const STYLES = `
   animation: yolo-pulse 2s ease-in-out infinite;
 }
 .yolo-status-dot.yolo-status-warning { background: var(--yolo-warning); animation: yolo-blink 1s infinite; }
-.yolo-status-dot.yolo-status-error { background: #ef4444; animation: none; }
+.yolo-status-dot.yolo-status-error { background: var(--yolo-error); animation: none; }
 @keyframes yolo-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
@@ -182,7 +181,7 @@ const STYLES = `
   padding: 4px 10px;
   font-size: 11px;
   font-weight: 500;
-  color: white;
+  color: var(--yolo-on-primary);
   background: var(--yolo-accent);
   border: none;
   border-radius: 4px;
@@ -191,7 +190,7 @@ const STYLES = `
 }
 .yolo-btn:hover { opacity: 0.9; }
 .yolo-btn-stop {
-  background: #ef4444;
+  background: var(--yolo-error);
 }
 
 /* Video Display */
@@ -329,7 +328,7 @@ const STYLES = `
   align-items: center;
   justify-content: center;
   background: rgba(0,0,0,0.8);
-  color: #ef4444;
+  color: var(--yolo-error);
   padding: 20px;
   text-align: center;
   z-index: 10;
@@ -393,16 +392,16 @@ const STYLES = `
   border-color: var(--yolo-accent);
 }
 .yolo-draw-btn.yolo-draw-active {
-  color: white;
+  color: var(--yolo-on-primary);
   background: var(--yolo-accent);
   border-color: var(--yolo-accent);
 }
 .yolo-draw-btn.yolo-draw-danger {
-  color: #ef4444;
+  color: var(--yolo-error);
   border-color: rgba(239,68,68,0.3);
 }
 .yolo-draw-btn.yolo-draw-danger:hover {
-  background: #ef4444;
+  background: var(--yolo-error);
   color: white;
 }
 
@@ -499,7 +498,7 @@ const STYLES = `
   border-radius: 3px;
 }
 .yolo-card:hover .yolo-card-btn { opacity: 0.7; }
-.yolo-card-btn:hover { opacity: 1 !important; color: #ef4444; background: rgba(0,0,0,0.04); }
+.yolo-card-btn:hover { opacity: 1 !important; color: var(--yolo-error); background: rgba(0,0,0,0.04); }
 .yolo-card-btn-edit:hover { color: var(--yolo-accent) !important; }
 
 /* Rules inside card */
@@ -531,7 +530,7 @@ const STYLES = `
   padding: 0;
   opacity: 0.6;
 }
-.yolo-rule-pill-btn:hover { opacity: 1; color: #ef4444; }
+.yolo-rule-pill-btn:hover { opacity: 1; color: var(--yolo-error); }
 
 /* Line direction chips */
 .yolo-line-dir {
@@ -711,7 +710,7 @@ const STYLES = `
   border: none;
   border-radius: 6px;
   background: hsl(221 83% 53%);
-  color: #fff;
+  color: var(--yolo-on-primary);
   cursor: pointer;
   font-family: inherit;
   transition: opacity 0.15s;
@@ -798,7 +797,13 @@ function hexToRgba(hex: string, alpha: number): string {
 // Component
 // ============================================================================
 
-export const YoloVideoDisplay = function YoloVideoDisplay({
+export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentProps & {
+  sourceUrl?: string
+  confidenceThreshold?: number
+  maxObjects?: number
+  fps?: number
+  drawBoxes?: boolean
+}>(function YoloVideoDisplay({
   title = 'YOLO Detection',
   dataSource,
   className = '',
@@ -807,13 +812,7 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
   sourceUrl = 'camera://0',
   fps: fpsProp = 15,
   drawBoxes = true,
-}: ExtensionComponentProps & {
-  sourceUrl?: string
-  confidenceThreshold?: number
-  maxObjects?: number
-  fps?: number
-  drawBoxes?: boolean
-}) {
+}, ref) {
   // Setup
   useEffect(() => { injectStyles() }, [])
 
@@ -1766,7 +1765,7 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
 
   // Render
   return (
-    <div className={`yolo ${className}`}>
+    <div ref={ref} className={`yolo ${className}`}>
       <div className="yolo-card">
         {/* Header */}
         <div className="yolo-header">
@@ -1802,7 +1801,7 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
               </button>
             )}
             {drawingTool === 'line' && lineStart && lineEnd && (
-              <button className="yolo-draw-btn" style={{ background: '#22c55e', borderColor: '#22c55e', color: '#fff' }} onClick={saveLine} title="Save line">
+              <button className="yolo-draw-btn" style={{ background: 'var(--color-success, #22c55e)', borderColor: 'var(--color-success, #22c55e)', color: 'var(--yolo-on-primary)' }} onClick={saveLine} title="Save line">
                 <Icon name="play" style={{ width: 10, height: 10 }} />
               </button>
             )}
@@ -1845,8 +1844,8 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
           {/* Hidden elements for camera capture */}
           {mode === 'camera' && (
             <>
-              <video ref={videoRef} className="hidden" playsInline muted />
-              <canvas ref={canvasRef} width={640} height={480} className="hidden" />
+              <video ref={videoRef} style={{ display: 'none' }} playsInline muted />
+              <canvas ref={canvasRef} width={640} height={480} style={{ display: 'none' }} />
             </>
           )}
 
@@ -2078,7 +2077,7 @@ export const YoloVideoDisplay = function YoloVideoDisplay({
       </div>
     </div>
   )
-}
+})
 
 // ============================================================================
 // Custom Dropdown (shadcn/ui-inspired)
@@ -2094,8 +2093,8 @@ function CustomDropdown({ value, options, open, onToggle, onChange }: {
   const selected = options.find(o => o.value === value)
   const triggerStyle: React.CSSProperties = {
     width: '100%', height: '36px', fontSize: '13px', padding: '0 10px',
-    border: open ? '1px solid hsl(221 83% 53%)' : '1px solid hsl(0 0% 82%)',
-    borderRadius: '6px', background: '#fff', color: 'hsl(0 0% 9%)',
+    border: open ? '1px solid var(--yolo-accent)' : '1px solid var(--yolo-border)',
+    borderRadius: '6px', background: 'var(--yolo-card)', color: 'var(--yolo-fg)',
     boxSizing: 'border-box', fontFamily: 'inherit', cursor: 'pointer',
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     outline: 'none', transition: 'border-color 0.15s',
@@ -2103,14 +2102,14 @@ function CustomDropdown({ value, options, open, onToggle, onChange }: {
   }
   const panelStyle: React.CSSProperties = {
     position: 'absolute', left: 0, right: 0, top: '100%', marginTop: '4px',
-    background: '#fff', border: '1px solid hsl(0 0% 90%)', borderRadius: '6px',
+    background: 'var(--yolo-card)', border: '1px solid var(--yolo-border)', borderRadius: '6px',
     boxShadow: '0 4px 20px rgba(0,0,0,0.1)', maxHeight: '180px', overflowY: 'auto',
     zIndex: 100, padding: '4px',
   }
   const optionStyle = (active: boolean): React.CSSProperties => ({
     padding: '6px 10px', fontSize: '13px', cursor: 'pointer', borderRadius: '4px',
-    background: active ? 'hsl(221 83% 53%)' : 'transparent',
-    color: active ? '#fff' : 'hsl(0 0% 9%)',
+    background: active ? 'var(--yolo-accent)' : 'transparent',
+    color: active ? 'var(--yolo-on-primary)' : 'var(--yolo-fg)',
     transition: 'background 0.1s',
   })
 
@@ -2128,7 +2127,7 @@ function CustomDropdown({ value, options, open, onToggle, onChange }: {
             <div key={opt.value}
               style={optionStyle(opt.value === value)}
               onClick={() => onChange(opt.value)}
-              onMouseEnter={e => { if (opt.value !== value) (e.currentTarget.style.background = 'hsl(0 0% 95%)') }}
+              onMouseEnter={e => { if (opt.value !== value) (e.currentTarget.style.background = 'var(--yolo-hover)') }}
               onMouseLeave={e => { if (opt.value !== value) (e.currentTarget.style.background = 'transparent') }}>
               {opt.label}
             </div>
@@ -2161,24 +2160,24 @@ function CaptureRuleEditor({ roiId, onAdd, onCancel }: {
   ]
   const classOptions = ['person','car','truck','bus','bicycle','motorcycle','dog','cat','bird','chair','bottle','cell phone','backpack','umbrella','handbag','suitcase']
 
-  const labelStyle: React.CSSProperties = { fontSize: '12px', fontWeight: 500, color: 'hsl(0 0% 45%)' }
+  const labelStyle: React.CSSProperties = { fontSize: '12px', fontWeight: 500, color: 'var(--yolo-muted)' }
   const fieldStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '14px' }
   const inputStyle: React.CSSProperties = {
     width: '100%', height: '36px', fontSize: '13px', padding: '0 10px',
-    border: '1px solid hsl(0 0% 82%)', borderRadius: '6px',
-    background: '#fff', color: 'hsl(0 0% 9%)', outline: 'none',
+    border: '1px solid var(--yolo-border)', borderRadius: '6px',
+    background: 'var(--yolo-card)', color: 'var(--yolo-fg)', outline: 'none',
     boxSizing: 'border-box', fontFamily: 'inherit',
   }
 
   return (
     <div style={{
-      background: '#fff', border: '1px solid hsl(0 0% 90%)', borderRadius: '12px',
+      background: 'var(--yolo-card)', border: '1px solid var(--yolo-border)', borderRadius: '12px',
       padding: '20px', minWidth: '300px', maxWidth: '360px',
       boxShadow: '0 20px 60px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05)',
       fontSize: '13px', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      color: 'hsl(0 0% 9%)',
+      color: 'var(--yolo-fg)',
     }} onClick={e => e.stopPropagation()}>
-      <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid hsl(0 0% 90%)' }}>Add Capture Rule</div>
+      <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid var(--yolo-border)' }}>Add Capture Rule</div>
 
       {/* Condition Type */}
       <label style={fieldStyle}>
@@ -2212,12 +2211,12 @@ function CaptureRuleEditor({ roiId, onAdd, onCancel }: {
         <input style={inputStyle} type="number" min={1} max={300} value={cooldown}
           onChange={e => setCooldown(Number(e.target.value))} />
       </label>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '18px', paddingTop: '14px', borderTop: '1px solid hsl(0 0% 90%)' }}>
-        <button style={{ height: '34px', padding: '0 16px', fontSize: '13px', fontWeight: 500, border: '1px solid hsl(0 0% 82%)', borderRadius: '6px', background: '#fff', color: 'hsl(0 0% 40%)', cursor: 'pointer', fontFamily: 'inherit' }}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '18px', paddingTop: '14px', borderTop: '1px solid var(--yolo-border)' }}>
+        <button style={{ height: '34px', padding: '0 16px', fontSize: '13px', fontWeight: 500, border: '1px solid var(--yolo-border)', borderRadius: '6px', background: 'var(--yolo-card)', color: 'var(--yolo-muted)', cursor: 'pointer', fontFamily: 'inherit' }}
           onClick={onCancel}
-          onMouseEnter={e => (e.currentTarget.style.background = 'hsl(0 0% 96%)')}
-          onMouseLeave={e => (e.currentTarget.style.background = '#fff')}>Cancel</button>
-        <button style={{ height: '34px', padding: '0 16px', fontSize: '13px', fontWeight: 500, border: 'none', borderRadius: '6px', background: 'hsl(221 83% 53%)', color: '#fff', cursor: 'pointer', fontFamily: 'inherit' }}
+          onMouseEnter={e => (e.currentTarget.style.background = 'var(--yolo-hover)')}
+          onMouseLeave={e => (e.currentTarget.style.background = 'var(--yolo-card)')}>Cancel</button>
+        <button style={{ height: '34px', padding: '0 16px', fontSize: '13px', fontWeight: 500, border: 'none', borderRadius: '6px', background: 'var(--yolo-accent)', color: 'var(--yolo-on-primary)', cursor: 'pointer', fontFamily: 'inherit' }}
           onClick={() => {
             const condition: CaptureCondition = condType === 'threshold'
               ? { type: 'threshold', class_name: className, threshold }
@@ -2235,22 +2234,28 @@ function CaptureRuleEditor({ roiId, onAdd, onCancel }: {
 // Export variants
 // ============================================================================
 
-export const YoloVideoCard = (props: ExtensionComponentProps) => (
-  <div style={{ height: '100%', minHeight: 300 }}>
-    <YoloVideoDisplay {...props} title={props.title || 'YOLO Detection'} />
-  </div>
+export const YoloVideoCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
+  (props, ref) => (
+    <div ref={ref} style={{ height: '100%', minHeight: 300 }}>
+      <YoloVideoDisplay {...props} title={props.title || 'YOLO Detection'} />
+    </div>
+  )
 )
 
-export const YoloVideoWidget = (props: ExtensionComponentProps) => (
-  <div style={{ height: 280 }}>
-    <YoloVideoDisplay {...props} title={props.title || 'YOLO'} />
-  </div>
+export const YoloVideoWidget = forwardRef<HTMLDivElement, ExtensionComponentProps>(
+  (props, ref) => (
+    <div ref={ref} style={{ height: 280 }}>
+      <YoloVideoDisplay {...props} title={props.title || 'YOLO'} />
+    </div>
+  )
 )
 
-export const YoloVideoPanel = (props: ExtensionComponentProps) => (
-  <div style={{ height: '100%', minHeight: 500 }}>
-    <YoloVideoDisplay {...props} title={props.title || 'YOLO Video Detection'} />
-  </div>
+export const YoloVideoPanel = forwardRef<HTMLDivElement, ExtensionComponentProps>(
+  (props, ref) => (
+    <div ref={ref} style={{ height: '100%', minHeight: 500 }}>
+      <YoloVideoDisplay {...props} title={props.title || 'YOLO Video Detection'} />
+    </div>
+  )
 )
 
 export default YoloVideoDisplay

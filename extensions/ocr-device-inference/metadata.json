@@ -1,8 +1,8 @@
 {
   "id": "ocr-device-inference",
   "name": "ocr device inference",
-  "version": "2.5.0",
-  "description": "OCR device inference extension with automatic text recognition",
+  "version": "2.6.0",
+  "description": "Automatic OCR text recognition bound to device image streams with SVTR model, bounding box drawing, and real-time metric output",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
   "type": "native",
@@ -14,19 +14,19 @@
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/ocr-device-inference",
   "builds": {
     "darwin-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.5.0/ocr-device-inference-2.5.0-darwin_aarch64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.6.0/ocr-device-inference-2.6.0-darwin_aarch64.nep"
     },
     "darwin-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.5.0/ocr-device-inference-2.5.0-darwin_x86_64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.6.0/ocr-device-inference-2.6.0-darwin_x86_64.nep"
     },
     "linux-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.5.0/ocr-device-inference-2.5.0-linux_amd64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.6.0/ocr-device-inference-2.6.0-linux_amd64.nep"
     },
     "linux-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.5.0/ocr-device-inference-2.5.0-linux_arm64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.6.0/ocr-device-inference-2.6.0-linux_arm64.nep"
     },
     "windows-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.5.0/ocr-device-inference-2.5.0-windows_x86_64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.6.0/ocr-device-inference-2.6.0-windows_x86_64.nep"
     }
   },
   "frontend": {

@@ -290,13 +290,14 @@ int _neomind_extension_shutdown();
 
 ### Frontend Components
 
-> **Full specification:** [`FRONTEND_DESIGN_SPEC.md`](FRONTEND_DESIGN_SPEC.md) — MUST read before any extension frontend work.
+> **完整设计规范：** [`EXTENSION_FRONTEND_DESIGN_GUIDE.md`](EXTENSION_FRONTEND_DESIGN_GUIDE.md) — 修改扩展前端前必须阅读。
 
 Key rules:
 - Build to UMD format (`.umd.cjs`) for browser compatibility
 - React/ReactDOM are external — provided by host app, NOT bundled
 - **NEVER use Tailwind CSS** — extensions don't have Tailwind. Use NeoMind CSS variables (`var(--foreground)`, `var(--card)`, etc.) for all colors
 - **NEVER hardcode colors** (`#fff`, `rgb(...)`) — use CSS variables for automatic light/dark mode support
+- **主按钮文本必须用 `var(--{prefix}-on-primary)`**，不能直接写 `var(--primary-foreground)` 或 `#fff` — 详见设计规范第 5.1 节
 - Component names in `index.json` must be string array, not objects
 - Entry point file must match `frontend.json` entrypoint
 - Every component must use `forwardRef` and handle loading/error/empty states
@@ -355,7 +356,7 @@ npm run build
 
 ## Documentation
 
-- **`FRONTEND_DESIGN_SPEC.md`** - Extension frontend design & component standards
+- **`EXTENSION_FRONTEND_DESIGN_GUIDE.md`** - Extension 前端设计规范（CSS 变量、组件模板、暗色模式、fallback 模式）
 - `EXTENSION_GUIDE.md` - Detailed extension development guide
 - `EXTENSION_GUIDE.zh.md` - Chinese version
 - `QUICKSTART.md` - Quick start guide

@@ -1,10 +1,10 @@
 [package]
 name = "weather-forecast-v2"
-version = "2.5.0"
+version = "2.6.0"
 edition = "2021"
 authors = ["NeoMind Team"]
 license = "Apache-2.0"
-description = "Weather forecast extension for the NeoMind isolated runtime"
+description = "Real-time weather forecast with multi-city support, OpenWeatherMap API integration, and metric data export for NeoMind dashboards"
 
 [lib]
 name = "neomind_extension_weather_forecast_v2"
