@@ -8,6 +8,7 @@ members = [
     "extensions/yolo-device-inference",
     "extensions/ocr-device-inference",
     "extensions/face-recognition",
+    "extensions/stream-player",
     "extensions/wasm-demo",
     # "extensions/final-test",
     # "extensions/cli-test-ext",

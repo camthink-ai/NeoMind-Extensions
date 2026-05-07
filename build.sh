@@ -153,6 +153,7 @@ V2_EXTENSIONS=(
     "yolo-device-inference"
     "ocr-device-inference"
     "face-recognition"
+    "stream-player"
     "wasm-demo"
 )
 
@@ -755,7 +756,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                             "max_w": (.maxSize.width // 800),
                             "max_h": (.maxSize.height // 600)
                         },
-                        "has_data_source": false,
+                        "has_data_source": (.hasDataSource // false),
                         "has_display_config": true,
                         "has_actions": false,
                         "max_data_sources": 0,
@@ -809,7 +810,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                             "max_w": (.maxSize.width // 800),
                             "max_h": (.maxSize.height // 600)
                         },
-                        "has_data_source": false,
+                        "has_data_source": (.hasDataSource // false),
                         "has_display_config": true,
                         "has_actions": false,
                         "max_data_sources": 0,

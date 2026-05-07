@@ -823,7 +823,7 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
   const [fps, setFps] = useState(0)
   const [frameCount, setFrameCount] = useState(0)
   const [detections, setDetections] = useState<Detection[]>([])
-  const [frameData, setFrameData] = useState<string | null>(null)
+  const [frameData, setFrameData] = useState<string | null>(null)  // Kept for backward compat, but not used for rendering
   const [cameraPermission, setCameraPermission] = useState<'pending' | 'granted' | 'denied'>('pending')
   const [streamStatus, setStreamStatus] = useState<'idle' | 'streaming' | 'reconnecting' | 'error' | 'connecting'>('idle')
 
@@ -878,6 +878,9 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
   const displayCanvasRef = useRef<HTMLCanvasElement>(null)  // Single canvas: frame + overlays
   const videoWrapRef = useRef<HTMLDivElement>(null)
   const frameImgRef = useRef<HTMLImageElement | null>(null)  // Cached decoded frame
+  // Pending frame data for rAF loop — bypasses React render per frame
+  const pendingFrameRef = useRef<string | null>(null)
+  const rafIdRef = useRef<number>(0)
 
   // Config update: debounced hot-update via REST API (no stream restart)
   const configUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1129,7 +1132,7 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
             // Image frame from backend stream
             if (msg.data && msg.data_type === 'image/jpeg') {
               setStreamStatus('streaming')
-              setFrameData(msg.data)
+              pendingFrameRef.current = msg.data  // rAF loop handles decode+draw
               updateFps()
               if (msg.metadata?.detections) {
                 setDetections(msg.metadata.detections)
@@ -1162,7 +1165,7 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
               } else if (isWaiting) {
                 // No frame yet from FFmpeg, keep waiting
               } else if (typeof msg.data === 'string' && msg.data.length > 0) {
-                setFrameData(msg.data)
+                pendingFrameRef.current = msg.data  // rAF loop handles decode+draw
                 updateFps()
                 if (msg.metadata?.frame_count) {
                   setFrameCount(msg.metadata.frame_count)
@@ -1303,6 +1306,8 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
     setFrameCount(0)
     setSessionTime(0)
     setFrameData(null)
+    pendingFrameRef.current = null
+    frameImgRef.current = null
     setRoiStats([])
     setLineStats([])
     setCaptureEvents([])
@@ -1713,20 +1718,30 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
     }
   }, [rois, lines, roiStats, lineStats, drawingPoints, lineStart, lineEnd, drawingTool])
 
-  // Decode frame data into Image and trigger canvas redraw
+  // rAF loop: decode pending frame and draw to canvas, bypassing React render
   useEffect(() => {
-    if (!frameData) {
-      frameImgRef.current = null
-      renderCanvas()
-      return
+    let running = true
+    const tick = () => {
+      if (!running) return
+      const data = pendingFrameRef.current
+      if (data) {
+        pendingFrameRef.current = null
+        const img = new Image()
+        img.onload = () => {
+          if (!running) return
+          frameImgRef.current = img
+          renderCanvas()
+        }
+        img.src = `data:image/jpeg;base64,${data}`
+      }
+      rafIdRef.current = requestAnimationFrame(tick)
     }
-    const img = new Image()
-    img.onload = () => {
-      frameImgRef.current = img
-      renderCanvas()
+    rafIdRef.current = requestAnimationFrame(tick)
+    return () => {
+      running = false
+      cancelAnimationFrame(rafIdRef.current)
     }
-    img.src = `data:image/jpeg;base64,${frameData}`
-  }, [frameData, renderCanvas])
+  }, [renderCanvas])
 
   // Redraw when overlays change (without new frame)
   useEffect(() => {

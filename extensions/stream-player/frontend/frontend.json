@@ -1,0 +1,35 @@
+{
+  "id": "stream-player",
+  "version": "2.0.0",
+  "entrypoint": "stream-player-components.umd.cjs",
+  "components": [
+    {
+      "name": "StreamPlayerCard",
+      "type": "panel",
+      "displayName": "Stream Player",
+      "description": "Universal video player for RTSP, RTMP, HLS, and local file playback",
+      "icon": "play-circle",
+      "defaultSize": { "width": 480, "height": 360 },
+      "minSize": { "width": 320, "height": 240 },
+      "maxSize": { "width": 1200, "height": 800 },
+      "configSchema": {
+        "defaultSource": {
+          "type": "string",
+          "default": "",
+          "description": "Default video source URL"
+        },
+        "targetFps": {
+          "type": "number",
+          "default": 24,
+          "description": "Target frames per second"
+        }
+      },
+      "hasDataSource": true,
+      "refreshable": false,
+      "refreshInterval": 0
+    }
+  ],
+  "dependencies": {
+    "react": ">=18.0.0"
+  }
+}
