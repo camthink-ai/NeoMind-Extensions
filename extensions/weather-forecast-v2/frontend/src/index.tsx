@@ -14,6 +14,10 @@ export interface ExtensionComponentProps {
   dataSource?: DataSource
   className?: string
   config?: Record<string, any>
+  // configSchema fields passed as individual props by host
+  defaultCity?: string
+  refreshInterval?: number
+  unit?: string
 }
 
 export interface DataSource {

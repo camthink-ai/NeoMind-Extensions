@@ -18,6 +18,10 @@ export interface ExtensionComponentProps {
   getDeviceMetrics?: (deviceId: string) => Promise<Metric[]>
   onDataSourceChange?: (dataSource: DataSource) => void
   onConfigChange?: (config: Record<string, any>) => void
+  // configSchema fields passed as individual props by host
+  confidence?: number
+  drawBoxes?: boolean
+  showPreview?: boolean
 }
 
 export interface DataSource {
@@ -697,7 +701,7 @@ export const DeviceInferenceCard = forwardRef<HTMLDivElement, ExtensionComponent
       // configSchema fields passed as individual props
       confidence: propConfidence,
       drawBoxes: propDrawBoxes,
-      showPreview: propShowPreview,
+      showPreview: _propShowPreview,
     } = props
 
     // Resolve config values: individual props take priority, fallback to config object

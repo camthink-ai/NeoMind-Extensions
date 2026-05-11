@@ -14,6 +14,14 @@ export interface ExtensionComponentProps {
   dataSource?: DataSource
   className?: string
   config?: Record<string, any>
+  // configSchema fields passed as individual props by host
+  confidenceThreshold?: number
+  maxObjects?: number
+  sourceUrl?: string
+  fps?: number
+  drawBoxes?: boolean
+  showStats?: boolean
+  variant?: string
 }
 
 export interface DataSource {
