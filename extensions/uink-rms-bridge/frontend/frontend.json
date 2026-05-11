@@ -1,0 +1,28 @@
+{
+  "id": "uink-rms-bridge",
+  "version": "0.1.0",
+  "entrypoint": "uink-rms-bridge-components.umd.cjs",
+  "components": [
+    {
+      "name": "DisplayEditorCard",
+      "type": "card",
+      "displayName": "E-Paper Display",
+      "description": "View and push e-paper display content",
+      "icon": "monitor",
+      "defaultSize": { "width": 380, "height": 420 },
+      "minSize": { "width": 280, "height": 320 },
+      "maxSize": { "width": 600, "height": 700 },
+      "refreshable": true,
+      "refreshInterval": 30000,
+      "hasDataSource": false,
+      "configSchema": {}
+    }
+  ],
+  "i18n": {
+    "defaultLanguage": "en",
+    "supportedLanguages": ["en"]
+  },
+  "dependencies": {
+    "react": ">=18.0.0"
+  }
+}

@@ -1,0 +1,38 @@
+[package]
+name = "uink-rms-bridge"
+version = "0.1.0"
+edition = "2021"
+authors = ["NeoMind Team"]
+license = "Apache-2.0"
+description = "Bridge extension for Uink-RMS e-paper displays, providing device registration, telemetry collection, and image push capabilities"
+
+[lib]
+name = "neomind_extension_uink_rms_bridge"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neomind-extension-sdk = { path = "../../../NeoMind/crates/neomind-extension-sdk" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = "0.1"
+chrono = "0.4"
+semver = "1"
+parking_lot = "0.12"
+base64 = "0.22"
+
+# Use sync HTTP client to avoid Tokio runtime issues in dynamic libraries
+ureq = { version = "2", features = ["json"] }
+
+# Tokio is required by SDK's FFI macro (for RwLock wrapper)
+tokio = { version = "1", features = ["rt", "sync"] }
+
+# Text → Image rendering
+image = "0.25"
+imageproc = "0.25"
+ab_glyph = "0.2"
+pulldown-cmark = "0.12"
+
+[features]
+default = []
+native = []
+wasm = []

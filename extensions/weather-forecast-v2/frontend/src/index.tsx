@@ -249,11 +249,11 @@ export interface WeatherCardProps extends ExtensionComponentProps {
 
 export const WeatherCard = forwardRef<HTMLDivElement, WeatherCardProps>(
   function WeatherCard(props, ref) {
-    const { dataSource, className = '', config, defaultCity: propCity = 'Beijing', unit = 'celsius' } = props
+    const { dataSource, className = '', defaultCity: propCity = 'Beijing', refreshInterval: propRefreshInterval = 300000, unit = 'celsius' } = props
 
     useEffect(() => injectStyles(), [])
 
-    const city = config?.defaultCity || propCity
+    const city = propCity
     const extensionId = dataSource?.extensionId || EXTENSION_ID
 
     const [weather, setWeather] = useState<WeatherData | null>(null)
@@ -291,7 +291,7 @@ export const WeatherCard = forwardRef<HTMLDivElement, WeatherCardProps>(
 
     // Auto refresh
     useEffect(() => {
-      const interval = config?.refreshInterval || 300000
+      const interval = propRefreshInterval
       if (interval <= 0) return
       const id = setInterval(async () => {
         if (!mountedRef.current) return
@@ -302,7 +302,7 @@ export const WeatherCard = forwardRef<HTMLDivElement, WeatherCardProps>(
         }
       }, interval)
       return () => clearInterval(id)
-    }, [extensionId, city, config?.refreshInterval])
+    }, [extensionId, city, propRefreshInterval])
 
     const handleRefresh = useCallback(async () => {
       setLoading(true)

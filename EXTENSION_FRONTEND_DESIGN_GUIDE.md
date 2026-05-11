@@ -356,7 +356,15 @@ import { forwardRef, useState, useEffect, useCallback, useMemo } from 'react'
 
 export interface ExtensionComponentProps {
   title?: string
-  dataSource?: { type: string; extensionId?: string; [key: string]: any }
+  dataSource?: {
+    type: string
+    deviceId?: string
+    device_id?: string
+    extensionId?: string
+    command?: string
+    config?: Record<string, any>
+    [key: string]: any
+  }
   className?: string
   config?: Record<string, any>
 }
@@ -704,27 +712,136 @@ Video player controls and image annotation overlays **may** use `color: white` s
 }
 ```
 
-### 7.2 Popups / Dialogs
+### 7.2 Host Fullscreen Dialog (System Dialog)
 
-```css
-.ext-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);  /* Allowed */
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+> **Important:** Dashboard card containers use `overflow: hidden`, so custom modals/portals cannot escape the card bounds. Extension components that need full-screen editing or complex dialogs **must** use the host-provided `openFullscreen` / `closeFullscreen` callback props instead of implementing their own modal.
 
-.ext-dialog {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl, 12px);
-  padding: 20px;
-  box-shadow: var(--shadow-xl);
+#### Available Props
+
+```typescript
+export interface ExtensionComponentProps {
+  // ... standard props ...
+
+  /** Open a fullscreen dialog with arbitrary React content (provided by host) */
+  openFullscreen?: (content: React.ReactNode) => void
+  /** Close the fullscreen dialog (provided by host) */
+  closeFullscreen?: () => void
 }
 ```
+
+The host renders the content inside its native `FullScreenDialog` component with glassmorphism backdrop, proper z-index stacking, Escape key handling, and scroll locking. Extension content fills the dialog area automatically.
+
+#### Usage Pattern
+
+```tsx
+export const MyCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
+  function MyCard(props, ref) {
+    const { openFullscreen, closeFullscreen } = props
+
+    const handleOpenEditor = () => {
+      if (!openFullscreen) return
+
+      // Pass any React element — it will render in the host's FullScreenDialog
+      openFullscreen(
+        <EditorContent
+          onClose={() => closeFullscreen?.()}
+          onSaved={() => {
+            closeFullscreen?.()
+            refreshData()
+          }}
+        />
+      )
+    }
+
+    return (
+      <div ref={ref} className="my-ext">
+        <div className="my-ext-card" onClick={handleOpenEditor}>
+          {/* Card content */}
+        </div>
+      </div>
+    )
+  }
+)
+```
+
+#### Editor Content Component Guidelines
+
+The content rendered inside the host dialog should follow these rules:
+
+1. **Root container**: Use `width: 100%; height: 100%; overflow: hidden` to fill the dialog
+2. **Use CSS variables**: All colors, borders, and radii via `var(--foreground)`, `var(--border)`, etc.
+3. **Use inline styles**: No Tailwind available — use `style={{ ... }}` or scoped CSS classes
+4. **No backdrop/overlay**: The host dialog already provides the glassmorphism overlay
+5. **Close via callback**: Call `props.closeFullscreen()` to dismiss (also triggered by Escape key)
+
+```tsx
+// Example: Content designed for host FullScreenDialog
+function EditorContent({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column',
+      width: '100%', height: '100%', overflow: 'hidden'
+    }}>
+      {/* Tab bar */}
+      <div style={{
+        display: 'flex', gap: 2, padding: '0 16px',
+        borderBottom: '1px solid var(--border)'
+      }}>
+        <button style={{
+          padding: '8px 14px', fontSize: 13, fontWeight: 500,
+          border: 'none', background: 'transparent',
+          color: 'var(--primary)', cursor: 'pointer',
+          borderBottom: '2px solid var(--primary)',
+        }}>
+          Tab 1
+        </button>
+      </div>
+
+      {/* Content area — flex: 1 to fill remaining space */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 16, overflow: 'auto' }}>
+        <textarea style={{
+          flex: 1, padding: 10, fontSize: 13,
+          border: '1px solid var(--border)', borderRadius: 8,
+          background: 'transparent', color: 'var(--foreground)',
+          resize: 'none', outline: 'none',
+        }} />
+      </div>
+
+      {/* Footer */}
+      <div style={{
+        display: 'flex', justifyContent: 'flex-end', gap: 8,
+        padding: '10px 16px', borderTop: '1px solid var(--border)'
+      }}>
+        <button onClick={onClose} style={{
+          padding: '6px 16px', fontSize: 13,
+          border: '1px solid var(--border)', borderRadius: 8,
+          background: 'transparent', color: 'var(--muted-foreground)',
+          cursor: 'pointer',
+        }}>
+          Cancel
+        </button>
+        <button onClick={onSaved} style={{
+          padding: '6px 16px', fontSize: 13, fontWeight: 500,
+          border: 'none', borderRadius: 8,
+          background: 'var(--primary)', color: 'var(--primary-foreground, #fff)',
+          cursor: 'pointer',
+        }}>
+          Save
+        </button>
+      </div>
+    </div>
+  )
+}
+```
+
+#### Why Not Custom Modals?
+
+| Approach | Problem |
+|----------|---------|
+| Custom CSS modal inside card | `overflow: hidden` on `.dashboard-item` clips the content |
+| `createPortal` to `document.body` | Works in theory but breaks the host's dialog z-index stacking and scroll lock |
+| `window.open()` | Loses React context, no shared state |
+| **Host `openFullscreen`** | **Correct** — renders in host's FullScreenDialog with proper layering, Escape key, and scroll lock |
 
 ---
 
@@ -868,6 +985,108 @@ export default defineConfig({
 
 ---
 
+## 13. Component Config & Data Source
+
+### 13.1 frontend.json Config Schema
+
+The dashboard auto-generates a config dialog from `configSchema`. Supported field types:
+
+```json
+"configSchema": {
+  "mode": {
+    "type": "string",
+    "title": "Display Mode",
+    "description": "How to render content",
+    "enum": ["auto", "dark", "light"],
+    "enumTitles": ["Auto", "Dark Mode", "Light Mode"],
+    "default": "auto"
+  },
+  "refreshInterval": {
+    "type": "number",
+    "title": "Refresh Interval",
+    "description": "Seconds between refreshes",
+    "default": 30
+  },
+  "showHeader": {
+    "type": "boolean",
+    "title": "Show Header",
+    "default": true
+  }
+}
+```
+
+| Property | Renders as |
+|----------|-----------|
+| `type: "string"` + no `enum` | Text input |
+| `type: "string"` + `enum` | **Dropdown select** |
+| `type: "number"` / `"integer"` | Number input |
+| `type: "boolean"` | Checkbox |
+
+**Key properties:**
+- `title` — Field label (required for good UX)
+- `enum` / `enumTitles` — Parallel arrays for dropdown values and display labels
+- `default` — Pre-filled default value
+
+### 13.2 Conditional Field Visibility (uiHints)
+
+Use `uiHints.visibilityRules` to show/hide fields based on other field values:
+
+```json
+"uiHints": {
+  "fieldOrder": ["contentType", "textContent", "imageUrl"],
+  "visibilityRules": [
+    { "field": "contentType", "condition": "equals", "value": "text", "thenShow": ["textContent"] },
+    { "field": "contentType", "condition": "equals", "value": "markdown", "thenShow": ["textContent"] },
+    { "field": "contentType", "condition": "equals", "value": "image-url", "thenShow": ["imageUrl"] }
+  ]
+}
+```
+
+**Behavior:** Fields in `thenShow` are **hidden by default**, only visible when a rule matches. Fields NOT in any `thenShow` are always visible.
+
+**Conditions:** `equals`, `not_equals`, `contains`, `empty`, `not_empty`
+
+### 13.3 Data Source Binding
+
+Enable data source tab in the config dialog:
+
+```json
+{
+  "hasDataSource": true,
+  "dataSourceAllowedTypes": ["device"]
+}
+```
+
+| `dataSourceAllowedTypes` | User can select |
+|--------------------------|----------------|
+| `["device"]` | Device only (for device-targeting components) |
+| `["device-metric", "extension"]` | Metrics and extension data |
+| (unset) | Default: `["device-metric", "extension", "extension-command"]` |
+
+The bound data source is passed to the component via `props.dataSource`:
+
+```typescript
+const boundDeviceId = props.dataSource?.deviceId || props.dataSource?.device_id
+```
+
+### 13.4 Reading Config in Component
+
+```typescript
+export const MyCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
+  function MyCard(props, ref) {
+    const { config, dataSource } = props
+    const extensionId = config?.extensionId || 'my-extension'
+
+    // Read device from data source binding
+    const targetDeviceId = dataSource?.deviceId || dataSource?.device_id
+
+    // Read config values (set via config dialog)
+    const contentType = config?.contentType || 'none'
+    const textContent = config?.textContent || ''
+```
+
+---
+
 ## Quick Reference
 
 | Resource | Location |
@@ -876,6 +1095,9 @@ export default defineConfig({
 | CSS variable definitions | `NeoMind/web/src/index.css` |
 | Main project Button component | `NeoMind/web/src/components/ui/button.tsx` |
 | Main project Card component | `NeoMind/web/src/components/ui/card.tsx` |
+| FullScreenDialog component | `NeoMind/web/src/components/automation/dialog/FullScreenDialog.tsx` |
+| ComponentRenderer (passes openFullscreen) | `NeoMind/web/src/components/dashboard/registry/ComponentRenderer.tsx` |
 | Dashboard component wrapper | `NeoMind/web/src/components/dashboard/DashboardComponentWrapper.tsx` |
 | Extension loader | `NeoMind/web/src/components/dashboard/ExtensionCardWrapper.tsx` |
+| Real-world fullscreen dialog example | `NeoMind-Extensions/extensions/uink-rms-bridge/frontend/src/DisplayEditorCard.tsx` |
 | Existing extension examples | `NeoMind-Extensions/extensions/` |

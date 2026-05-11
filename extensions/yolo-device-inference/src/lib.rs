@@ -1856,6 +1856,10 @@ impl Extension for YoloDeviceInference {
                 Ok(serde_json::to_value(&self.get_config())
                     .map_err(|e| ExtensionError::ExecutionFailed(format!("Serialization error: {}", e)))?)
             }
+            "configure" => {
+                // Accept config silently - can be extended for real config handling
+                Ok(json!({"status": "ok"}))
+            }
             _ => Err(ExtensionError::CommandNotFound(command.to_string())),
         }
     }

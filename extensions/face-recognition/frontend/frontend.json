@@ -20,6 +20,8 @@
           "description": "默认折叠"
         }
       },
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": ["device", "device-metric"],
       "refreshable": false,
       "refreshInterval": 0
     }

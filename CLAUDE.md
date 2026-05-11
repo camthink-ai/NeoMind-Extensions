@@ -172,17 +172,106 @@ neomind_extension_sdk::neomind_export!(MyExtension);
       "defaultSize": { "width": 340, "height": 320 },
       "minSize": { "width": 240, "height": 260 },
       "maxSize": { "width": 480, "height": 400 },
+      "refreshable": true,
+      "refreshInterval": 30000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": ["device"],
       "configSchema": {
-        "defaultCity": {
+        "contentType": {
           "type": "string",
-          "default": "Beijing",
-          "description": "Default city"
+          "title": "Content Type",
+          "description": "Type of content",
+          "enum": ["none", "text", "markdown", "html", "image-url"],
+          "enumTitles": ["None", "Plain Text", "Markdown", "HTML", "Image URL"],
+          "default": "none"
+        },
+        "textContent": {
+          "type": "string",
+          "title": "Text Content",
+          "description": "Content for text/markdown/html mode"
+        },
+        "imageUrl": {
+          "type": "string",
+          "title": "Image URL",
+          "description": "Image URL for image-url mode"
         }
+      },
+      "uiHints": {
+        "fieldOrder": ["contentType", "textContent", "imageUrl"],
+        "visibilityRules": [
+          { "field": "contentType", "condition": "equals", "value": "text", "thenShow": ["textContent"] },
+          { "field": "contentType", "condition": "equals", "value": "image-url", "thenShow": ["imageUrl"] }
+        ]
       }
     }
   ]
 }
 ```
+
+#### Component Config Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `refreshable` | boolean | Show refresh button on card |
+| `refreshInterval` | number | Auto-refresh interval in ms |
+| `hasDataSource` | boolean | Enable Data Source tab in config dialog |
+| `dataSourceAllowedTypes` | string[] | Allowed data source types: `"device"`, `"device-metric"`, `"extension"`, `"extension-command"`, `"system"`, `"ai-metric"`, `"transform"` |
+| `configSchema` | object | Form fields for config dialog |
+| `uiHints` | object | UI behavior hints for config form |
+
+#### configSchema Field Properties
+
+Each field in `configSchema` supports:
+- `type`: `"string"`, `"number"`, `"integer"`, `"boolean"`
+- `title`: Display label (shown as field label)
+- `description`: Help text / placeholder
+- `default`: Default value
+- `enum`: Array of allowed values → renders as dropdown select
+- `enumTitles`: Display labels for enum values (parallel array)
+
+#### uiHints (Conditional Field Visibility)
+
+```json
+"uiHints": {
+  "fieldOrder": ["field1", "field2", "field3"],
+  "visibilityRules": [
+    {
+      "field": "controlField",
+      "condition": "equals",
+      "value": "someValue",
+      "thenShow": ["dependentField1", "dependentField2"]
+    }
+  ]
+}
+```
+
+**Supported conditions:** `equals`, `not_equals`, `contains`, `empty`, `not_empty`
+
+**Behavior:** Fields listed in `thenShow` are **hidden by default**, and only shown when the rule matches. Fields NOT in any `thenShow` rule are always visible.
+
+#### Data Source Binding
+
+When `hasDataSource: true`, the config dialog shows a Data Source tab. The bound data source is passed to the component as `props.dataSource`:
+
+```typescript
+export interface ExtensionComponentProps {
+  dataSource?: {
+    type: string
+    deviceId?: string
+    device_id?: string
+    extensionId?: string
+    command?: string
+    [key: string]: any
+  }
+  config?: Record<string, any>
+  className?: string
+}
+```
+
+Use `dataSourceAllowedTypes` to control what types users can select:
+- `["device"]` — only device selection (for device-targeting components)
+- `["device-metric", "extension"]` — metric and extension data
+- Default (unset): `["device-metric", "extension", "extension-command"]`
 
 ## JSON File Generation
 

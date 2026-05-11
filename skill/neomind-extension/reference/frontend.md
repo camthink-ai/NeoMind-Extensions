@@ -249,22 +249,30 @@ async function getExtensionMetrics(
       },
       "refreshable": true,
       "refreshInterval": 5000,
-      "configurable": true,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": ["device-metric", "extension"],
       "configSchema": {
-        "type": "object",
-        "properties": {
-          "showDetails": {
-            "type": "boolean",
-            "title": "Show Details",
-            "default": true
-          },
-          "updateInterval": {
-            "type": "number",
-            "title": "Update Interval (ms)",
-            "default": 5000,
-            "minimum": 1000
-          }
+        "showDetails": {
+          "type": "boolean",
+          "title": "Show Details",
+          "default": true
+        },
+        "updateInterval": {
+          "type": "number",
+          "title": "Update Interval (ms)",
+          "default": 5000
+        },
+        "displayMode": {
+          "type": "string",
+          "title": "Display Mode",
+          "enum": ["auto", "dark", "light"],
+          "enumTitles": ["Auto", "Dark", "Light"],
+          "default": "auto"
         }
+      },
+      "uiHints": {
+        "fieldOrder": ["displayMode", "showDetails", "updateInterval"],
+        "visibilityRules": []
       }
     }
   ],

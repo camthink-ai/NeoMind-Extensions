@@ -1205,6 +1205,11 @@ impl Extension for YoloVideoProcessorV2 {
                     None => Err(ExtensionError::SessionNotFound(stream_id.into())),
                 }
             }
+            "configure" => {
+                // Accept config silently - can be extended for real config handling
+                Ok(json!({"status": "ok"}))
+            }
+
             _ => Err(ExtensionError::CommandNotFound(command.to_string())),
         }
     }

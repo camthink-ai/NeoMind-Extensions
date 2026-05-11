@@ -14,6 +14,16 @@ import React, { forwardRef, useState, useEffect, useRef, useCallback } from 'rea
 export interface OcrDeviceCardProps {
   executeCommand?: (command: string, args: Record<string, unknown>) => Promise<{ success: boolean; data?: any; error?: string }>
   config?: Record<string, unknown>
+  dataSource?: {
+    type: string
+    extensionId?: string
+    deviceId?: string
+    device_id?: string
+    metricId?: string
+    [key: string]: any
+  }
+  className?: string
+  title?: string
 }
 
 export interface TextBlock {
@@ -1174,7 +1184,6 @@ async function fetchDevices(): Promise<Device[]> {
     if (!res.ok) return []
     const data = await res.json()
     const devices = data.data?.devices || data.devices || data.data || []
-    console.log('[OCR Frontend] Fetched devices:', devices.length, devices.map((d: Device) => ({ id: d.id, name: d.name, metricsCount: d.metrics?.length })))
     return devices
   } catch {
     return []
@@ -1396,11 +1405,18 @@ const RoiEditor: React.FC<RoiEditorProps> = ({ binding, imageUrl, onSave, onCanc
 export const OcrDeviceCard = forwardRef<HTMLDivElement, OcrDeviceCardProps>(
   function OcrDeviceCard({
     executeCommand = executeCommandApi,
+    dataSource,
+    className: classNameProp,
   }, ref) {
   useEffect(() => injectStyles(), [])
 
-  // Tab state
-  const [activeTab, setActiveTab] = useState<'manual' | 'bindings'>('manual')
+  // Resolve bound device from data source
+  const boundDeviceId = dataSource?.deviceId || dataSource?.device_id || ''
+  const boundMetricId = dataSource?.metricId || ''
+  const isDataBound = !!boundDeviceId
+
+  // Tab state — auto-switch to bindings tab when bound via data source
+  const [activeTab, setActiveTab] = useState<'manual' | 'bindings'>(isDataBound ? 'bindings' : 'manual')
 
   // Manual test state
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
@@ -1418,8 +1434,8 @@ export const OcrDeviceCard = forwardRef<HTMLDivElement, OcrDeviceCardProps>(
   const [status, setStatus] = useState<ExtensionStatus | null>(null)
 
   // Form state
-  const [formDevice, setFormDevice] = useState('')
-  const [formImageMetric, setFormImageMetric] = useState('')
+  const [formDevice, setFormDevice] = useState(boundDeviceId)
+  const [formImageMetric, setFormImageMetric] = useState(boundMetricId)
   const [deviceDropdownOpen, setDeviceDropdownOpen] = useState(false)
   const [metricDropdownOpen, setMetricDropdownOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -1453,7 +1469,6 @@ export const OcrDeviceCard = forwardRef<HTMLDivElement, OcrDeviceCardProps>(
             type: m.data_type || 'string',
             data_type: m.data_type || 'string'
           }))
-          console.log('[OCR Frontend] Fetched device metrics from /current:', formDevice, metrics.length, metrics.map(m => m.id))
           setDeviceMetrics(metrics)
 
           // Auto-select image metric
@@ -1467,7 +1482,6 @@ export const OcrDeviceCard = forwardRef<HTMLDivElement, OcrDeviceCardProps>(
             setFormImageMetric('')
           }
         } else {
-          console.log('[OCR Frontend] /current endpoint failed, status:', res.status)
           setDeviceMetrics([])
           setFormImageMetric('')
         }
@@ -1496,12 +1510,13 @@ export const OcrDeviceCard = forwardRef<HTMLDivElement, OcrDeviceCardProps>(
   useEffect(() => {
     const handleClickOutside = () => {
       setDeviceDropdownOpen(false)
+      setMetricDropdownOpen(false)
     }
-    if (deviceDropdownOpen) {
+    if (deviceDropdownOpen || metricDropdownOpen) {
       document.addEventListener('click', handleClickOutside)
       return () => document.removeEventListener('click', handleClickOutside)
     }
-  }, [deviceDropdownOpen])
+  }, [deviceDropdownOpen, metricDropdownOpen])
 
   // Refresh bindings and status with error backoff
   const consecutiveFailures = useRef(0)
@@ -1541,6 +1556,47 @@ export const OcrDeviceCard = forwardRef<HTMLDivElement, OcrDeviceCardProps>(
     poll()
     return () => { cancelled = true }
   }, [refresh])
+
+  // Auto-bind when data source provides a bound device
+  const autoBindAttempted = useRef(false)
+  useEffect(() => {
+    if (!isDataBound || autoBindAttempted.current) return
+
+    let cancelled = false
+    const tryAutoBind = async () => {
+      autoBindAttempted.current = true
+      try {
+        // Check if already bound
+        const bindingsResult = await executeCommand('get_bindings', {})
+        if (cancelled) return
+        if (bindingsResult.success && bindingsResult.data?.bindings) {
+          setBindings(bindingsResult.data.bindings)
+          const alreadyBound = bindingsResult.data.bindings.some(
+            (b: BindingStatus) => b.binding.device_id === boundDeviceId
+          )
+          if (alreadyBound) return
+        }
+
+        // Auto-bind the device
+        const device = (await fetchDevices()).find(d => d.id === boundDeviceId)
+        if (cancelled) return
+        const metricToUse = boundMetricId || 'image'
+        await executeCommand('bind_device', {
+          device_id: boundDeviceId,
+          device_name: device?.name,
+          image_metric: metricToUse,
+          result_metric_prefix: 'ocr_',
+          draw_boxes: true,
+          active: true,
+        })
+        if (!cancelled) await refresh()
+      } catch (e) {
+        console.error('[OCR] Auto-bind failed:', e)
+      }
+    }
+    tryAutoBind()
+    return () => { cancelled = true }
+  }, [isDataBound, boundDeviceId, boundMetricId, executeCommand, refresh])
 
   // Image upload handlers
   const handleFileSelect = async (file: File) => {
@@ -1602,14 +1658,7 @@ export const OcrDeviceCard = forwardRef<HTMLDivElement, OcrDeviceCardProps>(
     // Convert data URI to base64
     const base64Data = selectedImage.split(',')[1]
 
-    console.log('[OCR Frontend] Sending recognize_image command, base64 length:', base64Data?.length)
-
     const result = await executeCommand('recognize_image', { image: base64Data })
-
-    console.log('[OCR Frontend] Result:', result)
-    console.log('[OCR Frontend] text_blocks:', result.data?.data?.text_blocks)
-    console.log('[OCR Frontend] full_text:', result.data?.data?.full_text)
-    console.log('[OCR Frontend] annotated_image_base64 length:', result.data?.data?.annotated_image_base64?.length)
 
     if (result.success && result.data?.data) {
       // The actual OCR data is nested in result.data.data
@@ -1817,7 +1866,8 @@ export const OcrDeviceCard = forwardRef<HTMLDivElement, OcrDeviceCardProps>(
         </div>
       )}
 
-      {/* Add binding form */}
+      {/* Add binding form — hidden when device is auto-bound via data source */}
+      {!isDataBound && (
       <div className="ocr-form">
         <div className="ocr-form-group">
           <label className="ocr-form-label">Device</label>
@@ -1911,6 +1961,7 @@ export const OcrDeviceCard = forwardRef<HTMLDivElement, OcrDeviceCardProps>(
           )}
         </button>
       </div>
+      )}
 
       {/* Bindings list */}
       <div className="ocr-bindings-list">
@@ -2018,7 +2069,7 @@ export const OcrDeviceCard = forwardRef<HTMLDivElement, OcrDeviceCardProps>(
   )
 
   return (
-    <div ref={ref} className="ocr">
+    <div ref={ref} className={`ocr ${classNameProp || ''}`}>
       <div className="ocr-card">
         {/* Header */}
         <div className="ocr-header">

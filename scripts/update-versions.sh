@@ -74,6 +74,8 @@ EOF
             platform_suffix="linux_amd64"
         elif [ "$platform" = "linux-aarch64" ]; then
             platform_suffix="linux_arm64"
+        elif [ "$platform" = "windows-x86_64" ]; then
+            platform_suffix="windows_amd64"
         else
             platform_suffix=$(echo $platform | sed 's/-/_/')
         fi
@@ -151,6 +153,8 @@ for ext_dir in "$EXTENSIONS_DIR"/*/; do
             platform_suffix="linux_amd64"
         elif [ "$platform" = "linux-aarch64" ]; then
             platform_suffix="linux_arm64"
+        elif [ "$platform" = "windows-x86_64" ]; then
+            platform_suffix="windows_amd64"
         else
             platform_suffix=$(echo $platform | sed 's/-/_/')
         fi

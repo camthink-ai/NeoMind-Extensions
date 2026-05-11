@@ -23,7 +23,9 @@
           "default": true,
           "description": "Show recognition results preview"
         }
-      }
+      },
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": ["device", "device-metric"]
     }
   ],
   "i18n": {

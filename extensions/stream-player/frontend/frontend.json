@@ -25,6 +25,7 @@
         }
       },
       "hasDataSource": true,
+      "dataSourceAllowedTypes": ["device", "device-metric"],
       "refreshable": false,
       "refreshInterval": 0
     }

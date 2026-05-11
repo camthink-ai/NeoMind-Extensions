@@ -10,6 +10,7 @@ members = [
     "extensions/face-recognition",
     "extensions/stream-player",
     "extensions/wasm-demo",
+    "extensions/uink-rms-bridge",
     # "extensions/final-test",
     # "extensions/cli-test-ext",
 ]

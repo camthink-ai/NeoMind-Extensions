@@ -207,6 +207,11 @@ impl Extension for WasmDemoExtension {
                     "request_count": self.request_count.load(Ordering::SeqCst)
                 }))
             }
+            "configure" => {
+                // Accept config silently - can be extended for real config handling
+                Ok(json!({"status": "ok"}))
+            }
+
             _ => Err(ExtensionError::CommandNotFound(command.to_string())),
         }
     }

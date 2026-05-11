@@ -693,8 +693,16 @@ export const DeviceInferenceCard = forwardRef<HTMLDivElement, ExtensionComponent
       getDevices,
       getDeviceMetrics,
       onDataSourceChange,
-      onConfigChange: _onConfigChange
+      onConfigChange: _onConfigChange,
+      // configSchema fields passed as individual props
+      confidence: propConfidence,
+      drawBoxes: propDrawBoxes,
+      showPreview: propShowPreview,
     } = props
+
+    // Resolve config values: individual props take priority, fallback to config object
+    const confidence = propConfidence ?? config.confidence ?? 0.25
+    const drawBoxes = propDrawBoxes ?? config.drawBoxes ?? true
 
     useEffect(() => injectStyles(), [])
 
@@ -825,8 +833,8 @@ export const DeviceInferenceCard = forwardRef<HTMLDivElement, ExtensionComponent
         device_id: selectedDevice,
         device_name: devices.find(d => d.id === selectedDevice)?.name,
         image_metric: selectedMetric || 'image',
-        confidence_threshold: config.confidence ?? 0.25,
-        draw_boxes: config.drawBoxes ?? true
+        confidence_threshold: confidence,
+        draw_boxes: drawBoxes,
       })
 
       if (result.success) {

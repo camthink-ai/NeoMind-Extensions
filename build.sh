@@ -155,6 +155,7 @@ V2_EXTENSIONS=(
     "face-recognition"
     "stream-player"
     "wasm-demo"
+    "uink-rms-bridge"
 )
 
 # Filter to single extension if specified
@@ -759,7 +760,8 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                         "has_data_source": (.hasDataSource // false),
                         "has_display_config": true,
                         "has_actions": false,
-                        "max_data_sources": 0,
+                        "max_data_sources": (if (.hasDataSource // false) then 1 else 0 end),
+                        "data_source_allowed_types": (.dataSourceAllowedTypes // null),
                         "config_schema": (if .configSchema then
                             {
                                 "type": "object",
@@ -769,10 +771,22 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                                                  elif .value.type == "number" then "number"
                                                  elif .value.type == "boolean" then "boolean"
                                                  else "string" end),
+                                        "title": .value.title,
                                         "description": .value.description,
-                                        "default": .value.default
+                                        "default": .value.default,
+                                        "enum": .value.enum,
+                                        "enumTitles": .value.enumTitles
                                     }
-                                }) | add // {})
+                                }) | add // {}),
+                                "ui_hints": (if .uiHints then {
+                                    "field_order": .uiHints.fieldOrder,
+                                    "visibility_rules": (.uiHints.visibilityRules | map({
+                                        "field": .field,
+                                        "condition": .condition,
+                                        "value": .value,
+                                        "then_show": .thenShow
+                                    }))
+                                } else null end)
                             }
                         else null end),
                         "default_config": (if .configSchema then
@@ -813,7 +827,8 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                         "has_data_source": (.hasDataSource // false),
                         "has_display_config": true,
                         "has_actions": false,
-                        "max_data_sources": 0,
+                        "max_data_sources": (if (.hasDataSource // false) then 1 else 0 end),
+                        "data_source_allowed_types": (.dataSourceAllowedTypes // null),
                         "config_schema": (if .configSchema then
                             {
                                 "type": "object",
@@ -823,10 +838,22 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                                                  elif .value.type == "number" then "number"
                                                  elif .value.type == "boolean" then "boolean"
                                                  else "string" end),
+                                        "title": .value.title,
                                         "description": .value.description,
-                                        "default": .value.default
+                                        "default": .value.default,
+                                        "enum": .value.enum,
+                                        "enumTitles": .value.enumTitles
                                     }
-                                }) | add // {})
+                                }) | add // {}),
+                                "ui_hints": (if .uiHints then {
+                                    "field_order": .uiHints.fieldOrder,
+                                    "visibility_rules": (.uiHints.visibilityRules | map({
+                                        "field": .field,
+                                        "condition": .condition,
+                                        "value": .value,
+                                        "then_show": .thenShow
+                                    }))
+                                } else null end)
                             }
                         else null end),
                         "default_config": (if .configSchema then
@@ -1008,13 +1035,237 @@ if [ "$AUTO_INSTALL" = true ]; then
     echo ""
     echo -e "${BLUE}Installing extensions to $INSTALL_DIR...${NC}"
 
-    # Install from .nep packages if available
-    if [ -d "dist" ] && ls dist/*.nep 1> /dev/null 2>&1; then
+    # In dev mode, install directly from build artifacts (with fresh manifest)
+    # In release mode, install from .nep packages
+    if [ "$DEV_MODE" = true ]; then
+        for ext in "${BUILT_EXTENSIONS[@]}"; do
+            EXT_DIR="extensions/$ext"
+            LIB_NAME=$(echo "$ext" | tr '-' '_')
+            EXT_INSTALL_DIR="$INSTALL_DIR/$ext"
+            mkdir -p "$EXT_INSTALL_DIR/binaries/$PLATFORM"
+            mkdir -p "$EXT_INSTALL_DIR/frontend"
+            mkdir -p "$EXT_INSTALL_DIR/models"
+
+            # Copy binary
+            if [ "$LIB_EXT" = "dll" ]; then
+                LIB_FILE="$BUILD_DIR/neomind_extension_${LIB_NAME}.${LIB_EXT}"
+            else
+                LIB_FILE="$BUILD_DIR/libneomind_extension_${LIB_NAME}.${LIB_EXT}"
+            fi
+            if [ -f "$LIB_FILE" ]; then
+                cp "$LIB_FILE" "$EXT_INSTALL_DIR/binaries/$PLATFORM/extension.${LIB_EXT}"
+            fi
+
+            # Copy frontend bundle
+            if [ -d "$EXT_DIR/frontend/dist" ]; then
+                cp "$EXT_DIR/frontend/dist/"*.umd.cjs "$EXT_INSTALL_DIR/frontend/" 2>/dev/null || true
+            fi
+
+            # Copy frontend.json for reference
+            if [ -f "$EXT_DIR/frontend/frontend.json" ]; then
+                cp "$EXT_DIR/frontend/frontend.json" "$EXT_INSTALL_DIR/frontend.json"
+            fi
+
+            # Generate manifest.json from frontend.json
+            EXT_VERSION=$(grep -m1 'version = ' "$EXT_DIR/Cargo.toml" 2>/dev/null | sed 's/.*version = "\([^"]*\)".*/\1/' || echo "0.1.0")
+            FRONTEND_JSON="$EXT_DIR/frontend/frontend.json"
+
+            DASHBOARD_COMPONENTS="[]"
+            if [ -f "$FRONTEND_JSON" ] && command -v jq &> /dev/null; then
+                ENTRYPOINT=$(jq -r '.entrypoint // ""' "$FRONTEND_JSON" 2>/dev/null)
+                ACTUAL_ENTRYPOINT="$ENTRYPOINT"
+                if [ ! -f "$EXT_DIR/frontend/dist/$ENTRYPOINT" ]; then
+                    if [ -f "$EXT_DIR/frontend/dist/${ENTRYPOINT%.umd.js}.umd.cjs" ]; then
+                        ACTUAL_ENTRYPOINT="${ENTRYPOINT%.umd.js}.umd.cjs"
+                    fi
+                fi
+
+                GLOBAL_NAME=""
+                if [ -f "$EXT_DIR/frontend/vite.config.ts" ]; then
+                    GLOBAL_NAME=$(grep -o "name: *'[^']*'" "$EXT_DIR/frontend/vite.config.ts" 2>/dev/null | head -1 | sed "s/name: *'\\([^']*\\)'/\\1/")
+                    if [ -z "$GLOBAL_NAME" ]; then
+                        GLOBAL_NAME=$(grep -o 'name: *"[^"]*"' "$EXT_DIR/frontend/vite.config.ts" 2>/dev/null | head -1 | sed 's/name: *"\([^"]*\)"/\1/')
+                    fi
+                fi
+
+                COMPONENT_TYPE=$(echo "$ext" | sed 's/-v2$//' | sed 's/-v1//')"-card"
+
+                if [ -n "$GLOBAL_NAME" ]; then
+                    DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" --arg global_name "$GLOBAL_NAME" '
+                        [.components[] | {
+                            "type": $component_type,
+                            "name": .displayName,
+                            "description": .description,
+                            "category": (if .type == "card" then "custom"
+                                         elif .type == "widget" then "custom"
+                                         elif .type == "panel" then "custom"
+                                         elif .type == "chart" then "chart"
+                                         elif .type == "metric" then "metric"
+                                         elif .type == "table" then "table"
+                                         elif .type == "control" then "control"
+                                         elif .type == "media" then "media"
+                                         else "other" end),
+                            "icon": .icon,
+                            "bundle_path": ("frontend/" + $entrypoint),
+                            "export_name": .name,
+                            "global_name": $global_name,
+                            "size_constraints": {
+                                "min_w": (.minSize.width // 200),
+                                "min_h": (.minSize.height // 150),
+                                "default_w": (.defaultSize.width // 300),
+                                "default_h": (.defaultSize.height // 200),
+                                "max_w": (.maxSize.width // 800),
+                                "max_h": (.maxSize.height // 600)
+                            },
+                            "has_data_source": (.hasDataSource // false),
+                            "has_display_config": true,
+                            "has_actions": false,
+                            "max_data_sources": (if (.hasDataSource // false) then 1 else 0 end),
+                            "data_source_allowed_types": (.dataSourceAllowedTypes // null),
+                            "config_schema": (if .configSchema then
+                                {
+                                    "type": "object",
+                                    "properties": (.configSchema | to_entries | map({
+                                        (.key): {
+                                            "type": (if .value.type == "string" then "string"
+                                                     elif .value.type == "number" then "number"
+                                                     elif .value.type == "boolean" then "boolean"
+                                                     else "string" end),
+                                            "title": .value.title,
+                                            "description": .value.description,
+                                            "default": .value.default,
+                                            "enum": .value.enum,
+                                            "enumTitles": .value.enumTitles
+                                        }
+                                    }) | add // {}),
+                                    "ui_hints": (if .uiHints then {
+                                        "field_order": .uiHints.fieldOrder,
+                                        "visibility_rules": (.uiHints.visibilityRules | map({
+                                            "field": .field,
+                                            "condition": .condition,
+                                            "value": .value,
+                                            "then_show": .thenShow
+                                        }))
+                                    } else null end)
+                                }
+                            else null end),
+                            "default_config": (if .configSchema then
+                                (.configSchema | to_entries | map(select(.value.default != null)) | map({
+                                    (.key): .value.default
+                                }) | add // {})
+                            else null end),
+                            "variants": []
+                        }]
+                    ' "$FRONTEND_JSON" 2>/dev/null)
+                else
+                    DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" '
+                        [.components[] | {
+                            "type": $component_type,
+                            "name": .displayName,
+                            "description": .description,
+                            "category": (if .type == "card" then "custom"
+                                         elif .type == "widget" then "custom"
+                                         elif .type == "panel" then "custom"
+                                         elif .type == "chart" then "chart"
+                                         elif .type == "metric" then "metric"
+                                         elif .type == "table" then "table"
+                                         elif .type == "control" then "control"
+                                         elif .type == "media" then "media"
+                                         else "other" end),
+                            "icon": .icon,
+                            "bundle_path": ("frontend/" + $entrypoint),
+                            "export_name": .name,
+                            "size_constraints": {
+                                "min_w": (.minSize.width // 200),
+                                "min_h": (.minSize.height // 150),
+                                "default_w": (.defaultSize.width // 300),
+                                "default_h": (.defaultSize.height // 200),
+                                "max_w": (.maxSize.width // 800),
+                                "max_h": (.maxSize.height // 600)
+                            },
+                            "has_data_source": (.hasDataSource // false),
+                            "has_display_config": true,
+                            "has_actions": false,
+                            "max_data_sources": (if (.hasDataSource // false) then 1 else 0 end),
+                            "data_source_allowed_types": (.dataSourceAllowedTypes // null),
+                            "config_schema": (if .configSchema then
+                                {
+                                    "type": "object",
+                                    "properties": (.configSchema | to_entries | map({
+                                        (.key): {
+                                            "type": (if .value.type == "string" then "string"
+                                                     elif .value.type == "number" then "number"
+                                                     elif .value.type == "boolean" then "boolean"
+                                                     else "string" end),
+                                            "title": .value.title,
+                                            "description": .value.description,
+                                            "default": .value.default,
+                                            "enum": .value.enum,
+                                            "enumTitles": .value.enumTitles
+                                        }
+                                    }) | add // {}),
+                                    "ui_hints": (if .uiHints then {
+                                        "field_order": .uiHints.fieldOrder,
+                                        "visibility_rules": (.uiHints.visibilityRules | map({
+                                            "field": .field,
+                                            "condition": .condition,
+                                            "value": .value,
+                                            "then_show": .thenShow
+                                        }))
+                                    } else null end)
+                                }
+                            else null end),
+                            "default_config": (if .configSchema then
+                                (.configSchema | to_entries | map(select(.value.default != null)) | map({
+                                    (.key): .value.default
+                                }) | add // {})
+                            else null end),
+                            "variants": []
+                        }]
+                    ' "$FRONTEND_JSON" 2>/dev/null)
+                fi
+
+                if [ -z "$DASHBOARD_COMPONENTS" ] || [ "$DASHBOARD_COMPONENTS" = "null" ]; then
+                    DASHBOARD_COMPONENTS="[]"
+                fi
+            fi
+
+            # Write manifest.json
+            jq -n \
+                --arg format "neomind-extension-package" \
+                --arg format_version "2.0" \
+                --argjson abi_version 3 \
+                --arg id "$ext" \
+                --arg name "$(echo $ext | sed 's/-v2$//' | sed 's/-/ /g')" \
+                --arg version "$EXT_VERSION" \
+                --arg sdk_version "2.0.0" \
+                --arg type "native" \
+                --arg platform "$PLATFORM" \
+                --arg lib_ext "$LIB_EXT" \
+                --argjson dashboard_components "$DASHBOARD_COMPONENTS" \
+                '{
+                    format: $format,
+                    format_version: $format_version,
+                    abi_version: $abi_version,
+                    id: $id,
+                    name: $name,
+                    version: $version,
+                    sdk_version: $sdk_version,
+                    type: $type,
+                    binaries: { ($platform): ("binaries/" + $platform + "/extension." + $lib_ext) },
+                    frontend: {
+                        "components": $dashboard_components
+                    }
+                }' > "$EXT_INSTALL_DIR/manifest.json"
+
+            echo -e "  ${GREEN}✓${NC} Installed $ext"
+        done
+    elif [ -d "dist" ] && ls dist/*.nep 1> /dev/null 2>&1; then
         for nep in dist/*.nep; do
             EXT_NAME=$(basename "$nep" .nep | sed 's/-[0-9].*//')
             EXT_INSTALL_DIR="$INSTALL_DIR/$EXT_NAME"
             mkdir -p "$EXT_INSTALL_DIR"
-            
+
             # Extract .nep
             unzip -q -o "$nep" -d "$EXT_INSTALL_DIR"
             echo -e "  ${GREEN}✓${NC} Installed $EXT_NAME"

@@ -803,6 +803,8 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
   maxObjects?: number
   fps?: number
   drawBoxes?: boolean
+  showStats?: boolean
+  variant?: string
 }>(function YoloVideoDisplay({
   title = 'YOLO Detection',
   dataSource,
@@ -812,6 +814,8 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
   sourceUrl = 'camera://0',
   fps: fpsProp = 15,
   drawBoxes = true,
+  showStats = true,
+  variant = 'default',
 }, ref) {
   // Setup
   useEffect(() => { injectStyles() }, [])
@@ -1904,7 +1908,7 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
         </div>
 
         {/* Stats Bar */}
-        {isRunning && (
+        {isRunning && showStats && (
           <div className="yolo-stats">
             <div className="yolo-stat-group">
               <div className="yolo-stat">
@@ -2273,8 +2277,7 @@ export const YoloVideoPanel = forwardRef<HTMLDivElement, ExtensionComponentProps
   )
 )
 
-export default YoloVideoDisplay
-export const Component = YoloVideoDisplay
+export default { YoloVideoDisplay }
 export const Card = YoloVideoCard
 export const Widget = YoloVideoWidget
 export const Panel = YoloVideoPanel

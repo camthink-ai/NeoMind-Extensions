@@ -31,12 +31,22 @@ export interface ExtensionComponentProps {
   title?: string
   dataSource?: DataSourceBinding
   className?: string
+  /** Direct prop from configSchema — preferred */
+  defaultSource?: string
+  /** Direct prop from configSchema — preferred */
+  targetFps?: number
+  /** Direct prop from configSchema — preferred */
+  outputWidth?: number
+  /** Direct prop from configSchema — preferred */
+  outputHeight?: number
+  /** @deprecated Backward compat — configSchema fields are now spread as individual props */
   config?: {
     defaultSource?: string
     targetFps?: number
     outputWidth?: number
     outputHeight?: number
   }
+  onConfigChange?: (config: Record<string, any>) => void
 }
 
 type PlayerStatus = 'idle' | 'connecting' | 'streaming' | 'paused' | 'error' | 'ended'
@@ -418,14 +428,30 @@ const STYLES = `
 
 export const StreamPlayerCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
   function StreamPlayerCard(props, ref) {
-    const { title = 'Stream Player', dataSource, className = '', config } = props
+    const {
+      title = 'Stream Player',
+      dataSource,
+      className = '',
+      defaultSource: defaultSourceProp,
+      targetFps: targetFpsProp,
+      outputWidth: outputWidthProp,
+      outputHeight: outputHeightProp,
+      config,
+      onConfigChange,
+    } = props
+
+    // Resolve effective config values: direct props take priority, fall back to config object
+    const cfgDefaultSource = defaultSourceProp ?? config?.defaultSource
+    const cfgTargetFps = targetFpsProp ?? config?.targetFps
+    const cfgOutputWidth = outputWidthProp ?? config?.outputWidth
+    const cfgOutputHeight = outputHeightProp ?? config?.outputHeight
     const extensionId = dataSource?.extensionId || EXTENSION_ID
 
     // Resolve data source binding
     const binding = resolveBoundSource(dataSource)
     const isBound = binding.bound
 
-    const [sourceUrl, setSourceUrl] = useState(config?.defaultSource || '')
+    const [sourceUrl, setSourceUrl] = useState(cfgDefaultSource || '')
     const [boundUrl, setBoundUrl] = useState<string | null>(null)
     const [status, setStatus] = useState<PlayerStatus>('idle')
     const [error, setError] = useState<string | null>(null)
@@ -522,9 +548,9 @@ export const StreamPlayerCard = forwardRef<HTMLDivElement, ExtensionComponentPro
           type: 'init',
           config: {
             source_url: url,
-            target_fps: config?.targetFps || 24,
-            output_width: config?.outputWidth || 640,
-            output_height: config?.outputHeight || 480,
+            target_fps: cfgTargetFps || 24,
+            output_width: cfgOutputWidth || 640,
+            output_height: cfgOutputHeight || 480,
             video_bitrate: 1500,
             loop_file: true,
           },
@@ -599,7 +625,7 @@ export const StreamPlayerCard = forwardRef<HTMLDivElement, ExtensionComponentPro
         wsRef.current = null
         sessionIdRef.current = null
       }
-    }, [effectiveUrl, config, extensionId, getWebSocketUrl, stopStream, updateFps, hasVideo, status])
+    }, [effectiveUrl, cfgTargetFps, cfgOutputWidth, cfgOutputHeight, extensionId, getWebSocketUrl, stopStream, updateFps, hasVideo, status])
 
     // ---- Data source binding: fetch device metric & auto-start ----
     useEffect(() => {
@@ -766,7 +792,13 @@ export const StreamPlayerCard = forwardRef<HTMLDivElement, ExtensionComponentPro
             className={`sp-url-input${isBound ? ' bound' : ''}`}
             type="text"
             value={effectiveUrl}
-            onChange={e => { if (!isBound) setSourceUrl(e.target.value) }}
+            onChange={e => {
+              if (!isBound) {
+                const val = e.target.value
+                setSourceUrl(val)
+                onConfigChange?.({ defaultSource: val })
+              }
+            }}
             onKeyDown={handleKeyDown}
             placeholder={isBound ? 'Bound to data source' : 'rtsp://host:554/stream'}
             disabled={inputDisabled}

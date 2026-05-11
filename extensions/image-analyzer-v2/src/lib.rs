@@ -812,6 +812,11 @@ impl Extension for ImageAnalyzer {
                     Err(ExtensionError::NotSupported("Model reload not available in WASM".to_string()))
                 }
             }
+            "configure" => {
+                // Accept config silently - can be extended for real config handling
+                Ok(json!({"status": "ok"}))
+            }
+
             _ => Err(ExtensionError::CommandNotFound(command.to_string())),
         }
     }
