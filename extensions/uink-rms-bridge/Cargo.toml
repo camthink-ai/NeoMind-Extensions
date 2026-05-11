@@ -11,7 +11,7 @@ name = "neomind_extension_uink_rms_bridge"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-neomind-extension-sdk = { path = "../../../NeoMind/crates/neomind-extension-sdk" }
+neomind-extension-sdk = "0.6.3"
 serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = "0.1"
