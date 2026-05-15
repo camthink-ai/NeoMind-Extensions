@@ -301,6 +301,8 @@ fn draw_detections_on_image(
 fn setup_native_lib_paths() {
     let lib_env = if cfg!(target_os = "macos") {
         "DYLD_LIBRARY_PATH"
+    } else if cfg!(target_os = "windows") {
+        "PATH"
     } else {
         "LD_LIBRARY_PATH"
     };
@@ -385,7 +387,8 @@ fn setup_native_lib_paths() {
     }
 
     if !paths.is_empty() {
-        let combined = paths.join(":");
+        let sep = if cfg!(target_os = "windows") { ";" } else { ":" };
+        let combined = paths.join(sep);
         tracing::info!("[NativeLibs] Setting {} = {}", lib_env, combined);
         std::env::set_var(lib_env, &combined);
     }

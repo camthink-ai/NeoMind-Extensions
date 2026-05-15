@@ -1,7 +1,7 @@
 {
   "id": "image-analyzer-v2",
   "name": "image analyzer",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "description": "Standalone image object detection using YOLOv11 with ONNX Runtime, CoreML/CUDA acceleration, and annotated bounding box visualization",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
@@ -14,19 +14,19 @@
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/image-analyzer-v2",
   "builds": {
     "darwin-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.0/image-analyzer-v2-2.6.0-darwin_aarch64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.0/image-analyzer-v2-2.7.0-darwin_aarch64.nep"
     },
     "darwin-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.0/image-analyzer-v2-2.6.0-darwin_x86_64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.0/image-analyzer-v2-2.7.0-darwin_x86_64.nep"
     },
     "linux-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.0/image-analyzer-v2-2.6.0-linux_amd64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.0/image-analyzer-v2-2.7.0-linux_amd64.nep"
     },
     "linux-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.0/image-analyzer-v2-2.6.0-linux_arm64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.0/image-analyzer-v2-2.7.0-linux_arm64.nep"
     },
     "windows-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.0/image-analyzer-v2-2.6.0-windows_amd64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.0/image-analyzer-v2-2.7.0-windows_amd64.nep"
     }
   },
   "frontend": {

@@ -63,6 +63,8 @@ pub struct Detection {
 fn setup_native_lib_paths() {
     let lib_env = if cfg!(target_os = "macos") {
         "DYLD_LIBRARY_PATH"
+    } else if cfg!(target_os = "windows") {
+        "PATH"
     } else {
         "LD_LIBRARY_PATH"
     };
@@ -147,7 +149,8 @@ fn setup_native_lib_paths() {
     }
 
     if !paths.is_empty() {
-        let combined = paths.join(":");
+        let sep = if cfg!(target_os = "windows") { ";" } else { ":" };
+        let combined = paths.join(sep);
         tracing::info!("[NativeLibs] Setting {} = {}", lib_env, combined);
         std::env::set_var(lib_env, &combined);
     }
@@ -173,6 +176,91 @@ fn setup_native_lib_paths() {
             }
         }
     }
+
+    // macOS: Fix dylib install names so bundled libraries can find each other.
+    // Homebrew-built dylibs reference each other by absolute paths (e.g., /opt/homebrew/...).
+    // SIP prevents DYLD_LIBRARY_PATH from taking effect in many cases.
+    // This changes all inter-dylib references to @loader_path/ relative paths.
+    #[cfg(target_os = "macos")]
+    fix_macos_dylib_install_names(&paths);
+}
+
+/// Fix macOS dylib install names so bundled libraries can find each other via @loader_path.
+/// Runs only once per installation (marker file prevents re-runs).
+#[cfg(target_os = "macos")]
+fn fix_macos_dylib_install_names(search_dirs: &[String]) {
+    use std::process::Command;
+
+    // Find the platform binaries directory
+    let platform_dir = search_dirs.iter().find(|d| {
+        std::path::Path::new(d).exists()
+            && d.contains("darwin_")
+            && std::path::Path::new(d).join("extension.dylib").exists()
+    });
+
+    let Some(dir) = platform_dir else { return };
+    let dir = std::path::Path::new(dir);
+
+    // Marker file to avoid re-running on every startup
+    let marker = dir.join(".dylib_paths_fixed");
+    if marker.exists() {
+        return;
+    }
+
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let dylib_names: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "dylib"))
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+
+    if dylib_names.is_empty() {
+        return;
+    }
+
+    tracing::info!("[NativeLibs] Fixing install names for {} dylib(s) in {}", dylib_names.len(), dir.display());
+
+    for name in &dylib_names {
+        let path = dir.join(name);
+        let loader_ref = format!("@loader_path/{}", name);
+
+        let Ok(output) = Command::new("otool").arg("-L").arg(&path).output() else { continue };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        let mut args: Vec<String> = vec!["-id".to_string(), loader_ref];
+
+        for line in stdout.lines().skip(1) {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with("@loader_path/") {
+                continue;
+            }
+            let ref_path = trimmed.split_whitespace().next().unwrap_or("");
+            if ref_path.is_empty()
+                || ref_path.starts_with("/usr/lib/")
+                || ref_path.starts_with("/System/")
+            {
+                continue;
+            }
+            let ref_name = std::path::Path::new(ref_path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            if dylib_names.contains(&ref_name) {
+                args.extend([
+                    "-change".to_string(),
+                    ref_path.to_string(),
+                    format!("@loader_path/{}", ref_name),
+                ]);
+            }
+        }
+
+        args.push(path.to_string_lossy().to_string());
+        let _ = Command::new("install_name_tool").args(&args).output();
+    }
+
+    let _ = std::fs::write(&marker, "");
+    tracing::info!("[NativeLibs] Install names fixed successfully");
 }
 
 /// YOLOv11 detector using usls
