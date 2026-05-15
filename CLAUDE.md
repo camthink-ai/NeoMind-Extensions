@@ -61,25 +61,72 @@ cargo test
 
 ### Release Process
 
+#### Version Model
+
+本仓库有三个层级的版本号，发布时**必须全部一致**（除非有明确理由保持不同）：
+
+| 文件 | 版本含义 | 示例 |
+|------|---------|------|
+| `VERSION` | 市场发布版本 | `2.7.0` |
+| `extensions/index.json` → `version` | 市场发布版本 | `2.7.0` |
+| `extensions/*/Cargo.toml` → `version` | 扩展自身版本（影响包文件名） | `2.7.0` |
+| `extensions/*/metadata.json` → `version` | 自动从 Cargo.toml 读取 | `2.7.0` |
+
+**常见错误**：只更新了 `VERSION` 和 `index.json`，但忘了更新各扩展的 `Cargo.toml`。这会导致：
+- 包文件名是旧版本：`xxx-2.6.0-windows_amd64.nep`
+- GitHub Release 标题是 v2.7.0，但里面的包都是 2.6.0
+- 用户体验混乱
+
+#### 发布步骤
+
 ```bash
-# 1. Update JSON files
-./scripts/update-versions.sh 2.4.0
+VERSION=2.7.0
 
-# 2. Commit version bump
-git add . && git commit -m "chore: bump to v2.4.0"
+# Step 1: 一步到位 — 同步 Cargo.toml + VERSION + 生成 JSON
+./scripts/update-versions.sh $VERSION --bump-extensions
 
-# 3. Build and package
-./release.sh 2.4.0
-# or: ./build.sh --release 2.4.0
+# Step 2: 验证版本一致性（必须通过！）
+./scripts/update-versions.sh $VERSION --check
 
-# 4. Verify packages
-ls -la dist/*.nep
+# Step 3: 提交版本变更
+git add . && git commit -m "chore: bump to v$VERSION"
 
-# 5. Tag and release
-git tag v2.4.0
+# Step 4: 构建和打包
+./build.sh --release $VERSION
+
+# Step 5: 验证包文件名版本一致
+ls dist/*.nep
+# 确认所有文件名包含正确版本号，如：weather-forecast-v2-2.7.0-darwin_aarch64.nep
+
+# Step 6: Tag 和发布
+git tag v$VERSION
 git push origin main --tags
-gh release create v2.4.0 ./dist/*.nep --title "v2.4.0"
+gh release create v$VERSION ./dist/*.nep --title "v$VERSION"
 ```
+
+#### update-versions.sh 用法
+
+```bash
+# 完整更新：同步 Cargo.toml + VERSION + 生成 JSON（推荐）
+./scripts/update-versions.sh 2.7.0 --bump-extensions
+
+# 仅生成 JSON 文件（不修改 Cargo.toml）
+./scripts/update-versions.sh 2.7.0
+
+# 仅检查版本一致性
+./scripts/update-versions.sh 2.7.0 --check
+
+# 不传版本参数时从 VERSION 文件读取
+./scripts/update-versions.sh --check
+```
+
+#### 发布前检查清单
+
+- [ ] `VERSION` 文件版本正确
+- [ ] `./scripts/update-versions.sh $VERSION --check` 通过
+- [ ] 所有 `Cargo.toml` 版本与市场版本一致
+- [ ] `dist/*.nep` 包文件名版本一致
+- [ ] `index.json` 中每个扩展的 `version` 和 `builds` URL 版本一致
 
 ### Legacy Scripts (Removed)
 
@@ -348,23 +395,7 @@ int _neomind_extension_shutdown();
 
 ## Release Process
 
-1. **Update versions:**
-   ```bash
-   ./scripts/update-versions.sh 2.4.0
-   git add . && git commit -m "chore: bump to v2.4.0"
-   ```
-
-2. **Build packages:**
-   ```bash
-   ./release.sh  # or ./build-all-platforms.sh
-   ```
-
-3. **Create GitHub release:**
-   ```bash
-   git tag v2.4.0
-   git push origin main --tags
-   gh release create v2.4.0 ./dist/*.nep --title "v2.4.0"
-   ```
+> 详细发布步骤和版本规范见上方 [Release Process](#release-process-1) 章节。
 
 ## Important Rules
 

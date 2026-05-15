@@ -2,17 +2,162 @@
 # NeoMind Extensions JSON Generator
 # Generates metadata.json for each extension and updates index.json
 #
-# Usage: ./scripts/update-versions.sh [VERSION]
-# Example: ./scripts/update-versions.sh 2.3.0
+# Usage: ./scripts/update-versions.sh [VERSION] [--bump-extensions]
+# Example: ./scripts/update-versions.sh 2.7.0
+#          ./scripts/update-versions.sh 2.7.0 --bump-extensions
+#
+# Options:
+#   --bump-extensions   Also update version in all Cargo.toml files
+#                       (use this for normal releases where all extensions share the same version)
+#   --check             Only verify version consistency, don't generate files
 
 set -e
 
+# Parse arguments
+MARKET_VERSION=""
+BUMP_EXTENSIONS=false
+CHECK_ONLY=false
+for arg in "$@"; do
+    case "$arg" in
+        --bump-extensions) BUMP_EXTENSIONS=true ;;
+        --check) CHECK_ONLY=true ;;
+        -*)
+            echo "Unknown option: $arg"
+            echo "Usage: $0 [VERSION] [--bump-extensions] [--check]"
+            exit 1
+            ;;
+        *)
+            if [ -z "$MARKET_VERSION" ]; then
+                MARKET_VERSION="$arg"
+            else
+                echo "Error: Multiple version arguments"
+                exit 1
+            fi
+            ;;
+    esac
+done
+
 # Configuration
-MARKET_VERSION="${1:-2.3.0}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 EXTENSIONS_DIR="$(dirname "$SCRIPT_DIR")/extensions"
 GITHUB_REPO="camthink-ai/NeoMind-Extensions"
 
+if [ -z "$MARKET_VERSION" ]; then
+    # Read from VERSION file
+    VERSION_FILE="$(dirname "$SCRIPT_DIR")/VERSION"
+    if [ -f "$VERSION_FILE" ]; then
+        MARKET_VERSION=$(cat "$VERSION_FILE" | tr -d '[:space:]')
+        echo "Using version from VERSION file: $MARKET_VERSION"
+    else
+        echo "Error: No version provided and VERSION file not found"
+        echo "Usage: $0 [VERSION] [--bump-extensions] [--check]"
+        exit 1
+    fi
+fi
+
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# ============================================================================
+# Version consistency check
+# ============================================================================
+check_versions() {
+    echo "========================================"
+    echo "Version Consistency Check"
+    echo "========================================"
+    echo "Target version: $MARKET_VERSION"
+    echo ""
+
+    local all_ok=true
+    local mismatches=""
+
+    for ext_dir in "$EXTENSIONS_DIR"/*/; do
+        ext_id=$(basename "$ext_dir")
+        cargo_toml="$ext_dir/Cargo.toml"
+
+        [ ! -f "$cargo_toml" ] && continue
+
+        ext_version=$(grep -E "^version" "$cargo_toml" | head -1 | sed 's/.*=.*"\(.*\)"/\1/')
+
+        if [ "$ext_version" != "$MARKET_VERSION" ]; then
+            echo "  MISMATCH: $ext_id Cargo.toml=$ext_version (expected $MARKET_VERSION)"
+            mismatches="$mismatches  $ext_id: $ext_version\n"
+            all_ok=false
+        fi
+    done
+
+    # Check VERSION file
+    if [ -f "$REPO_ROOT/VERSION" ]; then
+        file_version=$(cat "$REPO_ROOT/VERSION" | tr -d '[:space:]')
+        if [ "$file_version" != "$MARKET_VERSION" ]; then
+            echo "  MISMATCH: VERSION file=$file_version (expected $MARKET_VERSION)"
+            all_ok=false
+        fi
+    fi
+
+    if [ "$all_ok" = true ]; then
+        echo "  All versions consistent!"
+        return 0
+    else
+        echo ""
+        echo "  Run with --bump-extensions to fix:"
+        echo "    ./scripts/update-versions.sh $MARKET_VERSION --bump-extensions"
+        return 1
+    fi
+}
+
+# ============================================================================
+# Bump extension versions in Cargo.toml
+# ============================================================================
+bump_extensions() {
+    echo ""
+    echo "Bumping extension versions to $MARKET_VERSION..."
+    echo "=============================================="
+
+    local count=0
+    for ext_dir in "$EXTENSIONS_DIR"/*/; do
+        ext_id=$(basename "$ext_dir")
+        cargo_toml="$ext_dir/Cargo.toml"
+
+        [ ! -f "$cargo_toml" ] && continue
+
+        old_version=$(grep -E "^version" "$cargo_toml" | head -1 | sed 's/.*=.*"\(.*\)"/\1/')
+
+        if [ "$old_version" != "$MARKET_VERSION" ]; then
+            # Use sed to replace the version line
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                sed -i '' "s/^version = \"$old_version\"/version = \"$MARKET_VERSION\"/" "$cargo_toml"
+            else
+                sed -i "s/^version = \"$old_version\"/version = \"$MARKET_VERSION\"/" "$cargo_toml"
+            fi
+            echo "  Updated: $ext_id $old_version -> $MARKET_VERSION"
+            count=$((count + 1))
+        else
+            echo "  Already: $ext_id $MARKET_VERSION"
+        fi
+    done
+
+    # Also update VERSION file
+    echo "$MARKET_VERSION" > "$REPO_ROOT/VERSION"
+    echo "  Updated: VERSION file -> $MARKET_VERSION"
+
+    echo ""
+    echo "  $count extension(s) updated."
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+
+if [ "$CHECK_ONLY" = true ]; then
+    check_versions
+    exit $?
+fi
+
+if [ "$BUMP_EXTENSIONS" = true ]; then
+    bump_extensions
+fi
+
+echo ""
 echo "NeoMind Extensions JSON Generator"
 echo "=================================="
 echo "Market Version: $MARKET_VERSION"
