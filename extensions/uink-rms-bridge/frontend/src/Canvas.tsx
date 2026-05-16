@@ -28,10 +28,13 @@ interface CanvasEditorProps {
   onElementsChange: (elements: CanvasElement[]) => void
   selectedId: string | null
   onSelectedChange: (id: string | null) => void
+  flipH?: boolean
+  flipV?: boolean
 }
 
 const HANDLE_SIZE = 6
 const MIN_SIZE = 20
+const EXPORT_PAD_RATIO = 0.03  // 3% padding on each side during export
 
 let _idCounter = 0
 export function newId() { return 'el-' + (++_idCounter) }
@@ -90,10 +93,13 @@ function drawElementWithRotation(ctx: CanvasRenderingContext2D, el: CanvasElemen
 
 // ---- Component ----
 export const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
-  function CanvasEditor({ width, height, elements, onElementsChange, selectedId, onSelectedChange }, ref) {
+  function CanvasEditor({ width, height, elements, onElementsChange, selectedId, onSelectedChange, flipH, flipV }: CanvasEditorProps, ref) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const [dragging, setDragging] = useState<{ type: 'move' | 'resize'; handleIdx: number; startX: number; startY: number; startEl: CanvasElement } | null>(null)
     const scaleRef = useRef(1)
+    // Ref always holds latest elements — avoids stale closure in exportAsBase64
+    const elementsRef = useRef(elements)
+    elementsRef.current = elements
 
     // Scale factor: fit device resolution into the displayed canvas
     useEffect(() => {
@@ -182,35 +188,75 @@ export const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
           })
         }
       }
+
+      // Safe area indicator (shows export padding boundary)
+      const sapX = Math.round(width * EXPORT_PAD_RATIO)
+      const sapY = Math.round(height * EXPORT_PAD_RATIO)
+      ctx.strokeStyle = 'rgba(0,0,0,0.08)'
+      ctx.lineWidth = 1
+      ctx.setLineDash([3, 3])
+      ctx.strokeRect(sapX, sapY, width - 2 * sapX, height - 2 * sapY)
+      ctx.setLineDash([])
     }, [elements, selectedId, width, height, renderElements])
 
-    // Export handle
+    // Export handle — uses elementsRef to always get latest elements
     useImperativeHandle(ref, () => ({
       exportAsBase64: () => {
         const canvas = canvasRef.current
         if (!canvas) return null
         const ctx = canvas.getContext('2d')
         if (!ctx) return null
-        // Ensure canvas is at device resolution before export
         canvas.width = width
         canvas.height = height
-        renderElements(ctx)
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, width, height)
+        ctx.save()
+        if (flipH || flipV) {
+          if (flipH) { ctx.translate(width, 0); ctx.scale(-1, 1) }
+          if (flipV) { ctx.translate(0, height); ctx.scale(1, -1) }
+        }
+        // Padding so content doesn't touch screen edges
+        const padX = Math.round(width * EXPORT_PAD_RATIO)
+        const padY = Math.round(height * EXPORT_PAD_RATIO)
+        ctx.translate(padX, padY)
+        ctx.scale((width - 2 * padX) / width, (height - 2 * padY) / height)
+        elementsRef.current.forEach(el => {
+          if (el.type === 'text' && el.content) {
+            drawElementWithRotation(ctx, el, () => {
+              const weight = el.bold ? 'bold' : 'normal'
+              ctx.font = `${weight} ${el.fontSize || 18}px sans-serif`
+              ctx.fillStyle = '#000000'
+              ctx.textBaseline = 'top'
+              const lines = wrapText(ctx, el.content!, el.width)
+              lines.forEach((line, i) => {
+                ctx.fillText(line, el.x, el.y + i * (el.fontSize || 18) * 1.2)
+              })
+            })
+          } else if (el.type === 'image' && el._imageObj) {
+            drawElementWithRotation(ctx, el, () => {
+              ctx.drawImage(el._imageObj!, el.x, el.y, el.width, el.height)
+            })
+          }
+        })
+        ctx.restore()
         const dataUrl = canvas.toDataURL('image/png')
         return dataUrl.split(',')[1]
       },
-      getElements: () => elements,
-    }))
+      getElements: () => elementsRef.current,
+    }), [width, height, flipH, flipV])
 
     // ---- Mouse handlers (in canvas coordinate space) ----
     const toCanvasCoords = useCallback((e: React.MouseEvent) => {
       const canvas = canvasRef.current!
       const rect = canvas.getBoundingClientRect()
       const s = scaleRef.current
-      return {
-        x: (e.clientX - rect.left) / s,
-        y: (e.clientY - rect.top) / s,
-      }
-    }, [])
+      let x = (e.clientX - rect.left) / s
+      let y = (e.clientY - rect.top) / s
+      // Un-flip coordinates so hit-testing works in element space
+      if (flipH) x = width - x
+      if (flipV) y = height - y
+      return { x, y }
+    }, [flipH, flipV, width, height])
 
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
       const { x, y } = toCanvasCoords(e)
@@ -277,6 +323,7 @@ export const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
       setDragging(null)
     }, [])
 
+    const flipTransform = flipH && flipV ? 'scale(-1,-1)' : flipH ? 'scaleX(-1)' : flipV ? 'scaleY(-1)' : undefined
     return (
       <canvas
         ref={canvasRef}
@@ -284,6 +331,7 @@ export const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
+        style={flipTransform ? { transform: flipTransform } : undefined}
       />
     )
   }

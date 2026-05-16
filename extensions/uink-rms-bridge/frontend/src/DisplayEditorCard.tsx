@@ -10,6 +10,13 @@ export interface ExtensionComponentProps {
   title?: string
   className?: string
   config?: Record<string, any>
+  dataSource?: {
+    type: string
+    deviceId?: string
+    device_id?: string
+    extensionId?: string
+    [key: string]: any
+  }
   /** Open a fullscreen dialog with arbitrary React content (provided by host) */
   openFullscreen?: (content: React.ReactNode) => void
   /** Close the fullscreen dialog (provided by host) */
@@ -18,8 +25,9 @@ export interface ExtensionComponentProps {
 
 export const DisplayEditorCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
   function DisplayEditorCard(props, ref) {
-    const { className = '', config } = props
-    const extensionId = config?.extensionId || 'uink-rms-bridge'
+    const { className = '', config, dataSource } = props
+    const boundDeviceId = dataSource?.deviceId || dataSource?.device_id
+    const extensionId = dataSource?.extensionId || config?.extensionId || 'uink-rms-bridge'
 
     useEffect(() => { injectStyles() }, [])
 
@@ -92,10 +100,21 @@ export const DisplayEditorCard = forwardRef<HTMLDivElement, ExtensionComponentPr
 
       loadDeviceList().then(deviceList => {
         if (cancelled || !deviceList) return
-        // Pick initial device: previously selected > first
-        const initial = selectedId
-          ? deviceList.find(d => d.device_id === selectedId) || deviceList[0]
-          : deviceList[0]
+        // Pick initial device: bound > previously selected > first
+        let initial: DeviceInfo
+        if (boundDeviceId) {
+          const found = deviceList.find(d => d.device_id === boundDeviceId)
+          if (!found) {
+            setError(`Device ${boundDeviceId} not found`)
+            setLoading(false)
+            return
+          }
+          initial = found
+        } else {
+          initial = selectedId
+            ? deviceList.find(d => d.device_id === selectedId) || deviceList[0]
+            : deviceList[0]
+        }
         setDevice(initial)
         setSelectedId(initial.device_id)
 
@@ -105,7 +124,7 @@ export const DisplayEditorCard = forwardRef<HTMLDivElement, ExtensionComponentPr
       })
 
       return () => { cancelled = true }
-    }, [extensionId])
+    }, [extensionId, boundDeviceId])
 
     // Handle device switch
     const handleDeviceChange = useCallback(async (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -199,7 +218,7 @@ export const DisplayEditorCard = forwardRef<HTMLDivElement, ExtensionComponentPr
               </div>
 
               {/* Device selector overlay (bottom-right) */}
-              {devices.length > 1 && (
+              {devices.length > 1 && !boundDeviceId && (
                 <div className="uink-overlay-controls">
                   <select className="uink-device-select" value={device.device_id} onChange={handleDeviceChange}>
                     {devices.map(d => (

@@ -1144,6 +1144,7 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
             // Image frame from backend stream
             if (msg.data && msg.data_type === 'image/jpeg') {
               setStreamStatus('streaming')
+              setFrameData(msg.data)  // Update so overlay hides
               pendingFrameRef.current = msg.data  // rAF loop handles decode+draw
               updateFps()
               if (msg.metadata?.detections) {
@@ -1177,6 +1178,7 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
               } else if (isWaiting) {
                 // No frame yet from FFmpeg, keep waiting
               } else if (typeof msg.data === 'string' && msg.data.length > 0) {
+                setFrameData(msg.data)  // Update so overlay hides
                 pendingFrameRef.current = msg.data  // rAF loop handles decode+draw
                 updateFps()
                 if (msg.metadata?.frame_count) {

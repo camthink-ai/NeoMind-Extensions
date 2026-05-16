@@ -40,6 +40,8 @@ export function EditModalContent({ deviceId, deviceWidth, deviceHeight, onClose,
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const canvasRef = useRef<CanvasEditorHandle>(null)
   const canvasFileRef = useRef<HTMLInputElement>(null)
+  const [flipH, setFlipH] = useState(false)
+  const [flipV, setFlipV] = useState(false)
 
   // Toast
   useEffect(() => {
@@ -286,7 +288,7 @@ export function EditModalContent({ deviceId, deviceWidth, deviceHeight, onClose,
         {tab === 'canvas' && (
           <>
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12, overflow: 'auto', background: 'var(--muted)', position: 'relative', minHeight: 0 }}>
-              <CanvasEditor ref={canvasRef} width={deviceWidth} height={deviceHeight} elements={elements} onElementsChange={setElements} selectedId={selectedId} onSelectedChange={setSelectedId} />
+              <CanvasEditor ref={canvasRef} width={deviceWidth} height={deviceHeight} elements={elements} onElementsChange={setElements} selectedId={selectedId} onSelectedChange={setSelectedId} flipH={flipH} flipV={flipV} />
               {selectedElement && (
                 <div style={{ position: 'absolute', top: 8, right: 8, width: 200, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-lg)', zIndex: 5, overflow: 'hidden' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', borderBottom: '1px solid var(--border)', fontSize: 11, fontWeight: 600 }}>
@@ -350,6 +352,14 @@ export function EditModalContent({ deviceId, deviceWidth, deviceHeight, onClose,
                 Delete
               </button>
               <input ref={canvasFileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleCanvasFileSelected} />
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                <button onClick={() => setFlipH(f => !f)} title="Flip horizontal" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, border: `1px solid ${flipH ? 'var(--primary)' : 'var(--border)'}`, borderRadius: 6, background: flipH ? 'rgba(59,130,246,0.1)' : 'transparent', color: flipH ? 'var(--primary)' : 'var(--foreground)', cursor: 'pointer' }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M8 3H5a2 2 0 00-2 2v14a2 2 0 002 2h3"/><path d="M16 3h3a2 2 0 012 2v14a2 2 0 01-2 2h-3"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
+                </button>
+                <button onClick={() => setFlipV(f => !f)} title="Flip vertical" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, border: `1px solid ${flipV ? 'var(--primary)' : 'var(--border)'}`, borderRadius: 6, background: flipV ? 'rgba(59,130,246,0.1)' : 'transparent', color: flipV ? 'var(--primary)' : 'var(--foreground)', cursor: 'pointer' }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 8V5a2 2 0 012-2h14a2 2 0 012 2v3"/><path d="M3 16v3a2 2 0 002 2h14a2 2 0 002-2v-3"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
+                </button>
+              </div>
             </div>
           </>
         )}

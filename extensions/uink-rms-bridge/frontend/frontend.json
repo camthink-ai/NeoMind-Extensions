@@ -14,7 +14,8 @@
       "maxSize": { "width": 600, "height": 700 },
       "refreshable": true,
       "refreshInterval": 30000,
-      "hasDataSource": false,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": ["device"],
       "configSchema": {}
     }
   ],
