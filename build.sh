@@ -661,7 +661,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
 
         # Bundle dependency DLLs for Windows
         # Windows doesn't have otool/LD_LIBRARY_PATH, so we search FFMPEG_DIR and PATH for DLLs
-        if [ "$IS_WASM" = false ] && [ "$OS" = "MINGW" -o "$OS" = "MSYS" -o "$OS" = "CYGWIN" ]; then
+        if [ "$IS_WASM" = false ] && [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
             BINARY_PATH="$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
             BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
 
