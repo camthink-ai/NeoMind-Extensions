@@ -438,9 +438,6 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             fi
         fi
 
-        # DIAG: always print diagnostics right after ONNX Runtime bundling
-        echo "    [DIAG] ext=$ext IS_WASM='$IS_WASM' LIB_EXT='$LIB_EXT' PLATFORM='$PLATFORM'"
-
         # Bundle dependency DLLs for Windows (FFmpeg, etc.)
         # Windows doesn't have otool/LD_LIBRARY_PATH, so we search FFMPEG_DIR for DLLs
         if [ "$IS_WASM" = false ] && [ "$LIB_EXT" = "dll" ]; then
