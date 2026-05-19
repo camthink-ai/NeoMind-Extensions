@@ -661,63 +661,50 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
 
         # Bundle dependency DLLs for Windows
         # Windows doesn't have otool/LD_LIBRARY_PATH, so we search FFMPEG_DIR and PATH for DLLs
-        if [ "$IS_WASM" = false ] && [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+        if [ "$IS_WASM" = false ] && [ "$LIB_EXT" = "dll" ]; then
             BINARY_PATH="$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
             BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
 
             echo -e "    ${BLUE}→${NC} Bundling Windows dependency DLLs..."
 
             # Collect DLL search paths
-            DLL_SEARCH_DIRS=()
+            DLL_SEARCH_DIRS=""
             if [ -n "$FFMPEG_DIR" ] && [ -d "$FFMPEG_DIR/bin" ]; then
-                DLL_SEARCH_DIRS+=("$FFMPEG_DIR/bin")
+                DLL_SEARCH_DIRS="$DLL_SEARCH_DIRS $FFMPEG_DIR/bin"
             fi
             if [ -n "$FFMPEG_DIR" ] && [ -d "$FFMPEG_DIR/lib" ]; then
-                DLL_SEARCH_DIRS+=("$FFMPEG_DIR/lib")
+                DLL_SEARCH_DIRS="$DLL_SEARCH_DIRS $FFMPEG_DIR/lib"
             fi
-            # Add PATH directories
-            IFS=';' read -ra PATHS <<< "$PATH"
-            for p in "${PATHS[@]}"; do
-                if [ -d "$p" ]; then
-                    DLL_SEARCH_DIRS+=("$p")
-                fi
-            done
+
+            echo -e "    DLL search dirs:$DLL_SEARCH_DIRS"
 
             # Common DLLs needed by extensions (FFmpeg, ONNX Runtime, etc.)
             # BtbN FFmpeg shared builds use hyphenated names: avcodec-61.dll, avformat-61.dll, etc.
-            # MSYS2/MinGW builds may use different naming: libavcodec.dll, avcodec.dll
-            REQUIRED_DLLS=(
-                # FFmpeg (BtbN naming)
-                avcodec avformat avutil swscale swresample avdevice avfilter
-                # Common dependencies from BtbN build
+            REQUIRED_DLLS="avcodec avformat avutil swscale swresample avdevice avfilter
                 x264 x265 vpx opus vorbis ogg speex soxr
                 srt ssh rist zmq sodium
-                ssl crypto gmp hogweed nettle
+                ssl crypto gmp hoggle nettle
                 brotlicommon brotlidec brotlienc
                 zstd lzma png jpeg webp sharpyuv
                 fontconfig freetype fribidi
                 unistring idn2 intl tasn1 p11-kit gnutls
                 bluray aom dav1d rav1e jxl jxl_cms jxl_threads snappy
-                openjp2 mp3lame vmaf
-                theora theoraenc theoradec
-                # MSYS2/MinGW naming variants
-                libavcodec libavformat libavutil libswscale libswresample
-                libavdevice libavfilter
-            )
+                openjp2 mp3lame vmaf theora theoraenc theoradec"
 
             BUNDLED_COUNT=0
-            for dll_name in "${REQUIRED_DLLS[@]}"; do
+            for dll_name in $REQUIRED_DLLS; do
                 # Skip if already bundled (e.g., onnxruntime.dll was copied above)
                 if ls "$BINARY_DIR"/${dll_name}*.dll 2>/dev/null | head -1 | grep -q .; then
                     continue
                 fi
 
                 # Search for DLL in known directories
-                for search_dir in "${DLL_SEARCH_DIRS[@]}"; do
+                for search_dir in $DLL_SEARCH_DIRS; do
                     FOUND_DLL=$(find "$search_dir" -maxdepth 1 -name "${dll_name}*.dll" 2>/dev/null | head -1)
                     if [ -n "$FOUND_DLL" ] && [ -f "$FOUND_DLL" ]; then
                         cp "$FOUND_DLL" "$BINARY_DIR/"
                         BUNDLED_COUNT=$((BUNDLED_COUNT + 1))
+                        echo -e "      ${GREEN}→${NC} $(basename $FOUND_DLL)"
                         break
                     fi
                 done
