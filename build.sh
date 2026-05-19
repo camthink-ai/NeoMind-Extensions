@@ -659,6 +659,9 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             fi
         fi
 
+        # DEBUG: Show variables for packaging diagnostics
+        printf "    DEBUG: ext=%s IS_WASM=%s LIB_EXT=%s PLATFORM=%s\n" "$ext" "$IS_WASM" "$LIB_EXT" "$PLATFORM"
+
         # Bundle dependency DLLs for Windows
         # Windows doesn't have otool/LD_LIBRARY_PATH, so we search FFMPEG_DIR and PATH for DLLs
         if [ "$IS_WASM" = "false" ] && [ "$LIB_EXT" = "dll" ]; then
