@@ -493,6 +493,52 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             fi
         fi
 
+        # Bundle shared library dependencies for Linux
+        # Uses ldd to automatically detect all non-system dependencies (FFmpeg, etc.)
+        if [ "$IS_WASM" = false ] && [ "$LIB_EXT" = "so" ]; then
+            BINARY_PATH="$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
+            BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
+
+            echo -e "    ${BLUE}→${NC} Bundling Linux shared library dependencies..."
+
+            SO_BUNDLED_COUNT=0
+            while IFS= read -r line; do
+                # Parse ldd output: "libname.so.X => /path/to/libname.so.X (0x...)"
+                lib_soname=$(echo "$line" | awk '{print $1}')
+                lib_path=$(echo "$line" | sed -n 's/.*=> *\([^ ]*\).*/\1/p')
+
+                # Skip if no resolved path (e.g. linux-vdso)
+                [ -z "$lib_path" ] && continue
+                [ ! -f "$lib_path" ] && continue
+
+                # Skip system libraries that are always present on Linux
+                case "$lib_soname" in
+                    linux-vdso.so*|libc.so*|libm.so*|libpthread.so*|libdl.so*|librt.so*|\
+                    ld-linux*.so*|libgcc_s.so*|libstdc++.so*|libselinux.so*|\
+                    libpcre2-8.so*|libsystemd.so*|libgcrypt.so*|libgpg-error.so*|\
+                    libresolv.so*|libmount.so*|libblkid.so*|libuuid.so*|\
+                    libbz2.so*|liblzma.so*|libz.so*|libzstd.so*)
+                        continue
+                        ;;
+                esac
+
+                # Skip if already bundled (e.g. onnxruntime .so was copied above)
+                [ -f "$BINARY_DIR/$lib_soname" ] && continue
+
+                # Copy the actual file (follow symlinks), named as the soname
+                if cp -L "$lib_path" "$BINARY_DIR/$lib_soname" 2>/dev/null; then
+                    SO_BUNDLED_COUNT=$((SO_BUNDLED_COUNT + 1))
+                    echo -e "      ${GREEN}→${NC} $lib_soname"
+                fi
+            done < <(ldd "$BINARY_PATH" 2>/dev/null | grep "=> /")
+
+            if [ $SO_BUNDLED_COUNT -gt 0 ]; then
+                echo -e "    ${GREEN}✓${NC} Bundled $SO_BUNDLED_COUNT shared library dependency(s)"
+            else
+                echo -e "    ${YELLOW}⚠${NC} No shared library dependencies found to bundle"
+            fi
+        fi
+
         # Fix the binary's LC_ID_DYLIB to use @executable_path instead of absolute path
         # This is critical for Rust cdylib which sets LC_ID_DYLIB to absolute build path
         if [ "$IS_WASM" = false ] && [ "$OS" = "Darwin" ]; then
