@@ -661,11 +661,11 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
 
         # Bundle dependency DLLs for Windows
         # Windows doesn't have otool/LD_LIBRARY_PATH, so we search FFMPEG_DIR and PATH for DLLs
-        if [ "$IS_WASM" = false ] && [ "$LIB_EXT" = "dll" ]; then
+        if [ "$IS_WASM" = "false" ] && [ "$LIB_EXT" = "dll" ]; then
             BINARY_PATH="$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
             BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
 
-            echo -e "    ${BLUE}→${NC} Bundling Windows dependency DLLs..."
+            printf "    \033[0;34m→\033[0m Bundling Windows dependency DLLs (LIB_EXT=%s FFMPEG_DIR=%s)...\n" "$LIB_EXT" "$FFMPEG_DIR"
 
             # Collect DLL search paths
             DLL_SEARCH_DIRS=""
@@ -676,14 +676,12 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                 DLL_SEARCH_DIRS="$DLL_SEARCH_DIRS $FFMPEG_DIR/lib"
             fi
 
-            echo -e "    DLL search dirs:$DLL_SEARCH_DIRS"
-
             # Common DLLs needed by extensions (FFmpeg, ONNX Runtime, etc.)
             # BtbN FFmpeg shared builds use hyphenated names: avcodec-61.dll, avformat-61.dll, etc.
             REQUIRED_DLLS="avcodec avformat avutil swscale swresample avdevice avfilter
                 x264 x265 vpx opus vorbis ogg speex soxr
                 srt ssh rist zmq sodium
-                ssl crypto gmp hoggle nettle
+                ssl crypto gmp hogtle nettle
                 brotlicommon brotlidec brotlienc
                 zstd lzma png jpeg webp sharpyuv
                 fontconfig freetype fribidi
@@ -702,18 +700,18 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                 for search_dir in $DLL_SEARCH_DIRS; do
                     FOUND_DLL=$(find "$search_dir" -maxdepth 1 -name "${dll_name}*.dll" 2>/dev/null | head -1)
                     if [ -n "$FOUND_DLL" ] && [ -f "$FOUND_DLL" ]; then
-                        cp "$FOUND_DLL" "$BINARY_DIR/"
+                        cp "$FOUND_DLL" "$BINARY_DIR/" || true
                         BUNDLED_COUNT=$((BUNDLED_COUNT + 1))
-                        echo -e "      ${GREEN}→${NC} $(basename $FOUND_DLL)"
+                        printf "      \033[0;32m→\033[0m %s\n" "$(basename $FOUND_DLL)"
                         break
                     fi
                 done
             done
 
             if [ $BUNDLED_COUNT -gt 0 ]; then
-                echo -e "    ${GREEN}✓${NC} Bundled $BUNDLED_COUNT dependency DLL(s)"
+                printf "    \033[0;32m✓\033[0m Bundled %d dependency DLL(s)\n" $BUNDLED_COUNT
             else
-                echo -e "    ${YELLOW}⚠${NC} No dependency DLLs found to bundle"
+                printf "    \033[1;33m⚠\033[0m No dependency DLLs found to bundle\n"
             fi
         fi
 
