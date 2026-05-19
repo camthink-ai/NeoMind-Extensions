@@ -438,6 +438,61 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             fi
         fi
 
+        # Bundle dependency DLLs for Windows (FFmpeg, etc.)
+        # Windows doesn't have otool/LD_LIBRARY_PATH, so we search FFMPEG_DIR for DLLs
+        if [ "$IS_WASM" = false ] && [ "$LIB_EXT" = "dll" ]; then
+            echo -e "    ${BLUE}→${NC} Bundling Windows dependency DLLs (FFMPEG_DIR=$FFMPEG_DIR)..."
+
+            BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
+
+            # Collect DLL search paths
+            DLL_SEARCH_DIRS=""
+            if [ -n "$FFMPEG_DIR" ] && [ -d "$FFMPEG_DIR/bin" ]; then
+                DLL_SEARCH_DIRS="$DLL_SEARCH_DIRS $FFMPEG_DIR/bin"
+            fi
+            if [ -n "$FFMPEG_DIR" ] && [ -d "$FFMPEG_DIR/lib" ]; then
+                DLL_SEARCH_DIRS="$DLL_SEARCH_DIRS $FFMPEG_DIR/lib"
+            fi
+
+            # Common DLLs needed by extensions (FFmpeg, etc.)
+            # BtbN FFmpeg shared builds use hyphenated names: avcodec-61.dll, avformat-61.dll, etc.
+            REQUIRED_DLLS="avcodec avformat avutil swscale swresample avdevice avfilter
+                x264 x265 vpx opus vorbis ogg speex soxr
+                srt ssh rist zmq sodium
+                ssl crypto gmp hogtle nettle
+                brotlicommon brotlidec brotlienc
+                zstd lzma png jpeg webp sharpyuv
+                fontconfig freetype fribidi
+                unistring idn2 intl tasn1 p11-kit gnutls
+                bluray aom dav1d rav1e jxl jxl_cms jxl_threads snappy
+                openjp2 mp3lame vmaf theora theoraenc theoradec"
+
+            BUNDLED_COUNT=0
+            for dll_name in $REQUIRED_DLLS; do
+                # Skip if already bundled (e.g., onnxruntime.dll was copied above)
+                if ls "$BINARY_DIR"/${dll_name}*.dll 2>/dev/null | head -1 | grep -q .; then
+                    continue
+                fi
+
+                # Search for DLL in known directories
+                for search_dir in $DLL_SEARCH_DIRS; do
+                    FOUND_DLL=$(find "$search_dir" -maxdepth 1 -name "${dll_name}*.dll" 2>/dev/null | head -1)
+                    if [ -n "$FOUND_DLL" ] && [ -f "$FOUND_DLL" ]; then
+                        cp "$FOUND_DLL" "$BINARY_DIR/" || true
+                        BUNDLED_COUNT=$((BUNDLED_COUNT + 1))
+                        echo -e "      ${GREEN}→${NC} $(basename $FOUND_DLL)"
+                        break
+                    fi
+                done
+            done
+
+            if [ $BUNDLED_COUNT -gt 0 ]; then
+                echo -e "    ${GREEN}✓${NC} Bundled $BUNDLED_COUNT dependency DLL(s)"
+            else
+                echo -e "    ${YELLOW}⚠${NC} No dependency DLLs found to bundle"
+            fi
+        fi
+
         # Fix the binary's LC_ID_DYLIB to use @executable_path instead of absolute path
         # This is critical for Rust cdylib which sets LC_ID_DYLIB to absolute build path
         if [ "$IS_WASM" = false ] && [ "$OS" = "Darwin" ]; then
@@ -656,65 +711,6 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                 patchelf --set-rpath '$ORIGIN' "$BINARY_PATH" 2>/dev/null && \
                     echo -e "    ${GREEN}✓${NC} Set rpath to \$ORIGIN" || \
                     echo -e "    ${YELLOW}⚠${NC} Could not set rpath (may already be correct)"
-            fi
-        fi
-
-        # DEBUG: Show variables for packaging diagnostics
-        printf "    DEBUG: ext=%s IS_WASM=%s LIB_EXT=%s PLATFORM=%s\n" "$ext" "$IS_WASM" "$LIB_EXT" "$PLATFORM"
-
-        # Bundle dependency DLLs for Windows
-        # Windows doesn't have otool/LD_LIBRARY_PATH, so we search FFMPEG_DIR and PATH for DLLs
-        if [ "$IS_WASM" = "false" ] && [ "$LIB_EXT" = "dll" ]; then
-            BINARY_PATH="$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
-            BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
-
-            printf "    \033[0;34m→\033[0m Bundling Windows dependency DLLs (LIB_EXT=%s FFMPEG_DIR=%s)...\n" "$LIB_EXT" "$FFMPEG_DIR"
-
-            # Collect DLL search paths
-            DLL_SEARCH_DIRS=""
-            if [ -n "$FFMPEG_DIR" ] && [ -d "$FFMPEG_DIR/bin" ]; then
-                DLL_SEARCH_DIRS="$DLL_SEARCH_DIRS $FFMPEG_DIR/bin"
-            fi
-            if [ -n "$FFMPEG_DIR" ] && [ -d "$FFMPEG_DIR/lib" ]; then
-                DLL_SEARCH_DIRS="$DLL_SEARCH_DIRS $FFMPEG_DIR/lib"
-            fi
-
-            # Common DLLs needed by extensions (FFmpeg, ONNX Runtime, etc.)
-            # BtbN FFmpeg shared builds use hyphenated names: avcodec-61.dll, avformat-61.dll, etc.
-            REQUIRED_DLLS="avcodec avformat avutil swscale swresample avdevice avfilter
-                x264 x265 vpx opus vorbis ogg speex soxr
-                srt ssh rist zmq sodium
-                ssl crypto gmp hogtle nettle
-                brotlicommon brotlidec brotlienc
-                zstd lzma png jpeg webp sharpyuv
-                fontconfig freetype fribidi
-                unistring idn2 intl tasn1 p11-kit gnutls
-                bluray aom dav1d rav1e jxl jxl_cms jxl_threads snappy
-                openjp2 mp3lame vmaf theora theoraenc theoradec"
-
-            BUNDLED_COUNT=0
-            for dll_name in $REQUIRED_DLLS; do
-                # Skip if already bundled (e.g., onnxruntime.dll was copied above)
-                if ls "$BINARY_DIR"/${dll_name}*.dll 2>/dev/null | head -1 | grep -q .; then
-                    continue
-                fi
-
-                # Search for DLL in known directories
-                for search_dir in $DLL_SEARCH_DIRS; do
-                    FOUND_DLL=$(find "$search_dir" -maxdepth 1 -name "${dll_name}*.dll" 2>/dev/null | head -1)
-                    if [ -n "$FOUND_DLL" ] && [ -f "$FOUND_DLL" ]; then
-                        cp "$FOUND_DLL" "$BINARY_DIR/" || true
-                        BUNDLED_COUNT=$((BUNDLED_COUNT + 1))
-                        printf "      \033[0;32m→\033[0m %s\n" "$(basename $FOUND_DLL)"
-                        break
-                    fi
-                done
-            done
-
-            if [ $BUNDLED_COUNT -gt 0 ]; then
-                printf "    \033[0;32m✓\033[0m Bundled %d dependency DLL(s)\n" $BUNDLED_COUNT
-            else
-                printf "    \033[1;33m⚠\033[0m No dependency DLLs found to bundle\n"
             fi
         fi
 
