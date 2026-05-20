@@ -439,52 +439,39 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
         fi
 
         # Bundle dependency DLLs for Windows (FFmpeg, etc.)
-        # Windows doesn't have otool/LD_LIBRARY_PATH, so we search FFMPEG_DIR for DLLs
+        # Copy ALL DLLs from FFMPEG_DIR/bin to cover transitive dependencies.
+        # BtbN FFmpeg shared builds have codec DLLs (libx264-164.dll, libx265-209.dll, etc.)
+        # that avcodec-61.dll depends on at load time. A curated list always misses some.
         if [ "$IS_WASM" = false ] && [ "$LIB_EXT" = "dll" ]; then
             echo -e "    ${BLUE}→${NC} Bundling Windows dependency DLLs (FFMPEG_DIR=$FFMPEG_DIR)..."
 
             BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
-
-            # Collect DLL search paths
-            DLL_SEARCH_DIRS=""
-            if [ -n "$FFMPEG_DIR" ] && [ -d "$FFMPEG_DIR/bin" ]; then
-                DLL_SEARCH_DIRS="$DLL_SEARCH_DIRS $FFMPEG_DIR/bin"
-            fi
-            if [ -n "$FFMPEG_DIR" ] && [ -d "$FFMPEG_DIR/lib" ]; then
-                DLL_SEARCH_DIRS="$DLL_SEARCH_DIRS $FFMPEG_DIR/lib"
-            fi
-
-            # Common DLLs needed by extensions (FFmpeg, etc.)
-            # BtbN FFmpeg shared builds use hyphenated names: avcodec-61.dll, avformat-61.dll, etc.
-            REQUIRED_DLLS="avcodec avformat avutil swscale swresample avdevice avfilter
-                x264 x265 vpx opus vorbis ogg speex soxr
-                srt ssh rist zmq sodium
-                ssl crypto gmp hogtle nettle
-                brotlicommon brotlidec brotlienc
-                zstd lzma png jpeg webp sharpyuv
-                fontconfig freetype fribidi
-                unistring idn2 intl tasn1 p11-kit gnutls
-                bluray aom dav1d rav1e jxl jxl_cms jxl_threads snappy
-                openjp2 mp3lame vmaf theora theoraenc theoradec"
-
             BUNDLED_COUNT=0
-            for dll_name in $REQUIRED_DLLS; do
-                # Skip if already bundled (e.g., onnxruntime.dll was copied above)
-                if ls "$BINARY_DIR"/${dll_name}*.dll 2>/dev/null | head -1 | grep -q .; then
-                    continue
-                fi
 
-                # Search for DLL in known directories
-                for search_dir in $DLL_SEARCH_DIRS; do
-                    FOUND_DLL=$(find "$search_dir" -maxdepth 1 -name "${dll_name}*.dll" 2>/dev/null | head -1)
-                    if [ -n "$FOUND_DLL" ] && [ -f "$FOUND_DLL" ]; then
-                        cp "$FOUND_DLL" "$BINARY_DIR/" || true
-                        BUNDLED_COUNT=$((BUNDLED_COUNT + 1))
-                        echo -e "      ${GREEN}→${NC} $(basename $FOUND_DLL)"
-                        break
-                    fi
+            # Copy all DLLs from FFMPEG_DIR/bin (covers FFmpeg + all codec dependencies)
+            if [ -n "$FFMPEG_DIR" ] && [ -d "$FFMPEG_DIR/bin" ]; then
+                for dll in "$FFMPEG_DIR/bin"/*.dll; do
+                    [ -f "$dll" ] || continue
+                    dll_name=$(basename "$dll")
+                    # Skip if already bundled (e.g., onnxruntime.dll was copied above)
+                    [ -f "$BINARY_DIR/$dll_name" ] && continue
+                    cp "$dll" "$BINARY_DIR/" || true
+                    BUNDLED_COUNT=$((BUNDLED_COUNT + 1))
+                    echo -e "      ${GREEN}→${NC} $dll_name"
                 done
-            done
+            fi
+
+            # Also copy from FFMPEG_DIR/lib if it exists (some distributions put DLLs there)
+            if [ -n "$FFMPEG_DIR" ] && [ -d "$FFMPEG_DIR/lib" ]; then
+                for dll in "$FFMPEG_DIR/lib"/*.dll; do
+                    [ -f "$dll" ] || continue
+                    dll_name=$(basename "$dll")
+                    [ -f "$BINARY_DIR/$dll_name" ] && continue
+                    cp "$dll" "$BINARY_DIR/" || true
+                    BUNDLED_COUNT=$((BUNDLED_COUNT + 1))
+                    echo -e "      ${GREEN}→${NC} $dll_name"
+                done
+            fi
 
             if [ $BUNDLED_COUNT -gt 0 ]; then
                 echo -e "    ${GREEN}✓${NC} Bundled $BUNDLED_COUNT dependency DLL(s)"
