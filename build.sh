@@ -1102,6 +1102,36 @@ PYEOF
 
     echo ""
     echo -e "${GREEN}Packages created in dist/${NC}"
+
+    # === Windows DLL Dependency Diagnostic ===
+    # Show what DLLs each extension needs at load time vs what's bundled
+    if [ "$LIB_EXT" = "dll" ] && command -v dumpbin &>/dev/null; then
+        echo ""
+        echo -e "${BLUE}=== Windows DLL Dependency Diagnostic ===${NC}"
+        for nep in dist/*.nep; do
+            [ -f "$nep" ] || continue
+            ext_name=$(basename "$nep" | sed 's/-[0-9].*//')
+            echo -e "  ${BLUE}--- $ext_name ---${NC}"
+
+            # Extract to temp dir
+            tmp_dir=$(mktemp -d)
+            unzip -q -o "$nep" -d "$tmp_dir" 2>/dev/null || continue
+
+            # Find extension DLL
+            ext_dll=$(find "$tmp_dir/binaries" -name "*.dll" ! -name "avcodec*" ! -name "avformat*" ! -name "avutil*" ! -name "swscale*" ! -name "swresample*" ! -name "avdevice*" ! -name "avfilter*" ! -name "onnxruntime*" 2>/dev/null | head -1)
+
+            if [ -n "$ext_dll" ]; then
+                echo "  Extension: $(basename "$ext_dll")"
+                echo "  DLL Dependencies:"
+                dumpbin /dependents "$ext_dll" 2>/dev/null | grep -i "\.dll$" | sed 's/^/    /'
+                echo "  Bundled DLLs:"
+                find "$tmp_dir/binaries" -name "*.dll" -exec basename {} \; | sort | sed 's/^/    /'
+            fi
+
+            rm -rf "$tmp_dir"
+        done
+        echo -e "${BLUE}=== End DLL Diagnostic ===${NC}"
+    fi
 fi
 
 echo ""
