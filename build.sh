@@ -1384,3 +1384,4 @@ else
     echo "Or use the .nep packages:"
     echo "  NeoMind Web UI → Extensions → Add Extension → File Mode"
 fi
+# force CI
