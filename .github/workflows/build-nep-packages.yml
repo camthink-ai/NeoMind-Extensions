@@ -283,7 +283,7 @@ jobs:
         shell: bash
 
       - name: Diagnose extension DLL dependencies (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.platform == 'windows_amd64'
         shell: pwsh
         run: |
           # Use dumpbin to show what DLLs each extension needs at load time
