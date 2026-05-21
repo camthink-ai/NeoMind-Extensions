@@ -473,6 +473,30 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                 done
             fi
 
+            # Bundle MSVC runtime DLLs (VCRUNTIME140.dll etc.)
+            # Rust cdylib compiled with MSVC links against vcruntime140.dll.
+            # Not all Windows machines have the Visual C++ Redistributable installed.
+            # Search common locations for these DLLs.
+            VCRUNTIME_DLLS="vcruntime140 vcruntime140_1 msvcp140"
+            for vcruntime_name in $VCRUNTIME_DLLS; do
+                [ -f "$BINARY_DIR/${vcruntime_name}.dll" ] && continue
+                FOUND_VCRT=""
+                # Search in System32 (always present on Windows 10+)
+                if [ -f "/c/Windows/System32/${vcruntime_name}.dll" ]; then
+                    FOUND_VCRT="/c/Windows/System32/${vcruntime_name}.dll"
+                elif [ -f "$SYSTEMROOT/System32/${vcruntime_name}.dll" ]; then
+                    FOUND_VCRT="$SYSTEMROOT/System32/${vcruntime_name}.dll"
+                # Also try the Rust toolchain's DLL directory
+                elif [ -n "$RUSTUP_HOME" ]; then
+                    FOUND_VCRT=$(find "$RUSTUP_HOME/toolchains" -name "${vcruntime_name}.dll" 2>/dev/null | head -1)
+                fi
+                if [ -n "$FOUND_VCRT" ] && [ -f "$FOUND_VCRT" ]; then
+                    cp "$FOUND_VCRT" "$BINARY_DIR/" || true
+                    BUNDLED_COUNT=$((BUNDLED_COUNT + 1))
+                    echo -e "      ${GREEN}→${NC} ${vcruntime_name}.dll (MSVC runtime)"
+                fi
+            done
+
             if [ $BUNDLED_COUNT -gt 0 ]; then
                 echo -e "    ${GREEN}✓${NC} Bundled $BUNDLED_COUNT dependency DLL(s)"
             else
