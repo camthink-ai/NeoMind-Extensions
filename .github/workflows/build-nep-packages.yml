@@ -282,6 +282,57 @@ jobs:
           ls -lh dist/ || echo "No packages found"
         shell: bash
 
+      - name: Diagnose extension DLL dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Use dumpbin to show what DLLs each extension needs at load time
+          # This helps identify missing dependencies that cause runtime crashes
+          $dumpbin = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe"
+          $dumpbinPath = Get-ChildItem $dumpbin -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $dumpbinPath) {
+            # Try other VS locations
+            $dumpbinPath = Get-ChildItem "C:\Program Files (x86)\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $dumpbinPath) {
+            Write-Host "⚠ dumpbin not found, skipping dependency check"
+            exit 0
+          }
+          Write-Host "✓ Found dumpbin: $($dumpbinPath.FullName)"
+
+          # Check each built .nep package
+          foreach ($nep in (Get-ChildItem "dist\*.nep")) {
+            $extName = $nep.BaseName.Split('-')[0]
+            Write-Host "`n=== $extName ==="
+
+            # Extract to temp dir to get the DLL
+            $tmpDir = "C:\tmp\diag_$extName"
+            if (Test-Path $tmpDir) { Remove-Item $tmpDir -Recurse -Force }
+            Expand-Archive -Path $nep.FullName -DestinationPath $tmpDir -Force
+
+            # Find the extension DLL
+            $dll = Get-ChildItem "$tmpDir\binaries" -Recurse -Filter "*.dll" |
+              Where-Object { $_.Name -like "neomind_extension_*" -or $_.Name -eq "extension.dll" } |
+              Select-Object -First 1
+
+            if ($dll) {
+              Write-Host "Extension DLL: $($dll.FullName)"
+              Write-Host "--- DLL Dependencies ---"
+              & $dumpbinPath.FullName /dependents $dll.FullName 2>&1 | Select-String -Pattern "\.dll$" | ForEach-Object { Write-Host "  $_" }
+
+              Write-Host "--- Bundled DLLs in package ---"
+              Get-ChildItem "$tmpDir\binaries" -Recurse -Filter "*.dll" | ForEach-Object { Write-Host "  $($_.Name)" }
+            } else {
+              Write-Host "⚠ No extension DLL found in package"
+            }
+
+            # List all DLLs in FFMPEG_DIR/bin for reference
+            if ($env:FFMPEG_DIR -and (Test-Path "$env:FFMPEG_DIR\bin")) {
+              Write-Host "--- FFMPEG_DIR/bin DLLs ---"
+              Get-ChildItem "$env:FFMPEG_DIR\bin\*.dll" | ForEach-Object { Write-Host "  $($_.Name)" }
+            }
+          }
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
