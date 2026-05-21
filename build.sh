@@ -1104,8 +1104,8 @@ PYEOF
     echo -e "${GREEN}Packages created in dist/${NC}"
 
     # === Windows DLL Dependency Diagnostic ===
-    # Show what DLLs each extension needs at load time vs what's bundled
-    if [ "$LIB_EXT" = "dll" ] && command -v dumpbin &>/dev/null; then
+    # Use PowerShell to call dumpbin (not on PATH in Git Bash)
+    if [ "$LIB_EXT" = "dll" ]; then
         echo ""
         echo -e "${BLUE}=== Windows DLL Dependency Diagnostic ===${NC}"
         for nep in dist/*.nep; do
@@ -1117,13 +1117,29 @@ PYEOF
             tmp_dir=$(mktemp -d)
             unzip -q -o "$nep" -d "$tmp_dir" 2>/dev/null || continue
 
-            # Find extension DLL
+            # Find extension DLL (skip known dependency DLLs)
             ext_dll=$(find "$tmp_dir/binaries" -name "*.dll" ! -name "avcodec*" ! -name "avformat*" ! -name "avutil*" ! -name "swscale*" ! -name "swresample*" ! -name "avdevice*" ! -name "avfilter*" ! -name "onnxruntime*" 2>/dev/null | head -1)
 
             if [ -n "$ext_dll" ]; then
                 echo "  Extension: $(basename "$ext_dll")"
-                echo "  DLL Dependencies:"
-                dumpbin /dependents "$ext_dll" 2>/dev/null | grep -i "\.dll$" | sed 's/^/    /'
+                # Use PowerShell to run dumpbin
+                pwsh -NoProfile -Command "
+                    \$dll = '$ext_dll' -replace '\\\\','/'
+                    # Try dumpbin first
+                    \$dumpbin = Get-ChildItem 'C:\Program Files*\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+                    if (\$dumpbin) {
+                        Write-Host '  DLL Dependencies (dumpbin):'
+                        & \$dumpbin.FullName /dependents \$dll 2>&1 | Select-String '\.dll$' | ForEach-Object { Write-Host \"    \$(\$_.Line.Trim())\" }
+                    } else {
+                        # Fallback: use objdump from MinGW or strings
+                        Write-Host '  DLL Dependencies (strings fallback):'
+                        # Extract DLL names from the PE import table
+                        \$bytes = [System.IO.File]::ReadAllBytes(\$dll)
+                        \$text = [System.Text.Encoding]::ASCII.GetString(\$bytes)
+                        \$matches = [regex]::Matches(\$text, '[\w-]+\.dll')
+                        \$matches | ForEach-Object { \$_.Value } | Sort-Object -Unique | ForEach-Object { Write-Host \"    \$_\" }
+                    }
+                " 2>/dev/null
                 echo "  Bundled DLLs:"
                 find "$tmp_dir/binaries" -name "*.dll" -exec basename {} \; | sort | sed 's/^/    /'
             fi
