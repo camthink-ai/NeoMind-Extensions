@@ -4,6 +4,7 @@ name: Build .nep Packages V2
 # All extensions run in isolated processes with IPC communication
 # ABI Version: 3
 # Updated: usls 0.1.11 API compatibility
+# v2.7.1 version sync build
 
 on:
   push:
