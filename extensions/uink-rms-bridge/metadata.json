@@ -1,7 +1,7 @@
 {
   "id": "uink-rms-bridge",
   "name": "uink rms uridge",
-  "version": "0.1.0",
+  "version": "2.7.1",
   "description": "Bridge extension for Uink-RMS e-paper displays, providing device registration, telemetry collection, and image push capabilities",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
@@ -12,19 +12,19 @@
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/uink-rms-bridge",
   "builds": {
     "darwin-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.0/uink-rms-bridge-0.1.0-darwin_aarch64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/uink-rms-bridge-2.7.1-darwin_aarch64.nep"
     },
     "darwin-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.0/uink-rms-bridge-0.1.0-darwin_x86_64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/uink-rms-bridge-2.7.1-darwin_x86_64.nep"
     },
     "linux-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.0/uink-rms-bridge-0.1.0-linux_amd64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/uink-rms-bridge-2.7.1-linux_amd64.nep"
     },
     "linux-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.0/uink-rms-bridge-0.1.0-linux_arm64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/uink-rms-bridge-2.7.1-linux_arm64.nep"
     },
     "windows-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.0/uink-rms-bridge-0.1.0-windows_amd64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/uink-rms-bridge-2.7.1-windows_amd64.nep"
     }
   },
   "frontend": {
