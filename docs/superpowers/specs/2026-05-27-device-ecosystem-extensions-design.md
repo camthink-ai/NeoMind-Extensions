@@ -12,7 +12,7 @@ Three new NeoMind extensions to expand device connectivity beyond the platform's
 2. **lorawan-bridge** — LoRaWAN sensor gateway (ChirpStack/TTN integration)
 3. **homeassistant-bridge** — Home Assistant ecosystem connector (3000+ device integrations)
 
-These extensions address the "last mile" of device connectivity — protocols and ecosystems not covered by NeoMind's built-in device management.
+These extensions focus purely on **device data acquisition and control** — reading sensor data, writing control commands, and bridging devices into NeoMind's metric system.
 
 ## Common Architecture
 
@@ -369,7 +369,7 @@ Config schema:
 
 ### Purpose
 
-Connect NeoMind to Home Assistant, gaining access to 3000+ device integrations. Bidirectional communication: monitor/control HA entities from NeoMind, and inject NeoMind AI inference results as HA events for automation triggers.
+Connect NeoMind to Home Assistant, gaining access to 3000+ device integrations. Import HA entities (sensors, switches, lights, etc.) into NeoMind as devices with real-time state monitoring and remote control.
 
 ### Architecture
 
@@ -380,9 +380,8 @@ homeassistant-bridge (cdylib)
     ├── WebSocket client (tokio-tungstenite, host runtime)
     │   └── Real-time state_changed subscriptions
     ├── REST client (ureq, sync)
-    │   └── Service calls, entity queries, event fire
-    ├── Entity → NeoMind device mapping
-    └── NeoMind AI results → HA event bus
+    │   └── Service calls, entity queries
+    └── Entity → NeoMind device mapping
 ```
 
 ### HA API Integration
@@ -400,8 +399,6 @@ Home Assistant uses long-lived access tokens:
 | `/api/states` | GET | Get all entity states |
 | `/api/states/{entity_id}` | GET | Get specific entity state |
 | `/api/services/{domain}/{service}` | POST | Call service (turn_on, etc.) |
-| `/api/events` | GET | List event types |
-| `/api/events/{event_type}` | POST | Fire custom event |
 
 #### WebSocket API (via async `tokio-tungstenite`)
 
@@ -454,48 +451,9 @@ Key subscriptions:
 | `list_entities` | `{domain?}` | List HA entities (optionally filtered by domain) |
 | `get_state` | `{entity_id}` | Get entity current state |
 | `call_service` | `{domain, service, entity_id, service_data?}` | Call HA service |
-| `fire_event` | `{event_type, event_data?}` | Fire event on HA event bus |
-| `set_filters` | `{domains: [string], entity_patterns: [string], area_ids: [string]}` | Set entity import filters |
+| `set_filters` | `{domains: [string], entity_patterns: [string]}` | Set entity import filters |
 | `get_areas` | `{}` | List HA areas/rooms |
 | `get_status` | `{}` | HA connection status and stats |
-
-### AI → HA Event Injection
-
-NeoMind AI extensions (face-recognition, yolo-*) produce inference results. homeassistant-bridge fires these as HA events, enabling HA automations:
-
-```json
-// Event fired on HA event bus:
-{
-  "event_type": "neomind_ai_result",
-  "event_data": {
-    "extension_id": "face-recognition",
-    "device_id": "camera_front_door",
-    "result": {
-      "person_id": "zhang_san",
-      "confidence": 0.95
-    },
-    "timestamp": 1748352000000
-  }
-}
-```
-
-Users create HA automations:
-```yaml
-# HA automation example
-alias: "NeoMind: Auto-unlock for recognized person"
-trigger:
-  - platform: event
-    event_type: neomind_ai_result
-    event_data:
-      extension_id: face-recognition
-condition:
-  - condition: template
-    value_template: "{{ trigger.event.data.result.person_id == 'zhang_san' }}"
-action:
-  - service: lock.unlock
-    target:
-      entity_id: lock.front_door
-```
 
 ### Metrics
 
@@ -517,7 +475,6 @@ action:
 | `domains` | String | No | "sensor,light,switch" | Comma-separated domain filter |
 | `entity_patterns` | String | No | — | Comma-separated entity ID patterns |
 | `sync_interval` | Integer | No | 30 | Full state sync interval (seconds) |
-| `enable_ai_events` | Boolean | No | true | Forward NeoMind AI results to HA |
 
 ### Dependencies
 
@@ -542,7 +499,6 @@ ureq = { version = "3", features = ["json"] }
 - HA connection status
 - Monitored entity list grouped by domain
 - Quick controls (toggle switches, sliders for brightness/temperature)
-- AI event forwarding toggle
 - Last sync timestamp
 
 Config schema:
@@ -556,12 +512,8 @@ Config schema:
     "description": "Comma-separated HA domains to import",
     "default": "sensor,light,switch,climate,lock"
   },
-  "enableAiEvents": {
-    "type": "boolean",
-    "title": "Forward AI Results to HA",
-    "default": true
-  }
 }
+```
 ```
 
 ---
@@ -572,18 +524,17 @@ Config schema:
 |-------|-----------|-----------|-------|-----------|
 | 1 | modbus-bridge | Medium | Very High | Most requested industrial protocol; sync client avoids runtime issues |
 | 1 | lorawan-bridge | Medium-High | High | Unique long-range IoT capability; complements agriculture/smart city |
-| 2 | homeassistant-bridge | Medium | Very High | 3000+ device multiplier; AI ↔ automation unique value prop |
+| 2 | homeassistant-bridge | Medium | Very High | 3000+ device multiplier via HA ecosystem |
 
 ## Cross-Extension Integration
 
-These extensions are designed to work with existing NeoMind AI extensions:
+These extensions bring external device data into NeoMind, enriching the platform's dashboard and monitoring capabilities:
 
 | Combo | Value |
 |-------|-------|
-| modbus-bridge + yolo-device-inference | Monitor industrial equipment AND visual inspection |
-| lorawan-bridge + weather-forecast-v2 | Combine LoRa weather stations with forecast data |
-| homeassistant-bridge + face-recognition | Face recognition triggers HA automations (unlock doors) |
-| homeassistant-bridge + yolo-video-v2 | Object detection triggers HA scenes (intrusion → lights on) |
+| modbus-bridge + yolo-device-inference | Monitor industrial equipment data alongside visual inspection |
+| lorawan-bridge + weather-forecast-v2 | Compare LoRa weather station readings with forecast data |
+| homeassistant-bridge + stream-player | View HA camera feeds alongside sensor dashboards |
 
 ## File Structure
 
@@ -615,8 +566,8 @@ extensions/
 │   ├── Cargo.toml
 │   ├── src/
 │   │   ├── lib.rs
-│   │   ├── ws_client.rs      (WebSocket connection management)
-│   │   └── rest_client.rs    (REST API wrapper)
+│   │   ├── ws_client.rs      (WebSocket state subscription)
+│   │   └── rest_client.rs    (REST API calls)
 │   ├── metadata.json
 │   └── frontend/
 │       └── ...
