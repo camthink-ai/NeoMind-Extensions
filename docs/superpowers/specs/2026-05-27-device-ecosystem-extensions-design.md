@@ -42,6 +42,18 @@ Extensions are loaded as cdylib by NeoMind's extension runner. They cannot creat
 
 For lorawan-bridge and homeassistant-bridge, the extension will use `tokio::runtime::Handle::try_current()` to access the host's Tokio runtime. The neomind-extension-sdk already depends on Tokio for `RwLock`, so a runtime should be available.
 
+### Device Template & Auto-Registration
+
+All three extensions integrate with NeoMind's device management system:
+
+**Flow: Install extension → Configure connection → Devices auto-appear**
+
+1. **Template Registration**: On initialization, each extension registers `DeviceTypeTemplate`s for the device types it supports (e.g., "modbus_tcp_device", "lorawan_sensor", "ha_entity")
+2. **Auto-Discovery**: When the extension detects a new device (first Modbus response, first LoRaWAN uplink, HA entity sync), it auto-registers the device in NeoMind
+3. **Zero-config onboarding**: User only needs to configure the connection parameters (IP, broker URL, HA token). Device discovery and registration happens automatically.
+
+Each extension section below includes its device template definitions and auto-registration strategy.
+
 ---
 
 ## 1. modbus-bridge
@@ -59,8 +71,56 @@ modbus-bridge (cdylib)
     ├── tokio-modbus (sync feature — no Tokio runtime)
     ├── Register map (user-configured via JSON)
     ├── Polling loop (std::thread, not tokio)
-    └── register values → NeoMind metrics
+    ├── Device template registration (on init)
+    ├── Auto-discovery (scan slave IDs)
+    └── register values → NeoMind metrics + device data
 ```
+
+### Device Template
+
+Extension registers a generic `modbus_device` template on initialization. Each added device creates a NeoMind device instance with metrics derived from its register map.
+
+```json
+{
+  "device_type": "modbus_device",
+  "name": "Modbus Device",
+  "description": "Generic Modbus TCP/RTU device with configurable register mapping",
+  "categories": ["industrial", "sensor"],
+  "metrics": [
+    { "name": "connection", "description": "Connection status", "data_type": "String", "read_only": true },
+    { "name": "poll_errors", "description": "Poll error count", "data_type": "Integer", "read_only": true }
+  ],
+  "commands": [
+    { "name": "write_register", "description": "Write holding register" },
+    { "name": "write_coil", "description": "Write coil" }
+  ]
+}
+```
+
+User-defined registers are added as additional metrics on the device instance at registration time.
+
+### Auto-Registration Flow
+
+```
+User configures: IP/Serial + Slave ID + Register Map
+    ↓
+add_device command
+    ↓
+Extension tests connection (read register 0)
+    ↓ Success
+Register device in NeoMind with template + register-derived metrics
+    ↓
+Start polling loop
+    ↓
+Metrics auto-flow into NeoMind dashboards
+```
+
+**Simpler alternative**: Pre-built templates for common Modbus devices:
+- `modbus_power_meter` — 3-phase power meter (voltage, current, power, energy)
+- `modbus_env_sensor` — Temperature/humidity/CO2 sensor
+- `modbus_io_module` — Digital I/O module (relay inputs/outputs)
+
+Users select a template, enter IP and slave ID, device auto-registers.
 
 ### Commands
 
@@ -197,9 +257,55 @@ LoRaWAN Network Server (ChirpStack / TTN)
 lorawan-bridge (cdylib)
     ├── rumqttc (MQTT client to NS broker)
     ├── Payload decoders (Cayenne LPP + custom)
-    ├── Device auto-discovery from uplinks
-    └── decoded data → NeoMind metrics
+    ├── Device template registration (on init)
+    ├── Auto-discovery from uplinks (new device → auto-register)
+    └── decoded data → NeoMind metrics + device data
 ```
+
+### Device Template
+
+Extension registers a generic `lorawan_sensor` template. Each new device discovered from an uplink auto-creates a NeoMind device instance with metrics derived from the decoded payload.
+
+```json
+{
+  "device_type": "lorawan_sensor",
+  "name": "LoRaWAN Sensor",
+  "description": "LoRaWAN end device with auto-decoded payload",
+  "categories": ["iot", "sensor", "lorawan"],
+  "metrics": [
+    { "name": "rssi", "description": "Signal strength", "data_type": "Integer", "unit": "dBm", "read_only": true },
+    { "name": "snr", "description": "Signal-to-noise ratio", "data_type": "Float", "read_only": true },
+    { "name": "battery", "description": "Battery level", "data_type": "Integer", "unit": "%", "read_only": true },
+    { "name": "f_cnt", "description": "Frame counter", "data_type": "Integer", "read_only": true }
+  ],
+  "commands": [
+    { "name": "send_downlink", "description": "Send downlink payload to device" }
+  ]
+}
+```
+
+Decoded sensor fields (temperature, humidity, etc.) are added as additional metrics on the device instance at discovery time.
+
+### Auto-Registration Flow
+
+```
+User configures: NS type + broker URL + application ID
+    ↓
+Extension subscribes to NS uplink topics
+    ↓
+First uplink from unknown DevEUI arrives
+    ↓
+Auto-decode payload (Cayenne LPP or custom decoder)
+    ↓
+Auto-register device in NeoMind:
+  - Device ID: DevEUI
+  - Type: lorawan_sensor
+  - Metrics: rssi + snr + battery + decoded fields
+    ↓
+All subsequent uplinks → metrics auto-flow into NeoMind
+```
+
+**Key:** User only configures the NS connection. All LoRa devices in that application auto-appear in NeoMind within seconds of their first uplink.
 
 ### Network Server Support
 
@@ -383,8 +489,108 @@ homeassistant-bridge (cdylib)
     │   └── Real-time state_changed subscriptions
     ├── REST client (ureq, sync)
     │   └── Service calls, entity queries
-    └── Entity → NeoMind device mapping
+    ├── Device template registration (on init)
+    ├── Auto-sync HA entities → NeoMind devices
+    └── Entity state changes → NeoMind metrics
 ```
+
+### Device Templates
+
+Extension registers templates per HA domain. Each HA entity auto-creates a NeoMind device instance matching its domain type.
+
+```json
+[
+  {
+    "device_type": "ha_sensor",
+    "name": "HA Sensor",
+    "description": "Home Assistant sensor entity",
+    "categories": ["home-assistant", "sensor"],
+    "metrics": [
+      { "name": "value", "description": "Sensor value", "data_type": "Float", "read_only": true },
+      { "name": "battery", "description": "Battery level", "data_type": "Integer", "unit": "%", "read_only": true }
+    ]
+  },
+  {
+    "device_type": "ha_switch",
+    "name": "HA Switch",
+    "description": "Home Assistant switch/plug entity",
+    "categories": ["home-assistant", "control"],
+    "metrics": [
+      { "name": "state", "description": "Switch state", "data_type": "String", "read_only": true }
+    ],
+    "commands": [
+      { "name": "turn_on", "description": "Turn on" },
+      { "name": "turn_off", "description": "Turn off" }
+    ]
+  },
+  {
+    "device_type": "ha_light",
+    "name": "HA Light",
+    "description": "Home Assistant light entity",
+    "categories": ["home-assistant", "control"],
+    "metrics": [
+      { "name": "state", "description": "Light state", "data_type": "String", "read_only": true },
+      { "name": "brightness", "description": "Brightness", "data_type": "Integer", "unit": "%", "read_only": true }
+    ],
+    "commands": [
+      { "name": "turn_on", "description": "Turn on" },
+      { "name": "turn_off", "description": "Turn off" },
+      { "name": "set_brightness", "description": "Set brightness" }
+    ]
+  },
+  {
+    "device_type": "ha_climate",
+    "name": "HA Climate",
+    "description": "Home Assistant climate/HVAC entity",
+    "categories": ["home-assistant", "control"],
+    "metrics": [
+      { "name": "temperature", "description": "Current temperature", "data_type": "Float", "unit": "°C", "read_only": true },
+      { "name": "target_temperature", "description": "Target temperature", "data_type": "Float", "unit": "°C", "read_only": false }
+    ],
+    "commands": [
+      { "name": "set_temperature", "description": "Set target temperature" }
+    ]
+  },
+  {
+    "device_type": "ha_lock",
+    "name": "HA Lock",
+    "description": "Home Assistant lock entity",
+    "categories": ["home-assistant", "security"],
+    "metrics": [
+      { "name": "state", "description": "Lock state", "data_type": "String", "read_only": true }
+    ],
+    "commands": [
+      { "name": "lock", "description": "Lock" },
+      { "name": "unlock", "description": "Unlock" }
+    ]
+  }
+]
+```
+
+Domain filter determines which templates are registered. Only enabled domains (e.g., sensor, light, switch) create templates and sync entities.
+
+### Auto-Registration Flow
+
+```
+User configures: HA URL + access token + domain filter
+    ↓
+Extension connects via WebSocket + REST
+    ↓
+Register templates for enabled domains
+    ↓
+Fetch all entity states via REST (GET /api/states)
+    ↓
+For each entity matching domain filter:
+  - Auto-register as NeoMind device
+  - Device ID: ha_{entity_id} (e.g. ha_light_living_room)
+  - Type: ha_{domain} (e.g. ha_light)
+    ↓
+Subscribe to WebSocket state_changed events
+    ↓
+All state changes → metrics auto-flow into NeoMind
+```
+
+**Key:** User enters HA URL + token + selects domains. All matching entities auto-appear as NeoMind devices instantly.
 
 ### HA API Integration
 
