@@ -1,0 +1,28 @@
+[package]
+name = "homeassistant-bridge"
+version = "2.7.1"
+edition = "2021"
+authors = ["NeoMind Team"]
+license = "Apache-2.0"
+description = "Home Assistant bridge for NeoMind — import 3000+ HA entity integrations as devices"
+
+[lib]
+name = "neomind_extension_homeassistant_bridge"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neomind-extension-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = "0.1"
+chrono = "0.4"
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3", features = ["sink"] }
+tokio = { version = "1", features = ["rt", "sync"] }
+ureq = { version = "3", features = ["json"] }
+
+[features]
+default = []
+native = []
+wasm = []

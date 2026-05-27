@@ -1,0 +1,32 @@
+[package]
+name = "modbus-bridge"
+version = "2.7.1"
+edition = "2021"
+authors = ["NeoMind Team"]
+license = "Apache-2.0"
+description = "Modbus TCP/RTU bridge extension for NeoMind — connect PLCs, power meters, sensors, and industrial devices"
+
+[lib]
+name = "neomind_extension_modbus_bridge"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neomind-extension-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = "0.1"
+chrono = "0.4"
+
+# Modbus — use sync features to avoid Tokio runtime in cdylib
+tokio-modbus = { version = "0.17", default-features = false, features = ["tcp-sync", "rtu-sync"] }
+# Serial port for RTU mode (required by tokio-modbus rtu-sync)
+tokio-serial = "5.4"
+
+# Tokio minimal — required by SDK's FFI macro (RwLock wrapper)
+tokio = { version = "1", features = ["rt", "sync", "macros"] }
+
+[features]
+default = []
+native = []
+wasm = []

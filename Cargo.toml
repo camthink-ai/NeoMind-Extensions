@@ -11,6 +11,9 @@ members = [
     "extensions/stream-player",
     "extensions/wasm-demo",
     "extensions/uink-rms-bridge",
+    "extensions/modbus-bridge",
+    "extensions/lorawan-bridge",
+    "extensions/homeassistant-bridge",
     # "extensions/final-test",
     # "extensions/cli-test-ext",
 ]
