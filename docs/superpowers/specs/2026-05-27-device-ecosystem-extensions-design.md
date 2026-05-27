@@ -14,6 +14,8 @@ Three new NeoMind extensions to expand device connectivity beyond the platform's
 
 These extensions focus purely on **device data acquisition and control** — reading sensor data, writing control commands, and bridging devices into NeoMind's metric system.
 
+**Design principle:** Extensions are data providers only. All cross-device automation, event correlation, and workflow logic belongs in NeoMind's built-in rule engine.
+
 ## Common Architecture
 
 ### NeoMind Extension Standards
@@ -526,15 +528,9 @@ Config schema:
 | 1 | lorawan-bridge | Medium-High | High | Unique long-range IoT capability; complements agriculture/smart city |
 | 2 | homeassistant-bridge | Medium | Very High | 3000+ device multiplier via HA ecosystem |
 
-## Cross-Extension Integration
+## Design Principle
 
-These extensions bring external device data into NeoMind, enriching the platform's dashboard and monitoring capabilities:
-
-| Combo | Value |
-|-------|-------|
-| modbus-bridge + yolo-device-inference | Monitor industrial equipment data alongside visual inspection |
-| lorawan-bridge + weather-forecast-v2 | Compare LoRa weather station readings with forecast data |
-| homeassistant-bridge + stream-player | View HA camera feeds alongside sensor dashboards |
+Extensions are **data providers** — they bring external device data into NeoMind and expose control commands. All cross-device automation (e.g., "LoRa sensor threshold exceeded → trigger Modbus actuator") is handled by NeoMind's built-in rule engine, not by extensions.
 
 ## File Structure
 
