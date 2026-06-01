@@ -29,6 +29,9 @@ This repository contains officially maintained extensions for the **NeoMind exte
 | OCR Device Inference | `ocr-device-inference` | AI/ML | OcrDeviceCard | PP-OCRv4 text recognition on device images |
 | Stream Player | `stream-player` | Media | StreamPlayerCard | RTSP/RTMP/HLS video player via FFmpeg |
 | Uink-RMS Bridge | `uink-rms-bridge` | Device | DisplayEditorCard | E-paper display content push & management |
+| Home Assistant Bridge | `homeassistant-bridge` | IoT Bridge | — | Bidirectional HA entity sync via REST/WebSocket |
+| LoRaWAN Bridge | `lorawan-bridge` | IoT Bridge | — | LoRaWAN NS (ChirpStack/TTN) MQTT bridge with payload decoding |
+| Modbus Bridge | `modbus-bridge` | IoT Bridge | — | Modbus TCP/RTU device polling and register read/write |
 | WASM Demo | `wasm-demo` | Demo | — | Counter demo for WASM target |
 
 > **Latest Release**: See [GitHub Releases](https://github.com/camthink-ai/NeoMind-Extensions/releases)
@@ -136,6 +139,9 @@ NeoMind-Extensions/
 │   ├── ocr-device-inference/
 │   ├── stream-player/
 │   ├── uink-rms-bridge/
+│   ├── homeassistant-bridge/
+│   ├── lorawan-bridge/
+│   ├── modbus-bridge/
 │   ├── wasm-demo/
 │   └── index.json               # Marketplace index (auto-generated)
 ├── scripts/
