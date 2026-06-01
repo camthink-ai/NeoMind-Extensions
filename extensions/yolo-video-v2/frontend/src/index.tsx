@@ -1192,6 +1192,12 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
                 if (msg.metadata?.detections) {
                   setDetections(msg.metadata.detections)
                 }
+                if (msg.metadata?.roi_stats) {
+                  setRoiStats(msg.metadata.roi_stats)
+                }
+                if (msg.metadata?.line_stats) {
+                  setLineStats(msg.metadata.line_stats)
+                }
                 if (msg.metadata?.capture_events && msg.metadata.capture_events.length > 0) {
                   setCaptureEvents(prev => [...msg.metadata.capture_events, ...prev].slice(0, 10))
                 }
