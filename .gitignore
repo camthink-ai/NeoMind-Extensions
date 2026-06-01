@@ -118,3 +118,8 @@ releases/
 *.backup
 *.backup2
 .claude/scheduled_tasks.lock
+tests/simulators/ha_mock_server.py
+tests/simulators/lorawan_mqtt.py
+tests/simulators/modbus_slave.py
+tests/simulators/README.md
+tests/simulators/requirements.txt

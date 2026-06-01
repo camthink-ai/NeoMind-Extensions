@@ -17,6 +17,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 async-trait = "0.1"
 chrono = "0.4"
+parking_lot = "0.12"
 
 # Modbus — use sync features to avoid Tokio runtime in cdylib
 tokio-modbus = { version = "0.17", default-features = false, features = ["tcp-sync", "rtu-sync"] }
@@ -25,6 +26,10 @@ tokio-serial = "5.4"
 
 # Tokio minimal — required by SDK's FFI macro (RwLock wrapper)
 tokio = { version = "1", features = ["rt", "sync", "macros"] }
+
+[dev-dependencies]
+tokio-modbus = { version = "0.17", default-features = false, features = ["tcp-server"] }
+tokio = { version = "1", features = ["rt", "net", "macros", "time"] }
 
 [features]
 default = []

@@ -156,6 +156,9 @@ V2_EXTENSIONS=(
     "stream-player"
     "wasm-demo"
     "uink-rms-bridge"
+    "homeassistant-bridge"
+    "lorawan-bridge"
+    "modbus-bridge"
 )
 
 # Filter to single extension if specified

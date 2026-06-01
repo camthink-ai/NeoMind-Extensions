@@ -1,29 +1,28 @@
-use crate::types::{RegisterConfig, RegisterDataType, RegisterValue};
+use crate::types::{RegisterConfig, RegisterDataType, RegisterValue, WordOrder};
+
+#[cfg(test)]
+use crate::types::RegisterType;
 
 pub fn decode_register(config: &RegisterConfig, words: &[u16]) -> RegisterValue {
     let raw_value = match config.data_type {
-        RegisterDataType::Uint16 => words.get(0).copied().unwrap_or(0) as f64,
+        RegisterDataType::Uint16 => words.first().copied().unwrap_or(0) as f64,
         RegisterDataType::Int16 => {
-            let v = words.get(0).copied().unwrap_or(0) as i16;
+            let v = words.first().copied().unwrap_or(0) as i16;
             v as f64
         }
         RegisterDataType::Uint32 => {
-            let hi = words.get(0).copied().unwrap_or(0) as u32;
-            let lo = words.get(1).copied().unwrap_or(0) as u32;
-            ((hi << 16) | lo) as f64
+            let combined = combine_words(words, &config.word_order);
+            combined as f64
         }
         RegisterDataType::Int32 => {
-            let hi = words.get(0).copied().unwrap_or(0) as u32;
-            let lo = words.get(1).copied().unwrap_or(0) as u32;
-            ((hi << 16) | lo) as i32 as f64
+            let combined = combine_words(words, &config.word_order);
+            combined as i32 as f64
         }
         RegisterDataType::Float32 => {
-            let hi = words.get(0).copied().unwrap_or(0) as u32;
-            let lo = words.get(1).copied().unwrap_or(0) as u32;
-            let bits = (hi << 16) | lo;
-            f32::from_bits(bits) as f64
+            let combined = combine_words(words, &config.word_order);
+            f32::from_bits(combined) as f64
         }
-        RegisterDataType::Bool => (words.get(0).copied().unwrap_or(0) != 0) as u8 as f64,
+        RegisterDataType::Bool => (words.first().copied().unwrap_or(0) != 0) as u8 as f64,
     };
 
     let value = if config.scale != 0.0 {
@@ -40,6 +39,18 @@ pub fn decode_register(config: &RegisterConfig, words: &[u16]) -> RegisterValue 
     }
 }
 
+/// Combine two 16-bit words into a 32-bit value according to the configured word order.
+/// Big (default): first word = hi, second word = lo (standard Modbus).
+/// Little: first word = lo, second word = hi (some PLCs).
+fn combine_words(words: &[u16], order: &WordOrder) -> u32 {
+    let first = words.first().copied().unwrap_or(0) as u32;
+    let second = words.get(1).copied().unwrap_or(0) as u32;
+    match order {
+        WordOrder::Big => (first << 16) | second,
+        WordOrder::Little => (second << 16) | first,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -52,6 +63,8 @@ mod tests {
             data_type,
             scale,
             unit: String::new(),
+            word_order: WordOrder::Big,
+            register_type: RegisterType::Holding,
         }
     }
 

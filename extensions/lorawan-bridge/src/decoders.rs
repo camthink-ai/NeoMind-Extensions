@@ -14,6 +14,22 @@ const LPP_HUMIDITY: u8 = 0x68;
 const LPP_BAROMETER: u8 = 0x73;
 const LPP_ILLUMINANCE: u8 = 0x65;
 
+/// Data byte length for known Cayenne LPP type codes.
+/// Used to skip unknown types gracefully instead of breaking.
+const fn lpp_data_length(type_code: u8) -> Option<usize> {
+    match type_code {
+        // 1-byte types
+        0x00 | 0x01 | 0x68 => Some(1),
+        // 2-byte types
+        0x02 | 0x03 | 0x04 | 0x05 | 0x65 | 0x67 | 0x73 => Some(2),
+        // GPS (9 bytes: lat 3 + lon 3 + alt 3)
+        0x06 => Some(9),
+        // 4-byte types
+        0x07 | 0x08 => Some(4),
+        _ => None,
+    }
+}
+
 /// Decode a Cayenne LPP payload into a list of named fields.
 ///
 /// Cayenne LPP format per data point: `[channel, type_code, data_bytes...]`
@@ -39,7 +55,7 @@ pub fn decode_cayenne_lpp(payload: &[u8]) -> Vec<DecodedField> {
                 }
             }
             LPP_HUMIDITY => {
-                if pos + 1 <= payload.len() {
+                if pos < payload.len() {
                     let raw = payload[pos];
                     fields.push(DecodedField {
                         name: "humidity".to_string(),
@@ -83,7 +99,7 @@ pub fn decode_cayenne_lpp(payload: &[u8]) -> Vec<DecodedField> {
                 }
             }
             LPP_DIGITAL_INPUT => {
-                if pos + 1 <= payload.len() {
+                if pos < payload.len() {
                     let raw = payload[pos];
                     fields.push(DecodedField {
                         name: "digital_input".to_string(),
@@ -94,7 +110,7 @@ pub fn decode_cayenne_lpp(payload: &[u8]) -> Vec<DecodedField> {
                 }
             }
             LPP_DIGITAL_OUTPUT => {
-                if pos + 1 <= payload.len() {
+                if pos < payload.len() {
                     let raw = payload[pos];
                     fields.push(DecodedField {
                         name: "digital_output".to_string(),
@@ -104,9 +120,44 @@ pub fn decode_cayenne_lpp(payload: &[u8]) -> Vec<DecodedField> {
                     pos += 1;
                 }
             }
+            0x06 => {
+                // GPS Location: 9 bytes — lat 3 + lon 3 + alt 3
+                // Each value is a signed 24-bit integer.
+                if pos + 9 <= payload.len() {
+                    let lat_raw = sign_extend_24(payload[pos], payload[pos + 1], payload[pos + 2]);
+                    let lon_raw = sign_extend_24(payload[pos + 3], payload[pos + 4], payload[pos + 5]);
+                    let alt_raw = sign_extend_24(payload[pos + 6], payload[pos + 7], payload[pos + 8]);
+                    fields.push(DecodedField {
+                        name: "latitude".to_string(),
+                        value: lat_raw as f64 * 0.0001,
+                        unit: "\u{00b0}".to_string(),
+                    });
+                    fields.push(DecodedField {
+                        name: "longitude".to_string(),
+                        value: lon_raw as f64 * 0.0001,
+                        unit: "\u{00b0}".to_string(),
+                    });
+                    fields.push(DecodedField {
+                        name: "altitude".to_string(),
+                        value: alt_raw as f64 * 0.01,
+                        unit: "m".to_string(),
+                    });
+                    pos += 9;
+                }
+            }
             _ => {
-                // Unknown type – skip (cannot determine data length)
-                break;
+                // Unknown type – skip over its data bytes if length is known
+                if let Some(data_len) = lpp_data_length(type_code) {
+                    if pos + data_len <= payload.len() {
+                        pos += data_len;
+                    } else {
+                        // Not enough bytes remaining; stop parsing
+                        break;
+                    }
+                } else {
+                    // Truly unknown type with unknown length; stop parsing
+                    break;
+                }
             }
         }
     }
@@ -182,6 +233,13 @@ pub fn decode_custom(payload: &[u8], fields: &[CustomDecoderField]) -> Vec<Decod
     result
 }
 
+/// Sign-extend a 24-bit big-endian value to i32.
+/// Cayenne LPP GPS fields use signed 24-bit integers.
+fn sign_extend_24(b0: u8, b1: u8, b2: u8) -> i32 {
+    let sign = if b0 & 0x80 != 0 { 0xFF } else { 0x00 };
+    i32::from_be_bytes([sign, b0, b1, b2])
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -248,6 +306,30 @@ mod tests {
     fn test_cayenne_empty_payload() {
         let fields = decode_cayenne_lpp(&[]);
         assert!(fields.is_empty());
+    }
+
+    #[test]
+    fn test_cayenne_gps() {
+        // Channel 1, GPS type 0x06, 9 bytes
+        // Cayenne LPP GPS: signed 24-bit values, lat/lon scale 0.0001°, alt scale 0.01 m
+        // Positive lat: 0x001000 = 4096 => 0.4096°
+        // Negative lon: 0xFFF000 as signed 24-bit = -4096 => -0.4096°
+        // Positive alt: 0x000100 = 256 => 2.56 m
+        let payload: Vec<u8> = vec![
+            0x01,             // channel 1
+            0x06,             // GPS type
+            0x00, 0x10, 0x00, // lat = +4096 => 0.4096°
+            0xFF, 0xF0, 0x00, // lon = -4096 (signed 24-bit) => -0.4096°
+            0x00, 0x01, 0x00, // alt = +256 => 2.56 m
+        ];
+        let fields = decode_cayenne_lpp(&payload);
+        assert_eq!(fields.len(), 3);
+        assert_eq!(fields[0].name, "latitude");
+        assert!((fields[0].value - 0.4096).abs() < 1e-9);
+        assert_eq!(fields[1].name, "longitude");
+        assert!((fields[1].value - (-0.4096)).abs() < 1e-9);
+        assert_eq!(fields[2].name, "altitude");
+        assert!((fields[2].value - 2.56).abs() < 1e-9);
     }
 
     #[test]

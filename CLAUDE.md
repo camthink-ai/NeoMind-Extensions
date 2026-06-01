@@ -153,6 +153,9 @@ NeoMind-Extensions/
 │   ├── image-analyzer-v2/
 │   ├── yolo-video-v2/
 │   ├── yolo-device-inference/
+│   ├── homeassistant-bridge/   # Home Assistant entity bridge
+│   ├── lorawan-bridge/        # LoRaWAN sensor bridge (ChirpStack/TTN)
+│   ├── modbus-bridge/         # Modbus TCP/RTU device bridge
 │   └── wasm-demo/
 ├── scripts/
 │   ├── update-versions.sh  # Generate all JSON files
@@ -467,6 +470,41 @@ npm run build
 ### Marketplace parse_error
 - Check `index.json` syntax with `jq . extensions/index.json`
 - Ensure `components` is `["WeatherCard"]` not `[{...}]`
+
+## Bridge Extensions
+
+Three IoT bridge extensions connect external systems into NeoMind's device model. Each auto-registers discovered devices and exports per-device metrics via `CapabilityContext.invoke_capability()`.
+
+### homeassistant-bridge
+
+Imports Home Assistant entities (sensor, light, switch, climate, lock, etc.) as NeoMind devices.
+
+- **Dual-channel**: REST (ureq v2 sync) for initial sync + service calls, WebSocket (tokio-tungstenite) for real-time state_changed events
+- **Auto-discovery**: Fetches all entities from `GET /api/states`, filters by domain and entity patterns
+- **Control**: `call_service` command forwards to `POST /api/services/{domain}/{service}`
+- **Resilience**: WebSocket auto-reconnect with exponential backoff (1s→60s), auth failure stops after 5 retries, REST resync on WS reconnection
+- **Known limitation**: `get_areas` returns a helpful error — HA areas are only available via WebSocket API, not REST
+
+### lorawan-bridge
+
+Bridges LoRaWAN Network Servers (ChirpStack v3/v4, TTN v3) via MQTT into NeoMind.
+
+- **MQTT uplink listener**: `rumqttc::AsyncClient` with automatic resubscription on reconnect
+- **Payload decoders**: Cayenne LPP (temperature, humidity, barometer, illuminance, GPS, digital I/O, analog) + custom binary decoder (uint8/16/32, int16/32 with scale)
+- **Multi-NS support**: `chirpstack` (v3, top-level `devEui`), `chirpstack_v4` (nested `deviceInfo.devEui`, Bearer auth), `ttn` (v3 API format)
+- **Downlink**: Sync HTTP via ureq to NS REST/gRPC API, with FPort validation (1-223 only, per LoRaWAN spec)
+- **Resilience**: MQTT error backoff (500ms→30s), subscription resync on ConnAck
+
+### modbus-bridge
+
+Connects Modbus TCP/RTU devices (PLCs, power meters, sensors) with background polling.
+
+- **Sync client**: `tokio-modbus` sync features (avoids Tokio runtime issues in cdylib), polling on dedicated `std::thread`
+- **Register types**: Holding (FC03), Input (FC04), Coil (FC01), Discrete Input (FC02)
+- **Data types**: uint16, int16, uint32, int32, float32, bool — with configurable scale, unit, and word order (big/little endian)
+- **On-demand commands**: read_registers, write_register, write_registers, write_coil, write_coils — with protocol limit validation
+- **Polling validation**: Register count limits (125 for registers, 2000 for coils), address+count overflow check (≤65535)
+- **Connection**: Persistent TCP with auto-reconnect on failure, configurable per-device poll interval and timeout
 
 ## Related Projects
 

@@ -4,7 +4,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NsType {
+    /// ChirpStack v3 (and earlier) — top-level `devEui` in MQTT uplink JSON.
     Chirpstack,
+    /// ChirpStack v4 — `deviceInfo.devEui` nested in MQTT uplink JSON,
+    /// uses Bearer token auth, and gRPC-gateway for downlink.
+    ChirpstackV4,
     Ttn,
 }
 
@@ -82,6 +86,7 @@ pub struct LoRaDevice {
     pub snr: f64,
     pub battery: Option<u8>,
     pub f_cnt: u32,
+    pub f_port: u8,
     pub last_seen: i64,
     pub decoder_type: DecoderType,
     pub custom_decoder: Option<Vec<CustomDecoderField>>,

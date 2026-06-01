@@ -12,6 +12,41 @@ pub struct RegisterConfig {
     pub scale: f64,
     #[serde(default)]
     pub unit: String,
+    /// Word order for multi-register types (float32, int32, uint32).
+    /// "big" = hi word first (default, Modbus standard),
+    /// "little" = lo word first (some PLCs).
+    #[serde(default = "default_word_order")]
+    pub word_order: WordOrder,
+    /// Register type: "holding" (FC03, default), "input" (FC04),
+    /// "coil" (FC01), "discrete_input" (FC02).
+    #[serde(default = "default_register_type")]
+    pub register_type: RegisterType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum WordOrder {
+    #[default]
+    Big,
+    Little,
+}
+
+fn default_word_order() -> WordOrder {
+    WordOrder::Big
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum RegisterType {
+    #[default]
+    Holding,
+    Input,
+    Coil,
+    DiscreteInput,
+}
+
+fn default_register_type() -> RegisterType {
+    RegisterType::Holding
 }
 
 fn default_count() -> u16 {

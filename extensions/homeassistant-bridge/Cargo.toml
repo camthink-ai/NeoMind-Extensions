@@ -17,10 +17,14 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 async-trait = "0.1"
 chrono = "0.4"
+parking_lot = "0.12"
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3", features = ["sink"] }
 tokio = { version = "1", features = ["rt", "sync"] }
-ureq = { version = "3", features = ["json"] }
+ureq = { version = "2", features = ["json"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "net", "macros", "time"] }
 
 [features]
 default = []

@@ -3,6 +3,12 @@
 //! Bridges Home Assistant into NeoMind, importing 3000+ HA entity integrations
 //! as devices. Supports real-time state updates via WebSocket and command
 //! execution (turn on/off lights, switches, climate, locks, etc.).
+//!
+//! # Architecture
+//!
+//! Uses sync HTTP client (ureq) to avoid Tokio runtime issues in dynamic libraries.
+//! parking_lot::RwLock is used for the shared entity map (non-async, no .await needed).
+//! Device template and device registration use CapabilityContext.invoke_capability().
 
 mod types;
 mod rest_client;
@@ -10,39 +16,55 @@ mod ws_client;
 
 use neomind_extension_sdk::{
     async_trait, json,
-    Extension, ExtensionMetadata, ExtensionError, ExtensionMetricValue,
+    CapabilityContext, Extension, ExtensionMetadata, ExtensionError, ExtensionMetricValue,
     MetricDescriptor, ExtensionCommand, MetricDataType, ParameterDefinition,
     ParamMetricValue, Result,
 };
-use std::collections::HashMap;
+use parking_lot::RwLock;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 
-use types::{HaConfig, HaEntity};
+use types::{HaConfig, HaEntity, entity_matches_patterns};
 
 // ============================================================================
 // Extension Struct
 // ============================================================================
 
 pub struct HomeAssistantBridgeExtension {
-    rest_client: std::sync::RwLock<Option<rest_client::HaRestClient>>,
+    rest_client: RwLock<Option<rest_client::HaRestClient>>,
     entities: Arc<RwLock<HashMap<String, HaEntity>>>,
     running: Arc<AtomicBool>,
-    config: std::sync::RwLock<Option<HaConfig>>,
+    config: RwLock<Option<HaConfig>>,
     total_commands: AtomicI64,
     connected: Arc<AtomicBool>,
+    /// 0 = template not registered, 1 = registered
+    template_registered: AtomicI64,
+    /// Timestamp (epoch seconds) of last full REST resync
+    last_full_sync: AtomicI64,
+    /// Set of entity IDs already registered with NeoMind (avoids repeated device_register calls)
+    registered_entities: RwLock<HashSet<String>>,
+    /// Shared REST client for WS reconnection resync
+    ws_rest_client: Arc<RwLock<Option<rest_client::HaRestClient>>>,
+    /// Handle for the WebSocket background task (to abort old one on reconnect)
+    ws_task_handle: RwLock<Option<JoinHandle<()>>>,
 }
 
 impl HomeAssistantBridgeExtension {
     pub fn new() -> Self {
         Self {
-            rest_client: std::sync::RwLock::new(None),
+            rest_client: RwLock::new(None),
             entities: Arc::new(RwLock::new(HashMap::new())),
             running: Arc::new(AtomicBool::new(false)),
-            config: std::sync::RwLock::new(None),
+            config: RwLock::new(None),
             total_commands: AtomicI64::new(0),
             connected: Arc::new(AtomicBool::new(false)),
+            template_registered: AtomicI64::new(0),
+            last_full_sync: AtomicI64::new(0),
+            registered_entities: RwLock::new(HashSet::new()),
+            ws_rest_client: Arc::new(RwLock::new(None)),
+            ws_task_handle: RwLock::new(None),
         }
     }
 }
@@ -114,6 +136,17 @@ impl Extension for HomeAssistantBridgeExtension {
                     default_value: Some(ParamMetricValue::Integer(30)),
                     min: Some(5.0),
                     max: Some(3600.0),
+                    options: Vec::new(),
+                },
+                ParameterDefinition {
+                    name: "entityPatterns".to_string(),
+                    display_name: "Entity Patterns".to_string(),
+                    description: "Comma-separated glob patterns to filter entities (e.g. sensor.living_room*,light.*)".to_string(),
+                    param_type: MetricDataType::String,
+                    required: false,
+                    default_value: None,
+                    min: None,
+                    max: None,
                     options: Vec::new(),
                 },
             ])
@@ -200,6 +233,17 @@ impl Extension for HomeAssistantBridgeExtension {
                         param_type: MetricDataType::Integer,
                         required: false,
                         default_value: Some(ParamMetricValue::Integer(30)),
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "entityPatterns".to_string(),
+                        display_name: "Entity Patterns".to_string(),
+                        description: "Comma-separated glob patterns to filter entities".to_string(),
+                        param_type: MetricDataType::String,
+                        required: false,
+                        default_value: None,
                         min: None,
                         max: None,
                         options: Vec::new(),
@@ -362,6 +406,26 @@ impl Extension for HomeAssistantBridgeExtension {
                 parameter_groups: Vec::new(),
             },
             ExtensionCommand {
+                name: "get_areas".to_string(),
+                display_name: "Get Areas".to_string(),
+                description: "List all areas configured in Home Assistant".to_string(),
+                payload_template: String::new(),
+                parameters: Vec::new(),
+                fixed_values: Default::default(),
+                samples: vec![json!({})],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "refresh".to_string(),
+                display_name: "Refresh Entities".to_string(),
+                description: "Manually trigger a full entity resync from Home Assistant (no reconnect needed)".to_string(),
+                payload_template: String::new(),
+                parameters: Vec::new(),
+                fixed_values: Default::default(),
+                samples: vec![json!({})],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
                 name: "configure".to_string(),
                 display_name: "Configure".to_string(),
                 description: "Apply configuration changes".to_string(),
@@ -389,7 +453,9 @@ impl Extension for HomeAssistantBridgeExtension {
             "call_service" => self.cmd_call_service(args).await,
             "set_filters" => self.cmd_set_filters(args).await,
             "get_status" => self.cmd_get_status().await,
-            "configure" => Ok(json!({"status": "ok"})),
+            "get_areas" => self.cmd_get_areas().await,
+            "refresh" => self.cmd_refresh().await,
+            "configure" => Ok(json!({"status": "ok", "message": "Configuration saved. Run 'connect' command to establish connection and sync entities."})),
             _ => Err(ExtensionError::CommandNotFound(command.to_string())),
         }
     }
@@ -397,6 +463,21 @@ impl Extension for HomeAssistantBridgeExtension {
     fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
         let now = chrono::Utc::now().timestamp_millis();
         let mut metrics = Vec::new();
+
+        // Auto-sync: register template and periodically resync via REST
+        let configured = self.config.read().is_some();
+        if configured {
+            let now_secs = chrono::Utc::now().timestamp();
+            let sync_interval = self.config.read().as_ref().map(|c| c.sync_interval as i64).unwrap_or(30);
+            let should_sync = self.template_registered.load(Ordering::SeqCst) == 0
+                || (now_secs - self.last_full_sync.load(Ordering::SeqCst)) >= sync_interval;
+
+            if should_sync {
+                if let Err(e) = self.auto_sync() {
+                    eprintln!("[ha-bridge] Auto-sync failed: {}", e);
+                }
+            }
+        }
 
         // Connection status
         metrics.push(ExtensionMetricValue {
@@ -409,8 +490,8 @@ impl Extension for HomeAssistantBridgeExtension {
             timestamp: now,
         });
 
-        // Entity count - use try_read to avoid blocking sync context
-        let entity_count = self.entities.try_read().map(|e| e.len()).unwrap_or(0);
+        // Entity count
+        let entity_count = self.entities.read().len();
         metrics.push(ExtensionMetricValue {
             name: "ha.entities_count".to_string(),
             value: ParamMetricValue::Integer(entity_count as i64),
@@ -425,28 +506,27 @@ impl Extension for HomeAssistantBridgeExtension {
         });
 
         // Per-entity metrics: ha.{entity_id}.value, ha.{entity_id}.battery
-        if let Ok(entities) = self.entities.try_read() {
-            for (entity_id, entity) in entities.iter() {
-                // Sanitize entity_id for metric name: replace dots and hyphens with underscores
-                let safe_id = entity_id.replace('.', "_").replace('-', "_");
+        let entities = self.entities.read();
+        for (entity_id, entity) in entities.iter() {
+            // Sanitize entity_id for metric name: replace dots and hyphens with underscores
+            let safe_id = entity_id.replace(['.', '-'], "_");
 
-                // Numeric value metric (if available)
-                if let Some(val) = entity.value {
-                    metrics.push(ExtensionMetricValue {
-                        name: format!("ha.{}.value", safe_id),
-                        value: ParamMetricValue::Float(val),
-                        timestamp: now,
-                    });
-                }
+            // Numeric value metric (if available)
+            if let Some(val) = entity.value {
+                metrics.push(ExtensionMetricValue {
+                    name: format!("ha.{}.value", safe_id),
+                    value: ParamMetricValue::Float(val),
+                    timestamp: now,
+                });
+            }
 
-                // Battery metric (if available)
-                if let Some(battery) = entity.battery {
-                    metrics.push(ExtensionMetricValue {
-                        name: format!("ha.{}.battery", safe_id),
-                        value: ParamMetricValue::Integer(battery as i64),
-                        timestamp: now,
-                    });
-                }
+            // Battery metric (if available)
+            if let Some(battery) = entity.battery {
+                metrics.push(ExtensionMetricValue {
+                    name: format!("ha.{}.battery", safe_id),
+                    value: ParamMetricValue::Integer(battery as i64),
+                    timestamp: now,
+                });
             }
         }
 
@@ -473,6 +553,16 @@ impl Extension for HomeAssistantBridgeExtension {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(30);
 
+            let patterns_str = config
+                .get("entityPatterns")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let entity_patterns: Vec<String> = patterns_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+
             let ha_config = HaConfig {
                 ha_url: config
                     .get("haUrl")
@@ -486,9 +576,12 @@ impl Extension for HomeAssistantBridgeExtension {
                     .to_string(),
                 domains,
                 sync_interval,
+                entity_patterns,
             };
 
-            *self.config.write().unwrap() = Some(ha_config);
+            *self.config.write() = Some(ha_config);
+            // Reset template_registered so auto_sync runs with new config
+            self.template_registered.store(0, Ordering::SeqCst);
         }
 
         Ok(())
@@ -496,6 +589,159 @@ impl Extension for HomeAssistantBridgeExtension {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+// ============================================================================
+// Auto-Sync (called from produce_metrics, synchronous context)
+// ============================================================================
+
+impl HomeAssistantBridgeExtension {
+    /// Auto-sync: register device template (once) and fetch & register devices.
+    /// Called from produce_metrics() in a synchronous context.
+    fn auto_sync(&self) -> Result<()> {
+        let ctx = CapabilityContext::default();
+
+        // Register device template once using compare_exchange for thread safety
+        if self.template_registered.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+            let template_json = json!({
+                "device_type": "ha_entity",
+                "name": "Home Assistant Entity",
+                "description": "Entity synced from Home Assistant",
+                "categories": ["smart-home", "home-assistant"],
+                "metrics": [
+                    { "name": "state", "display_name": "State", "data_type": "String" },
+                    { "name": "friendly_name", "display_name": "Friendly Name", "data_type": "String" },
+                    { "name": "domain", "display_name": "Domain", "data_type": "String" },
+                    { "name": "area", "display_name": "Area", "data_type": "String" },
+                    { "name": "last_changed", "display_name": "Last Changed", "data_type": "String" },
+                    { "name": "value", "display_name": "Numeric Value", "data_type": "Float" },
+                    { "name": "unit", "display_name": "Unit", "data_type": "String" },
+                    { "name": "battery", "display_name": "Battery", "data_type": "Integer" }
+                ]
+            });
+            let result = ctx.invoke_capability("device_template_register", &template_json);
+            if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+                eprintln!("[ha-bridge] Template registered");
+                // Already set to 1 by compare_exchange above
+            } else {
+                let err = result.get("error").and_then(|v| v.as_str()).unwrap_or("unknown");
+                eprintln!("[ha-bridge] Template registration failed: {}", err);
+                // Reset to 0 so it will retry next time
+                self.template_registered.store(0, Ordering::SeqCst);
+                return Err(ExtensionError::ExecutionFailed(format!("Template registration failed: {}", err)));
+            }
+        }
+
+        // Periodic REST resync: fetch all entities via REST and update the map + device metrics
+        let (domains, entity_patterns) = {
+            let cfg = self.config.read();
+            match cfg.as_ref() {
+                Some(c) => (c.domains.clone(), c.entity_patterns.clone()),
+                None => return Ok(()),
+            }
+        };
+
+        let client_guard = self.rest_client.read();
+        if let Some(ref client) = *client_guard {
+            match client.get_all_states(&domains) {
+                Ok(fetched) => {
+                    let now = chrono::Utc::now().timestamp_millis();
+                    let mut ent_map = self.entities.write();
+                    let mut reg_set = self.registered_entities.write();
+                    let mut registered = 0i64;
+
+                    for entity in &fetched {
+                        // Apply entity_patterns filter
+                        if !entity_matches_patterns(&entity.entity_id, &entity_patterns) {
+                            continue;
+                        }
+
+                        ent_map.insert(entity.entity_id.clone(), entity.clone());
+
+                        // Register as a NeoMind device (only if not already registered)
+                        let safe_id = entity.entity_id.replace(['.', '-'], "_");
+                        let neo_device_id = format!("ha_{}", safe_id);
+
+                        if !reg_set.contains(&entity.entity_id) {
+                            let device_json = json!({
+                                "device_id": neo_device_id,
+                                "name": entity.name,
+                                "device_type": "ha_entity",
+                            });
+                            let _ = ctx.invoke_capability("device_register", &device_json);
+                            reg_set.insert(entity.entity_id.clone());
+                        }
+
+                        // Write entity state metrics to the NeoMind device
+                        let _ = ctx.invoke_capability("device_metrics_write", &json!({
+                            "device_id": neo_device_id,
+                            "metric": "state",
+                            "value": entity.state,
+                            "timestamp": now,
+                        }));
+
+                        let _ = ctx.invoke_capability("device_metrics_write", &json!({
+                            "device_id": neo_device_id,
+                            "metric": "friendly_name",
+                            "value": entity.name,
+                            "timestamp": now,
+                        }));
+
+                        let _ = ctx.invoke_capability("device_metrics_write", &json!({
+                            "device_id": neo_device_id,
+                            "metric": "domain",
+                            "value": entity.domain,
+                            "timestamp": now,
+                        }));
+
+                        let _ = ctx.invoke_capability("device_metrics_write", &json!({
+                            "device_id": neo_device_id,
+                            "metric": "last_changed",
+                            "value": entity.last_changed,
+                            "timestamp": now,
+                        }));
+
+                        if let Some(val) = entity.value {
+                            let _ = ctx.invoke_capability("device_metrics_write", &json!({
+                                "device_id": neo_device_id,
+                                "metric": "value",
+                                "value": val,
+                                "timestamp": now,
+                            }));
+                        }
+
+                        if let Some(ref unit) = entity.unit {
+                            let _ = ctx.invoke_capability("device_metrics_write", &json!({
+                                "device_id": neo_device_id,
+                                "metric": "unit",
+                                "value": unit,
+                                "timestamp": now,
+                            }));
+                        }
+
+                        if let Some(battery) = entity.battery {
+                            let _ = ctx.invoke_capability("device_metrics_write", &json!({
+                                "device_id": neo_device_id,
+                                "metric": "battery",
+                                "value": battery,
+                                "timestamp": now,
+                            }));
+                        }
+
+                        registered += 1;
+                    }
+
+                    self.last_full_sync.store(chrono::Utc::now().timestamp(), Ordering::SeqCst);
+                    eprintln!("[ha-bridge] REST resync completed, {} entities synced", registered);
+                }
+                Err(e) => {
+                    eprintln!("[ha-bridge] REST resync failed: {}", e);
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -543,23 +789,39 @@ impl HomeAssistantBridgeExtension {
             .and_then(|v| v.as_u64())
             .unwrap_or(30);
 
+        let patterns_str = args
+            .get("entityPatterns")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let entity_patterns: Vec<String> = patterns_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
         let ha_config = HaConfig {
             ha_url: ha_url.clone(),
             token: token.clone(),
             domains: domains.clone(),
             sync_interval,
+            entity_patterns: entity_patterns.clone(),
         };
 
         // 1. Create REST client and test connection
         let client = rest_client::HaRestClient::new(&ha_config);
         let msg = client
             .test_connection()
-            .map_err(|e| ExtensionError::ExecutionFailed(e))?;
+            .map_err(ExtensionError::ExecutionFailed)?;
 
         // 2. Fetch all states and populate entity map
-        let entities = client
+        let mut entities = client
             .get_all_states(&domains)
-            .map_err(|e| ExtensionError::ExecutionFailed(e))?;
+            .map_err(ExtensionError::ExecutionFailed)?;
+
+        // Apply entity_patterns filter
+        if !entity_patterns.is_empty() {
+            entities.retain(|e| entity_matches_patterns(&e.entity_id, &entity_patterns));
+        }
 
         let count = entities.len();
         let mut ent_map = HashMap::new();
@@ -568,13 +830,16 @@ impl HomeAssistantBridgeExtension {
         }
 
         {
-            let mut ents = self.entities.write().await;
+            let mut ents = self.entities.write();
             *ents = ent_map;
         }
 
         // 3. Store config and client
-        *self.config.write().unwrap() = Some(ha_config);
-        *self.rest_client.write().unwrap() = Some(client);
+        *self.config.write() = Some(ha_config);
+        *self.rest_client.write() = Some(client);
+        // Reset template flag so auto_sync registers template with new connection
+        self.template_registered.store(0, Ordering::SeqCst);
+        self.last_full_sync.store(chrono::Utc::now().timestamp(), Ordering::SeqCst);
 
         // 4. Spawn WebSocket read loop on the host Tokio runtime
         self.running.store(true, Ordering::SeqCst);
@@ -585,13 +850,27 @@ impl HomeAssistantBridgeExtension {
         let ws_connected = self.connected.clone();
         let ws_url = ha_url.clone();
         let ws_token = token.clone();
+        let ws_domains = domains.clone();
+        let ws_rest_client = self.ws_rest_client.clone();
+
+        // Copy REST client for WS reconnection resync
+        {
+            let rest_guard = self.rest_client.read();
+            *ws_rest_client.write() = rest_guard.clone();
+        }
 
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
-                handle.spawn(async move {
-                    ws_client::run_ws_loop(ws_url, ws_token, ws_entities, ws_running, ws_connected)
+                // Abort any previous WebSocket task to prevent leaks
+                if let Some(old_handle) = self.ws_task_handle.write().take() {
+                    old_handle.abort();
+                }
+
+                let task = handle.spawn(async move {
+                    ws_client::run_ws_loop(ws_url, ws_token, ws_domains, ws_entities, ws_rest_client, ws_running, ws_connected)
                         .await;
                 });
+                *self.ws_task_handle.write() = Some(task);
             }
             Err(_) => {
                 // No Tokio runtime available - WebSocket will not run,
@@ -612,16 +891,25 @@ impl HomeAssistantBridgeExtension {
         self.running.store(false, Ordering::SeqCst);
         self.connected.store(false, Ordering::SeqCst);
 
+        // Abort the WebSocket task
+        if let Some(handle) = self.ws_task_handle.write().take() {
+            handle.abort();
+        }
+
         // Give the WS loop a moment to notice the flag
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         {
-            let mut ents = self.entities.write().await;
+            let mut ents = self.entities.write();
             ents.clear();
         }
+        self.registered_entities.write().clear();
 
-        *self.rest_client.write().unwrap() = None;
-        *self.config.write().unwrap() = None;
+        *self.rest_client.write() = None;
+        *self.ws_rest_client.write() = None;
+        *self.config.write() = None;
+        self.template_registered.store(0, Ordering::SeqCst);
+        self.last_full_sync.store(0, Ordering::SeqCst);
 
         Ok(json!({
             "success": true,
@@ -633,7 +921,7 @@ impl HomeAssistantBridgeExtension {
     async fn cmd_list_entities(&self, args: &serde_json::Value) -> Result<serde_json::Value> {
         let domain_filter = args.get("domain").and_then(|v| v.as_str());
 
-        let entities = self.entities.read().await;
+        let entities = self.entities.read();
         let mut result: Vec<&HaEntity> = Vec::new();
 
         for entity in entities.values() {
@@ -667,7 +955,7 @@ impl HomeAssistantBridgeExtension {
 
         // Try cache first
         {
-            let entities = self.entities.read().await;
+            let entities = self.entities.read();
             if let Some(entity) = entities.get(entity_id) {
                 return Ok(json!({
                     "success": true,
@@ -678,19 +966,14 @@ impl HomeAssistantBridgeExtension {
         }
 
         // Fall back to REST API
-        // Clone the client data out of the std::sync::RwLock before any await,
-        // so the guard is not held across an await point.
         let entity_result = {
-            let client_guard = self.rest_client.read().unwrap();
-            match *client_guard {
-                Some(ref client) => Some(client.get_state(entity_id)),
-                None => None,
-            }
+            let client_guard = self.rest_client.read();
+            (*client_guard).as_ref().map(|client| client.get_state(entity_id))
         }; // client_guard dropped here
 
         match entity_result {
             Some(Ok(entity)) => {
-                let mut entities = self.entities.write().await;
+                let mut entities = self.entities.write();
                 entities.insert(entity_id.to_string(), entity.clone());
 
                 Ok(json!({
@@ -746,13 +1029,8 @@ impl HomeAssistantBridgeExtension {
         }
 
         let service_result = {
-            let client_guard = self.rest_client.read().unwrap();
-            match *client_guard {
-                Some(ref client) => {
-                    Some(client.call_service(domain, service, &serde_json::Value::Object(data)))
-                }
-                None => None,
-            }
+            let client_guard = self.rest_client.read();
+            (*client_guard).as_ref().map(|client| client.call_service(domain, service, &serde_json::Value::Object(data)))
         }; // client_guard dropped here
 
         match service_result {
@@ -787,7 +1065,7 @@ impl HomeAssistantBridgeExtension {
 
         // Update config
         {
-            let mut config_guard = self.config.write().unwrap();
+            let mut config_guard = self.config.write();
             if let Some(ref mut config) = *config_guard {
                 config.domains = new_domains.clone();
             } else {
@@ -798,17 +1076,20 @@ impl HomeAssistantBridgeExtension {
         }
 
         // Re-sync entities with new domain filter
-        // Extract the data from std::sync::RwLock before any await.
+        let entity_patterns = self.config.read().as_ref().map(|c| c.entity_patterns.clone()).unwrap_or_default();
+
         let fetch_result = {
-            let client_guard = self.rest_client.read().unwrap();
-            match *client_guard {
-                Some(ref client) => Some(client.get_all_states(&new_domains)),
-                None => None,
-            }
+            let client_guard = self.rest_client.read();
+            (*client_guard).as_ref().map(|client| client.get_all_states(&new_domains))
         }; // client_guard dropped here
 
         match fetch_result {
-            Some(Ok(entities)) => {
+            Some(Ok(mut entities)) => {
+                // Apply entity_patterns filter
+                if !entity_patterns.is_empty() {
+                    entities.retain(|e| entity_matches_patterns(&e.entity_id, &entity_patterns));
+                }
+
                 let count = entities.len();
                 let mut ent_map = HashMap::new();
                 for e in entities {
@@ -816,7 +1097,7 @@ impl HomeAssistantBridgeExtension {
                 }
 
                 {
-                    let mut ents = self.entities.write().await;
+                    let mut ents = self.entities.write();
                     *ents = ent_map;
                 }
 
@@ -833,10 +1114,43 @@ impl HomeAssistantBridgeExtension {
         }
     }
 
+    /// Manually trigger a full entity resync (without reconnecting).
+    async fn cmd_refresh(&self) -> Result<serde_json::Value> {
+        let config = self.config.read();
+        let ha_config = config.as_ref().ok_or_else(|| {
+            ExtensionError::ExecutionFailed("Not configured. Run 'connect' or 'configure' first.".to_string())
+        })?;
+
+        let client = rest_client::HaRestClient::new(ha_config);
+        let mut entities = client
+            .get_all_states(&ha_config.domains)
+            .map_err(ExtensionError::ExecutionFailed)?;
+
+        if !ha_config.entity_patterns.is_empty() {
+            entities.retain(|e| entity_matches_patterns(&e.entity_id, &ha_config.entity_patterns));
+        }
+
+        let count = entities.len();
+        let mut entity_map = self.entities.write();
+        entity_map.clear();
+        for entity in entities {
+            entity_map.insert(entity.entity_id.clone(), entity);
+        }
+
+        // Force re-sync on next produce_metrics cycle
+        self.last_full_sync.store(0, Ordering::SeqCst);
+
+        Ok(json!({
+            "success": true,
+            "entity_count": count,
+            "message": format!("Refreshed {} entities from Home Assistant", count)
+        }))
+    }
+
     /// Get current connection status and entity statistics.
     async fn cmd_get_status(&self) -> Result<serde_json::Value> {
         let is_connected = self.connected.load(Ordering::SeqCst);
-        let entities = self.entities.read().await;
+        let entities = self.entities.read();
 
         // Count by domain
         let mut domain_counts: HashMap<String, usize> = HashMap::new();
@@ -847,13 +1161,13 @@ impl HomeAssistantBridgeExtension {
         let config_info = self
             .config
             .read()
-            .unwrap()
             .as_ref()
             .map(|c| {
                 json!({
                     "haUrl": c.ha_url,
                     "domains": c.domains,
                     "syncInterval": c.sync_interval,
+                    "entityPatterns": c.entity_patterns,
                 })
             })
             .unwrap_or(json!(null));
@@ -865,6 +1179,34 @@ impl HomeAssistantBridgeExtension {
             "totalCommands": self.total_commands.load(Ordering::SeqCst),
             "config": config_info,
         }))
+    }
+
+    /// Get all areas from Home Assistant.
+    ///
+    /// NOTE: Areas are not available via the REST API in standard HA installs.
+    /// This command will return an informative error when the REST endpoint
+    /// is not available (which is the common case).
+    async fn cmd_get_areas(&self) -> Result<serde_json::Value> {
+        let areas_result = {
+            let client_guard = self.rest_client.read();
+            (*client_guard).as_ref().map(|client| client.get_areas())
+        };
+
+        match areas_result {
+            Some(Ok(areas)) => Ok(json!({
+                "success": true,
+                "areas": areas,
+            })),
+            Some(Err(e)) => Ok(json!({
+                "success": false,
+                "error": e,
+                "hint": "Home Assistant areas are not available via REST API. \
+                         Use the Home Assistant UI to manage areas instead."
+            })),
+            None => Err(ExtensionError::ExecutionFailed(
+                "Not connected to Home Assistant".to_string(),
+            )),
+        }
     }
 }
 
@@ -881,7 +1223,6 @@ neomind_extension_sdk::neomind_export!(HomeAssistantBridgeExtension);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use types::domain_has_commands;
 
     #[test]
     fn test_extension_metadata() {
@@ -896,7 +1237,7 @@ mod tests {
     fn test_extension_commands() {
         let ext = HomeAssistantBridgeExtension::new();
         let commands = ext.commands();
-        assert!(commands.len() >= 8);
+        assert!(commands.len() >= 9, "expected at least 9 commands, got {}", commands.len());
         let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
         assert!(names.contains(&"connect"));
         assert!(names.contains(&"disconnect"));
@@ -905,6 +1246,7 @@ mod tests {
         assert!(names.contains(&"call_service"));
         assert!(names.contains(&"set_filters"));
         assert!(names.contains(&"get_status"));
+        assert!(names.contains(&"get_areas"));
         assert!(names.contains(&"configure"));
     }
 
@@ -950,20 +1292,44 @@ mod tests {
         assert!(!ext.connected.load(Ordering::SeqCst));
         assert!(!ext.running.load(Ordering::SeqCst));
         assert_eq!(ext.total_commands.load(Ordering::SeqCst), 0);
+        assert_eq!(ext.template_registered.load(Ordering::SeqCst), 0);
+    }
+
+
+    #[test]
+    fn test_entity_matches_patterns_empty() {
+        // Empty patterns = accept all
+        assert!(entity_matches_patterns("sensor.temperature", &[]));
+        assert!(entity_matches_patterns("light.living_room", &[]));
     }
 
     #[test]
-    fn test_types_domain_has_commands() {
-        assert!(domain_has_commands("light"));
-        assert!(domain_has_commands("switch"));
-        assert!(domain_has_commands("climate"));
-        assert!(domain_has_commands("lock"));
-        assert!(domain_has_commands("cover"));
-        assert!(domain_has_commands("fan"));
-        assert!(domain_has_commands("media_player"));
-        assert!(!domain_has_commands("sensor"));
-        assert!(!domain_has_commands("binary_sensor"));
-        assert!(!domain_has_commands("weather"));
+    fn test_entity_matches_patterns_substring() {
+        let patterns: Vec<String> = vec!["living_room".to_string(), "kitchen".to_string()];
+        assert!(entity_matches_patterns("sensor.living_room_temperature", &patterns));
+        assert!(entity_matches_patterns("light.kitchen", &patterns));
+        assert!(!entity_matches_patterns("sensor.bedroom", &patterns));
+    }
+
+    #[test]
+    fn test_entity_matches_patterns_glob() {
+        let patterns: Vec<String> = vec!["sensor.living_*".to_string()];
+        assert!(entity_matches_patterns("sensor.living_room_temperature", &patterns));
+        assert!(entity_matches_patterns("sensor.living_room_humidity", &patterns));
+        assert!(!entity_matches_patterns("sensor.bedroom_temperature", &patterns));
+    }
+
+    #[test]
+    fn test_entity_matches_patterns_wildcard_only() {
+        let patterns: Vec<String> = vec!["*".to_string()];
+        assert!(entity_matches_patterns("sensor.temperature", &patterns));
+        assert!(entity_matches_patterns("light.living_room", &patterns));
+    }
+
+    #[test]
+    fn test_entity_matches_patterns_case_insensitive() {
+        let patterns: Vec<String> = vec!["Living_Room".to_string()];
+        assert!(entity_matches_patterns("sensor.living_room_temperature", &patterns));
     }
 
     #[test]
@@ -1033,5 +1399,16 @@ mod tests {
         assert_eq!(config.token, "test123");
         assert_eq!(config.domains, vec!["sensor", "light", "switch", "climate", "lock"]);
         assert_eq!(config.sync_interval, 30);
+        assert!(config.entity_patterns.is_empty());
+    }
+
+    #[test]
+    fn test_ha_config_with_entity_patterns() {
+        let config = serde_json::from_str::<types::HaConfig>(
+            r#"{"ha_url":"http://hassio.local:8123","token":"test123","entity_patterns":["sensor.living_*","light.*"]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.entity_patterns, vec!["sensor.living_*", "light.*"]);
     }
 }
