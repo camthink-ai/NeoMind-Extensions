@@ -159,6 +159,9 @@ V2_EXTENSIONS=(
     "homeassistant-bridge"
     "lorawan-bridge"
     "modbus-bridge"
+    "bacnet-bridge"
+    "onvif-bridge"
+    "opcua-bridge"
 )
 
 # Filter to single extension if specified
