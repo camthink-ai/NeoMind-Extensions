@@ -87,6 +87,9 @@ fn hex_decode(hex_str: &str) -> Result<Vec<u8>, String> {
     if !hex_str.len().is_multiple_of(2) {
         return Err("Hex string has odd length".to_string());
     }
+    if !hex_str.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("Hex string contains invalid characters".to_string());
+    }
     let mut bytes = Vec::with_capacity(hex_str.len() / 2);
     for i in (0..hex_str.len()).step_by(2) {
         let byte_val = u8::from_str_radix(&hex_str[i..i + 2], 16)
@@ -448,6 +451,12 @@ fn parse_chirpstack_uplink(
     let f_cnt = msg.get("fCnt").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     let f_port = msg.get("fPort").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
 
+    // FPort 0 = MAC commands only, not application data
+    if f_port == 0 {
+        eprintln!("[lorawan-bridge] Ignoring MAC command on FPort 0 for {}", dev_eui);
+        return None;
+    }
+
     // Look up per-device decoder configuration
     let (device_decoder_type, device_custom_decoder) = {
         let map = devices.read();
@@ -538,6 +547,12 @@ fn parse_chirpstack_v4_uplink(
         .to_string();
     let f_cnt = msg.get("fCnt").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     let f_port = msg.get("fPort").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+
+    // FPort 0 = MAC commands only, not application data
+    if f_port == 0 {
+        eprintln!("[lorawan-bridge] Ignoring MAC command on FPort 0 for {}", dev_eui);
+        return None;
+    }
 
     // Look up per-device decoder configuration
     let (device_decoder_type, device_custom_decoder) = {
@@ -679,6 +694,12 @@ fn parse_ttn_uplink(
     let uplink = msg.get("uplink_message")?;
     let f_cnt = uplink.get("f_cnt").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     let f_port = uplink.get("f_port").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+
+    // FPort 0 = MAC commands only, not application data
+    if f_port == 0 {
+        eprintln!("[lorawan-bridge] Ignoring MAC command on FPort 0 for {}", dev_eui);
+        return None;
+    }
 
     // Look up per-device decoder configuration
     let (device_decoder_type, device_custom_decoder) = {

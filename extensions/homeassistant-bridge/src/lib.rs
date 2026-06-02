@@ -861,8 +861,9 @@ impl HomeAssistantBridgeExtension {
 
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
-                // Abort any previous WebSocket task to prevent leaks
-                if let Some(old_handle) = self.ws_task_handle.write().take() {
+                // Abort any previous WebSocket task and store new one atomically
+                let mut task_guard = self.ws_task_handle.write();
+                if let Some(old_handle) = task_guard.take() {
                     old_handle.abort();
                 }
 
@@ -870,7 +871,7 @@ impl HomeAssistantBridgeExtension {
                     ws_client::run_ws_loop(ws_url, ws_token, ws_domains, ws_entities, ws_rest_client, ws_running, ws_connected)
                         .await;
                 });
-                *self.ws_task_handle.write() = Some(task);
+                *task_guard = Some(task);
             }
             Err(_) => {
                 // No Tokio runtime available - WebSocket will not run,

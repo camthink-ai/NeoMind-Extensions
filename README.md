@@ -32,6 +32,9 @@ This repository contains officially maintained extensions for the **NeoMind exte
 | Home Assistant Bridge | `homeassistant-bridge` | IoT Bridge | — | Bidirectional HA entity sync via REST/WebSocket |
 | LoRaWAN Bridge | `lorawan-bridge` | IoT Bridge | — | LoRaWAN NS (ChirpStack/TTN) MQTT bridge with payload decoding |
 | Modbus Bridge | `modbus-bridge` | IoT Bridge | — | Modbus TCP/RTU device polling and register read/write |
+| BACnet Bridge | `bacnet-bridge` | IoT Bridge | — | BACnet/IP building automation — device discovery, sensor reading, COV subscriptions |
+| ONVIF Bridge | `onvif-bridge` | IoT Bridge | — | ONVIF IP camera discovery, RTSP streaming, PTZ control |
+| OPC-UA Bridge | `opcua-bridge` | IoT Bridge | — | OPC-UA server connection, node browsing, data subscriptions |
 | WASM Demo | `wasm-demo` | Demo | — | Counter demo for WASM target |
 
 > **Latest Release**: See [GitHub Releases](https://github.com/camthink-ai/NeoMind-Extensions/releases)
@@ -139,9 +142,12 @@ NeoMind-Extensions/
 │   ├── ocr-device-inference/
 │   ├── stream-player/
 │   ├── uink-rms-bridge/
-│   ├── homeassistant-bridge/
-│   ├── lorawan-bridge/
-│   ├── modbus-bridge/
+│   ├── homeassistant-bridge/    # Home Assistant REST/WebSocket bridge
+│   ├── lorawan-bridge/          # LoRaWAN ChirpStack/TTN MQTT bridge
+│   ├── modbus-bridge/           # Modbus TCP/RTU bridge
+│   ├── bacnet-bridge/           # BACnet/IP building automation bridge
+│   ├── onvif-bridge/            # ONVIF IP camera bridge
+│   ├── opcua-bridge/            # OPC-UA industrial bridge
 │   ├── wasm-demo/
 │   └── index.json               # Marketplace index (auto-generated)
 ├── scripts/

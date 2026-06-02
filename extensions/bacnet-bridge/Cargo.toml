@@ -1,0 +1,26 @@
+[package]
+name = "bacnet-bridge"
+version = "2.7.1"
+edition = "2021"
+authors = ["NeoMind Team"]
+license = "Apache-2.0"
+description = "BACnet/IP bridge extension for NeoMind — discover building automation devices, read sensors, write controls"
+
+[lib]
+name = "neomind_extension_bacnet_bridge"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neomind-extension-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = "0.1"
+chrono = "0.4"
+parking_lot = "0.12"
+tokio = { version = "1", features = ["rt", "sync", "macros"] }
+
+[features]
+default = []
+native = []
+wasm = []

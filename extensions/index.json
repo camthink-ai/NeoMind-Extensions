@@ -3,6 +3,39 @@
   "market_version": "2.7.1",
   "extensions": [
     {
+      "id": "bacnet-bridge",
+      "name": "uacnet uridge",
+      "version": "2.7.1",
+      "description": "BACnet/IP bridge extension for NeoMind — discover building automation devices, read sensors, write controls",
+      "author": "NeoMind Team",
+      "license": "Apache-2.0",
+      "type": "native",
+      "categories": [
+        "iot",
+        "bridge",
+        "device-integration"
+      ],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/bacnet-bridge",
+      "builds": {
+        "darwin-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/bacnet-bridge-2.7.1-darwin_aarch64.nep"
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/bacnet-bridge-2.7.1-darwin_x86_64.nep"
+        },
+        "linux-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/bacnet-bridge-2.7.1-linux_amd64.nep"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/bacnet-bridge-2.7.1-linux_arm64.nep"
+        },
+        "windows-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/bacnet-bridge-2.7.1-windows_amd64.nep"
+        }
+      },
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/bacnet-bridge/metadata.json"
+    },
+    {
       "id": "face-recognition",
       "name": "face recognition",
       "version": "2.7.1",
@@ -11,7 +44,9 @@
       "license": "Apache-2.0",
       "type": "native",
       "categories": [
-        "utility"
+        "ai",
+        "face-recognition",
+        "device-integration"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/face-recognition",
       "builds": {
@@ -38,6 +73,39 @@
         "entrypoint": "face-recognition-components.umd.cjs"
       },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/face-recognition/metadata.json"
+    },
+    {
+      "id": "homeassistant-bridge",
+      "name": "homeassistant uridge",
+      "version": "2.7.1",
+      "description": "Home Assistant bridge for NeoMind — import 3000+ HA entity integrations as devices",
+      "author": "NeoMind Team",
+      "license": "Apache-2.0",
+      "type": "native",
+      "categories": [
+        "iot",
+        "bridge",
+        "device-integration"
+      ],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/homeassistant-bridge",
+      "builds": {
+        "darwin-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/homeassistant-bridge-2.7.1-darwin_aarch64.nep"
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/homeassistant-bridge-2.7.1-darwin_x86_64.nep"
+        },
+        "linux-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/homeassistant-bridge-2.7.1-linux_amd64.nep"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/homeassistant-bridge-2.7.1-linux_arm64.nep"
+        },
+        "windows-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/homeassistant-bridge-2.7.1-windows_amd64.nep"
+        }
+      },
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/homeassistant-bridge/metadata.json"
     },
     {
       "id": "image-analyzer-v2",
@@ -79,6 +147,72 @@
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/image-analyzer-v2/metadata.json"
     },
     {
+      "id": "lorawan-bridge",
+      "name": "lorawan uridge",
+      "version": "2.7.1",
+      "description": "LoRaWAN bridge extension for NeoMind — connect ChirpStack/TTN sensors with auto-discovery",
+      "author": "NeoMind Team",
+      "license": "Apache-2.0",
+      "type": "native",
+      "categories": [
+        "iot",
+        "bridge",
+        "device-integration"
+      ],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/lorawan-bridge",
+      "builds": {
+        "darwin-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/lorawan-bridge-2.7.1-darwin_aarch64.nep"
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/lorawan-bridge-2.7.1-darwin_x86_64.nep"
+        },
+        "linux-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/lorawan-bridge-2.7.1-linux_amd64.nep"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/lorawan-bridge-2.7.1-linux_arm64.nep"
+        },
+        "windows-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/lorawan-bridge-2.7.1-windows_amd64.nep"
+        }
+      },
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/lorawan-bridge/metadata.json"
+    },
+    {
+      "id": "modbus-bridge",
+      "name": "moduus uridge",
+      "version": "2.7.1",
+      "description": "Modbus TCP/RTU bridge extension for NeoMind — connect PLCs, power meters, sensors, and industrial devices",
+      "author": "NeoMind Team",
+      "license": "Apache-2.0",
+      "type": "native",
+      "categories": [
+        "iot",
+        "bridge",
+        "device-integration"
+      ],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/modbus-bridge",
+      "builds": {
+        "darwin-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/modbus-bridge-2.7.1-darwin_aarch64.nep"
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/modbus-bridge-2.7.1-darwin_x86_64.nep"
+        },
+        "linux-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/modbus-bridge-2.7.1-linux_amd64.nep"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/modbus-bridge-2.7.1-linux_arm64.nep"
+        },
+        "windows-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/modbus-bridge-2.7.1-windows_amd64.nep"
+        }
+      },
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/modbus-bridge/metadata.json"
+    },
+    {
       "id": "ocr-device-inference",
       "name": "ocr device inference",
       "version": "2.7.1",
@@ -118,6 +252,72 @@
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/ocr-device-inference/metadata.json"
     },
     {
+      "id": "onvif-bridge",
+      "name": "onvif uridge",
+      "version": "2.7.1",
+      "description": "ONVIF camera bridge extension for NeoMind — discover IP cameras, get RTSP streams, PTZ control",
+      "author": "NeoMind Team",
+      "license": "Apache-2.0",
+      "type": "native",
+      "categories": [
+        "iot",
+        "bridge",
+        "device-integration"
+      ],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/onvif-bridge",
+      "builds": {
+        "darwin-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/onvif-bridge-2.7.1-darwin_aarch64.nep"
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/onvif-bridge-2.7.1-darwin_x86_64.nep"
+        },
+        "linux-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/onvif-bridge-2.7.1-linux_amd64.nep"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/onvif-bridge-2.7.1-linux_arm64.nep"
+        },
+        "windows-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/onvif-bridge-2.7.1-windows_amd64.nep"
+        }
+      },
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/onvif-bridge/metadata.json"
+    },
+    {
+      "id": "opcua-bridge",
+      "name": "opcua uridge",
+      "version": "2.7.1",
+      "description": "OPC-UA bridge extension for NeoMind — connect industrial servers, browse nodes, subscribe to data changes",
+      "author": "NeoMind Team",
+      "license": "Apache-2.0",
+      "type": "native",
+      "categories": [
+        "iot",
+        "bridge",
+        "device-integration"
+      ],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/opcua-bridge",
+      "builds": {
+        "darwin-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/opcua-bridge-2.7.1-darwin_aarch64.nep"
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/opcua-bridge-2.7.1-darwin_x86_64.nep"
+        },
+        "linux-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/opcua-bridge-2.7.1-linux_amd64.nep"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/opcua-bridge-2.7.1-linux_arm64.nep"
+        },
+        "windows-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/opcua-bridge-2.7.1-windows_amd64.nep"
+        }
+      },
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/opcua-bridge/metadata.json"
+    },
+    {
       "id": "stream-player",
       "name": "stream player",
       "version": "2.7.1",
@@ -126,7 +326,8 @@
       "license": "Apache-2.0",
       "type": "native",
       "categories": [
-        "utility"
+        "video",
+        "streaming"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/stream-player",
       "builds": {
@@ -163,7 +364,9 @@
       "license": "Apache-2.0",
       "type": "native",
       "categories": [
-        "utility"
+        "iot",
+        "bridge",
+        "device-integration"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/uink-rms-bridge",
       "builds": {
@@ -200,7 +403,7 @@
       "license": "Apache-2.0",
       "type": "native",
       "categories": [
-        "utility"
+        "demo"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/wasm-demo",
       "builds": {

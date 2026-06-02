@@ -200,7 +200,9 @@ EOF
 
     # Infer categories
     categories='["utility"]'
-    if [[ "$ext_id" == *"yolo"* ]] || [[ "$ext_id" == *"image"* ]]; then
+    if [[ "$ext_id" == *"bridge"* ]]; then
+        categories='["iot", "bridge", "device-integration"]'
+    elif [[ "$ext_id" == *"yolo"* ]] || [[ "$ext_id" == *"image"* ]]; then
         categories='["ai", "vision", "detection"]'
     elif [[ "$ext_id" == *"weather"* ]]; then
         categories='["weather"]'
@@ -208,6 +210,14 @@ EOF
         categories='["video", "streaming", "detection"]'
     elif [[ "$ext_id" == *"device"* ]]; then
         categories='["ai", "computer-vision", "device-integration"]'
+    elif [[ "$ext_id" == *"ocr"* ]]; then
+        categories='["ai", "ocr", "device-integration"]'
+    elif [[ "$ext_id" == *"face"* ]]; then
+        categories='["ai", "face-recognition", "device-integration"]'
+    elif [[ "$ext_id" == *"stream"* ]]; then
+        categories='["video", "streaming"]'
+    elif [[ "$ext_id" == *"wasm"* ]]; then
+        categories='["demo"]'
     fi
 
     # Build platforms for builds field

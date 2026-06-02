@@ -491,8 +491,10 @@ impl YOLODetector {
         tracing::info!("[YOLODetector] Loading model file: {}", model_path.display());
 
         // Create config using usls API
+        let model_path_str = model_path.to_str()
+            .ok_or_else(|| format!("Model path contains invalid UTF-8: {}", model_path.display()))?;
         let config = Config::yolo()
-            .with_model_file(model_path.to_str().unwrap())
+            .with_model_file(model_path_str)
             .with_version(YOLOVersion(version_num, 0, None))
             .with_class_confs(&[conf]);
 

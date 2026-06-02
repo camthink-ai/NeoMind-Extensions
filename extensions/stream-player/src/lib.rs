@@ -946,8 +946,9 @@ impl Extension for StreamPlayerExtension {
         };
 
         if let Some(handle) = task_handle {
-            drop(handle);
-            tracing::info!("[StreamPlayer] Push task stopping: {}", session_id);
+            // Wait for thread to exit (it checks `running` flag frequently)
+            let _ = handle.join();
+            tracing::info!("[StreamPlayer] Push task stopped: {}", session_id);
         }
 
         Ok(())
@@ -962,12 +963,21 @@ impl Extension for StreamPlayerExtension {
     }
 
     async fn close_session(&self, session_id: &str) -> Result<SessionStats> {
-        {
+        let task_handle = {
             let mut registry = get_registry().lock();
             if let Some(stream) = registry.streams.remove(session_id) {
-                stream.lock().running = false;
+                let mut s = stream.lock();
+                s.running = false;
+                s.push_task.take()
+            } else {
+                None
             }
+        };
+
+        if let Some(handle) = task_handle {
+            let _ = handle.join();
         }
+
         tracing::info!("[StreamPlayer] Session closed: {}", session_id);
         Ok(SessionStats::default())
     }

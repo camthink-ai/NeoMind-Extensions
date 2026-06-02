@@ -653,8 +653,8 @@ impl YoloDetector {
             })
             .collect();
 
-        // Sort by confidence descending
-        detections.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
+        // Sort by confidence descending (handle NaN as equal)
+        detections.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
 
         let elapsed = start.elapsed();
         tracing::debug!(

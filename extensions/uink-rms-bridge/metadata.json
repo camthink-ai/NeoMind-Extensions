@@ -7,7 +7,9 @@
   "license": "Apache-2.0",
   "type": "native",
   "categories": [
-    "utility"
+    "iot",
+    "bridge",
+    "device-integration"
   ],
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/uink-rms-bridge",
   "builds": {

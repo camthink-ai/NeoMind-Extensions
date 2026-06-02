@@ -1,0 +1,27 @@
+[package]
+name = "opcua-bridge"
+version = "2.7.1"
+edition = "2021"
+authors = ["NeoMind Team"]
+license = "Apache-2.0"
+description = "OPC-UA bridge extension for NeoMind — connect industrial servers, browse nodes, subscribe to data changes"
+
+[lib]
+name = "neomind_extension_opcua_bridge"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neomind-extension-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = "0.1"
+chrono = "0.4"
+parking_lot = "0.12"
+tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }
+uuid = { version = "1", features = ["v4"] }
+
+[features]
+default = []
+native = []
+wasm = []

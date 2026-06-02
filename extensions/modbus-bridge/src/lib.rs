@@ -1074,6 +1074,13 @@ impl ModbusBridgeExtension {
                 values.len()
             )));
         }
+        // Validate address + count doesn't overflow Modbus address space
+        if (address as u32) + (values.len() as u32) > 65536 {
+            return Err(ExtensionError::InvalidArguments(format!(
+                "Address {} + count {} overflows Modbus address space (max 65535)",
+                address, values.len()
+            )));
+        }
 
         let devices = self.devices.read();
         let device = devices.get(device_id).ok_or_else(|| {
@@ -1174,6 +1181,13 @@ impl ModbusBridgeExtension {
             return Err(ExtensionError::InvalidArguments(format!(
                 "Cannot write {} coils at once (Modbus limit is 1968). Split into multiple writes.",
                 values.len()
+            )));
+        }
+        // Validate address + count doesn't overflow Modbus address space
+        if (address as u32) + (values.len() as u32) > 65536 {
+            return Err(ExtensionError::InvalidArguments(format!(
+                "Address {} + count {} overflows Modbus address space (max 65535)",
+                address, values.len()
             )));
         }
 
