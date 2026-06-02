@@ -116,15 +116,43 @@ fn parse_probe_matches(response: &str) -> Vec<DiscoveryMatch> {
     matches
 }
 
+/// Find a suitable local IPv4 address for multicast
+fn find_local_ipv4() -> Option<Ipv4Addr> {
+    // On macOS, multicast from 0.0.0.0 can fail with "No route to host"
+    // Binding to a specific interface address fixes this
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    // Try connecting to a public address (doesn't actually send packets)
+    socket.connect("8.8.8.8:80").ok()?;
+    let local = socket.local_addr().ok()?;
+    match local {
+        std::net::SocketAddr::V4(v4) => Some(*v4.ip()),
+        _ => None,
+    }
+}
+
 /// Discover ONVIF devices on the local network via WS-Discovery
 pub fn discover_devices(timeout_ms: u64) -> Result<Vec<DiscoveryMatch>, String> {
     // Clamp timeout to reasonable range
     let timeout_ms = timeout_ms.clamp(500, 30_000);
 
-    let socket = UdpSocket::bind("0.0.0.0:0")
+    // Bind to a specific local interface to avoid "No route to host" on macOS
+    let bind_addr = match find_local_ipv4() {
+        Some(ip) => {
+            eprintln!("[onvif-bridge] Binding multicast socket to {}", ip);
+            SocketAddrV4::new(ip, 0)
+        }
+        None => {
+            eprintln!("[onvif-bridge] Could not detect local IP, binding to 0.0.0.0");
+            SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)
+        }
+    };
+
+    let socket = UdpSocket::bind(bind_addr)
         .map_err(|e| format!("Failed to bind UDP socket: {}", e))?;
 
     // Set broadcast/multicast permissions
+    socket.set_broadcast(true)
+        .map_err(|e| format!("Failed to enable broadcast: {}", e))?;
     socket.set_multicast_ttl_v4(1)
         .map_err(|e| format!("Failed to set multicast TTL: {}", e))?;
     socket.set_read_timeout(Some(Duration::from_millis(timeout_ms)))
@@ -135,9 +163,26 @@ pub fn discover_devices(timeout_ms: u64) -> Result<Vec<DiscoveryMatch>, String> 
         MULTICAST_PORT,
     );
 
+    // Join multicast group on the detected interface
+    if let Some(local_ip) = find_local_ipv4() {
+        if let Err(e) = socket.join_multicast_v4(
+            &MULTICAST_ADDR.parse::<Ipv4Addr>().unwrap(),
+            &local_ip,
+        ) {
+            eprintln!("[onvif-bridge] Warning: could not join multicast group: {}", e);
+        }
+    }
+
     let probe = build_probe_message();
-    socket.send_to(probe.as_bytes(), multicast_addr)
-        .map_err(|e| format!("Failed to send probe: {}", e))?;
+    if let Err(e) = socket.send_to(probe.as_bytes(), multicast_addr) {
+        // Provide actionable guidance instead of raw OS error
+        return Err(format!(
+            "Failed to send WS-Discovery probe: {}. \
+             Ensure your device is connected to a network that supports UDP multicast. \
+             You can also try 'add_device' with a known camera URL instead.",
+            e
+        ));
+    }
 
     let mut buf = [0u8; 8192];
     let mut discovered = Vec::new();
