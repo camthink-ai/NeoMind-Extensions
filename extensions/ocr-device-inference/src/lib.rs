@@ -275,30 +275,35 @@ fn setup_native_lib_paths() {
                         paths.push(path.to_string_lossy().to_string());
 
                         // Create unversioned symlinks for versioned libraries
-                        // e.g. libonnxruntime.1.19.2.dylib -> libonnxruntime.dylib
+                        // e.g. libonnxruntime.so.1 -> libonnxruntime.so
+                        //      libonnxruntime.1.19.2.dylib -> libonnxruntime.dylib
                         if let Ok(files) = std::fs::read_dir(&path) {
                             for file in files.flatten() {
                                 let file_path = file.path();
                                 let name = file_path.file_name().unwrap_or_default().to_string_lossy();
-                                // Match versioned dylib/so patterns
-                                if let Some(base) = name.strip_suffix(".dylib")
-                                    .or_else(|| name.strip_suffix(".so"))
-                                {
-                                    if base.contains('.') {
-                                        // Has version suffix like libonnxruntime.1.19.2
-                                        let unversioned = if cfg!(target_os = "macos") {
-                                            format!("{}.dylib", base.split('.').next().unwrap_or(base))
-                                        } else {
-                                            format!("{}.so", base.split('.').next().unwrap_or(base))
-                                        };
-                                        let link_path = path.join(&unversioned);
-                                        if !link_path.exists() {
-                                            #[cfg(unix)]
-                                            let _ = std::os::unix::fs::symlink(&file_path, &link_path);
-                                            #[cfg(not(unix))]
-                                            let _ = ();
-                                            tracing::info!("[NativeLibs] Created symlink: {} -> {}", unversioned, name);
-                                        }
+                                let unversioned = if cfg!(target_os = "macos") {
+                                    name.strip_suffix(".dylib").and_then(|base| {
+                                        let parts: Vec<&str> = base.split('.').collect();
+                                        if parts.len() > 1 { Some(format!("{}.dylib", parts[0])) } else { None }
+                                    })
+                                } else if cfg!(target_os = "windows") {
+                                    None
+                                } else {
+                                    // Linux: libfoo.so.1 -> libfoo.so
+                                    if let Some(idx) = name.find(".so.") {
+                                        Some(format!("{}.so", &name[..idx]))
+                                    } else {
+                                        None
+                                    }
+                                };
+                                if let Some(unversioned) = unversioned {
+                                    let link_path = path.join(&unversioned);
+                                    if !link_path.exists() {
+                                        #[cfg(unix)]
+                                        let _ = std::os::unix::fs::symlink(&file_path, &link_path);
+                                        #[cfg(not(unix))]
+                                        let _ = ();
+                                        tracing::info!("[NativeLibs] Created symlink: {} -> {}", unversioned, name);
                                     }
                                 }
                             }
