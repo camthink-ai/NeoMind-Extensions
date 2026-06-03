@@ -162,6 +162,7 @@ V2_EXTENSIONS=(
     "bacnet-bridge"
     "onvif-bridge"
     "opcua-bridge"
+    "locate-anything-v2"
 )
 
 # Filter to single extension if specified
@@ -423,6 +424,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
 
             if [ -n "$ORT_LIB" ] && [ -f "$ORT_LIB" ]; then
                 cp "$ORT_LIB" "$BINARY_DIR/"
+                chmod +x "$BINARY_DIR/$(basename $ORT_LIB)"
                 echo -e "    ${GREEN}→${NC} Bundled ONNX Runtime: $(basename $ORT_LIB)"
 
                 # Verify architecture matches the target platform
@@ -1071,6 +1073,9 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
 
         cd "$PACKAGE_DIR"
 
+        # Ensure all shared libraries have execute permission (required on Linux)
+        find . -name "*.so*" -o -name "*.dylib" | xargs chmod +x 2>/dev/null || true
+
         # Export output path for Python script (avoids shell string escaping issues)
         export NEOMIND_OUTPUT_ABS="$OUTPUT_ABS"
 
@@ -1218,6 +1223,11 @@ if [ "$AUTO_INSTALL" = true ]; then
             fi
             if [ -f "$LIB_FILE" ]; then
                 cp "$LIB_FILE" "$EXT_INSTALL_DIR/binaries/$PLATFORM/extension.${LIB_EXT}"
+                # Fix dylib install name on macOS
+                if [ "$LIB_EXT" = "dylib" ]; then
+                    install_name_tool -id '@rpath/extension.dylib' "$EXT_INSTALL_DIR/binaries/$PLATFORM/extension.dylib" 2>/dev/null || true
+                    codesign --force --sign - "$EXT_INSTALL_DIR/binaries/$PLATFORM/extension.dylib" 2>/dev/null || true
+                fi
             fi
 
             # Copy frontend bundle
@@ -1452,6 +1462,19 @@ if [ "$AUTO_INSTALL" = true ]; then
     echo ""
     echo -e "${GREEN}Installation complete!${NC}"
     echo "Extensions installed to: $INSTALL_DIR"
+
+    # Also install to Tauri data directory on macOS (if it exists)
+    TAURI_DATA_DIR="$HOME/Library/Application Support/com.neomind.neomind/data/extensions"
+    if [ "$(uname)" = "Darwin" ] && [ -d "$TAURI_DATA_DIR" ]; then
+        echo ""
+        echo -e "${BLUE}Syncing to Tauri data directory...${NC}"
+        for ext in "${BUILT_EXTENSIONS[@]}"; do
+            if [ -d "$INSTALL_DIR/$ext" ] && [ -d "$TAURI_DATA_DIR/$ext" ]; then
+                cp -R "$INSTALL_DIR/$ext/"* "$TAURI_DATA_DIR/$ext/" 2>/dev/null || true
+                echo -e "  ${GREEN}✓${NC} Synced $ext to Tauri data dir"
+            fi
+        done
+    fi
 else
     echo ""
     echo -e "${YELLOW}To install extensions, run:${NC}"
