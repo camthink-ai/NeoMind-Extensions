@@ -20,111 +20,28 @@ NeoMind 边缘 AI 平台的官方扩展仓库。
 
 ## 可用扩展
 
-> **最新版本 (v2.0.0)**：6 个平台，27 个扩展包  
-> **运行时协议**：v3（隔离扩展架构）  
-> **发布地址**：[GitHub Release](https://github.com/camthink-ai/NeoMind-Extensions/releases/tag/v2.0.0)
+> **最新版本**：6 个平台，16 个扩展
+> **运行时协议**：v3（隔离扩展架构）
+> **发布地址**：[GitHub Releases](https://github.com/camthink-ai/NeoMind-Extensions/releases)
 
-### 天气预报 V2
-
-**ID**: `weather-forecast-v2`
-
-使用 Open-Meteo API 的实时天气数据。
-
-| 能力 | 类型 | 描述 |
-|-----|------|------|
-| `get_weather` | 命令 | 获取任意城市的天气 |
-| temperature_c | 指标 | 摄氏温度 |
-| humidity_percent | 指标 | 相对湿度 |
-| wind_speed_kmph | 指标 | 风速 |
-
-**前端组件**：WeatherCard - 美观的天气显示，带动态图标
-
-```bash
-# 构建
-cargo build --release -p neomind-weather-forecast-v2
-
-# 安装
-cp target/release/libneomind_extension_weather_forecast_v2.dylib ~/.neomind/extensions/
-```
-
----
-
-### 图像分析器 V2
-
-**ID**: `image-analyzer-v2`
-
-使用 YOLOv8 目标检测的 AI 图像分析。
-
-| 能力 | 类型 | 描述 |
-|-----|------|------|
-| `analyze_image` | 命令 | 分析图像中的物体 |
-| images_processed | 指标 | 已处理图像总数 |
-| total_detections | 指标 | 检测到的物体数 |
-| avg_processing_time_ms | 指标 | 平均处理时间 |
-
-**前端组件**：ImageAnalyzer - 拖放图像上传，带检测框显示
-
-```bash
-# 构建
-cargo build --release -p neomind-image-analyzer-v2
-
-# 安装
-cp target/release/libneomind_extension_image_analyzer_v2.dylib ~/.neomind/extensions/
-```
-
----
-
-### YOLO 视频 V2
-
-**ID**: `yolo-video-v2`
-
-使用 YOLOv11 目标检测的实时视频流处理。
-
-| 能力 | 类型 | 描述 |
-|-----|------|------|
-| `start_stream` | 命令 | 启动视频流 |
-| `stop_stream` | 命令 | 停止视频流 |
-| `get_stream_stats` | 命令 | 获取流统计 |
-| active_streams | 指标 | 活跃流数量 |
-| total_frames_processed | 指标 | 已处理帧数 |
-
-**前端组件**：YoloVideoDisplay - MJPEG 流显示，带实时检测
-
-```bash
-# 构建
-cargo build --release -p neomind-yolo-video-v2
-
-# 安装
-cp target/release/libneomind_extension_yolo_video_v2.dylib ~/.neomind/extensions/
-```
-
----
-
-### YOLO 设备推理
-
-**ID**: `yolo-device-inference`
-
-基于 YOLOv8 的高性能目标检测，用于设备摄像头推理。
-
-| 能力 | 类型 | 描述 |
-|-----|------|------|
-| `start_inference` | 命令 | 启动摄像头推理 |
-| `stop_inference` | 命令 | 停止推理 |
-| `get_inference_stats` | 命令 | 获取推理统计 |
-| active_sessions | 指标 | 活跃会话数 |
-| total_detections | 指标 | 检测到的物体总数 |
-
-**前端组件**：YoloDeviceInference - 实时摄像头显示，带检测框
-
-**安全提示**：此扩展使用 AI 推理并启用了进程隔离。YOLOv8 模型加载一次后在会话间重用。
-
-```bash
-# 构建
-cargo build --release -p neomind-yolo-device-inference
-
-# 安装
-cp target/release/libneomind_extension_yolo_device_inference.dylib ~/.neomind/extensions/
-```
+| 扩展 | ID | 分类 | 前端 | 说明 |
+|------|----|------|------|------|
+| 天气预报 V2 | `weather-forecast-v2` | 数据 | WeatherCard | 基于 Open-Meteo API 的实时天气 |
+| 图像分析器 V2 | `image-analyzer-v2` | AI/ML | ImageAnalyzer | YOLOv11 图像目标检测 |
+| YOLO 视频 V2 | `yolo-video-v2` | AI/ML | YoloVideoDisplay | 实时视频流检测，支持 ROI/越线分析 |
+| YOLO 设备推理 | `yolo-device-inference` | AI/ML | DeviceBindingCard | 绑定设备摄像头的自动 YOLO 检测 |
+| 人脸识别 | `face-recognition` | AI/ML | FaceRecognitionCard | ArcFace 人脸识别，支持人脸库管理 |
+| OCR 设备推理 | `ocr-device-inference` | AI/ML | OcrDeviceCard | PP-OCRv4 文字识别，绑定设备图像流 |
+| 万物定位 V2 | `locate-anything-v2` | AI/ML | LocateCard | 视觉定位 — 目标检测、短语定位、OCR，基于 LocateAnything-3B |
+| 流媒体播放器 | `stream-player` | 媒体 | StreamPlayerCard | RTSP/RTMP/HLS 视频播放，基于 FFmpeg |
+| Uink-RMS 桥接 | `uink-rms-bridge` | 设备 | DisplayEditorCard | 墨水屏内容推送与管理 |
+| Home Assistant 桥接 | `homeassistant-bridge` | IoT 桥接 | — | 双向同步 HA 实体，REST/WebSocket |
+| LoRaWAN 桥接 | `lorawan-bridge` | IoT 桥接 | — | ChirpStack/TTN MQTT 桥接，支持负载解码 |
+| Modbus 桥接 | `modbus-bridge` | IoT 桥接 | — | Modbus TCP/RTU 设备轮询，寄存器读写 |
+| BACnet 桥接 | `bacnet-bridge` | IoT 桥接 | — | BACnet/IP 楼宇自动化 — 设备发现、传感器读取、COV 订阅 |
+| ONVIF 桥接 | `onvif-bridge` | IoT 桥接 | — | ONVIP IP 摄像头发现、RTSP 取流、PTZ 控制 |
+| OPC-UA 桥接 | `opcua-bridge` | IoT 桥接 | — | OPC-UA 服务器连接、节点浏览、数据订阅 |
+| WASM 演示 | `wasm-demo` | 演示 | — | WASM 目标的计数器演示 |
 
 ---
 
@@ -400,6 +317,18 @@ NeoMind-Extension/
 │   ├── image-analyzer-v2/      # 图像分析扩展
 │   ├── yolo-video-v2/          # 视频处理扩展
 │   ├── yolo-device-inference/  # 设备推理扩展
+│   ├── face-recognition/       # 人脸识别扩展
+│   ├── ocr-device-inference/   # OCR 文字识别扩展
+│   ├── locate-anything-v2/     # 视觉定位扩展
+│   ├── stream-player/          # 流媒体播放扩展
+│   ├── uink-rms-bridge/        # 墨水屏桥接扩展
+│   ├── homeassistant-bridge/   # Home Assistant 桥接
+│   ├── lorawan-bridge/         # LoRaWAN 桥接
+│   ├── modbus-bridge/          # Modbus 桥接
+│   ├── bacnet-bridge/          # BACnet 桥接
+│   ├── onvif-bridge/           # ONVIF 桥接
+│   ├── opcua-bridge/           # OPC-UA 桥接
+│   ├── wasm-demo/              # WASM 演示
 │   └── index.json              # 市场索引
 ├── skill/                      # Claude Code 技能（AI 辅助开发）
 │   ├── install.sh              # 技能安装脚本
@@ -429,7 +358,7 @@ NeoMind-Extension/
 | Windows | x86_64 (64-bit) | `*.dll` |
 | Windows | x86 (32-bit) | `*.dll` |
 
-**总计：6 个平台，27 个扩展包 (v2.0.0)**
+**总计：6 个平台，16 个扩展**
 
 ---
 

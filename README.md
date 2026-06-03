@@ -27,6 +27,7 @@ This repository contains officially maintained extensions for the **NeoMind exte
 | YOLO Device Inference | `yolo-device-inference` | AI/ML | DeviceBindingCard | Auto YOLO detection on device camera feeds |
 | Face Recognition | `face-recognition` | AI/ML | FaceRecognitionCard | ArcFace face recognition with gallery management |
 | OCR Device Inference | `ocr-device-inference` | AI/ML | OcrDeviceCard | PP-OCRv4 text recognition on device images |
+| Locate Anything V2 | `locate-anything-v2` | AI/ML | LocateCard | Visual grounding — object detection, phrase grounding, OCR via LocateAnything-3B |
 | Stream Player | `stream-player` | Media | StreamPlayerCard | RTSP/RTMP/HLS video player via FFmpeg |
 | Uink-RMS Bridge | `uink-rms-bridge` | Device | DisplayEditorCard | E-paper display content push & management |
 | Home Assistant Bridge | `homeassistant-bridge` | IoT Bridge | — | Bidirectional HA entity sync via REST/WebSocket |
@@ -140,14 +141,15 @@ NeoMind-Extensions/
 │   ├── yolo-device-inference/
 │   ├── face-recognition/
 │   ├── ocr-device-inference/
+│   ├── locate-anything-v2/
 │   ├── stream-player/
 │   ├── uink-rms-bridge/
-│   ├── homeassistant-bridge/    # Home Assistant REST/WebSocket bridge
-│   ├── lorawan-bridge/          # LoRaWAN ChirpStack/TTN MQTT bridge
-│   ├── modbus-bridge/           # Modbus TCP/RTU bridge
-│   ├── bacnet-bridge/           # BACnet/IP building automation bridge
-│   ├── onvif-bridge/            # ONVIF IP camera bridge
-│   ├── opcua-bridge/            # OPC-UA industrial bridge
+│   ├── homeassistant-bridge/
+│   ├── lorawan-bridge/
+│   ├── modbus-bridge/
+│   ├── bacnet-bridge/
+│   ├── onvif-bridge/
+│   ├── opcua-bridge/
 │   ├── wasm-demo/
 │   └── index.json               # Marketplace index (auto-generated)
 ├── scripts/
