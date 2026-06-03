@@ -1,0 +1,36 @@
+{
+  "id": "locate-anything-v2",
+  "name": "locate anything",
+  "version": "2.7.1",
+  "description": "LocateAnything visual grounding extension - AI skill for object detection, phrase grounding, OCR, GUI grounding, and pointing via LocateAnything-3B model",
+  "author": "NeoMind Team",
+  "license": "Apache-2.0",
+  "type": "native",
+  "categories": [
+    "utility"
+  ],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/locate-anything-v2",
+  "builds": {
+    "darwin-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/locate-anything-v2-2.7.1-darwin_aarch64.nep"
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/locate-anything-v2-2.7.1-darwin_x86_64.nep"
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/locate-anything-v2-2.7.1-linux_amd64.nep"
+    },
+    "linux-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/locate-anything-v2-2.7.1-linux_arm64.nep"
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.1/locate-anything-v2-2.7.1-windows_amd64.nep"
+    }
+  },
+  "frontend": {
+    "components": [
+      "LocateCard"
+    ],
+    "entrypoint": "locate-anything-v2-components.umd.cjs"
+  }
+}

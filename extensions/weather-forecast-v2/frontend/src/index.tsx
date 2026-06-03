@@ -1,6 +1,6 @@
 /**
- * Weather Forecast V2 - Compact Edition
- * Matches NeoMind dashboard design system
+ * Weather Forecast V2 - Compact & Atmospheric
+ * Single visual plane, subtle gradients, no loading flicker
  */
 
 import { forwardRef, useEffect, useState, useCallback, useRef, useMemo } from 'react'
@@ -14,7 +14,6 @@ export interface ExtensionComponentProps {
   dataSource?: DataSource
   className?: string
   config?: Record<string, any>
-  // configSchema fields passed as individual props by host
   defaultCity?: string
   refreshInterval?: number
   unit?: string
@@ -70,129 +69,287 @@ async function fetchWeather(extensionId: string, city: string, retries = 3): Pro
     }
   }
 
-  // Try with retries for extension cold start
   for (let i = 0; i < retries; i++) {
     const result = await doFetch()
     if (result.success) return result
-
-    // If it's an extension initialization error, wait and retry
     const isInitError = result.error?.includes('Invalid response') ||
                         result.error?.includes('NotRunning') ||
                         result.error?.includes('INTERNAL_ERROR')
-
     if (isInitError && i < retries - 1) {
       await new Promise(r => setTimeout(r, 500 * (i + 1)))
       continue
     }
-
     return result
   }
-
   return { success: false, error: 'Failed after retries' }
 }
 
 // ============================================================================
-// Styles (minimal, design-system aligned)
+// Scoped CSS
 // ============================================================================
 
-const CSS_ID = 'wfc-styles-v2'
+const CSS_ID = 'weather-styles-v5'
 
 const STYLES = `
-.wfc {
-  --wfc-fg: var(--foreground);
-  --wfc-muted: var(--muted-foreground);
-  --wfc-accent: var(--primary);
-  --wfc-card: var(--card);
-  --wfc-border: var(--border);
+.weather {
+  --w-fg: var(--foreground);
+  --w-muted: var(--muted-foreground);
+  --w-accent: var(--primary);
+  --w-on-accent: var(--primary-foreground, #ffffff);
+  --w-card: var(--card);
+  --w-border: var(--border);
+  --w-success: var(--color-success);
+  --w-warning: var(--color-warning);
+  --w-error: var(--color-error);
+  --w-info: var(--color-info);
+  --w-cyan: var(--accent-cyan);
+  --w-cyan-bg: var(--accent-cyan-bg);
+  --w-purple: var(--accent-purple);
+  --w-purple-bg: var(--accent-purple-bg);
+  --w-orange: var(--accent-orange);
+  --w-orange-bg: var(--accent-orange-bg);
+  --w-emerald: var(--accent-emerald);
+  --w-emerald-bg: var(--accent-emerald-bg);
+  --w-indigo: var(--accent-indigo);
+  --w-indigo-bg: var(--accent-indigo-bg);
+
   width: 100%;
   height: 100%;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  box-sizing: border-box;
 }
-.wfc-card {
+
+.dark .weather {
+  --w-on-accent: var(--primary-foreground, #17172a);
+}
+
+/* Card — glass with subtle gradient */
+.weather-card {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 10px;
-  background: var(--wfc-card);
+  background: var(--w-card);
   backdrop-filter: blur(12px);
-  border: 1px solid var(--wfc-border);
-  border-radius: 8px;
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--w-border);
+  border-radius: var(--radius-xl, 12px);
+  box-shadow: var(--shadow-sm);
   box-sizing: border-box;
+  overflow: hidden;
+  position: relative;
 }
-.wfc-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-.wfc-location {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--wfc-muted);
-  font-size: 11px;
-}
-.wfc-location svg { width: 12px; height: 12px; opacity: 0.7; }
 
-.wfc-main {
+/* Subtle gradient overlay — top-left atmospheric tint */
+.weather-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 0% 0%, var(--w-cyan-bg) 0%, transparent 70%),
+    radial-gradient(ellipse 60% 50% at 100% 100%, var(--w-purple-bg) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.weather-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Top: icon + temp + meta */
+.weather-top {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
+  gap: 12px;
+  padding: 16px 16px 0;
 }
-.wfc-icon { width: 32px; height: 32px; color: var(--wfc-accent); flex-shrink: 0; }
-.wfc-temp-wrap { display: flex; flex-direction: column; }
-.wfc-temp { font-size: 24px; font-weight: 700; color: var(--wfc-fg); line-height: 1; }
-.wfc-desc { font-size: 10px; color: var(--wfc-muted); margin-top: 1px; text-transform: capitalize; }
 
-.wfc-stats {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
+/* Icon with pill background */
+.weather-icon {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-lg, 10px);
+  background: var(--w-cyan-bg);
+  color: var(--w-cyan);
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px color-mix(in oklch, var(--w-cyan) 15%, transparent);
+}
+
+.dark .weather-icon {
+  background: var(--w-indigo-bg);
+  color: var(--w-indigo);
+  box-shadow: 0 2px 8px color-mix(in oklch, var(--w-indigo) 15%, transparent);
+}
+
+.weather-icon.night {
+  background: var(--w-purple-bg);
+  color: var(--w-purple);
+  box-shadow: 0 2px 8px color-mix(in oklch, var(--w-purple) 15%, transparent);
+}
+
+.weather-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* Temperature block */
+.weather-main {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
-.wfc-stat {
+
+.weather-temp {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--w-fg);
+  letter-spacing: -0.02em;
+}
+
+.weather-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--w-muted);
+}
+
+.weather-meta .weather-desc-text {
+  text-transform: capitalize;
+}
+
+.weather-meta .weather-sep {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--w-muted);
+  opacity: 0.4;
+}
+
+.weather-meta .weather-city {
   display: flex;
   align-items: center;
   gap: 3px;
-  padding: 3px 4px;
-  background: rgba(0,0,0,0.03);
-  border-radius: 3px;
 }
-.dark .wfc-stat { background: rgba(255,255,255,0.03); }
-.wfc-stat-icon { width: 12px; height: 12px; flex-shrink: 0; }
-.wfc-stat-icon svg { width: 100%; height: 100%; }
-.wfc-stat-val { font-size: 10px; font-weight: 600; color: var(--wfc-fg); }
-.wfc-stat-label { font-size: 8px; color: var(--wfc-muted); text-transform: uppercase; letter-spacing: 0.2px; }
 
-.wfc-footer {
+.weather-meta .weather-city svg {
+  width: 10px;
+  height: 10px;
+  opacity: 0.5;
+}
+
+/* Inline status spinner/dot */
+.weather-indicator {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 4px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
-  margin-top: 6px;
-  font-size: 9px;
-  color: var(--wfc-muted);
+  gap: 5px;
+  font-size: 10px;
+  color: var(--w-muted);
 }
-.wfc-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--color-success); }
-.wfc-dot.stale { background: var(--color-warning); }
 
-.wfc-loading, .wfc-error {
+.weather-indicator-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--w-success);
+  flex-shrink: 0;
+}
+
+.weather-indicator-dot.stale {
+  background: var(--w-warning);
+}
+
+.weather-indicator-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--w-border);
+  border-top-color: var(--w-accent);
+  border-radius: 50%;
+  animation: weather-spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes weather-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Stats — 3 column, compact with colored pills */
+.weather-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 12px 14px 0;
+}
+
+.weather-stat {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  flex: 1;
-  color: var(--wfc-muted);
-  font-size: 11px;
-  gap: 6px;
+  gap: 2px;
+  padding: 8px 4px;
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in oklch, var(--muted) 40%, transparent);
+  transition: background var(--duration-fast, 150ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
 }
-.wfc-spinner {
-  width: 24px; height: 24px;
-  border: 2px solid var(--wfc-border);
-  border-top-color: var(--wfc-accent);
-  border-radius: 50%;
-  animation: wfc-spin 0.7s linear infinite;
+
+.weather-stat:hover {
+  background: color-mix(in oklch, var(--muted) 60%, transparent);
+}
+
+.weather-stat-val {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--w-fg);
+  line-height: 1.3;
+}
+
+.weather-stat-label {
+  font-size: 10px;
+  color: var(--w-muted);
+  letter-spacing: 0.2px;
+}
+
+
+/* Error */
+.weather-error-inline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 16px;
+}
+
+.weather-error-text {
+  font-size: 12px;
+  color: var(--w-error);
+}
+
+.weather-error-btn {
+  padding: 4px 12px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--w-border);
+  background: transparent;
+  color: var(--w-fg);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background var(--duration-fast, 150ms);
+}
+
+.weather-error-btn:hover {
+  background: var(--accent);
 }
 `
 
@@ -205,26 +362,20 @@ function injectStyles() {
 }
 
 // ============================================================================
-// Icons (inline SVG paths)
+// Icons
 // ============================================================================
 
 const ICONS: Record<string, string> = {
   location: '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>',
-  refresh: '<path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.9 1 6.7 2.7L21 8M21 3v5h-5"/>',
-  droplet: '<path d="M12 22a7 7 0 0 0 7-7c0-2-1-4-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 5-4 6.5C6 11 5 13 5 15a7 7 0 0 0 7 7z"/>',
-  wind: '<path d="M17.7 7.7a2.5 2.5 0 1 1 1.8 4.3H2M9.6 4.6A2 2 0 1 1 11 8H2M12.6 19.4A2 2 0 1 0 14 16H2"/>',
-  gauge: '<path d="M12 16v-4M12 8h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0z"/>',
-  compass: '<circle cx="12" cy="12" r="10"/><polygon points="16.2 7.8 14.1 14.1 7.8 16.2 9.9 9.9 16.2 7.8" fill="currentColor" stroke="none"/>',
   cloud: '<path d="M18 10h-1.3A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/>',
   moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/>',
   cloudSun: '<path d="M12 2v2M4.9 4.9l1.4 1.4M20 12h2M19.1 4.9l-1.4 1.4M17.5 19H9a6 6 0 1 1 3.3-11A5 5 0 0 1 17.5 19z"/>',
   cloudRain: '<path d="M16 13v8M8 13v8M12 15v8M20 16.6A5 5 0 0 0 18 7h-1.3a8 8 0 1 0-12.7 8"/>',
-  thermometer: '<path d="M14 4v10.5a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0z"/>',
 }
 
 const Icon = ({ name, className = '' }: { name: string; className?: string }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={className}
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}
     dangerouslySetInnerHTML={{ __html: ICONS[name] || ICONS.cloud }} />
 )
 
@@ -237,8 +388,28 @@ const getWeatherIcon = (desc: string, isDay?: boolean) => {
   return day ? 'cloudSun' : 'cloud'
 }
 
-const ICON_COLORS: Record<string, string> = {
-  humidity: '#3b82f6', wind: '#06b6d4', feels: '#f97316', pressure: '#10b981', direction: '#8b5cf6', cloud: '#64748b'
+// ============================================================================
+// i18n
+// ============================================================================
+
+type Locale = 'en' | 'zh'
+
+function detectLocale(): Locale {
+  const stored = localStorage.getItem('i18nextLng') || ''
+  if (stored.startsWith('zh')) return 'zh'
+  if (stored.startsWith('en')) return 'en'
+  return navigator.language.startsWith('zh') ? 'zh' : 'en'
+}
+
+const T: Record<string, Record<Locale, string>> = {
+  humidity:  { en: 'Humidity', zh: '湿度' },
+  wind:      { en: 'Wind', zh: '风速' },
+  direction: { en: 'Wind Dir', zh: '风向' },
+  feels:     { en: 'Feels', zh: '体感' },
+  cloud:     { en: 'Cloud', zh: '云量' },
+  pressure:  { en: 'Pressure', zh: '气压' },
+  retry:     { en: 'Retry', zh: '重试' },
+  updated:   { en: 'Updated', zh: '更新' },
 }
 
 // ============================================================================
@@ -257,11 +428,14 @@ export const WeatherCard = forwardRef<HTMLDivElement, WeatherCardProps>(
 
     useEffect(() => injectStyles(), [])
 
+    const locale = useMemo(() => detectLocale(), [])
+    const t = useCallback((key: string) => T[key]?.[locale] ?? key, [locale])
+
     const city = propCity
     const extensionId = dataSource?.extensionId || EXTENSION_ID
 
     const [weather, setWeather] = useState<WeatherData | null>(null)
-    const [loading, setLoading] = useState(false)
+    const [fetching, setFetching] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [updated, setUpdated] = useState<Date | null>(null)
 
@@ -273,12 +447,11 @@ export const WeatherCard = forwardRef<HTMLDivElement, WeatherCardProps>(
       return () => { mountedRef.current = false; timerRef.current && clearTimeout(timerRef.current) }
     }, [])
 
-    // Fetch with debounce
     useEffect(() => {
       if (timerRef.current) clearTimeout(timerRef.current)
       timerRef.current = setTimeout(async () => {
         if (!mountedRef.current) return
-        setLoading(true)
+        setFetching(true)
         const result = await fetchWeather(extensionId, city)
         if (!mountedRef.current) return
         if (result.success && result.data) {
@@ -288,19 +461,18 @@ export const WeatherCard = forwardRef<HTMLDivElement, WeatherCardProps>(
         } else {
           setError(result.error || 'Failed')
         }
-        setLoading(false)
+        setFetching(false)
       }, 400)
       return () => { if (timerRef.current) clearTimeout(timerRef.current) }
     }, [extensionId, city])
 
-    // Auto refresh
     useEffect(() => {
       const interval = propRefreshInterval
       if (interval <= 0) return
       const id = setInterval(async () => {
         if (!mountedRef.current) return
         const result = await fetchWeather(extensionId, city)
-        if (result.success && result.data) {
+        if (mountedRef.current && result.success && result.data) {
           setWeather(result.data)
           setUpdated(new Date())
         }
@@ -308,8 +480,8 @@ export const WeatherCard = forwardRef<HTMLDivElement, WeatherCardProps>(
       return () => clearInterval(id)
     }, [extensionId, city, propRefreshInterval])
 
-    const handleRefresh = useCallback(async () => {
-      setLoading(true)
+    const handleRetry = useCallback(async () => {
+      setFetching(true)
       const result = await fetchWeather(extensionId, city)
       if (result.success && result.data) {
         setWeather(result.data)
@@ -318,103 +490,71 @@ export const WeatherCard = forwardRef<HTMLDivElement, WeatherCardProps>(
       } else {
         setError(result.error || 'Failed')
       }
-      setLoading(false)
+      setFetching(false)
     }, [extensionId, city])
 
-    const formatTemp = (t: number) => unit === 'fahrenheit' ? `${Math.round(t * 9/5 + 32)}°` : `${Math.round(t)}°`
+    const formatTemp = (v: number) => unit === 'fahrenheit' ? `${Math.round(v * 9/5 + 32)}°F` : `${Math.round(v)}°`
     const formatTime = (d: Date | null) => d ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
-
     const iconKey = useMemo(() => weather ? getWeatherIcon(weather.description, weather.is_day) : 'cloud', [weather])
-    const isStale = useMemo(() => updated && Date.now() - updated.getTime() > 600000, [updated])
+    const isNight = weather?.is_day === false
+    const isStale = updated ? Date.now() - updated.getTime() > 600000 : false
+
+    const stats = weather ? [
+      { cls: 'humidity',  val: `${weather.humidity_percent}%`, label: t('humidity') },
+      { cls: 'wind',      val: `${Math.round(weather.wind_speed_kmph)} km/h`, label: t('wind') },
+      { cls: 'feels',     val: weather.feels_like_c ? formatTemp(weather.feels_like_c) : '-', label: t('feels') },
+      { cls: 'direction', val: weather.wind_direction || '-', label: t('direction') },
+      { cls: 'cloud',     val: weather.cloud_cover_percent != null ? `${weather.cloud_cover_percent}%` : '-', label: t('cloud') },
+      { cls: 'pressure',  val: weather.pressure_hpa ? `${Math.round(weather.pressure_hpa)} hPa` : '-', label: t('pressure') },
+    ] : []
 
     return (
-      <div ref={ref} className={`wfc ${className}`}>
-        <div className="wfc-card">
-          {/* Header */}
-          <div className="wfc-header">
-            <div className="wfc-location">
-              <Icon name="location" />
-              <span>{weather?.city || city}</span>
+      <div ref={ref} className={`weather ${className}`}>
+        <div className="weather-card">
+          {error && !weather ? (
+            <div className="weather-error-inline">
+              <span className="weather-error-text">{error}</span>
+              <button className="weather-error-btn" onClick={handleRetry}>{t('retry')}</button>
             </div>
-          </div>
-
-          {/* Content */}
-          {loading && !weather ? (
-            <div className="wfc-loading">
-              <div className="wfc-spinner" />
-              <span>Loading...</span>
-            </div>
-          ) : error && !weather ? (
-            <div className="wfc-error">
-              <span>{error}</span>
-              <button onClick={handleRefresh} style={{ padding: '4px 10px', fontSize: '11px', borderRadius: '4px', border: '1px solid var(--wfc-border)', background: 'transparent', cursor: 'pointer' }}>Retry</button>
-            </div>
-          ) : weather ? (
+          ) : (
             <>
-              {/* Main */}
-              <div className="wfc-main">
-                <div className="wfc-icon">
+              <div className="weather-top">
+                <div className={`weather-icon ${isNight ? 'night' : ''}`}>
                   <Icon name={iconKey} />
                 </div>
-                <div className="wfc-temp-wrap">
-                  <div className="wfc-temp">{formatTemp(weather.temperature_c)}</div>
-                  <div className="wfc-desc">{weather.description}</div>
+                <div className="weather-main">
+                  <div className="weather-temp">{weather ? formatTemp(weather.temperature_c) : '--°'}</div>
+                  <div className="weather-meta">
+                    {weather && <span className="weather-desc-text">{weather.description}</span>}
+                    {weather && <span className="weather-sep" />}
+                    <span className="weather-city">
+                      <Icon name="location" />
+                      {weather?.city || city}
+                    </span>
+                  </div>
+                </div>
+                <div className="weather-indicator">
+                  {fetching && !weather ? (
+                    <div className="weather-indicator-spinner" />
+                  ) : (
+                    <div className={`weather-indicator-dot ${isStale ? 'stale' : ''}`} />
+                  )}
+                  {updated && <span>{formatTime(updated)}</span>}
                 </div>
               </div>
 
-              {/* Stats */}
-              <div className="wfc-stats">
-                <div className="wfc-stat">
-                  <div className="wfc-stat-icon" style={{ color: ICON_COLORS.humidity }}><Icon name="droplet" /></div>
-                  <div>
-                    <div className="wfc-stat-val">{weather.humidity_percent}%</div>
-                    <div className="wfc-stat-label">Humidity</div>
-                  </div>
+              {weather && (
+                <div className="weather-stats">
+                  {stats.map((s) => (
+                    <div className="weather-stat" key={s.cls}>
+                      <div className="weather-stat-val">{s.val}</div>
+                      <div className="weather-stat-label">{s.label}</div>
+                    </div>
+                  ))}
                 </div>
-                <div className="wfc-stat">
-                  <div className="wfc-stat-icon" style={{ color: ICON_COLORS.wind }}><Icon name="wind" /></div>
-                  <div>
-                    <div className="wfc-stat-val">{Math.round(weather.wind_speed_kmph)}</div>
-                    <div className="wfc-stat-label">km/h</div>
-                  </div>
-                </div>
-                <div className="wfc-stat">
-                  <div className="wfc-stat-icon" style={{ color: ICON_COLORS.direction }}><Icon name="compass" /></div>
-                  <div>
-                    <div className="wfc-stat-val">{weather.wind_direction || '-'}</div>
-                    <div className="wfc-stat-label">Wind</div>
-                  </div>
-                </div>
-                <div className="wfc-stat">
-                  <div className="wfc-stat-icon" style={{ color: ICON_COLORS.feels }}><Icon name="thermometer" /></div>
-                  <div>
-                    <div className="wfc-stat-val">{weather.feels_like_c ? formatTemp(weather.feels_like_c) : '-'}</div>
-                    <div className="wfc-stat-label">Feels</div>
-                  </div>
-                </div>
-                <div className="wfc-stat">
-                  <div className="wfc-stat-icon" style={{ color: ICON_COLORS.cloud }}><Icon name="cloud" /></div>
-                  <div>
-                    <div className="wfc-stat-val">{weather.cloud_cover_percent ?? '-'}%</div>
-                    <div className="wfc-stat-label">Cloud</div>
-                  </div>
-                </div>
-                <div className="wfc-stat">
-                  <div className="wfc-stat-icon" style={{ color: ICON_COLORS.pressure }}><Icon name="gauge" /></div>
-                  <div>
-                    <div className="wfc-stat-val">{weather.pressure_hpa ? Math.round(weather.pressure_hpa) : '-'}</div>
-                    <div className="wfc-stat-label">hPa</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Footer */}
-              <div className="wfc-footer">
-                <div className={`wfc-dot ${isStale ? 'stale' : ''}`} />
-                <span>{updated ? `Updated ${formatTime(updated)}` : 'Not updated'}</span>
-              </div>
+              )}
             </>
-          ) : null}
+          )}
         </div>
       </div>
     )

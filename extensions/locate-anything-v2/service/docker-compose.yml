@@ -1,0 +1,33 @@
+version: "3.8"
+
+services:
+  locate-anything:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: locate-anything-service:latest
+    container_name: locate-anything
+    restart: unless-stopped
+    ports:
+      - "9380:9380"
+    volumes:
+      - locate-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - LOCATE_ANYTHING_MODEL=nvidia/LocateAnything-3B
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9380/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 300s
+      retries: 3
+
+volumes:
+  locate-models:
+    driver: local

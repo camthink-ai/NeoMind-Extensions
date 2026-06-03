@@ -1,0 +1,24 @@
+{
+  "id": "locate-anything-v2",
+  "version": "2.7.1",
+  "entrypoint": "locate-anything-v2-components.umd.cjs",
+  "components": [
+    {
+      "name": "LocateCard",
+      "type": "card",
+      "displayName": "LocateAnything Visual Grounding",
+      "description": "AI visual grounding tool - detect objects, locate by description, OCR text detection, GUI element finding, and pointing",
+      "icon": "scan",
+      "defaultSize": { "width": 360, "height": 480 },
+      "minSize": { "width": 280, "height": 360 },
+      "maxSize": { "width": 600, "height": 700 },
+      "refreshable": true,
+      "refreshInterval": 0,
+      "hasDataSource": false,
+      "configSchema": {}
+    }
+  ],
+  "dependencies": {
+    "react": ">=18.0.0"
+  }
+}

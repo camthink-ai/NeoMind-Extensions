@@ -17,6 +17,7 @@ members = [
     "extensions/opcua-bridge",
     "extensions/onvif-bridge",
     "extensions/bacnet-bridge",
+    "extensions/locate-anything-v2",
     # "extensions/final-test",
     # "extensions/cli-test-ext",
 ]

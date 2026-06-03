@@ -1,0 +1,26 @@
+# LocateAnything API Server - Mac compatible dependencies
+# Install: pip install -r requirements.txt
+
+# Core ML
+torch>=2.5.0
+torchvision>=0.20.0
+transformers==4.57.1
+tokenizers==0.22.0
+accelerate>=1.5.2
+timm>=1.0.11
+sentencepiece>=0.2.0
+
+# Image processing
+Pillow>=10.0
+opencv-python-headless>=4.8
+decord>=0.6.0
+
+# API server
+fastapi>=0.110.0
+uvicorn>=0.29.0
+pydantic>=2.7.0
+
+# Utilities
+numpy>=1.25,<2
+einops
+requests
