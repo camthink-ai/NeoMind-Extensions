@@ -31,6 +31,9 @@ class LocateAnythingWorker:
             trust_remote_code=True,
         ).to(device).eval()
 
+        # torch.compile disabled — first compilation takes 15+ min on T4 for 3B model
+        # Can enable after warmup: torch.compile(model, mode="reduce-overhead")
+
     @torch.no_grad()
     def predict(
         self,
@@ -38,7 +41,7 @@ class LocateAnythingWorker:
         question: str,
         generation_mode: str = "hybrid",
         max_new_tokens: int = 2048,
-        temperature: float = 0.7,
+        temperature: float = 0.0,
         verbose: bool = True,
     ) -> dict:
         """
@@ -74,6 +77,7 @@ class LocateAnythingWorker:
         input_ids = inputs["input_ids"]
         image_grid_hws = inputs.get("image_grid_hws", None)
 
+        do_sample = temperature > 0
         response = self.model.generate(
             pixel_values=pixel_values,
             input_ids=input_ids,
@@ -84,8 +88,8 @@ class LocateAnythingWorker:
             use_cache=True,
             generation_mode=generation_mode,
             temperature=temperature,
-            do_sample=True,
-            top_p=0.9,
+            do_sample=do_sample,
+            top_p=0.9 if do_sample else 1.0,
             repetition_penalty=1.1,
             verbose=verbose,
         )
@@ -148,6 +152,8 @@ class LocateAnythingWorker:
         boxes = []
         for m in re.finditer(r"<box><(\d+)><(\d+)><(\d+)><(\d+)></box>", answer):
             x1, y1, x2, y2 = [int(g) for g in m.groups()]
+            # Clamp to [0, 1000] — model can occasionally produce out-of-range values
+            x1, y1, x2, y2 = [max(0, min(1000, v)) for v in (x1, y1, x2, y2)]
             boxes.append({
                 "x1": x1 / 1000 * image_width,
                 "y1": y1 / 1000 * image_height,
@@ -162,6 +168,7 @@ class LocateAnythingWorker:
         points = []
         for m in re.finditer(r"<box><(\d+)><(\d+)></box>", answer):
             x, y = int(m.group(1)), int(m.group(2))
+            x, y = max(0, min(1000, x)), max(0, min(1000, y))
             points.append({
                 "x": x / 1000 * image_width,
                 "y": y / 1000 * image_height,

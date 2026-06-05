@@ -626,19 +626,30 @@ impl OcrEngine {
 
         for (crop_img, bbox) in crops_with_bboxes {
             // Recognize text using the selected recognizer
+            // Gracefully skip crops that fail recognition instead of aborting entirely
             let rec_results = match language {
                 Language::Chinese => {
                     if let Some(ref mut recognizer) = self.recognizer_chinese {
-                        recognizer.forward(&[crop_img])
-                            .map_err(|e| ExtensionError::ExecutionFailed(format!("Recognition failed: {}", e)))?
+                        match recognizer.forward(&[crop_img]) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                tracing::warn!("[OcrDeviceInference] Skipping crop due to recognition error: {}", e);
+                                continue;
+                            }
+                        }
                     } else {
                         return Err(ExtensionError::ExecutionFailed("Chinese recognizer not initialized".to_string()));
                     }
                 }
                 Language::English => {
                     if let Some(ref mut recognizer) = self.recognizer_english {
-                        recognizer.forward(&[crop_img])
-                            .map_err(|e| ExtensionError::ExecutionFailed(format!("Recognition failed: {}", e)))?
+                        match recognizer.forward(&[crop_img]) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                tracing::warn!("[OcrDeviceInference] Skipping crop due to recognition error: {}", e);
+                                continue;
+                            }
+                        }
                     } else {
                         return Err(ExtensionError::ExecutionFailed("English recognizer not initialized".to_string()));
                     }
@@ -718,21 +729,24 @@ impl OcrEngine {
         let xs: Vec<f32> = coords.iter().map(|p| p[0]).collect();
         let ys: Vec<f32> = coords.iter().map(|p| p[1]).collect();
 
-        let x_min = xs.iter().cloned().fold(f32::INFINITY, f32::min) as u32;
-        let x_max = xs.iter().cloned().fold(f32::NEG_INFINITY, f32::max) as u32;
-        let y_min = ys.iter().cloned().fold(f32::INFINITY, f32::min) as u32;
-        let y_max = ys.iter().cloned().fold(f32::NEG_INFINITY, f32::max) as u32;
+        // Clamp coordinates to valid image bounds before casting to u32
+        // This prevents issues with negative coords or coords beyond image edges
+        let x_min = xs.iter().cloned().fold(f32::INFINITY, f32::min).max(0.0).min(img.width() as f32 - 1.0) as u32;
+        let x_max = xs.iter().cloned().fold(f32::NEG_INFINITY, f32::max).max(0.0).min(img.width() as f32 - 1.0) as u32;
+        let y_min = ys.iter().cloned().fold(f32::INFINITY, f32::min).max(0.0).min(img.height() as f32 - 1.0) as u32;
+        let y_max = ys.iter().cloned().fold(f32::NEG_INFINITY, f32::max).max(0.0).min(img.height() as f32 - 1.0) as u32;
 
-        let x_min = x_min.max(0);
-        let x_max = x_max.min(img.width() - 1);
-        let y_min = y_min.max(0);
-        let y_max = y_max.min(img.height() - 1);
+        let w = x_max.saturating_sub(x_min) + 1;
+        let h = y_max.saturating_sub(y_min) + 1;
 
-        if x_max <= x_min || y_max <= y_min {
+        // Skip crops too small for recognition (SVTR needs at least ~8px in each dimension)
+        const MIN_CROP_SIZE: u32 = 8;
+        if w < MIN_CROP_SIZE || h < MIN_CROP_SIZE {
+            tracing::debug!("[OcrDeviceInference] Skipping small crop: {}x{}", w, h);
             return None;
         }
 
-        let cropped = img.to_dyn().crop_imm(x_min, y_min, x_max - x_min + 1, y_max - y_min + 1);
+        let cropped = img.to_dyn().crop_imm(x_min, y_min, w, h);
         Some(cropped.into())
     }
 

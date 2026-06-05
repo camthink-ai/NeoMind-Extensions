@@ -104,32 +104,32 @@ class ImageRequest(BaseModel):
 class DetectRequest(ImageRequest):
     categories: list[str] = Field(..., description="Object categories to detect")
     generation_mode: str = Field("hybrid", description="fast|slow|hybrid")
-    max_new_tokens: int = Field(2048)
+    max_new_tokens: int = Field(4096)
 
 
 class GroundRequest(ImageRequest):
     phrase: str = Field(..., description="Text description to ground")
     mode: str = Field("multi", description="single|multi")
     generation_mode: str = Field("hybrid")
-    max_new_tokens: int = Field(2048)
+    max_new_tokens: int = Field(4096)
 
 
 class DetectTextRequest(ImageRequest):
     generation_mode: str = Field("hybrid")
-    max_new_tokens: int = Field(2048)
+    max_new_tokens: int = Field(4096)
 
 
 class GuiGroundRequest(ImageRequest):
     phrase: str = Field(..., description="UI element description")
     output_type: str = Field("box", description="box|point")
     generation_mode: str = Field("hybrid")
-    max_new_tokens: int = Field(2048)
+    max_new_tokens: int = Field(4096)
 
 
 class PointRequest(ImageRequest):
     phrase: str = Field(..., description="Object description to point to")
     generation_mode: str = Field("hybrid")
-    max_new_tokens: int = Field(2048)
+    max_new_tokens: int = Field(4096)
 
 
 class InferenceResponse(BaseModel):
@@ -163,7 +163,7 @@ def load_image_from_request(req: ImageRequest) -> tuple[Image.Image, tuple[int, 
     # Save original dimensions before resizing
     original_size = img.size  # (width, height)
 
-    # Downscale large images to speed up inference (max 512px on longest side)
+    # Downscale large images to 512px
     max_size = 512
     if max(img.size) > max_size:
         ratio = max_size / max(img.size)

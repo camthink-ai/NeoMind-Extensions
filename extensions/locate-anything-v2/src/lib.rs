@@ -27,8 +27,8 @@ use parking_lot::RwLock;
 // ============================================================================
 
 const DEFAULT_SERVICE_URL: &str = "http://127.0.0.1:9380";
-const DEFAULT_GENERATION_MODE: &str = "fast";
-const DEFAULT_MAX_NEW_TOKENS: i64 = 512;
+const DEFAULT_GENERATION_MODE: &str = "hybrid";
+const DEFAULT_MAX_NEW_TOKENS: i64 = 2048;
 
 // ============================================================================
 // Extension

@@ -1,12 +1,12 @@
 {
   "id": "lorawan-bridge",
   "name": "lorawan uridge",
-  "version": "2.7.2",
+  "version": "2.7.3",
   "description": "LoRaWAN bridge extension for NeoMind — connect ChirpStack/TTN sensors with auto-discovery",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
   "type": "native",
   "categories": ["iot", "bridge", "device-integration"],
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/lorawan-bridge",
-  "builds": {"darwin-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.2/lorawan-bridge-2.7.2-darwin_aarch64.nep"},"darwin-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.2/lorawan-bridge-2.7.2-darwin_x86_64.nep"},"linux-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.2/lorawan-bridge-2.7.2-linux_amd64.nep"},"linux-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.2/lorawan-bridge-2.7.2-linux_arm64.nep"},"windows-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.2/lorawan-bridge-2.7.2-windows_amd64.nep"}}
+  "builds": {"darwin-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.3/lorawan-bridge-2.7.3-darwin_aarch64.nep"},"darwin-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.3/lorawan-bridge-2.7.3-darwin_x86_64.nep"},"linux-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.3/lorawan-bridge-2.7.3-linux_amd64.nep"},"linux-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.3/lorawan-bridge-2.7.3-linux_arm64.nep"},"windows-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.3/lorawan-bridge-2.7.3-windows_amd64.nep"}}
 }

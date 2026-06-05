@@ -59,10 +59,24 @@ async function executeExtensionCommand<T>(
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
-    const r = new FileReader()
-    r.onload = () => resolve((r.result as string).split(',')[1])
-    r.onerror = reject
-    r.readAsDataURL(file)
+    const img = new Image()
+    img.onload = () => {
+      // Resize to max 1024px, JPEG 0.8 — keeps payload well under typical server limits (~256KB)
+      const MAX = 1024
+      let w = img.width, h = img.height
+      if (Math.max(w, h) > MAX) {
+        const s = MAX / Math.max(w, h)
+        w = Math.round(w * s); h = Math.round(h * s)
+      }
+      const c = document.createElement('canvas')
+      c.width = w; c.height = h
+      c.getContext('2d')!.drawImage(img, 0, 0, w, h)
+      const b64 = c.toDataURL('image/jpeg', 0.8).split(',')[1]
+      URL.revokeObjectURL(img.src)
+      resolve(b64)
+    }
+    img.onerror = () => reject(new Error('Failed to load image'))
+    img.src = URL.createObjectURL(file)
   })
 }
 
@@ -195,12 +209,14 @@ export const LocateCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
 
     const onFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
       const f = e.target.files?.[0]; if (!f) return
-      const url = URL.createObjectURL(f)
-      setImageSrc(url); setResult(null); setError(null); setShowDetail(false)
+      setResult(null); setError(null); setShowDetail(false)
       const b64 = await fileToBase64(f); setImageBase64(b64)
+      // Display the compressed version so imgSize matches what the server sees
+      const dataUrl = 'data:image/jpeg;base64,' + b64
+      setImageSrc(dataUrl)
       const img = new Image()
       img.onload = () => setImgSize({ w: img.naturalWidth, h: img.naturalHeight })
-      img.src = url
+      img.src = dataUrl
     }, [])
 
     const analyze = useCallback(async () => {

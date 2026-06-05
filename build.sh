@@ -1083,12 +1083,18 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
         # macOS zip command has a known bug producing incorrect CRC32 for large files
         if command -v python3 &> /dev/null; then
             python3 << 'PYEOF'
-import zipfile, os, sys
+import zipfile, os, stat, sys
 
 output = os.path.normpath(os.environ.get('NEOMIND_OUTPUT_ABS', ''))
 if not output:
     print("ERROR: NEOMIND_OUTPUT_ABS not set", file=sys.stderr)
     sys.exit(1)
+
+def make_external_attr(filepath, is_dir=False):
+    """Preserve Unix permissions in zip external_attr so unzip restores execute bits."""
+    mode = os.stat(filepath).st_mode
+    # external_attr layout: MSB = Unix permissions << 16
+    return (mode & 0xFFFF) << 16
 
 os.makedirs(os.path.dirname(output), exist_ok=True)
 with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -1097,9 +1103,15 @@ with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zf:
             fp = os.path.join(root, f)
             arcname = fp[2:]  # strip './'
             if os.path.isdir(fp):
-                zf.write(fp, arcname + '/')
+                info = zipfile.ZipInfo.from_file(fp, arcname + '/')
+                info.external_attr = make_external_attr(fp, is_dir=True)
+                zf.writestr(info, b'')
             else:
-                zf.write(fp, arcname)
+                info = zipfile.ZipInfo.from_file(fp, arcname)
+                info.external_attr = make_external_attr(fp)
+                info.compress_type = zipfile.ZIP_DEFLATED
+                with open(fp, 'rb') as fh:
+                    zf.writestr(info, fh.read())
 # Verify
 with zipfile.ZipFile(output, 'r') as zf:
     bad = zf.testzip()
