@@ -619,22 +619,26 @@ impl OcrEngine {
 
         tracing::info!("[OcrDeviceInference] Created {} crops for recognition", crops_with_bboxes.len());
 
-        // Now recognize all cropped images
+        // Batch recognition: process all crops in one forward pass instead of one-by-one
         let mut text_blocks = Vec::new();
         let mut all_texts = Vec::new();
         let mut total_confidence = 0.0;
 
-        for (crop_img, bbox) in crops_with_bboxes {
-            // Recognize text using the selected recognizer
-            // Gracefully skip crops that fail recognition instead of aborting entirely
+        if !crops_with_bboxes.is_empty() {
+            // Separate crops and bboxes for batch processing
+            let bboxes: Vec<BoundingBox> = crops_with_bboxes.iter().map(|(_, b)| b.clone()).collect();
+            let crop_images: Vec<usls::Image> = crops_with_bboxes.into_iter().map(|(img, _)| img).collect();
+
+            // Single batch forward pass
             let rec_results = match language {
                 Language::Chinese => {
                     if let Some(ref mut recognizer) = self.recognizer_chinese {
-                        match recognizer.forward(&[crop_img]) {
+                        match recognizer.forward(&crop_images) {
                             Ok(r) => r,
                             Err(e) => {
-                                tracing::warn!("[OcrDeviceInference] Skipping crop due to recognition error: {}", e);
-                                continue;
+                                tracing::warn!("[OcrDeviceInference] Batch recognition failed, trying individually: {}", e);
+                                // Fallback: process individually on batch failure
+                                Self::recognize_individually(recognizer, &crop_images)?
                             }
                         }
                     } else {
@@ -643,11 +647,11 @@ impl OcrEngine {
                 }
                 Language::English => {
                     if let Some(ref mut recognizer) = self.recognizer_english {
-                        match recognizer.forward(&[crop_img]) {
+                        match recognizer.forward(&crop_images) {
                             Ok(r) => r,
                             Err(e) => {
-                                tracing::warn!("[OcrDeviceInference] Skipping crop due to recognition error: {}", e);
-                                continue;
+                                tracing::warn!("[OcrDeviceInference] Batch recognition failed, trying individually: {}", e);
+                                Self::recognize_individually(recognizer, &crop_images)?
                             }
                         }
                     } else {
@@ -656,27 +660,30 @@ impl OcrEngine {
                 }
             };
 
-            if let Some(rec_result) = rec_results.first() {
-                tracing::info!("[OcrDeviceInference] Recognition found {} texts", rec_result.texts.len());
-                for text_obj in &rec_result.texts {
-                    let text_str = text_obj.text().to_string();
-                    let conf = text_obj.confidence().unwrap_or(0.0);
-
-                    tracing::info!("[OcrDeviceInference] Recognized: '{}' (confidence: {:.2})", text_str, conf);
-
-                    // Draw bounding box + OCR text label on annotated image
-                    Self::draw_bbox_with_text(&mut annotated_img, &bbox, &text_str, conf, img_width, img_height);
-
-                    text_blocks.push(TextBlock {
-                        text: text_str.clone(),
-                        confidence: conf,
-                        bbox: bbox.clone(),
-                    });
-                    all_texts.push(text_str);
-                    total_confidence += conf;
+            // Map recognition results back to their bounding boxes
+            for (i, rec_result) in rec_results.iter().enumerate() {
+                if i >= bboxes.len() {
+                    break;
                 }
-            } else {
-                tracing::warn!("[OcrDeviceInference] Recognition returned no results for crop");
+                let bbox = &bboxes[i];
+                if !rec_result.texts.is_empty() {
+                    for text_obj in &rec_result.texts {
+                        let text_str = text_obj.text().to_string();
+                        let conf = text_obj.confidence().unwrap_or(0.0);
+
+                        tracing::debug!("[OcrDeviceInference] #{}: '{}' ({:.2})", i, text_str, conf);
+
+                        Self::draw_bbox_with_text(&mut annotated_img, bbox, &text_str, conf, img_width, img_height);
+
+                        text_blocks.push(TextBlock {
+                            text: text_str.clone(),
+                            confidence: conf,
+                            bbox: bbox.clone(),
+                        });
+                        all_texts.push(text_str);
+                        total_confidence += conf;
+                    }
+                }
             }
         }
 
@@ -718,6 +725,25 @@ impl OcrEngine {
             timestamp,
             annotated_image_base64: Some(annotated_base64),
         })
+    }
+
+    /// Fallback: recognize images one-by-one when batch processing fails
+    /// (e.g., when individual crops have incompatible dimensions)
+    fn recognize_individually(
+        recognizer: &mut usls::models::SVTR,
+        images: &[usls::Image],
+    ) -> Result<Vec<usls::Y>> {
+        let mut results = Vec::with_capacity(images.len());
+        for img in images {
+            match recognizer.forward(&[img.clone()]) {
+                Ok(r) => results.extend(r),
+                Err(e) => {
+                    tracing::warn!("[OcrDeviceInference] Skipping crop: {}", e);
+                    results.push(usls::Y::default());
+                }
+            }
+        }
+        Ok(results)
     }
 
     fn crop_polygon_static(img: &usls::Image, polygon: &usls::Polygon) -> Option<usls::Image> {
