@@ -1,12 +1,30 @@
 {
   "id": "opcua-bridge",
-  "name": "opcua uridge",
-  "version": "2.7.4",
+  "name": "opcua bridge",
+  "version": "2.7.5",
   "description": "OPC-UA bridge extension for NeoMind — connect industrial servers, browse nodes, subscribe to data changes",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
   "type": "native",
-  "categories": ["iot", "bridge", "device-integration"],
+  "categories": [
+    "utility"
+  ],
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/opcua-bridge",
-  "builds": {"darwin-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.4/opcua-bridge-2.7.4-darwin_aarch64.nep"},"darwin-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.4/opcua-bridge-2.7.4-darwin_x86_64.nep"},"linux-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.4/opcua-bridge-2.7.4-linux_amd64.nep"},"linux-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.4/opcua-bridge-2.7.4-linux_arm64.nep"},"windows-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.4/opcua-bridge-2.7.4-windows_amd64.nep"}}
+  "builds": {
+    "darwin-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.5/opcua-bridge-2.7.5-darwin_aarch64.nep"
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.5/opcua-bridge-2.7.5-darwin_x86_64.nep"
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.5/opcua-bridge-2.7.5-linux_amd64.nep"
+    },
+    "linux-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.5/opcua-bridge-2.7.5-linux_arm64.nep"
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.5/opcua-bridge-2.7.5-windows_x86_64.nep"
+    }
+  }
 }
