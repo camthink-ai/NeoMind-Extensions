@@ -32,14 +32,115 @@ use chrono::Utc;
 use base64::Engine;
 
 /// Auto-detect best available inference device.
-/// macOS → CoreML, Linux → CUDA, others → CPU.
+/// macOS → CoreML, Linux → CUDA (only if sufficient address space), others → CPU.
 fn auto_device() -> usls::Device {
     #[cfg(target_os = "macos")]
     { usls::Device::CoreMl }
     #[cfg(all(not(target_os = "macos"), target_os = "linux"))]
-    { usls::Device::Cuda(0) }
+    {
+        // CUDA EP initialization hangs in memory-constrained environments
+        // (even with RLIMIT_AS raised to 4096MB). Only use CUDA when address
+        // space is plentiful (unlimited or >=8GB).
+        // The extension runner sets soft=2048MB hard=4096MB — we raise soft
+        // to hard for model loading but use CPU for inference.
+        let rlimit_mb = get_rlimit_as_mb();
+        if rlimit_mb <= 4096 {
+            eprintln!("[HW] RLIMIT_AS is {}MB (memory-constrained), using CPU", rlimit_mb);
+            return usls::Device::Cpu(0);
+        }
+
+        // Only use CUDA when address space is plentiful (e.g., unlimited or >=8GB)
+        let free_gpu_mb = get_gpu_free_memory_mb();
+        if free_gpu_mb >= 2048 {
+            eprintln!("[HW] GPU free: {}MB, RLIMIT_AS: {}MB, using CUDA", free_gpu_mb, rlimit_mb);
+            usls::Device::Cuda(0)
+        } else {
+            eprintln!("[HW] GPU free: {}MB (insufficient), using CPU", free_gpu_mb);
+            usls::Device::Cpu(0)
+        }
+    }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     { usls::Device::Cpu(0) }
+}
+
+/// Get current RLIMIT_AS in MiB by reading /proc/self/limits (0 = unlimited or error)
+#[cfg(target_os = "linux")]
+fn get_rlimit_as_mb() -> u64 {
+    get_rlimit_as().map(|(soft, _)| soft / 1024 / 1024).unwrap_or(u64::MAX)
+}
+
+/// Get RLIMIT_AS (soft, hard) in bytes by reading /proc/self/limits.
+/// Returns None if the file can't be parsed.
+#[cfg(target_os = "linux")]
+fn get_rlimit_as() -> Option<(u64, u64)> {
+    let contents = std::fs::read_to_string("/proc/self/limits").ok()?;
+    for line in contents.lines() {
+        if line.contains("address space") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            // Format: "Max address space  2147483648  4294967296  bytes"
+            // parts: ["Max", "address", "space", "2147483648", "4294967296", "bytes"]
+            if parts.len() >= 5 {
+                let soft = parts[3].parse::<u64>().ok()?;
+                let hard = parts[4].parse::<u64>().ok()?;
+                return Some((soft, hard));
+            }
+        }
+    }
+    None
+}
+
+/// Raise RLIMIT_AS soft limit to the given value using inline syscall.
+/// On x86_64 Linux, setrlimit syscall number is 160. RLIMIT_AS = 9.
+/// A process can always raise its own soft limit up to the hard limit.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn raise_rlimit_as(new_soft: u64) {
+    // struct rlimit { rlim_cur: u64, rlim_max: u64 } — 16 bytes
+    let mut rlim = [0u64; 2];
+    rlim[0] = new_soft; // rlim_cur
+    rlim[1] = new_soft; // rlim_max
+    let ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            in("rax") 160u64,        // __NR_setrlimit
+            in("rdi") 9u64,          // RLIMIT_AS
+            in("rsi") rlim.as_ptr(),
+            lateout("rax") ret,
+            out("rcx") _,
+            out("r11") _,
+        );
+    }
+    if ret == 0 {
+        eprintln!("[NativeLibs] Raised RLIMIT_AS to {}MB", new_soft / 1024 / 1024);
+    } else {
+        eprintln!("[NativeLibs] setrlimit failed (errno={})", -ret);
+    }
+}
+
+#[cfg(all(target_os = "linux", not(target_arch = "x86_64")))]
+fn raise_rlimit_as(_new_soft: u64) {
+    eprintln!("[NativeLibs] raise_rlimit_as: unsupported architecture");
+}
+
+/// Query free GPU memory in MiB via nvidia-smi
+#[cfg(target_os = "linux")]
+fn get_gpu_free_memory_mb() -> u64 {
+    use std::process::Command;
+    match Command::new("nvidia-smi")
+        .args(["--query-gpu=memory.free", "--format=csv,noheader,nounits"])
+        .output()
+    {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(line) = stdout.lines().next() {
+                if let Ok(mb) = line.trim().parse::<u64>() {
+                    return mb;
+                }
+            }
+        }
+        Err(_) => {}
+    }
+    0
 }
 
 /// Try building a model with the auto-detected device, fall back to CPU on failure.
@@ -54,8 +155,8 @@ where
             eprintln!("[HW] Model loaded with device: {:?}", device);
             Ok(model)
         }
-        Err(_) if !matches!(device, usls::Device::Cpu(_)) => {
-            eprintln!("[HW] {:?} failed, falling back to CPU", device);
+        Err(ref e) if !matches!(device, usls::Device::Cpu(_)) => {
+            eprintln!("[HW] {:?} failed, falling back to CPU: {}", device, e);
             try_build(usls::Device::Cpu(0))
         }
         Err(e) => Err(e),
@@ -242,6 +343,19 @@ struct OcrConfig {
 /// Checks NEOMIND_EXTENSION_DIR/lib/ and common system paths.
 #[cfg(not(target_arch = "wasm32"))]
 fn setup_native_lib_paths() {
+    // Raise RLIMIT_AS soft limit to match hard limit.
+    // The extension runner sets soft=2048MB hard=4096MB. Three OCR models need
+    // ~2.1GB virtual address space, so the default 2048MB soft limit is too low.
+    // A process can always raise its own soft limit to the hard limit (no root needed).
+    #[cfg(target_os = "linux")]
+    {
+        if let Some((_soft, hard)) = get_rlimit_as() {
+            if hard > 0 {
+                raise_rlimit_as(hard);
+            }
+        }
+    }
+
     let lib_env = if cfg!(target_os = "macos") {
         "DYLD_LIBRARY_PATH"
     } else if cfg!(target_os = "windows") {

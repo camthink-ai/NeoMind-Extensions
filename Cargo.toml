@@ -52,6 +52,13 @@ ndarray = "0.16"
 
 neomind-extension-sdk = "0.6.3"
 
+# Patch usls to skip unreliable is_available() check for CUDA EP.
+# When ORT is loaded dynamically (load-dynamic), GetAvailableProviders()
+# may not report CUDA even though the GPU build supports it.
+# The patched version directly tries to register the EP instead.
+[patch.crates-io]
+usls = { path = "patches/usls" }
+
 [profile.release]
 opt-level = 3
 lto = "thin"
