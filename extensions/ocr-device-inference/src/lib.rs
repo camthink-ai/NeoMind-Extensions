@@ -294,6 +294,8 @@ pub struct TextBlock {
     pub text: String,
     pub confidence: f32,
     pub bbox: BoundingBox,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub polygon: Option<Vec<[f32; 2]>>,
 }
 
 /// OCR inference result
@@ -716,7 +718,8 @@ impl OcrEngine {
         };
 
         // Collect cropped images and their bounding boxes first (before borrowing recognizer)
-        let mut crops_with_bboxes: Vec<(usls::Image, BoundingBox)> = Vec::new();
+        // Also carry normalized polygon coords so the precise contour can be emitted alongside bbox.
+        let mut crops_with_data: Vec<(usls::Image, BoundingBox, Option<Vec<[f32; 2]>>)> = Vec::new();
 
         if let Some(det_result) = det_results.first() {
             tracing::info!("[OcrDeviceInference] Detection found {} polygons", det_result.polygons.len());
@@ -724,24 +727,30 @@ impl OcrEngine {
                 let cropped = Self::crop_polygon_static(&img, polygon);
                 if let Some(crop_img) = cropped {
                     let bbox = Self::polygon_to_bbox_static(polygon, img_width, img_height);
-                    crops_with_bboxes.push((crop_img, bbox));
+                    let poly_coords = Some(
+                        polygon.points().iter()
+                            .map(|p| [p[0] / img_width as f32, p[1] / img_height as f32])
+                            .collect()
+                    );
+                    crops_with_data.push((crop_img, bbox, poly_coords));
                 }
             }
         } else {
             tracing::warn!("[OcrDeviceInference] Detection returned no results");
         }
 
-        tracing::info!("[OcrDeviceInference] Created {} crops for recognition", crops_with_bboxes.len());
+        tracing::info!("[OcrDeviceInference] Created {} crops for recognition", crops_with_data.len());
 
         // Batch recognition: process all crops in one forward pass instead of one-by-one
         let mut text_blocks = Vec::new();
         let mut all_texts = Vec::new();
         let mut total_confidence = 0.0;
 
-        if !crops_with_bboxes.is_empty() {
-            // Separate crops and bboxes for batch processing
-            let bboxes: Vec<BoundingBox> = crops_with_bboxes.iter().map(|(_, b)| b.clone()).collect();
-            let crop_images: Vec<usls::Image> = crops_with_bboxes.into_iter().map(|(img, _)| img).collect();
+        if !crops_with_data.is_empty() {
+            // Separate crops, bboxes and polygons for batch processing
+            let bboxes: Vec<BoundingBox> = crops_with_data.iter().map(|(_, b, _)| b.clone()).collect();
+            let polygons: Vec<Option<Vec<[f32; 2]>>> = crops_with_data.iter().map(|(_, _, p)| p.clone()).collect();
+            let crop_images: Vec<usls::Image> = crops_with_data.into_iter().map(|(img, _, _)| img).collect();
 
             // Single batch forward pass
             let rec_results = match language {
@@ -793,6 +802,7 @@ impl OcrEngine {
                             text: text_str.clone(),
                             confidence: conf,
                             bbox: bbox.clone(),
+                            polygon: polygons[i].clone(),
                         });
                         all_texts.push(text_str);
                         total_confidence += conf;
