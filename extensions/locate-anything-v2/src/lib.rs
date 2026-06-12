@@ -27,8 +27,11 @@ use parking_lot::RwLock;
 // ============================================================================
 
 const DEFAULT_SERVICE_URL: &str = "http://127.0.0.1:9380";
-const DEFAULT_GENERATION_MODE: &str = "hybrid";
+const DEFAULT_GENERATION_MODE: &str = "slow";
 const DEFAULT_MAX_NEW_TOKENS: i64 = 2048;
+const DEFAULT_NMS_IOU_THRESHOLD: f64 = 0.7;
+const DEFAULT_MIN_AREA_RATIO: f64 = 0.0005;  // 0.05% of image area
+const DEFAULT_MAX_AREA_RATIO: f64 = 0.98;    // 98% of image area
 
 // ============================================================================
 // Extension
@@ -41,6 +44,12 @@ pub struct LocateAnythingExtension {
     generation_mode: RwLock<String>,
     /// Max new tokens per inference
     max_new_tokens: RwLock<i64>,
+    /// NMS IoU threshold (boxes with IoU > threshold are suppressed)
+    nms_iou_threshold: RwLock<f64>,
+    /// Minimum box area ratio relative to image area
+    min_area_ratio: RwLock<f64>,
+    /// Maximum box area ratio relative to image area
+    max_area_ratio: RwLock<f64>,
     /// Whether the service is reachable
     service_ok: AtomicBool,
     /// Total inference requests
@@ -65,6 +74,9 @@ impl LocateAnythingExtension {
             service_url: RwLock::new(service_url),
             generation_mode: RwLock::new(DEFAULT_GENERATION_MODE.to_string()),
             max_new_tokens: RwLock::new(DEFAULT_MAX_NEW_TOKENS),
+            nms_iou_threshold: RwLock::new(DEFAULT_NMS_IOU_THRESHOLD),
+            min_area_ratio: RwLock::new(DEFAULT_MIN_AREA_RATIO),
+            max_area_ratio: RwLock::new(DEFAULT_MAX_AREA_RATIO),
             service_ok: AtomicBool::new(false),
             total_requests: AtomicI64::new(0),
             last_inference_ms: AtomicI64::new(0),
@@ -135,10 +147,194 @@ impl LocateAnythingExtension {
             body["max_new_tokens"] = json!(tokens);
         }
     }
+
+    /// Apply post-processing with per-command overrides from args.
+    /// Reads nms_iou_threshold / min_area_ratio / max_area_ratio from args if present,
+    /// falling back to global config defaults.
+    fn postprocess_args(&self, result: &mut serde_json::Value, args: &serde_json::Value) {
+        let iou_threshold = args.get("nms_iou_threshold")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(*self.nms_iou_threshold.read());
+        let min_ratio = args.get("min_area_ratio")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(*self.min_area_ratio.read());
+        let max_ratio = args.get("max_area_ratio")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(*self.max_area_ratio.read());
+
+        self.postprocess_result(result, iou_threshold, min_ratio, max_ratio);
+    }
 }
 
 impl Default for LocateAnythingExtension {
     fn default() -> Self { Self::new() }
+}
+
+// ============================================================================
+// Bounding box types and post-processing
+// ============================================================================
+
+#[derive(Clone, Debug)]
+struct BBox {
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+}
+
+impl BBox {
+    fn area(&self) -> f64 {
+        let w = (self.x2 - self.x1).max(0.0);
+        let h = (self.y2 - self.y1).max(0.0);
+        w * h
+    }
+
+    fn iou(&self, other: &BBox) -> f64 {
+        let x1 = self.x1.max(other.x1);
+        let y1 = self.y1.max(other.y1);
+        let x2 = self.x2.min(other.x2);
+        let y2 = self.y2.min(other.y2);
+
+        let inter = (x2 - x1).max(0.0) * (y2 - y1).max(0.0);
+        if inter == 0.0 {
+            return 0.0;
+        }
+
+        let union = self.area() + other.area() - inter;
+        if union <= 0.0 {
+            return 0.0;
+        }
+
+        inter / union
+    }
+}
+
+/// Non-Maximum Suppression: remove overlapping boxes keeping the larger one.
+/// Boxes are sorted by area (descending), then suppressed by IoU threshold.
+/// Returns boxes in original order.
+fn nms(boxes: Vec<BBox>, iou_threshold: f64) -> Vec<BBox> {
+    if boxes.is_empty() {
+        return Vec::new();
+    }
+
+    // Sort by area descending (larger boxes have priority)
+    let mut indexed: Vec<(usize, BBox)> = boxes.into_iter().enumerate().collect();
+    indexed.sort_by(|a, b| {
+        b.1.area().partial_cmp(&a.1.area()).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let n = indexed.len();
+    let mut keep = vec![true; n];
+
+    for i in 0..n {
+        if !keep[i] {
+            continue;
+        }
+        for j in (i + 1)..n {
+            if !keep[j] {
+                continue;
+            }
+            if indexed[i].1.iou(&indexed[j].1) > iou_threshold {
+                keep[j] = false;
+            }
+        }
+    }
+
+    // Collect kept items, then sort by original index to preserve order
+    let mut kept: Vec<(usize, BBox)> = indexed.into_iter()
+        .zip(keep.iter())
+        .filter(|(_, &k)| k)
+        .map(|((idx, bbox), _)| (idx, bbox))
+        .collect();
+    kept.sort_by_key(|(idx, _)| *idx);
+    kept.into_iter().map(|(_, bbox)| bbox).collect()
+}
+
+/// Filter boxes by area ratio relative to image dimensions.
+fn filter_by_area(boxes: Vec<BBox>, img_w: f64, img_h: f64, min_ratio: f64, max_ratio: f64) -> Vec<BBox> {
+    let image_area = img_w * img_h;
+    if image_area <= 0.0 {
+        return boxes;
+    }
+
+    boxes.into_iter().filter(|b| {
+        let ratio = b.area() / image_area;
+        ratio >= min_ratio && ratio <= max_ratio
+    }).collect()
+}
+
+impl LocateAnythingExtension {
+    /// Apply NMS and area filtering to the service response.
+    /// Extracts boxes from the response JSON, filters them, and updates the response.
+    fn postprocess_result(
+        &self,
+        result: &mut serde_json::Value,
+        iou_threshold: f64,
+        min_area_ratio: f64,
+        max_area_ratio: f64,
+    ) {
+        // Extract image dimensions from response
+        let img_w = result.get("image_width")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let img_h = result.get("image_height")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+
+        // Parse boxes from response
+        let boxes_arr = match result.get("boxes").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return,
+        };
+
+        if boxes_arr.is_empty() {
+            return;
+        }
+
+        let original_count = boxes_arr.len();
+        let mut bboxes: Vec<BBox> = Vec::with_capacity(boxes_arr.len());
+        for b in boxes_arr {
+            let x1 = b.get("x1").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let y1 = b.get("y1").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let x2 = b.get("x2").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let y2 = b.get("y2").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            bboxes.push(BBox { x1, y1, x2, y2 });
+        }
+
+        // Step 1: Area filtering
+        if img_w > 0.0 && img_h > 0.0 {
+            bboxes = filter_by_area(bboxes, img_w, img_h, min_area_ratio, max_area_ratio);
+        }
+
+        // Step 2: NMS
+        bboxes = nms(bboxes, iou_threshold);
+
+        let filtered_count = bboxes.len();
+
+        // Update response
+        result["boxes"] = json!(bboxes.iter().map(|b| json!({
+            "x1": b.x1, "y1": b.y1, "x2": b.x2, "y2": b.y2
+        })).collect::<Vec<_>>());
+
+        // Also strip filtered boxes from the text answer
+        // (we can't easily re-parse the answer text, so just note the filtering)
+        if filtered_count < original_count {
+            result["filtered_count"] = json!(original_count - filtered_count);
+            if let Some(obj) = result.as_object_mut() {
+                obj.insert(
+                    "postprocess".to_string(),
+                    json!({
+                        "nms_iou_threshold": iou_threshold,
+                        "min_area_ratio": min_area_ratio,
+                        "max_area_ratio": max_area_ratio,
+                        "original_count": original_count,
+                        "kept_count": filtered_count,
+                        "removed_count": original_count - filtered_count,
+                    }),
+                );
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -181,6 +377,39 @@ impl Extension for LocateAnythingExtension {
                         default_value: Some(ParamMetricValue::Integer(DEFAULT_MAX_NEW_TOKENS)),
                         min: Some(128.0),
                         max: Some(8192.0),
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "nms_iou_threshold".to_string(),
+                        display_name: "NMS IoU Threshold".to_string(),
+                        description: "Non-Maximum Suppression IoU threshold. Overlapping boxes with IoU above this value are merged. Lower = more aggressive filtering (0.0 = keep all, 1.0 = no filtering)".to_string(),
+                        param_type: MetricDataType::Float,
+                        required: false,
+                        default_value: Some(ParamMetricValue::Float(DEFAULT_NMS_IOU_THRESHOLD)),
+                        min: Some(0.0),
+                        max: Some(1.0),
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "min_area_ratio".to_string(),
+                        display_name: "Min Area Ratio".to_string(),
+                        description: "Minimum box area as ratio of image area. Boxes smaller than this are filtered out (e.g. 0.001 = 0.1% of image)".to_string(),
+                        param_type: MetricDataType::Float,
+                        required: false,
+                        default_value: Some(ParamMetricValue::Float(DEFAULT_MIN_AREA_RATIO)),
+                        min: Some(0.0),
+                        max: Some(0.5),
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "max_area_ratio".to_string(),
+                        display_name: "Max Area Ratio".to_string(),
+                        description: "Maximum box area as ratio of image area. Boxes larger than this are filtered out (e.g. 0.95 = filter near-full-image boxes)".to_string(),
+                        param_type: MetricDataType::Float,
+                        required: false,
+                        default_value: Some(ParamMetricValue::Float(DEFAULT_MAX_AREA_RATIO)),
+                        min: Some(0.1),
+                        max: Some(1.0),
                         options: Vec::new(),
                     },
                 ])
@@ -354,6 +583,39 @@ impl Extension for LocateAnythingExtension {
             eprintln!("[LocateAnything] Max new tokens: {}", tokens);
         }
 
+        // Update NMS IoU threshold
+        if let Some(threshold) = config.get("nms_iou_threshold").and_then(|v| v.as_f64()) {
+            if threshold < 0.0 || threshold > 1.0 {
+                return Err(ExtensionError::InvalidArguments(
+                    "nms_iou_threshold must be between 0.0 and 1.0".to_string()
+                ));
+            }
+            *self.nms_iou_threshold.write() = threshold;
+            eprintln!("[LocateAnything] NMS IoU threshold: {}", threshold);
+        }
+
+        // Update min area ratio
+        if let Some(ratio) = config.get("min_area_ratio").and_then(|v| v.as_f64()) {
+            if ratio < 0.0 || ratio > 0.5 {
+                return Err(ExtensionError::InvalidArguments(
+                    "min_area_ratio must be between 0.0 and 0.5".to_string()
+                ));
+            }
+            *self.min_area_ratio.write() = ratio;
+            eprintln!("[LocateAnything] Min area ratio: {}", ratio);
+        }
+
+        // Update max area ratio
+        if let Some(ratio) = config.get("max_area_ratio").and_then(|v| v.as_f64()) {
+            if ratio < 0.1 || ratio > 1.0 {
+                return Err(ExtensionError::InvalidArguments(
+                    "max_area_ratio must be between 0.1 and 1.0".to_string()
+                ));
+            }
+            *self.max_area_ratio.write() = ratio;
+            eprintln!("[LocateAnything] Max area ratio: {}", ratio);
+        }
+
         Ok(())
     }
 
@@ -384,7 +646,9 @@ impl Extension for LocateAnythingExtension {
                     "categories": categories,
                 });
                 self.inject_defaults(&mut body);
-                self.call_service("detect", &body)
+                let mut result = self.call_service("detect", &body)?;
+                self.postprocess_args(&mut result, args);
+                Ok(result)
             }
 
             "ground" => {
@@ -404,7 +668,9 @@ impl Extension for LocateAnythingExtension {
                     "mode": mode,
                 });
                 self.inject_defaults(&mut body);
-                self.call_service("ground", &body)
+                let mut result = self.call_service("ground", &body)?;
+                self.postprocess_args(&mut result, args);
+                Ok(result)
             }
 
             "detect_text" => {
@@ -436,7 +702,9 @@ impl Extension for LocateAnythingExtension {
                     "output_type": output_type,
                 });
                 self.inject_defaults(&mut body);
-                self.call_service("ground_gui", &body)
+                let mut result = self.call_service("ground_gui", &body)?;
+                self.postprocess_args(&mut result, args);
+                Ok(result)
             }
 
             "point" => {
@@ -525,5 +793,126 @@ mod tests {
         let config = json!({"generation_mode": "invalid"});
         let rt = tokio::runtime::Runtime::new().unwrap();
         assert!(rt.block_on(ext.configure(&config)).is_err());
+    }
+
+    #[test]
+    fn test_configure_nms_params() {
+        let mut ext = LocateAnythingExtension::new();
+        let config = json!({
+            "nms_iou_threshold": 0.3,
+            "min_area_ratio": 0.005,
+            "max_area_ratio": 0.8
+        });
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(ext.configure(&config)).unwrap();
+        assert!((*ext.nms_iou_threshold.read() - 0.3).abs() < f64::EPSILON);
+        assert!((*ext.min_area_ratio.read() - 0.005).abs() < f64::EPSILON);
+        assert!((*ext.max_area_ratio.read() - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_bbox_area() {
+        let bbox = BBox { x1: 10.0, y1: 20.0, x2: 60.0, y2: 70.0 };
+        assert!((bbox.area() - 2500.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_bbox_iou_no_overlap() {
+        let a = BBox { x1: 0.0, y1: 0.0, x2: 10.0, y2: 10.0 };
+        let b = BBox { x1: 20.0, y1: 20.0, x2: 30.0, y2: 30.0 };
+        assert!(a.iou(&b).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_bbox_iou_full_overlap() {
+        let a = BBox { x1: 0.0, y1: 0.0, x2: 10.0, y2: 10.0 };
+        assert!((a.iou(&a) - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_bbox_iou_partial() {
+        let a = BBox { x1: 0.0, y1: 0.0, x2: 10.0, y2: 10.0 };
+        let b = BBox { x1: 5.0, y1: 5.0, x2: 15.0, y2: 15.0 };
+        // Intersection: 5x5 = 25, Union: 100 + 100 - 25 = 175
+        let expected = 25.0 / 175.0;
+        assert!((a.iou(&b) - expected).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_nms_removes_overlapping() {
+        let boxes = vec![
+            BBox { x1: 0.0, y1: 0.0, x2: 100.0, y2: 100.0 },   // large
+            BBox { x1: 5.0, y1: 5.0, x2: 95.0, y2: 95.0 },     // 90% overlap with large
+            BBox { x1: 200.0, y1: 200.0, x2: 300.0, y2: 300.0 }, // separate
+        ];
+        let result = nms(boxes, 0.5);
+        assert_eq!(result.len(), 2);
+        // The larger box (0,0,100,100) should be kept, the overlapping one removed
+        assert!((result[0].x1 - 0.0).abs() < f64::EPSILON);
+        assert!((result[1].x1 - 200.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_nms_keeps_non_overlapping() {
+        let boxes = vec![
+            BBox { x1: 0.0, y1: 0.0, x2: 50.0, y2: 50.0 },
+            BBox { x1: 100.0, y1: 100.0, x2: 150.0, y2: 150.0 },
+            BBox { x1: 200.0, y1: 200.0, x2: 250.0, y2: 250.0 },
+        ];
+        let result = nms(boxes, 0.5);
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_nms_empty() {
+        let result: Vec<BBox> = nms(vec![], 0.5);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_by_area_removes_small() {
+        // Image: 1000x1000 = 1_000_000 area
+        let boxes = vec![
+            BBox { x1: 0.0, y1: 0.0, x2: 10.0, y2: 10.0 },       // 100 / 1M = 0.0001 (too small)
+            BBox { x1: 100.0, y1: 100.0, x2: 300.0, y2: 300.0 },  // 40000 / 1M = 0.04 (ok)
+            BBox { x1: 0.0, y1: 0.0, x2: 990.0, y2: 990.0 },     // 980100 / 1M = 0.98 (too large)
+        ];
+        let result = filter_by_area(boxes, 1000.0, 1000.0, 0.001, 0.95);
+        assert_eq!(result.len(), 1);
+        assert!((result[0].x1 - 100.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_filter_by_area_keeps_all_valid() {
+        let boxes = vec![
+            BBox { x1: 0.0, y1: 0.0, x2: 100.0, y2: 100.0 },   // 1%
+            BBox { x1: 200.0, y1: 200.0, x2: 400.0, y2: 400.0 }, // 4%
+        ];
+        let result = filter_by_area(boxes, 1000.0, 1000.0, 0.001, 0.95);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_postprocess_result_integration() {
+        let ext = LocateAnythingExtension::new();
+        let mut result = json!({
+            "success": true,
+            "image_width": 1000,
+            "image_height": 1000,
+            "boxes": [
+                {"x1": 10, "y1": 10, "x2": 15, "y2": 15},          // too small: 25/1M = 0.000025
+                {"x1": 100, "y1": 100, "x2": 300, "y2": 300},      // ok: 40000/1M = 0.04
+                {"x1": 105, "y1": 105, "x2": 295, "y2": 295},      // overlaps with above
+                {"x1": 0, "y1": 0, "x2": 990, "y2": 990},          // too large: 980100/1M = 0.98
+            ]
+        });
+
+        ext.postprocess_result(&mut result, 0.5, 0.001, 0.95);
+
+        let boxes = result["boxes"].as_array().unwrap();
+        // Should keep only one box (the 200x200 one after area filter + NMS)
+        assert_eq!(boxes.len(), 1);
+        assert!(result.get("postprocess").is_some());
+        assert_eq!(result["postprocess"]["removed_count"], 3);
     }
 }
