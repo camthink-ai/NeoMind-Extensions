@@ -1,30 +1,12 @@
 {
   "id": "modbus-bridge",
-  "name": "modbus bridge",
-  "version": "2.7.5",
+  "name": "moduus uridge",
+  "version": "2.7.6",
   "description": "Modbus TCP/RTU bridge extension for NeoMind — connect PLCs, power meters, sensors, and industrial devices",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
   "type": "native",
-  "categories": [
-    "utility"
-  ],
+  "categories": ["iot", "bridge", "device-integration"],
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/modbus-bridge",
-  "builds": {
-    "darwin-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.5/modbus-bridge-2.7.5-darwin_aarch64.nep"
-    },
-    "darwin-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.5/modbus-bridge-2.7.5-darwin_x86_64.nep"
-    },
-    "linux-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.5/modbus-bridge-2.7.5-linux_amd64.nep"
-    },
-    "linux-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.5/modbus-bridge-2.7.5-linux_arm64.nep"
-    },
-    "windows-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.5/modbus-bridge-2.7.5-windows_x86_64.nep"
-    }
-  }
+  "builds": {"darwin-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.6/modbus-bridge-2.7.6-darwin_aarch64.nep"},"darwin-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.6/modbus-bridge-2.7.6-darwin_x86_64.nep"},"linux-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.6/modbus-bridge-2.7.6-linux_amd64.nep"},"linux-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.6/modbus-bridge-2.7.6-linux_arm64.nep"},"windows-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.6/modbus-bridge-2.7.6-windows_amd64.nep"}}
 }
