@@ -133,3 +133,50 @@ async def test_pipeline_records_telemetry():
     assert "first_audio_out_ms" in snap
     assert "full_turn_ms" in snap
     assert telemetry.turn_count == 1
+
+
+@pytest.mark.asyncio
+async def test_pipeline_barge_in_invokes_handler_and_cancels_llm():
+    """End-to-end: handle_barge_in transitions to BARGED, runs 4 cleanups
+    (cancel_llm should call llm.cancel), then transitions to LISTENING."""
+    vad, asr, llm, tts = _make_mocks()
+    cancelled = asyncio.Event()
+
+    async def llm_stream(text, session_id):
+        yield LlmEvent(type="Content", text="部")
+        # Park until barge-in fires; the second chunk should never reach TTS
+        await cancelled.wait()
+        yield LlmEvent(type="Content", text="分内容")
+
+    llm.stream = llm_stream
+    llm.cancel = AsyncMock(side_effect=lambda **_: cancelled.set())
+    on_tts_pcm = AsyncMock()
+    on_stop_playback = AsyncMock()
+    pipeline = VoicePipeline(
+        vad, asr, llm, tts,
+        on_tts_pcm=on_tts_pcm,
+        on_stop_playback=on_stop_playback,
+    )
+
+    # Start the turn in background
+    task = asyncio.create_task(pipeline.run_turn(_make_segment()))
+    await asyncio.sleep(0.05)  # let LLM emit first chunk and park on cancelled.wait()
+
+    # Sanity: pipeline should be in THINKING
+    assert pipeline.fsm.state == State.THINKING
+
+    # Fire barge-in
+    await pipeline.barge_in.handle_barge_in(pipeline.fsm, reason="test_speech")
+
+    # cancelled should have been set by llm.cancel side_effect, unblocking the task
+    await task
+
+    # llm.cancel was invoked
+    llm.cancel.assert_called_once()
+    # TTS never synthesized, PCM never delivered
+    tts.synthesize.assert_not_called()
+    on_tts_pcm.assert_not_called()
+    # Browser was told to stop playback (the cancel_tts_playback cleanup)
+    on_stop_playback.assert_called_once()
+    # After handle_barge_in, FSM is in LISTENING (cleanup complete)
+    assert pipeline.fsm.state == State.LISTENING

@@ -163,6 +163,7 @@ class VoicePipeline:
         llm,
         tts,
         on_tts_pcm,
+        on_stop_playback=None,
         telemetry=None,
         voice: str = "中文女",
     ):
@@ -171,12 +172,21 @@ class VoicePipeline:
         self.llm = llm
         self.tts = tts
         self.on_tts_pcm = on_tts_pcm  # async callable(pcm_bytes, sample_rate)
+        self.on_stop_playback = on_stop_playback  # async callable() -> None
         self.telemetry = telemetry
         self.voice = voice
         self.fsm = StateMachine()
         # AEC threshold hack: raise VAD threshold during TTS playback to avoid
         # the assistant's own voice triggering barge-in. Restored after.
         self._original_vad_threshold = getattr(vad, "threshold", None)
+        self._pcm_queue: asyncio.Queue | None = None  # set when streaming TTS queue is in use
+        # Barge-in handler — wires the 4 cleanup actions to pipeline-owned state
+        self.barge_in = BargeInHandler(
+            cancel_tts_playback=self._cancel_tts_playback,
+            cancel_llm_request=self._cancel_llm,
+            clear_pending_queues=self._clear_queues,
+            drain_asr_buffer=self._drain_asr,
+        )
 
     async def run_turn(self, segment) -> None:
         """Process one VAD segment end-to-end.
@@ -203,6 +213,8 @@ class VoicePipeline:
         if self.telemetry:
             self.telemetry.observe("asr_complete_ms", asr_ms)
         if self.fsm.state == State.BARGED:
+            if self.telemetry:
+                self.telemetry.increment_barge_ins()
             return  # barge-in fired during ASR
 
         # Empty transcript -> back to IDLE without invoking LLM/TTS.
@@ -229,8 +241,13 @@ class VoicePipeline:
                     )
             if evt.type == "Content" and getattr(evt, "text", None):
                 full_text += evt.text
-            # Barge-in check after each event.
-            if self.fsm.state == State.BARGED:
+            # Barge-in check after each event. During LLM streaming the
+            # pipeline is in THINKING; any other state (BARGED, or LISTENING
+            # after the BargeInHandler already completed cleanup) means the
+            # turn was interrupted.
+            if self.fsm.state != State.THINKING:
+                if self.telemetry:
+                    self.telemetry.increment_barge_ins()
                 return
 
         # No content produced -> back to IDLE.
@@ -260,6 +277,8 @@ class VoicePipeline:
         # Re-check barge-in right before delivering PCM (may have fired
         # during TTS synthesis).
         if self.fsm.state == State.BARGED:
+            if self.telemetry:
+                self.telemetry.increment_barge_ins()
             return
 
         # Deliver PCM to player. ZipVoice outputs 24kHz int16 LE.
@@ -273,3 +292,29 @@ class VoicePipeline:
 
         # SPEAKING -> IDLE
         await self.fsm.async_transition(State.IDLE)
+
+    async def _cancel_tts_playback(self) -> None:
+        """Notify the browser to stop audio playback (WS control frame)."""
+        if self.on_stop_playback is not None:
+            await self.on_stop_playback()
+
+    async def _cancel_llm(self) -> None:
+        """Cancel the in-flight LLM stream."""
+        await self.llm.cancel(session_id=str(id(self)))
+
+    async def _clear_queues(self) -> None:
+        """Drop any buffered PCM chunks not yet sent to the browser."""
+        if self._pcm_queue is None:
+            return
+        while not self._pcm_queue.empty():
+            try:
+                self._pcm_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+    async def _drain_asr(self) -> None:
+        """ASR is stateless at the Protocol level; nothing to drain.
+
+        Orchestrator-level reset happens via the FSM transition to LISTENING.
+        """
+        pass
