@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Awaitable
 
@@ -89,3 +90,50 @@ class StateMachine:
                 result = self.on_transition(prev, target)
                 if asyncio.iscoroutine(result):
                     await result
+
+
+@dataclass
+class BargeInHandler:
+    """Coordinates the 4 parallel cleanup actions on barge-in.
+
+    Each action is an async callable; failures are logged but don't halt others.
+    Uses a lock to ensure idempotency for concurrent barge-in triggers.
+    """
+    cancel_tts_playback: Callable[[], Awaitable[None]]
+    cancel_llm_request: Callable[[], Awaitable[None]]
+    clear_pending_queues: Callable[[], Awaitable[None]]
+    drain_asr_buffer: Callable[[], Awaitable[None]]
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    _in_progress: bool = field(default=False)
+
+    async def handle_barge_in(self, fsm: StateMachine, reason: str) -> None:
+        """Transition to BARGED, run 4 cleanups, transition to LISTENING.
+
+        Idempotent: if a barge-in is already in progress, return immediately.
+        """
+        async with self._lock:
+            if self._in_progress:
+                logger.debug("barge-in already in progress, skipping (reason=%s)", reason)
+                return
+            if fsm.state == State.IDLE or fsm.state == State.LISTENING:
+                logger.debug("barge-in in state %s, nothing to cancel", fsm.state.value)
+                return
+            self._in_progress = True
+
+        logger.info("BARGE-IN triggered (reason=%s, from=%s)", reason, fsm.state.value)
+        await fsm.async_transition(State.BARGED)
+
+        cleanup_tasks = [
+            self.cancel_tts_playback(),
+            self.cancel_llm_request(),
+            self.clear_pending_queues(),
+            self.drain_asr_buffer(),
+        ]
+        results = await asyncio.gather(*cleanup_tasks, return_exceptions=True)
+        for i, r in enumerate(results):
+            if isinstance(r, Exception):
+                logger.warning("barge-in cleanup task %d failed: %s", i, r)
+
+        await fsm.async_transition(State.LISTENING)
+        async with self._lock:
+            self._in_progress = False
