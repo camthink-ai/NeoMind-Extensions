@@ -18,6 +18,11 @@ members = [
     "extensions/onvif-bridge",
     "extensions/bacnet-bridge",
     "extensions/locate-anything-v2",
+    "extensions/moss-tts-nano",
+    "extensions/sensevoice-asr",
+    "extensions/cosyvoice-3",
+    "extensions/voice-edge-tts",
+    "extensions/voice-assistant",
     # "extensions/final-test",
     # "extensions/cli-test-ext",
 ]
