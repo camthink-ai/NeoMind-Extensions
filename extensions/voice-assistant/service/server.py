@@ -135,6 +135,11 @@ from backends.asr import SenseVoiceHTTPASR
 
 _asr_backend = SenseVoiceHTTPASR(url=ASR_URL)
 
+# TTS backend — extracted to backends/tts.py (Task 6 refactor).
+# tts_stream() keeps its streaming callback + latency tracking for now;
+# it will be wired to ZipVoiceHTTP in Task 14.
+from backends.tts import ZipVoiceHTTP  # noqa: F401
+
 
 async def asr_transcribe(pcm_int16: bytes, language: str = "auto") -> dict:
     """POST /asr on sensevoice-asr service. Returns parsed JSON."""
