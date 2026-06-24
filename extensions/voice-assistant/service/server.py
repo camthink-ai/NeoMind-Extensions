@@ -48,6 +48,8 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 
 logger = logging.getLogger("voice-assistant")
 
@@ -109,6 +111,43 @@ AEC_MODE = os.environ.get("VOICE_ASSISTANT_AEC_MODE", "echo_window").lower()
 AEC_SILENCE_BOOST_MS = int(os.environ.get("VOICE_ASSISTANT_AEC_SILENCE_BOOST_MS", "800"))
 AEC_ENERGY_BOOST = float(os.environ.get("VOICE_ASSISTANT_AEC_ENERGY_BOOST", "0.020"))
 AEC_TAIL_MS = int(os.environ.get("VOICE_ASSISTANT_AEC_TAIL_MS", "400"))
+
+
+# ---------------------------------------------------------------------------
+# FastAPI app — serves HTTP /measure and WebSocket /ws on the same port.
+# ---------------------------------------------------------------------------
+app = FastAPI(title="Voice Assistant Orchestrator")
+
+
+@app.post("/measure")
+async def measure(req: dict | None = None):
+    """Return aggregated latency stats from telemetry.
+
+    Body is ignored (the ``n`` field in the plan is informational; we report
+    all accumulated observations). Response shape::
+
+        {
+          "turn_count": int,
+          "barge_in_count": int,
+          "target_ms": int,
+          "target_met": bool,
+          "<kpi_name>": {"p50": float, "p95": float, "min": float, "max": float},
+          ...
+        }
+    """
+    snap = _telemetry.snapshot()
+    first_audio_p50 = snap.get("first_audio_out_ms", {}).get("p50")
+    target_met = (
+        first_audio_p50 is not None
+        and first_audio_p50 <= _profile.latency_target_ms
+    )
+    return {
+        "turn_count": _telemetry.turn_count,
+        "barge_in_count": _telemetry.barge_in_count,
+        "target_ms": _profile.latency_target_ms,
+        "target_met": target_met,
+        **snap,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -221,13 +260,13 @@ class VoiceSession:
 
     async def send_json(self, obj: dict) -> None:
         try:
-            await self.ws.send(json.dumps(obj, ensure_ascii=False))
+            await self.ws.send_text(json.dumps(obj, ensure_ascii=False))
         except Exception as e:
             logger.warning("send_json failed: %s", e)
 
     async def send_binary(self, data: bytes) -> None:
         try:
-            await self.ws.send(data)
+            await self.ws.send_bytes(data)
         except Exception as e:
             logger.warning("send_binary failed: %s", e)
 
@@ -409,18 +448,15 @@ async def run_pipeline_for_segment(
 # ---------------------------------------------------------------------------
 # WebSocket handler
 # ---------------------------------------------------------------------------
-async def ws_handler(websocket):
+@app.websocket("/ws")
+async def ws_handler(websocket: WebSocket):
     """Main per-connection loop: parse messages, drive VAD, delegate each
     turn to VoicePipeline.run_turn()."""
-    import websockets  # for exception types
+    await websocket.accept()
 
-    session_id = "anon"
-    path = getattr(websocket, "path", "") or ""
-    if "?" in path:
-        qs = path.split("?", 1)[1]
-        for kv in qs.split("&"):
-            if kv.startswith("session_id="):
-                session_id = kv.split("=", 1)[1]
+    # session_id is passed as a query parameter (?session_id=xxx) — the
+    # browser extension's WS URL already includes this.
+    session_id = websocket.query_params.get("session_id", "anon")
 
     sess = VoiceSession(websocket, session_id)
     logger.info("voice session connected: %s", session_id)
@@ -545,7 +581,7 @@ async def ws_handler(websocket):
                         and not current_pipeline_task.done()
                     ):
                         current_pipeline_task.cancel()
-    except websockets.ConnectionClosed:
+    except WebSocketDisconnect:
         pass
     except Exception as e:
         logger.exception("ws_handler crashed")
@@ -563,32 +599,6 @@ async def ws_handler(websocket):
 # ---------------------------------------------------------------------------
 # Main entry
 # ---------------------------------------------------------------------------
-async def _main(host: str, port: int):
-    import websockets
-
-    logger.info(
-        "voice orchestrator starting: ws://%s:%d/ws  "
-        "(profile=%s, VAD=%s, ASR=%s, LLM=%s, TTS=%s, voice=%s)",
-        host, port,
-        _profile.name,
-        VAD_BACKEND,
-        ASR_URL,
-        _profile.llm_config.get("type", "unknown"),
-        TTS_URL,
-        TTS_VOICE,
-    )
-
-    async with websockets.serve(
-        ws_handler,
-        host,
-        port,
-        max_size=None,
-        ping_interval=20,
-        ping_timeout=60,
-    ):
-        await asyncio.Future()  # run forever
-
-
 def main():
     parser = argparse.ArgumentParser(description="Voice Assistant orchestrator")
     parser.add_argument("--host", default="127.0.0.1")
@@ -600,10 +610,30 @@ def main():
         level=logging.INFO,
     )
 
-    try:
-        asyncio.run(_main(args.host, args.port))
-    except KeyboardInterrupt:
-        pass
+    logger.info(
+        "voice orchestrator starting: http://%s:%d  "
+        "(profile=%s, VAD=%s, ASR=%s, LLM=%s, TTS=%s, voice=%s)",
+        args.host, args.port,
+        _profile.name,
+        VAD_BACKEND,
+        ASR_URL,
+        _profile.llm_config.get("type", "unknown"),
+        TTS_URL,
+        TTS_VOICE,
+    )
+
+    import uvicorn
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        log_level="info",
+        # Keep WebSocket pings alive (matches old websockets.serve defaults).
+        ws_ping_interval=20,
+        ws_ping_timeout=60,
+        # No max message size cap — mic PCM frames can be large.
+        ws_max_size=None,
+    )
 
 
 if __name__ == "__main__":
