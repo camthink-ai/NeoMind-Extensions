@@ -107,6 +107,9 @@ async def test_pipeline_barge_in_aborts_llm_stream():
     # Should NOT have synthesized or delivered PCM because barge-in happened first
     tts.synthesize.assert_not_called()
     on_tts_pcm.assert_not_called()
+    # Pipeline returns at BARGED state; BargeInHandler (Task 14b) drives the
+    # BARGED -> LISTENING cleanup. Document this contract explicitly.
+    assert pipeline.fsm.state == State.BARGED
 
 
 @pytest.mark.asyncio
