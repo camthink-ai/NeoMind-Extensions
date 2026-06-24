@@ -281,7 +281,7 @@ def _startup():
 
     cfg = sherpa_onnx.OfflineTtsConfig(
         model=sherpa_onnx.OfflineTtsModelConfig(
-            zipvoice=sherpa_onnx.OfflineTtsZipVoiceModelConfig(
+            zipvoice=sherpa_onnx.OfflineTtsZipvoiceModelConfig(
                 encoder=f"{model_root}/encoder.int8.onnx",
                 decoder=f"{model_root}/decoder.int8.onnx",
                 vocoder=vocoder,
@@ -294,7 +294,6 @@ def _startup():
             provider="cpu",
         ),
         max_num_sentences=2,
-        provider="cpu",
     )
     if not cfg.validate():
         raise RuntimeError("sherpa-onnx ZipVoice config invalid; check paths")
