@@ -70,10 +70,10 @@ VAD_MIN_SPEECH_MS = int(os.environ.get("VOICE_ASSISTANT_VAD_MIN_SPEECH_MS", "300
 VAD_ENERGY_THRESHOLD = float(os.environ.get("VOICE_ASSISTANT_VAD_ENERGY", "0.015"))
 
 # VAD backend selection.
-#   VOICE_ASSISTANT_VAD_BACKEND=energy (default, PoC) — simple RMS threshold
-#   VOICE_ASSISTANT_VAD_BACKEND=fsmn                  — FunASR FSMN neural VAD
-#   VOICE_ASSISTANT_VAD_BACKEND=silero                — Silero VAD via sherpa-onnx
-VAD_BACKEND = os.environ.get("VOICE_ASSISTANT_VAD_BACKEND", "energy").lower()
+#   VOICE_ASSISTANT_VAD_BACKEND=silero (default) — sherpa-onnx Silero v5, MIT
+#   VOICE_ASSISTANT_VAD_BACKEND=fsmn             — FunASR FSMN neural VAD
+#   VOICE_ASSISTANT_VAD_BACKEND=energy           — simple RMS threshold (PoC)
+VAD_BACKEND = os.environ.get("VOICE_ASSISTANT_VAD_BACKEND", "silero").lower()
 FSMN_VAD_MODEL_ID = os.environ.get(
     "FSMN_VAD_MODEL_ID",
     "iic/speech_fsmn_vad_zh-cn-16k-common-onnx",
