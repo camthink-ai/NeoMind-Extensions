@@ -140,6 +140,12 @@ _asr_backend = SenseVoiceHTTPASR(url=ASR_URL)
 # it will be wired to ZipVoiceHTTP in Task 14.
 from backends.tts import ZipVoiceHTTP  # noqa: F401
 
+# LLM backends — extracted to backends/llm.py (Task 7 refactor).
+# llm_stream()/ollama_llm_stream()/fake_llm_stream() keep their
+# sentence-string yield contract for now; the new LlmEvent-yielding
+# classes are wired into the orchestrator in Task 14.
+from backends.llm import FakeLLMClient, OllamaHTTPClient  # noqa: F401
+
 
 async def asr_transcribe(pcm_int16: bytes, language: str = "auto") -> dict:
     """POST /asr on sensevoice-asr service. Returns parsed JSON."""
