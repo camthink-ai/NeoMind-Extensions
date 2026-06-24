@@ -123,6 +123,146 @@ def health():
 
 
 # ---------------------------------------------------------------------------
+# PCM / WAV helpers
+# ---------------------------------------------------------------------------
+def _wav_bytes(samples_f32, sample_rate: int) -> bytes:
+    """float32 [-1,1] → int16 LE mono WAV bytes."""
+    import numpy as np
+    pcm = np.clip(np.asarray(samples_f32, dtype=np.float32).reshape(-1), -1.0, 1.0)
+    pcm = (pcm * 32767.0).astype("<i2")
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sample_rate)
+        w.writeframes(pcm.tobytes())
+    return buf.getvalue()
+
+
+def _pcm_int16_le_bytes(samples_f32) -> bytes:
+    """float32 [-1,1] → int16 LE bytes (no WAV header)."""
+    import numpy as np
+    pcm = np.clip(np.asarray(samples_f32, dtype=np.float32).reshape(-1), -1.0, 1.0)
+    return (pcm * 32767.0).astype("<i2").tobytes()
+
+
+def _resolve_prompt(req: "TTSRequest") -> tuple[str, str]:
+    """Return (prompt_text, prompt_wav_path) — explicit or default."""
+    if req.prompt_audio_path:
+        return req.prompt_text or "", req.prompt_audio_path
+    if req.voice == "中文女" and _default_prompt_wav:
+        return _default_prompt_text, _default_prompt_wav
+    if _default_prompt_wav:
+        return _default_prompt_text, _default_prompt_wav
+    raise HTTPException(500, "no voice available; pass prompt_audio_path")
+
+
+def _generate(text: str, prompt_text: str, prompt_wav_path: str):
+    """Synthesize one utterance. Returns GeneratedAudio (.samples, .sample_rate)."""
+    return _synthesize_one(text, prompt_text, prompt_wav_path)
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+@app.post("/tts")
+def tts_full(req: TTSRequest):
+    import time
+    from fastapi.responses import Response
+    if tts is None:
+        raise HTTPException(503, "runtime not loaded")
+    try:
+        t0 = time.perf_counter()
+        prompt_text, prompt_wav = _resolve_prompt(req)
+        audio = _generate(req.text, prompt_text, prompt_wav)
+        elapsed = time.perf_counter() - t0
+        sr = int(audio.sample_rate)
+        wav = _wav_bytes(audio.samples, sr)
+        return Response(
+            content=wav,
+            media_type="audio/wav",
+            headers={
+                "X-Sample-Rate": str(sr),
+                "X-Elapsed-Seconds": f"{elapsed:.4f}",
+                "X-Duration-Seconds": f"{len(audio.samples)/sr:.4f}",
+                "X-Channels": "1",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("synthesize failed")
+        raise HTTPException(500, str(e))
+
+
+@app.post("/tts/stream")
+def tts_stream(req: TTSRequest):
+    """Stream PCM chunks as NDJSON.
+
+    Each line: {"seq": int, "data": "<base64 int16 le>",
+                "sample_rate": 24000, "channels": 1, "is_pause": bool}
+
+    ZipVoice returns a single complete waveform per generate() call (no true
+    streaming). We emit it as one NDJSON line — voice-assistant tolerates
+    this (same as CosyVoice 3 behavior).
+    """
+    import json
+    import queue
+    import threading
+    from fastapi.responses import StreamingResponse
+
+    if tts is None:
+        raise HTTPException(503, "runtime not loaded")
+    sr = int(model_sample_rate)
+    prompt_text, prompt_wav = _resolve_prompt(req)
+
+    def gen():
+        seq = 0
+        q: "queue.Queue" = queue.Queue(maxsize=4)
+
+        def _worker():
+            try:
+                audio = _generate(req.text, prompt_text, prompt_wav)
+                q.put(audio.samples)
+            except Exception as exc:
+                logger.exception("stream synthesis failed")
+                q.put({"error": str(exc)})
+            finally:
+                q.put(None)
+
+        threading.Thread(target=_worker, daemon=True, name="zipvoice-stream").start()
+
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            if isinstance(item, dict) and "error" in item:
+                yield json.dumps(item, ensure_ascii=False) + "\n"
+                break
+            pcm = _pcm_int16_le_bytes(item)
+            yield json.dumps(
+                {
+                    "seq": seq,
+                    "data": base64.b64encode(pcm).decode(),
+                    "sample_rate": sr,
+                    "channels": 1,
+                    "is_pause": False,
+                },
+                ensure_ascii=False,
+            ) + "\n"
+            seq += 1
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+@app.get("/voices")
+def list_voices():
+    if tts is None:
+        raise HTTPException(503, "runtime not loaded")
+    return {"voices": available_voices}
+
+
+# ---------------------------------------------------------------------------
 # Default voice registration (zero-shot reference audio)
 # ---------------------------------------------------------------------------
 _default_prompt_wav: Optional[str] = None
