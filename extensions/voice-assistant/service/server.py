@@ -801,10 +801,12 @@ class VoiceSession:
         self._silero_vad.accept_waveform(audio_f32)
 
         # Drain any completed segments.
+        # NOTE: must copy segment.samples BEFORE calling pop(), because pop()
+        # destroys the underlying C++ segment object and invalidates samples.
         while not self._silero_vad.empty():
             segment = self._silero_vad.front
-            self._silero_vad.pop()
             samples = np.asarray(segment.samples, dtype=np.float32)
+            self._silero_vad.pop()
             if samples.size == 0:
                 continue
             pcm_bytes = (samples * 32767.0).astype("<i2").tobytes()
