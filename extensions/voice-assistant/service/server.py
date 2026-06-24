@@ -130,18 +130,17 @@ import httpx
 # one place. The classes in backends.vad are defined but not yet wired in.
 from backends.vad import _ensure_silero_config as _load_silero_config
 
+# ASR backend — extracted to backends/asr.py (Task 5 refactor).
+from backends.asr import SenseVoiceHTTPASR
+
+_asr_backend = SenseVoiceHTTPASR(url=ASR_URL)
+
 
 async def asr_transcribe(pcm_int16: bytes, language: str = "auto") -> dict:
     """POST /asr on sensevoice-asr service. Returns parsed JSON."""
-    wav_bytes = _pcm_to_wav(pcm_int16, SAMPLE_RATE, channels=1)
-    b64 = base64.b64encode(wav_bytes).decode()
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.post(
-            f"{ASR_URL}/asr",
-            json={"audio_base64": b64, "language": language, "use_itn": True},
-        )
-        r.raise_for_status()
-        return r.json()
+    samples = np.frombuffer(pcm_int16, dtype=np.int16).astype(np.float32) / 32768.0
+    text = await _asr_backend.transcribe(samples.tolist(), SAMPLE_RATE)
+    return {"text": text}
 
 
 async def tts_stream(pcm_consumer, text: str, voice: str = TTS_VOICE,
