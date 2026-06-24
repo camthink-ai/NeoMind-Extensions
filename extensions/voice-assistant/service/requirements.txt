@@ -7,3 +7,4 @@ numpy>=1.24
 httpx>=0.27
 pyyaml>=6.0
 pytest-asyncio>=0.23
+opentelemetry-sdk>=1.20.0  # optional: set VOICE_ASSISTANT_TRACE=1 to enable
