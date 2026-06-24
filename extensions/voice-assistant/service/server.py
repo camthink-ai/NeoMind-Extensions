@@ -533,10 +533,17 @@ async def ws_handler(websocket: WebSocket):
     current_pipeline_task: Optional[asyncio.Task] = None
 
     try:
-        async for message in websocket:
-            if isinstance(message, bytes):
-                sess.bytes_in += len(message)
-                samples = np.frombuffer(message, dtype=np.int16)
+        while True:
+            try:
+                message = await websocket.receive()
+            except WebSocketDisconnect:
+                break
+            if message.get("type") == "websocket.disconnect":
+                break
+            if "bytes" in message and message["bytes"] is not None:
+                raw = message["bytes"]
+                sess.bytes_in += len(raw)
+                samples = np.frombuffer(raw, dtype=np.int16)
                 if samples.size == 0:
                     continue
                 pcm_complete = sess.feed_pcm(samples)
@@ -561,34 +568,38 @@ async def ws_handler(websocket: WebSocket):
                 current_pipeline_task = asyncio.create_task(
                     run_pipeline_for_segment(sess, pipeline, pcm_complete)
                 )
-            elif isinstance(message, str):
-                try:
-                    obj = json.loads(message)
-                except json.JSONDecodeError:
-                    continue
-                mtype = obj.get("type")
-                if mtype == "ping":
-                    await sess.send_json({"type": "pong"})
-                elif mtype == "start":
-                    await sess.send_json({
-                        "type": "ready",
-                        "session_id": sess.session_id,
-                        "asr_url": ASR_URL,
-                        "tts_url": TTS_URL,
-                        "voice": TTS_VOICE,
-                        "vad_silence_ms": VAD_SILENCE_MS,
-                        "vad_min_speech_ms": VAD_MIN_SPEECH_MS,
-                        "vad_energy_threshold": VAD_ENERGY_THRESHOLD,
-                    })
-                elif mtype == "stop":
-                    await pipeline.barge_in.handle_barge_in(
-                        pipeline.fsm, reason="client_stop"
-                    )
-                    if (
-                        current_pipeline_task is not None
-                        and not current_pipeline_task.done()
-                    ):
-                        current_pipeline_task.cancel()
+                continue
+            if "text" in message and message["text"] is not None:
+                msg_text = message["text"]
+            else:
+                continue
+            try:
+                obj = json.loads(msg_text)
+            except json.JSONDecodeError:
+                continue
+            mtype = obj.get("type")
+            if mtype == "ping":
+                await sess.send_json({"type": "pong"})
+            elif mtype == "start":
+                await sess.send_json({
+                    "type": "ready",
+                    "session_id": sess.session_id,
+                    "asr_url": ASR_URL,
+                    "tts_url": TTS_URL,
+                    "voice": TTS_VOICE,
+                    "vad_silence_ms": VAD_SILENCE_MS,
+                    "vad_min_speech_ms": VAD_MIN_SPEECH_MS,
+                    "vad_energy_threshold": VAD_ENERGY_THRESHOLD,
+                })
+            elif mtype == "stop":
+                await pipeline.barge_in.handle_barge_in(
+                    pipeline.fsm, reason="client_stop"
+                )
+                if (
+                    current_pipeline_task is not None
+                    and not current_pipeline_task.done()
+                ):
+                    current_pipeline_task.cancel()
     except WebSocketDisconnect:
         pass
     except Exception as e:
