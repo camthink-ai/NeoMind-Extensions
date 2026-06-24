@@ -166,6 +166,12 @@ class VoicePipeline:
         on_stop_playback=None,
         telemetry=None,
         voice: str = "中文女",
+        on_asr_start=None,
+        on_asr_complete=None,
+        on_skip=None,
+        on_tts_start=None,
+        on_tts_end=None,
+        on_error=None,
     ):
         self.vad = vad
         self.asr = asr
@@ -175,6 +181,12 @@ class VoicePipeline:
         self.on_stop_playback = on_stop_playback  # async callable() -> None
         self.telemetry = telemetry
         self.voice = voice
+        self.on_asr_start = on_asr_start  # async callable(bytes_count: int)
+        self.on_asr_complete = on_asr_complete  # async callable(transcript: str, elapsed_ms: float)
+        self.on_skip = on_skip  # async callable(reason: str)
+        self.on_tts_start = on_tts_start  # async callable()
+        self.on_tts_end = on_tts_end  # async callable(metrics: dict)
+        self.on_error = on_error  # async callable(phase: str, message: str)
         self.fsm = StateMachine()
         # AEC threshold hack: raise VAD threshold during TTS playback to avoid
         # the assistant's own voice triggering barge-in. Restored after.
@@ -203,15 +215,36 @@ class VoicePipeline:
         # IDLE -> THINKING (a fresh turn starts from IDLE between turns).
         await self.fsm.async_transition(State.THINKING)
         turn_start = time.perf_counter()
+
+        # Compute PCM byte count for the segment (int16 = 2 bytes per sample).
+        pcm_byte_count = len(segment.samples) * 2
+
+        if self.on_asr_start is not None:
+            await self.on_asr_start(pcm_byte_count)
+
         asr_start = time.perf_counter()
 
         # ---- ASR ----
-        transcript = await self.asr.transcribe(
-            segment.samples, segment.sample_rate
-        )
+        try:
+            transcript = await self.asr.transcribe(
+                segment.samples, segment.sample_rate
+            )
+        except Exception as exc:
+            logger.exception("ASR failed in run_turn")
+            if self.on_error is not None:
+                await self.on_error("asr", str(exc))
+            # Best-effort return to a clean state
+            if self.fsm.state == State.THINKING:
+                await self.fsm.async_transition(State.IDLE)
+            return
+
         asr_ms = (time.perf_counter() - asr_start) * 1000
         if self.telemetry:
             self.telemetry.observe("asr_complete_ms", asr_ms)
+
+        if self.on_asr_complete is not None:
+            await self.on_asr_complete(transcript, asr_ms)
+
         if self.fsm.state == State.BARGED:
             if self.telemetry:
                 self.telemetry.increment_barge_ins()
@@ -219,6 +252,8 @@ class VoicePipeline:
 
         # Empty transcript -> back to IDLE without invoking LLM/TTS.
         if not transcript.strip():
+            if self.on_skip is not None:
+                await self.on_skip("empty_transcript")
             await self.fsm.async_transition(State.IDLE)
             return
 
@@ -252,6 +287,8 @@ class VoicePipeline:
 
         # No content produced -> back to IDLE.
         if not full_text.strip():
+            if self.on_skip is not None:
+                await self.on_skip("empty_llm_output")
             await self.fsm.async_transition(State.IDLE)
             return
 
@@ -262,11 +299,26 @@ class VoicePipeline:
         if self._original_vad_threshold is not None:
             self.vad.threshold = self._original_vad_threshold + 0.2
 
+        if self.on_tts_start is not None:
+            await self.on_tts_start()
+
         tts_start = time.perf_counter()
         try:
             pcm = await self.tts.synthesize(full_text, self.voice)
+        except Exception as exc:
+            logger.exception("TTS failed in run_turn")
+            # Always restore VAD threshold on failure
+            if self._original_vad_threshold is not None:
+                self.vad.threshold = self._original_vad_threshold
+            if self.on_error is not None:
+                await self.on_error("tts", str(exc))
+            # Return to IDLE for next turn
+            await self.fsm.async_transition(State.IDLE)
+            return
         finally:
-            # Always restore VAD threshold, even if synthesize raised.
+            # Always restore VAD threshold for success path (except path
+            # already restored and returned above; finally runs before the
+            # function returns from except, so this covers both paths safely).
             if self._original_vad_threshold is not None:
                 self.vad.threshold = self._original_vad_threshold
 
@@ -289,6 +341,13 @@ class VoicePipeline:
             self.telemetry.observe("first_audio_out_ms", total_ms)
             self.telemetry.observe("full_turn_ms", total_ms)
             self.telemetry.increment_turns()
+
+        if self.on_tts_end is not None:
+            await self.on_tts_end({
+                "total_ms": total_ms,
+                "tts_first_chunk_ms": tts_ms,
+                "asr_ms": asr_ms,
+            })
 
         # SPEAKING -> IDLE
         await self.fsm.async_transition(State.IDLE)

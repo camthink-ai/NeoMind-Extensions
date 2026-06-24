@@ -180,3 +180,96 @@ async def test_pipeline_barge_in_invokes_handler_and_cancels_llm():
     on_stop_playback.assert_called_once()
     # After handle_barge_in, FSM is in LISTENING (cleanup complete)
     assert pipeline.fsm.state == State.LISTENING
+
+
+@pytest.mark.asyncio
+async def test_pipeline_emits_lifecycle_callbacks():
+    """run_turn fires on_asr_start → on_asr_complete → on_tts_start → on_tts_end in order."""
+    vad, asr, llm, tts = _make_mocks()
+    events = []
+    on_asr_start = AsyncMock(side_effect=lambda n: events.append(("asr_start", (n,))))
+    on_asr_complete = AsyncMock(side_effect=lambda t, ms: events.append(("asr_complete", (t, ms))))
+    on_tts_start = AsyncMock(side_effect=lambda: events.append(("tts_start", ())))
+    on_tts_end = AsyncMock(side_effect=lambda m: events.append(("tts_end", (m,))))
+    on_tts_pcm = AsyncMock()
+    pipeline = VoicePipeline(
+        vad, asr, llm, tts,
+        on_tts_pcm=on_tts_pcm,
+        on_asr_start=on_asr_start,
+        on_asr_complete=on_asr_complete,
+        on_tts_start=on_tts_start,
+        on_tts_end=on_tts_end,
+    )
+
+    await pipeline.run_turn(_make_segment())
+
+    names = [e[0] for e in events]
+    assert names == ["asr_start", "asr_complete", "tts_start", "tts_end"]
+    # asr_start got a byte count > 0
+    assert events[0][1][0] > 0
+    # asr_complete got the transcript text and a positive elapsed_ms
+    assert events[1][1][0] == "你好"
+    assert events[1][1][1] >= 0.0
+    # tts_end got a metrics dict
+    assert isinstance(events[3][1][0], dict)
+    assert "total_ms" in events[3][1][0]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_emits_skip_on_empty_transcript():
+    vad, asr, llm, tts = _make_mocks()
+    asr.transcribe = AsyncMock(return_value="   ")
+    on_skip = AsyncMock()
+    on_tts_pcm = AsyncMock()
+    pipeline = VoicePipeline(
+        vad, asr, llm, tts,
+        on_tts_pcm=on_tts_pcm,
+        on_skip=on_skip,
+    )
+
+    await pipeline.run_turn(_make_segment())
+
+    on_skip.assert_called_once_with("empty_transcript")
+    tts.synthesize.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_emits_error_on_asr_failure():
+    vad, asr, llm, tts = _make_mocks()
+    asr.transcribe = AsyncMock(side_effect=RuntimeError("ASR down"))
+    on_error = AsyncMock()
+    on_tts_pcm = AsyncMock()
+    pipeline = VoicePipeline(
+        vad, asr, llm, tts,
+        on_tts_pcm=on_tts_pcm,
+        on_error=on_error,
+    )
+
+    await pipeline.run_turn(_make_segment())  # should not raise
+
+    on_error.assert_called_once()
+    args = on_error.call_args.args
+    assert args[0] == "asr"
+    assert "ASR down" in args[1]
+    tts.synthesize.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_emits_error_on_tts_failure():
+    vad, asr, llm, tts = _make_mocks()
+    tts.synthesize = AsyncMock(side_effect=RuntimeError("TTS down"))
+    on_error = AsyncMock()
+    on_tts_pcm = AsyncMock()
+    pipeline = VoicePipeline(
+        vad, asr, llm, tts,
+        on_tts_pcm=on_tts_pcm,
+        on_error=on_error,
+    )
+
+    await pipeline.run_turn(_make_segment())  # should not raise
+
+    on_error.assert_called_once()
+    args = on_error.call_args.args
+    assert args[0] == "tts"
+    assert "TTS down" in args[1]
+    on_tts_pcm.assert_not_called()
