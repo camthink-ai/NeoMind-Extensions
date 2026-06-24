@@ -124,6 +124,12 @@ AEC_TAIL_MS = int(os.environ.get("VOICE_ASSISTANT_AEC_TAIL_MS", "400"))
 # ---------------------------------------------------------------------------
 import httpx
 
+# Silero VAD config loader — extracted to backends/vad.py (Task 4 refactor).
+# server.py keeps its inline VoiceSession._feed_pcm_* methods for now; we only
+# delegate the config singleton load so the download/validate logic lives in
+# one place. The classes in backends.vad are defined but not yet wired in.
+from backends.vad import _ensure_silero_config as _load_silero_config
+
 
 async def asr_transcribe(pcm_int16: bytes, language: str = "auto") -> dict:
     """POST /asr on sensevoice-asr service. Returns parsed JSON."""
@@ -530,30 +536,11 @@ if VAD_BACKEND == "fsmn":
 # ---------------------------------------------------------------------------
 _SILERO_VAD_CONFIG = None
 if VAD_BACKEND == "silero":
-    try:
-        import sherpa_onnx
-
-        silero_path = Path(SILERO_VAD_MODEL_PATH)
-        if not silero_path.is_file():
-            silero_path.parent.mkdir(parents=True, exist_ok=True)
-            import urllib.request
-            url = "https://github.com/snakers4/silero-vad/raw/master/files/silero_vad.onnx"
-            logger.info("Downloading Silero VAD model → %s", silero_path)
-            urllib.request.urlretrieve(url, silero_path)
-
-        _SILERO_VAD_CONFIG = sherpa_onnx.VadModelConfig()
-        _SILERO_VAD_CONFIG.silero_vad.model = str(silero_path)
-        _SILERO_VAD_CONFIG.silero_vad.threshold = SILERO_VAD_THRESHOLD
-        _SILERO_VAD_CONFIG.silero_vad.min_silence_duration = SILERO_VAD_SILENCE_MS / 1000.0
-        _SILERO_VAD_CONFIG.silero_vad.min_speech_duration = SILERO_VAD_MIN_SPEECH_MS / 1000.0
-        _SILERO_VAD_CONFIG.sample_rate = SAMPLE_RATE
-        _SILERO_VAD_CONFIG.provider = "cpu"
-        if not _SILERO_VAD_CONFIG.validate():
-            raise RuntimeError("Silero VAD config invalid")
-        logger.info("Silero VAD config ready: %s", silero_path)
-    except Exception as e:
-        logger.warning("Silero VAD load failed, falling back to energy: %s", e)
-        _SILERO_VAD_CONFIG = None
+    # Config load is delegated to backends/vad.py (logic-preserving port).
+    # The loader auto-downloads the model if missing, validates the config,
+    # and returns None on any failure — matching the previous inline behavior.
+    _SILERO_VAD_CONFIG = _load_silero_config()
+    if _SILERO_VAD_CONFIG is None:
         VAD_BACKEND = "energy"
 
 

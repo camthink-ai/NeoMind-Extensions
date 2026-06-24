@@ -20,7 +20,7 @@ import pytest
 # Note: this file is 24kHz float32 (format 3), not 16kHz int16 — we resample
 # in the test below.
 _REAL_SPEECH_WAV = (
-    Path(__file__).resolve().parents[2]
+    Path(__file__).resolve().parents[3]
     / "voice-edge-tts" / "service" / "assets" / "default_prompt.wav"
 )
 
