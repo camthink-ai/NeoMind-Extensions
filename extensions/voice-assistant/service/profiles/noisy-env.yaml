@@ -1,0 +1,11 @@
+name: noisy-env
+description: "Factory floor / vehicle cabin, high ambient noise"
+acoustic:
+  vad_backend: silero
+  vad_threshold: 0.7
+  vad_min_speech_ms: 500
+  vad_silence_ms: 700
+  noise_suppression: rnnoise
+  aec: none  # speexdsp lands in Phase 2
+interaction:
+  latency_target_ms: 1500

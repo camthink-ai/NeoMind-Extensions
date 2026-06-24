@@ -1,0 +1,6 @@
+name: headset
+description: "Near-field headset, no echo path"
+acoustic:
+  vad_backend: energy
+  vad_threshold: 0.3
+  aec: none

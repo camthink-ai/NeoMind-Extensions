@@ -1,0 +1,27 @@
+name: default
+description: "Developer default: M4 Pro + desktop mic + CN/EN"
+hardware:
+  cpu_threads: 4
+acoustic:
+  vad_backend: silero
+  vad_threshold: 0.5
+  vad_min_speech_ms: 250
+  vad_silence_ms: 500
+  aec: none
+backends:
+  asr:
+    type: sensevoice_http
+    url: http://127.0.0.1:9383
+    language: auto
+  llm:
+    type: neomind_ws
+    url: ws://127.0.0.1:9375/api/chat
+    token_env: NEOMIND_TOKEN
+    voice_mode: true
+  tts:
+    type: zipvoice_http
+    url: http://127.0.0.1:9386
+    voice: 中文女
+interaction:
+  barge_in: full
+  latency_target_ms: 1200
