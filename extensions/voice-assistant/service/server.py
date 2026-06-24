@@ -54,13 +54,13 @@ logger = logging.getLogger("voice-assistant")
 # Config
 # ---------------------------------------------------------------------------
 ASR_URL = os.environ.get("SENSEVOICE_ASR_URL", "http://127.0.0.1:9383")
-# Default TTS backend is now CosyVoice 3 (port 9385). moss-tts-nano on
-# port 9382 is kept as fallback — set VOICE_ASSISTANT_TTS_URL or
-# MOSS_TTS_URL to override.
+# Default TTS backend is voice-edge-tts (sherpa-onnx ZipVoice, port 9386).
+# cosyvoice-3 on port 9385 is the opt-in fallback — set
+# VOICE_ASSISTANT_TTS_URL or MOSS_TTS_URL to override.
 TTS_URL = (
     os.environ.get("VOICE_ASSISTANT_TTS_URL")
     or os.environ.get("MOSS_TTS_URL")
-    or "http://127.0.0.1:9385"
+    or "http://127.0.0.1:9386"
 )
 TTS_VOICE = os.environ.get("VOICE_ASSISTANT_VOICE", "中文女")
 
