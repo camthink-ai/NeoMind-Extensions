@@ -62,9 +62,12 @@ from orchestrator import VoicePipeline, State
 from telemetry import Telemetry
 
 _profile = load_profile(os.environ.get("VOICE_ASSISTANT_PROFILE"))
+# VAD/ASR/TTS backends are stateless or thread-safe across sessions — share them.
+# LLM backend is built PER-SESSION inside ws_handler because NeoMindWSClient
+# stores live WS connection state as instance attributes (_active_ws,
+# _llm_completed); sharing would cross-corrupt concurrent sessions.
 _vad_backend = make_vad(_profile)
 _asr_backend = make_asr(_profile)
-_llm_backend = make_llm(_profile)
 _tts_backend = make_tts(_profile)
 _telemetry = Telemetry()
 
@@ -505,10 +508,15 @@ async def ws_handler(websocket: WebSocket):
             {"type": "error", "phase": phase, "message": message}
         )
 
+    # Per-session LLM backend — NeoMindWSClient holds live WS state as instance
+    # attributes; a single shared instance would cross-corrupt concurrent
+    # sessions. Other backends are stateless and shared.
+    llm_backend = make_llm(_profile)
+
     pipeline = VoicePipeline(
         _vad_backend,
         _asr_backend,
-        _llm_backend,
+        llm_backend,
         _tts_backend,
         on_tts_pcm=on_tts_pcm,
         on_stop_playback=on_stop_playback,
