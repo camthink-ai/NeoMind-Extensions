@@ -561,7 +561,7 @@ if VAD_BACKEND == "silero":
 # Session state
 # ---------------------------------------------------------------------------
 class VoiceSession:
-    """Per-connection state + VAD (energy or FSMN, picked by env)."""
+    """Per-connection state + VAD (Silero / FSMN / energy, picked by env + load state)."""
 
     def __init__(self, ws, session_id: str):
         self.ws = ws
@@ -637,8 +637,10 @@ class VoiceSession:
     def feed_pcm(self, samples_int16: np.ndarray) -> Optional[np.ndarray]:
         """Feed a chunk of int16 samples. Returns the complete utterance's
         PCM (int16 LE bytes) when VAD detects speech-end, else None.
-        Dispatches to energy or FSMN backend based on env.
+        Dispatches to Silero / FSMN / energy backend based on env + load state.
         """
+        if self._silero_vad is not None:
+            return self._feed_pcm_silero(samples_int16)
         if self._fsmn_vad is not None:
             return self._feed_pcm_fsmn(samples_int16)
         return self._feed_pcm_energy(samples_int16)
@@ -773,6 +775,41 @@ class VoiceSession:
         self._fsmn_collected = []
         self._fsmn_speech_ms = 0
         return pcm_bytes
+
+    def _feed_pcm_silero(self, samples_int16: np.ndarray) -> Optional[np.ndarray]:
+        """Silero neural VAD via sherpa-onnx.
+
+        Silero emits complete segments via accept_waveform + drain loop.
+        Each SpeechSegment from .front contains the full PCM samples (float32
+        in [-1, 1]) for one utterance. We convert to int16 LE bytes and hand
+        to the ASR pipeline, exactly like the FSMN/energy paths.
+
+        AEC echo window: while TTS playback is active, skip feeding the VAD
+        entirely so TTS-leak doesn't get misclassified as user speech.
+        """
+        if self._silero_vad is None:
+            return self._feed_pcm_energy(samples_int16)
+
+        # AEC echo window: drop this chunk so the detector's internal buffer
+        # doesn't accumulate speaker echo. Real user speech after the tail
+        # resumes normal feeding.
+        if self._aec_active_now():
+            return None
+
+        # int16 → float32 in [-1, 1]
+        audio_f32 = (samples_int16.astype(np.float32) / 32768.0).tolist()
+        self._silero_vad.accept_waveform(audio_f32)
+
+        # Drain any completed segments.
+        while not self._silero_vad.empty():
+            segment = self._silero_vad.front
+            self._silero_vad.pop()
+            samples = np.asarray(segment.samples, dtype=np.float32)
+            if samples.size == 0:
+                continue
+            pcm_bytes = (samples * 32767.0).astype("<i2").tobytes()
+            return pcm_bytes
+        return None
 
     def _reset_vad(self):
         """Reset only used by energy path."""
