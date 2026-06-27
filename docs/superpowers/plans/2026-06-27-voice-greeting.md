@@ -463,12 +463,27 @@ def test_start_emits_greeting_when_enabled(monkeypatch):
     client = TestClient(server.app)
 
     captured_sessions: list = []
-    orig_handler = server.ws_handler
 
     with client.websocket_connect("/ws?session_id=test-greet") as ws:
         ws.send_json({"type": "start", "sample_rate": 16000})
         text_frames, binary_frames = _drain_ws(
             ws, expected_types={"ready", "greeting"}, timeout_s=3.0)
+        # The server's greeting push sends text frame THEN binary frame
+        # synchronously. By the time _drain_ws returns (having seen both
+        # ready+greeting text types), the binary may still be in flight.
+        # Drain briefly so the WS context exit doesn't race the server's
+        # send_binary (which would log a WebSocketDisconnect).
+        import time as _t
+        _deadline = _t.monotonic() + 0.5
+        while _t.monotonic() < _deadline:
+            try:
+                extra = ws.receive()
+            except Exception:
+                break
+            if "bytes" in extra and extra["bytes"] is not None:
+                binary_frames.append(extra["bytes"])
+            elif extra.get("type") == "websocket.disconnect":
+                break
 
     # Ordering assertions
     types = [f.get("type") for f in text_frames]
@@ -612,6 +627,13 @@ def test_speech_during_greeting_emits_barge_in_immediately(monkeypatch):
     monkeypatch.setattr(server, "VAD_ENERGY_THRESHOLD", 0.001)
     monkeypatch.setattr(server, "VAD_MIN_SPEECH_MS", 90)
     monkeypatch.setattr(server, "VAD_SILENCE_MS", 150)
+    # CRITICAL: greeting push sets sess.tts_active=True, which arms the
+    # AEC echo window (_aec_active_now() returns True while tts_active
+    # and within AEC_TAIL_MS). AEC boosts the effective VAD threshold by
+    # AEC_ENERGY_BOOST, suppressing our test audio below detection —
+    # VAD never fires, pcm_complete stays None, the barge-in guard never
+    # runs, and the test deadlocks. Disable AEC for this test.
+    monkeypatch.setattr(server, "AEC_MODE", "none")
     monkeypatch.setattr(server._profile, "barge_in_ack", False)
     monkeypatch.setattr(server._profile, "stage_filler_words", {})
 
