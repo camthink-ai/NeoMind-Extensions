@@ -203,6 +203,11 @@ async def _warm_banks_async() -> None:
                 logger.warning("stage[%s] bank empty — disabling that filler",
                                stage_name)
 
+    # ---- greeting clip ----
+    # No WARMED flag needed: _warm_greeting is idempotent — empty greeting_text
+    # short-circuits, non-empty re-synthesizes harmlessly if called twice.
+    await _warm_greeting()
+
 
 async def _warm_greeting() -> None:
     """Pre-synthesize greeting clip once at startup.
