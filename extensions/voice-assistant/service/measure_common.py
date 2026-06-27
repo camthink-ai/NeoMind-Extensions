@@ -77,8 +77,8 @@ async def run_one_turn(
     # Total binary chunks, and chunks seen AFTER tts_start (real TTS PCM).
     post_tts_pcm_chunks = 0
     error_events: list[dict] = []
-    # Greeting PCM arrives before any asr_start / tts_start. Track separately
-    # so greeting frames don't pollute tts_chunk_count / post_tts_pcm_chunks.
+    # Greeting PCM (pre-synthesized clip pushed at session start) is tracked
+    # separately so it doesn't pollute tts_chunk_count / post_tts_pcm_chunks.
     greeting_seen = False
     greeting_pcm_chunks = 0
 
@@ -105,8 +105,13 @@ async def run_one_turn(
                 if isinstance(raw, bytes):
                     now = time.perf_counter()
                     t_last_pcm = now
-                    # Greeting PCM arrives before any asr_start / tts_start.
-                    # Count it separately so it doesn't pollute turn metrics.
+                    # Attribute to greeting bucket only when ALL three hold:
+                    # greeting_seen (greeting JSON parsed), no asr_done (user
+                    # hasn't finished speaking), no tts_start (turn TTS hasn't
+                    # engaged). The conjunction is intentionally strict so
+                    # mid-turn binary frames never get mis-attributed; in
+                    # practice asr_done always precedes tts_start, but the
+                    # redundant guard is defensive against protocol reordering.
                     if (t_asr_done is None and t_tts_start is None
                             and greeting_seen):
                         greeting_pcm_chunks += 1

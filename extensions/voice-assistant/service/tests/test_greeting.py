@@ -71,7 +71,7 @@ def test_warm_greeting_swallows_tts_failure(monkeypatch):
     assert server._GREETING_PCM is None
 
 
-def test_measure_common_counts_greeting_pcm_separately():
+def test_measure_common_counts_greeting_pcm_separately(monkeypatch):
     """run_one_turn attributes PCM between greeting and asr_start to
     greeting_pcm_chunks, NOT tts_chunk_count. Verifies the measurement
     isolation that keeps Phase 2 metrics clean."""
@@ -94,12 +94,17 @@ def test_measure_common_counts_greeting_pcm_separately():
                 b"\x03\x04" * 10,                            # turn PCM
                 json.dumps({"type": "stop"}),
             ]
-        async def send(self, x): self._sent.append(x)
-        async def close(self): pass
-        def __aiter__(self): return self
+        async def send(self, x):
+            self._sent.append(x)
+        async def close(self):
+            pass
+        def __aiter__(self):
+            return self
         async def __anext__(self):
-            if self._idx >= len(self.frames): raise StopAsyncIteration
-            f = self.frames[self._idx]; self._idx += 1
+            if self._idx >= len(self.frames):
+                raise StopAsyncIteration
+            f = self.frames[self._idx]
+            self._idx += 1
             return f
 
     # Mock websockets.connect to return an async-cm yielding FakeWS
@@ -108,20 +113,14 @@ def test_measure_common_counts_greeting_pcm_separately():
         async def __aenter__(self): return self.ws
         async def __aexit__(self, *a): pass
 
-    # Save originals so we restore them — patching mc.asyncio leaks globally
-    # because asyncio is a shared stdlib module imported by reference.
-    orig_websockets = mc.websockets
-    orig_sleep = mc.asyncio.sleep
-    try:
-        mc.websockets = MagicMock()
-        mc.websockets.connect = lambda *a, **kw: FakeCM(FakeWS())
-        # Stub the feed_audio inner task by making sleep a no-op
-        mc.asyncio.sleep = AsyncMock()
+    mock_ws_module = MagicMock()
+    mock_ws_module.connect = lambda *a, **kw: FakeCM(FakeWS())
+    # monkeypatch handles teardown for both module attribute and the stdlib
+    # asyncio.sleep reference (which would otherwise leak across tests).
+    monkeypatch.setattr(mc, "websockets", mock_ws_module)
+    monkeypatch.setattr(mc.asyncio, "sleep", AsyncMock())
 
-        result = asyncio.run(mc.run_one_turn("ws://x", b"\x00" * 100))
-    finally:
-        mc.websockets = orig_websockets
-        mc.asyncio.sleep = orig_sleep
+    result = asyncio.run(mc.run_one_turn("ws://x", b"\x00" * 100))
 
     assert result["greeting_pcm_chunks"] == 1
     assert result["tts_chunk_count"] == 1  # only the post-tts_start binary
