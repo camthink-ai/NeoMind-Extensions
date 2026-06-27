@@ -164,6 +164,9 @@ V2_EXTENSIONS=(
     "opcua-bridge"
     "locate-anything-v2"
     "moss-tts-nano"
+    "cosyvoice-3"
+    "sensevoice-asr"
+    "voice-edge-tts"
     "voice-assistant"
 )
 
