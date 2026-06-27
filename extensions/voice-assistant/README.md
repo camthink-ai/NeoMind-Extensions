@@ -499,3 +499,59 @@ error events. Run `measure_bi_stream_e2e.py --n 3` for the
 profile-agnostic Phase 2 baseline; the NeoMind harness layers the
 integration-specific signal on top of the same WS protocol code.
 
+---
+
+## Greeting (Say-First)
+
+When a user connects, the assistant can immediately play a pre-synthesized
+greeting clip ("你好，我是 NeoMind 助手") instead of waiting for the first
+VAD → ASR → LLM → TTS round trip. Inspired by Vapi / Retell / LiveKit
+greeting patterns.
+
+### Configuration
+
+```yaml
+# profiles/default.yaml
+interaction:
+  greeting_text: ""  # empty = disabled (default)
+```
+
+Set `greeting_text` to a non-empty string to enable. The clip is
+synthesized once at server startup using the profile's TTS voice and
+cached as 16kHz mono PCM (third sibling to the `_ACK_PCM_BANK` and
+`_STAGE_FILLER_BANK` warmup banks).
+
+### Protocol
+
+On `{"type":"start"}`, after sending `ready`, the server emits:
+
+1. `{"type":"greeting","text":"..."}` — text frame for browser subtitle
+2. Binary PCM frames — the greeting audio, queued in the browser's
+   existing playback queue
+
+No `tts_start`/`tts_end` is emitted around greeting — those mark turn
+lifecycle only. Measurement scripts (`measure_common.run_one_turn`)
+attribute pre-`asr_start` binary to a separate `greeting_pcm_chunks`
+counter so Phase 2 metrics stay clean.
+
+### Barge-in during greeting
+
+If the user speaks during greeting playback, VAD fires normally and
+the server immediately emits `{"type":"barge_in"}` so the browser
+flushes the greeting queue — no waiting for the new turn's first TTS
+PCM (which would add 200-500ms of continued greeting playback).
+
+### AEC warning (opt-in by default)
+
+Greeting playback without AEC will self-trigger VAD: the greeting
+audio from the speaker enters the mic and may be detected as user
+speech, cutting the greeting short. **Default is empty (disabled).**
+Enable only when:
+
+- `acoustic.aec: webrtc` (or similar) is configured, OR
+- The environment is quiet enough that speaker→mic bleed is below
+  the VAD threshold
+
+This is the same AEC gap that affects ack and stage-filler playback;
+greeting just makes it more visible due to its 1-2s duration. See
+spec: `docs/superpowers/specs/2026-06-27-voice-greeting-design.md`.
