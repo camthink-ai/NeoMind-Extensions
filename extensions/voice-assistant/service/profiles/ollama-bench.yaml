@@ -1,5 +1,5 @@
-name: default
-description: "Developer default: M4 Pro + desktop mic + CN/EN"
+name: ollama-bench
+description: "Benchmark profile: Ollama direct LLM, energy VAD, no AEC"
 hardware:
   cpu_threads: 4
 acoustic:
@@ -14,18 +14,16 @@ backends:
     url: http://127.0.0.1:9383
     language: auto
   llm:
-    type: neomind_ws
-    url: ws://127.0.0.1:9375/api/chat
-    token_env: NEOMIND_TOKEN
-    auth_mode: api_key
-    voice_mode: true
+    type: ollama_http
+    url: http://127.0.0.1:11434
+    model: qwen3.5:0.8b-mlx
   tts:
-    type: zipvoice_http
-    url: http://127.0.0.1:9386
-    voice: 中文女
+    type: moss_tts_http
+    url: http://127.0.0.1:9382
+    voice: Mei
 interaction:
   barge_in: full
-  latency_target_ms: 1200
+  latency_target_ms: 1500
   barge_in_ack: true
   ack_words: ["好的", "嗯哼", "明白"]
   stage_filler_words:

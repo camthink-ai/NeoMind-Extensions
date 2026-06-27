@@ -31,7 +31,9 @@ def make_asr(profile: Profile):
     cfg = dict(profile.asr_config)
     t = cfg.pop("type")
     match t:
-        case "sensevoice_http":
+        # qwen3_asr_http shares the same /asr contract as sensevoice-asr;
+        # the SenseVoiceHTTPASR class is a generic HTTP ASR client.
+        case "sensevoice_http" | "qwen3_asr_http":
             return SenseVoiceHTTPASR(**cfg)
         case _:
             raise ValueError(f"unknown ASR backend: {t}")
@@ -55,7 +57,9 @@ def make_tts(profile: Profile):
     cfg = dict(profile.tts_config)
     t = cfg.pop("type")
     match t:
-        case "zipvoice_http":
+        # zipvoice_http / moss_tts_http / kokoro_http all share the same
+        # NDJSON /tts/stream contract; the class name is historical.
+        case "zipvoice_http" | "moss_tts_http" | "kokoro_http":
             return ZipVoiceHTTP(**cfg)
         case _:
             raise ValueError(f"unknown TTS backend: {t}")

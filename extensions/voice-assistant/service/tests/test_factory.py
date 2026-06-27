@@ -20,6 +20,8 @@ def _profile(**overrides):
         tts_config={"type": "zipvoice_http", "url": "http://m", "voice": "v"},
         aec_config=None, barge_in_mode="full",
         latency_target_ms=1000, cpu_threads=4,
+        barge_in_ack=False, ack_words=["好的"],
+        stage_filler_words={"thinking": ["让我想想"]},
     )
     base.update(overrides)
     return Profile(**base)

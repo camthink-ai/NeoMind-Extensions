@@ -61,6 +61,7 @@ class OllamaHTTPClient:
         model: str = "qwen3:1.7b",
         system_prompt: str | None = None,
         timeout: float = 60.0,
+        **_extra,
     ):
         self.url = url
         self.model = model
@@ -88,6 +89,7 @@ class OllamaHTTPClient:
                             {"role": "user", "content": user_text},
                         ],
                         "stream": True,
+                        "think": False,
                     },
                 ) as resp:
                     resp.raise_for_status()
@@ -133,11 +135,16 @@ class NeoMindWSClient:
         url: str,
         token: str | None = None,
         token_env: str = "NEOMIND_TOKEN",
+        auth_mode: str = "api_key",
         voice_mode: bool = True,
         timeout: float = 60.0,
     ):
+        """auth_mode: 'api_key' uses ?api_key=xxx (NeoMind API key, nmk_...).
+        'token' uses ?token=xxx (NeoMind JWT). Default 'api_key' since the
+        CLI-issued keys (neomind api-key create) are API keys."""
         self.url = url
         self.token = token or os.environ.get(token_env, "")
+        self.auth_mode = auth_mode
         self.voice_mode = voice_mode
         self.timeout = timeout
         self._active_ws = None
@@ -147,7 +154,11 @@ class NeoMindWSClient:
         import websockets
 
         self._llm_completed = False
-        url = f"{self.url}?token={self.token}" if self.token else self.url
+        if self.token:
+            param = "api_key" if self.auth_mode == "api_key" else "token"
+            url = f"{self.url}?{param}={self.token}"
+        else:
+            url = self.url
         async with websockets.connect(url, max_size=2**24) as ws:
             self._active_ws = ws
             await ws.send(json.dumps({

@@ -8,10 +8,11 @@ from stats import RollingPercentile
 
 logger = logging.getLogger("voice-assistant.telemetry")
 
-# 7 KPIs per spec Section 6.1
+# KPIs per spec Section 6.1 + Phase 2 bi-streaming additions.
 KPI_NAMES = (
     "asr_complete_ms",
     "llm_ttfb_ms",
+    "llm_first_sentence_ms",
     "tts_first_chunk_ms",
     "first_audio_out_ms",
     "full_turn_ms",

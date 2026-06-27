@@ -1,0 +1,6 @@
+# Qwen3-ASR (mlx_qwen3_asr) — Apple Silicon only
+fastapi>=0.110
+uvicorn[standard]>=0.27
+numpy
+soundfile
+mlx_qwen3_asr

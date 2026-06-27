@@ -20,6 +20,9 @@ class Profile:
     barge_in_mode: str
     latency_target_ms: int
     cpu_threads: int
+    barge_in_ack: bool
+    ack_words: list[str]
+    stage_filler_words: dict[str, list[str]]
 
     @classmethod
     def from_dict(cls, d: dict) -> "Profile":
@@ -28,6 +31,16 @@ class Profile:
         interaction = d.get("interaction", {})
         hardware = d.get("hardware", {})
         aec = acoustic.get("aec", "none")
+        # Stage fillers: short voice prompts played at different pipeline
+        # stages so the user knows what's happening during slow LLM turns.
+        # Supported stages: "thinking" (after ASR, before LLM), "tool_call"
+        # (LLM emits ToolCallStart). Each stage has a word list; one is
+        # picked at random when the stage fires.
+        default_stage_fillers = {
+            "thinking": ["让我想想", "嗯,让我想想"],
+            "tool_call": ["我查一下", "搜索中"],
+        }
+        stage_filler_words = dict(interaction.get("stage_filler_words", default_stage_fillers))
         return cls(
             name=d.get("name", "unknown"),
             vad_backend_type=acoustic.get("vad_backend", "silero"),
@@ -43,6 +56,9 @@ class Profile:
             barge_in_mode=interaction.get("barge_in", "full"),
             latency_target_ms=interaction.get("latency_target_ms", 1200),
             cpu_threads=hardware.get("cpu_threads", 4),
+            barge_in_ack=interaction.get("barge_in_ack", False),
+            ack_words=list(interaction.get("ack_words", ["好的"])),
+            stage_filler_words=stage_filler_words,
         )
 
 
