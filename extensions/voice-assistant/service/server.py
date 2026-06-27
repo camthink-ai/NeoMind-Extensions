@@ -141,6 +141,9 @@ _ACK_PCM_BANK: list[bytes] = []
 _ACK_BANK_WARMED = False
 _STAGE_FILLER_BANK: dict[str, list[bytes]] = {}
 _STAGE_BANK_WARMED = False
+# Greeting (say-first) — single PCM clip, or None if disabled / synth failed.
+# Mirrors _ACK_PCM_BANK pattern but holds one clip, not a list.
+_GREETING_PCM: bytes | None = None
 
 
 async def _synth_word_list(words: list[str], label: str) -> list[bytes]:
@@ -199,6 +202,29 @@ async def _warm_banks_async() -> None:
             else:
                 logger.warning("stage[%s] bank empty — disabling that filler",
                                stage_name)
+
+
+async def _warm_greeting() -> None:
+    """Pre-synthesize greeting clip once at startup.
+
+    No-op if profile's greeting_text is empty/whitespace (greeting disabled).
+    On TTS failure, leaves _GREETING_PCM as None — greeting silently
+    disabled, server still starts.
+    """
+    global _GREETING_PCM
+    text = (_profile.greeting_text or "").strip()
+    if not text:
+        return
+    try:
+        raw_pcm = await _tts_backend.synthesize(text, TTS_VOICE)
+        # _tts_backend.synthesize returns 24kHz mono raw PCM; resample to
+        # 16kHz mono int16 LE for the browser (same path as ack/filler banks).
+        _GREETING_PCM = _tts_to_browser_pcm(raw_pcm, 24000, 1)
+        logger.info("greeting clip warmed: %d bytes (%d samples)",
+                    len(_GREETING_PCM), len(_GREETING_PCM) // 2)
+    except Exception as e:
+        logger.warning("greeting synth failed — greeting disabled: %s", e)
+        _GREETING_PCM = None
 
 
 # ---------------------------------------------------------------------------
