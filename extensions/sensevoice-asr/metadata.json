@@ -1,0 +1,12 @@
+{
+  "id": "sensevoice-asr",
+  "name": "sensevoice asr",
+  "version": "2.7.6",
+  "description": "SenseVoice-Small ASR extension (Mandarin/English/Japanese/Korean/Cantonese) via sherpa-onnx ONNX CPU backend",
+  "author": "NeoMind Team",
+  "license": "Apache-2.0",
+  "type": "native",
+  "categories": ["utility"],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/sensevoice-asr",
+  "builds": {"darwin-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.6/sensevoice-asr-2.7.6-darwin_aarch64.nep"},"darwin-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.6/sensevoice-asr-2.7.6-darwin_x86_64.nep"},"linux-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.6/sensevoice-asr-2.7.6-linux_amd64.nep"},"linux-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.6/sensevoice-asr-2.7.6-linux_arm64.nep"},"windows-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.6/sensevoice-asr-2.7.6-windows_amd64.nep"}}
+}

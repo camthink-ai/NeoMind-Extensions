@@ -1,0 +1,41 @@
+[package]
+name = "moss-tts-nano"
+version = "2.7.6"
+edition = "2021"
+authors = ["NeoMind Team"]
+license = "Apache-2.0"
+description = "MOSS-TTS-Nano voice cloning TTS extension (speak on host audio device + synthesize wav)"
+
+[lib]
+name = "neomind_extension_moss_tts_nano"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neomind-extension-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+semver = "1"
+base64 = "0.22"
+parking_lot = "0.12"
+tracing = "0.1"
+
+# Native (non-wasm) deps
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+chrono = "0.4"
+tokio = { version = "1", features = ["rt", "sync", "rt-multi-thread"] }
+ureq = { version = "3", features = ["json"] }
+
+# Audio playback: rodio for cross-platform host audio output.
+# default-features = false disables the symphonia decoder bundle (we feed raw PCM),
+# which keeps the dependency footprint small and avoids binary bloat.
+# cpal (which rodio wraps) needs libasound2 on Linux at runtime.
+[target.'cfg(all(not(target_arch = "wasm32"), target_os = "linux"))'.dependencies]
+rodio = { version = "0.17", default-features = false }
+
+[target.'cfg(all(not(target_arch = "wasm32"), target_os = "macos"))'.dependencies]
+rodio = { version = "0.17", default-features = false }
+
+[target.'cfg(all(not(target_arch = "wasm32"), target_os = "windows"))'.dependencies]
+rodio = { version = "0.17", default-features = false }

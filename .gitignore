@@ -127,6 +127,7 @@ tests/simulators/requirements.txt
 # Python service artifacts
 __pycache__/
 *.py[cod]
+.pytest_cache/
 
 # Voice-assistant runtime secrets (NeoMind API keys, encryption material)
 extensions/voice-assistant/service/data/

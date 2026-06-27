@@ -1,0 +1,7 @@
+# Runtime deps. sherpa-onnx bundles ONNX Runtime (no torch dependency).
+sherpa-onnx>=1.10.0
+fastapi>=0.110
+uvicorn[standard]>=0.27
+numpy>=1.24
+pydantic>=2.0
+soundfile>=0.12
