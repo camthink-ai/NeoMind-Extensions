@@ -402,6 +402,12 @@ class VoiceSession:
         # ---- AEC echo-window state ----
         self.tts_active: bool = False
         self.tts_last_chunk_ts: float = 0.0
+        # Greeting (say-first) — True between greeting push and the first
+        # user-speech detection that ends the greeting window. Used by
+        # ws_handler's pcm_complete branch to emit barge_in immediately
+        # (before the new turn starts) so the browser flushes the greeting
+        # queue without waiting for the new turn's first TTS PCM.
+        self.greeting_active: bool = False
 
     def _aec_active_now(self) -> bool:
         """True if TTS echo suppression should currently be applied."""
