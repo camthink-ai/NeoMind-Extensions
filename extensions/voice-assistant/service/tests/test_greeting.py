@@ -69,3 +69,59 @@ def test_warm_greeting_swallows_tts_failure(monkeypatch):
     monkeypatch.setattr(server._profile, "greeting_text", "你好")
     asyncio.run(server._warm_greeting())  # must not raise
     assert server._GREETING_PCM is None
+
+
+def test_measure_common_counts_greeting_pcm_separately():
+    """run_one_turn attributes PCM between greeting and asr_start to
+    greeting_pcm_chunks, NOT tts_chunk_count. Verifies the measurement
+    isolation that keeps Phase 2 metrics clean."""
+    import asyncio
+    import json
+    import measure_common as mc
+    from unittest.mock import AsyncMock, MagicMock
+
+    # Fake WS that emits greeting + binary + asr_start + binary + stop
+    class FakeWS:
+        def __init__(self):
+            self._sent = []
+            self._idx = 0
+            self.frames = [
+                json.dumps({"type": "greeting", "text": "hi"}),
+                b"\x01\x02" * 10,                            # greeting PCM
+                json.dumps({"type": "asr_start"}),
+                json.dumps({"type": "transcript", "text": "user"}),
+                json.dumps({"type": "tts_start"}),
+                b"\x03\x04" * 10,                            # turn PCM
+                json.dumps({"type": "stop"}),
+            ]
+        async def send(self, x): self._sent.append(x)
+        async def close(self): pass
+        def __aiter__(self): return self
+        async def __anext__(self):
+            if self._idx >= len(self.frames): raise StopAsyncIteration
+            f = self.frames[self._idx]; self._idx += 1
+            return f
+
+    # Mock websockets.connect to return an async-cm yielding FakeWS
+    class FakeCM:
+        def __init__(self, ws): self.ws = ws
+        async def __aenter__(self): return self.ws
+        async def __aexit__(self, *a): pass
+
+    # Save originals so we restore them — patching mc.asyncio leaks globally
+    # because asyncio is a shared stdlib module imported by reference.
+    orig_websockets = mc.websockets
+    orig_sleep = mc.asyncio.sleep
+    try:
+        mc.websockets = MagicMock()
+        mc.websockets.connect = lambda *a, **kw: FakeCM(FakeWS())
+        # Stub the feed_audio inner task by making sleep a no-op
+        mc.asyncio.sleep = AsyncMock()
+
+        result = asyncio.run(mc.run_one_turn("ws://x", b"\x00" * 100))
+    finally:
+        mc.websockets = orig_websockets
+        mc.asyncio.sleep = orig_sleep
+
+    assert result["greeting_pcm_chunks"] == 1
+    assert result["tts_chunk_count"] == 1  # only the post-tts_start binary

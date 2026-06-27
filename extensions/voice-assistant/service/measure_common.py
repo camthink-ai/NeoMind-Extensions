@@ -77,6 +77,10 @@ async def run_one_turn(
     # Total binary chunks, and chunks seen AFTER tts_start (real TTS PCM).
     post_tts_pcm_chunks = 0
     error_events: list[dict] = []
+    # Greeting PCM arrives before any asr_start / tts_start. Track separately
+    # so greeting frames don't pollute tts_chunk_count / post_tts_pcm_chunks.
+    greeting_seen = False
+    greeting_pcm_chunks = 0
 
     async with websockets.connect(ws_url, max_size=2 ** 24) as ws:
         await ws.send(json.dumps({
@@ -99,13 +103,19 @@ async def run_one_turn(
         try:
             async for raw in ws:
                 if isinstance(raw, bytes):
-                    tts_chunk_count += 1
                     now = time.perf_counter()
                     t_last_pcm = now
-                    if t_tts_start is not None:
-                        post_tts_pcm_chunks += 1
-                        if t_first_tts_pcm is None:
-                            t_first_tts_pcm = now
+                    # Greeting PCM arrives before any asr_start / tts_start.
+                    # Count it separately so it doesn't pollute turn metrics.
+                    if (t_asr_done is None and t_tts_start is None
+                            and greeting_seen):
+                        greeting_pcm_chunks += 1
+                    else:
+                        tts_chunk_count += 1
+                        if t_tts_start is not None:
+                            post_tts_pcm_chunks += 1
+                            if t_first_tts_pcm is None:
+                                t_first_tts_pcm = now
                     if on_event is not None:
                         on_event({"_binary": True, "t": now})
                     continue
@@ -118,6 +128,8 @@ async def run_one_turn(
                     on_event(msg)
                 if mtype == "transcript":
                     t_asr_done = time.perf_counter()
+                elif mtype == "greeting":
+                    greeting_seen = True
                 elif mtype == "tts_start":
                     t_tts_start = time.perf_counter()
                 elif mtype == "llm_sentence":
@@ -143,6 +155,7 @@ async def run_one_turn(
         "llm_sentence_count": llm_sentence_count,
         "tts_chunk_count": tts_chunk_count,
         "post_tts_pcm_chunks": post_tts_pcm_chunks,
+        "greeting_pcm_chunks": greeting_pcm_chunks,
         "error_events": error_events,
     }
 
