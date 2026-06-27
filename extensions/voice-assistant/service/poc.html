@@ -221,6 +221,10 @@ function handleEvent(obj) {
       log(`transcript (${obj.elapsed_ms?.toFixed(0)}ms): "${obj.text}"`, 'warn');
       addTranscript(obj.text, obj.language);
       break;
+    case 'greeting':
+      log(`greeting: "${obj.text}"`, 'warn');
+      addTranscript(obj.text, 'auto');
+      break;
     case 'tts_start':
       log(`tts_start reply="${obj.text}" chars=${obj.reply_chars} mode=${obj.mode || 'single'}`);
       break;
