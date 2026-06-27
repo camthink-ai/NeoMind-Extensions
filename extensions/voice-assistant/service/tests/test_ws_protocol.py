@@ -5,7 +5,7 @@ import json
 
 from ws_protocol import (
     encode_transcript, encode_phase, encode_stop, encode_error,
-    encode_barge_in_ack, decode_start, decode_ping,
+    encode_barge_in_ack, encode_greeting, decode_start, decode_ping,
 )
 
 
@@ -44,3 +44,11 @@ def test_decode_start():
 def test_decode_ping():
     assert decode_ping('{"type": "ping"}') is True
     assert decode_ping('{"type": "other"}') is False
+
+
+def test_encode_greeting():
+    """Greeting frame carries text for browser subtitle rendering."""
+    frame = encode_greeting("你好")
+    obj = json.loads(frame)
+    assert obj["type"] == "greeting"
+    assert obj["text"] == "你好"

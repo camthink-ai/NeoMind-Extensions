@@ -40,6 +40,21 @@ def encode_llm_sentence(seq: int, text: str) -> str:
     )
 
 
+def encode_greeting(text: str) -> str:
+    """Greeting (say-first) frame — emitted once on session start,
+    followed by the pre-synthesized greeting PCM as binary frames.
+
+    Optional frame: clients without handling for ``greeting`` simply
+    ignore the text frame; the binary PCM still plays via the standard
+    playback queue. No ``tts_start``/``tts_end`` is emitted around
+    greeting (those mark turn lifecycle only).
+    """
+    return json.dumps(
+        {"type": "greeting", "text": text},
+        ensure_ascii=False,
+    )
+
+
 def decode_start(frame_text: str) -> dict:
     """Parse a 'start' text frame from browser."""
     obj = json.loads(frame_text)
