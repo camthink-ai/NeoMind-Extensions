@@ -23,6 +23,7 @@ class Profile:
     barge_in_ack: bool
     ack_words: list[str]
     stage_filler_words: dict[str, list[str]]
+    greeting_text: str
 
     @classmethod
     def from_dict(cls, d: dict) -> "Profile":
@@ -59,6 +60,7 @@ class Profile:
             barge_in_ack=interaction.get("barge_in_ack", False),
             ack_words=list(interaction.get("ack_words", ["好的"])),
             stage_filler_words=stage_filler_words,
+            greeting_text=interaction.get("greeting_text", ""),
         )
 
 

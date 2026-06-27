@@ -22,6 +22,7 @@ def _profile(**overrides):
         latency_target_ms=1000, cpu_threads=4,
         barge_in_ack=False, ack_words=["好的"],
         stage_filler_words={"thinking": ["让我想想"]},
+        greeting_text="",
     )
     base.update(overrides)
     return Profile(**base)

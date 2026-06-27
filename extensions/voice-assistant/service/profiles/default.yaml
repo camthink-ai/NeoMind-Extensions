@@ -31,3 +31,4 @@ interaction:
   stage_filler_words:
     thinking: ["让我想想", "嗯,让我想想", "稍等一下"]
     tool_call: ["我查一下", "搜索中", "查一下资料"]
+  greeting_text: ""  # empty = disabled (opt-in due to AEC gap; see spec)
