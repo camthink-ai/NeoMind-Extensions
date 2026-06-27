@@ -312,7 +312,6 @@ def test_speech_during_greeting_emits_barge_in_immediately(monkeypatch):
     turn — so the browser can flush the greeting queue without waiting
     for the new turn's first TTS PCM (which arrives 200-500ms later)."""
     import server
-    import json as _json
 
     fake_greeting = b"\x01\x02\x03\x04" * 1000
     monkeypatch.setattr(server, "_GREETING_PCM", fake_greeting)
