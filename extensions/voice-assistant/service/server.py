@@ -82,9 +82,12 @@ VAD_BACKEND = _profile.vad_backend_type
 # VAD tuning — read from env (VoiceSession still reads these directly).
 # Refactoring VAD config into Profile is out of scope for this task.
 # ---------------------------------------------------------------------------
-VAD_SILENCE_MS = int(os.environ.get("VOICE_ASSISTANT_VAD_SILENCE_MS", "500"))
-VAD_MIN_SPEECH_MS = int(os.environ.get("VOICE_ASSISTANT_VAD_MIN_SPEECH_MS", "300"))
-VAD_ENERGY_THRESHOLD = float(os.environ.get("VOICE_ASSISTANT_VAD_ENERGY", "0.015"))
+VAD_SILENCE_MS = int(os.environ.get("VOICE_ASSISTANT_VAD_SILENCE_MS",
+                                     str(_profile.vad_config.get("silence_ms", 500))))
+VAD_MIN_SPEECH_MS = int(os.environ.get("VOICE_ASSISTANT_VAD_MIN_SPEECH_MS",
+                                       str(_profile.vad_config.get("min_speech_ms", 300))))
+VAD_ENERGY_THRESHOLD = float(os.environ.get("VOICE_ASSISTANT_VAD_ENERGY",
+                                            str(_profile.vad_config.get("threshold", 0.015))))
 
 FSMN_VAD_MODEL_ID = os.environ.get(
     "FSMN_VAD_MODEL_ID",
@@ -117,9 +120,126 @@ AEC_TAIL_MS = int(os.environ.get("VOICE_ASSISTANT_AEC_TAIL_MS", "400"))
 
 
 # ---------------------------------------------------------------------------
+# Pre-synthesized PCM banks for instant voice feedback.
+#
+# Two categories, both warmed at app startup (lifespan event) via the shared
+# _warm_banks_async() helper:
+#
+#   _ACK_PCM_BANK          — barge-in ack words ("好的" / "嗯哼") played AFTER
+#                            cleanup so the user knows the interrupt landed.
+#
+#   _STAGE_FILLER_BANK     — pipeline-stage voice prompts played so the user
+#                            knows what's happening during slow LLM turns:
+#                              "thinking"  → after ASR, before LLM stream
+#                              "tool_call" → LLM emits ToolCallStart event
+#
+# Each bank entry is 16kHz mono int16 LE bytes, ready to ship to the browser.
+# Failures during warmup are logged; affected banks stay empty (callbacks
+# become no-ops).
+# ---------------------------------------------------------------------------
+_ACK_PCM_BANK: list[bytes] = []
+_ACK_BANK_WARMED = False
+_STAGE_FILLER_BANK: dict[str, list[bytes]] = {}
+_STAGE_BANK_WARMED = False
+
+
+async def _synth_word_list(words: list[str], label: str) -> list[bytes]:
+    """Synthesize each word via TTS, return list of 16kHz mono PCM bytes.
+
+    Failures per-word are logged; the rest still get synthesized.
+    """
+    out: list[bytes] = []
+    for w in words:
+        try:
+            pcm = await _tts_backend.synthesize(w, TTS_VOICE)
+            # _tts_backend already downmixes to mono. Resample to 16k for browser.
+            out.append(_tts_to_browser_pcm(pcm, 24000, 1))
+        except Exception as e:
+            logger.warning("%s presynth failed for %r: %s", label, w, e)
+    return out
+
+
+async def _warm_banks_async() -> None:
+    """Pre-synthesize ack + stage-filler banks. Idempotent via _*_WARMED flags.
+
+    Called eagerly at app startup (lifespan event, fire-and-forget task) so
+    the server is immediately available even if TTS is slow. Safe to re-invoke
+    lazily if a bank is still empty on first use.
+    """
+    global _ACK_BANK_WARMED, _STAGE_BANK_WARMED
+
+    # ---- ack bank ----
+    if not _ACK_BANK_WARMED:
+        _ACK_BANK_WARMED = True
+        if _profile.barge_in_ack:
+            words = _profile.ack_words or []
+            if words:
+                bank = await _synth_word_list(words, "ack")
+                if bank:
+                    _ACK_PCM_BANK.extend(bank)
+                    logger.info("ack bank warmed: %d words (%d-%d bytes each)",
+                                len(bank), min(len(b) for b in bank),
+                                max(len(b) for b in bank))
+                else:
+                    logger.warning("ack bank empty after presynth — disabling barge_in_ack")
+
+    # ---- stage filler bank ----
+    if not _STAGE_BANK_WARMED:
+        _STAGE_BANK_WARMED = True
+        stages = _profile.stage_filler_words or {}
+        for stage_name, words in stages.items():
+            if not words:
+                continue
+            bank = await _synth_word_list(words, f"stage[{stage_name}]")
+            if bank:
+                _STAGE_FILLER_BANK[stage_name] = bank
+                logger.info("stage[%s] bank warmed: %d words (%d-%d bytes each)",
+                            stage_name, len(bank),
+                            min(len(b) for b in bank), max(len(b) for b in bank))
+            else:
+                logger.warning("stage[%s] bank empty — disabling that filler",
+                               stage_name)
+
+
+# ---------------------------------------------------------------------------
 # FastAPI app — serves HTTP /measure and WebSocket /ws on the same port.
 # ---------------------------------------------------------------------------
-app = FastAPI(title="Voice Assistant Orchestrator")
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup: pre-synthesize ack + stage-filler banks in background.
+
+    Non-blocking — server is immediately available even if TTS is slow
+    (moss-tts: 3-8s/word). Banks populate as TTS completes; callbacks that
+    fire before warmup finishes fall back to lazy synth or no-op.
+    """
+    asyncio.create_task(_warm_banks_async())
+    yield
+
+
+app = FastAPI(title="Voice Assistant Orchestrator", lifespan=lifespan)
+
+
+async def _pick_ack_pcm() -> bytes | None:
+    """Return a random ack PCM, lazy-warming the bank if needed.
+
+    _ACK_PCM_BANK is mutated in place via .extend(), so we can read it
+    directly from module scope after warmup completes.
+    """
+    import random
+    if _ACK_PCM_BANK:
+        return random.choice(_ACK_PCM_BANK)
+    if not _ACK_BANK_WARMED:
+        try:
+            await _warm_banks_async()
+        except Exception as e:
+            logger.warning("lazy ack warmup failed: %s", e)
+            return None
+    if not _ACK_PCM_BANK:
+        return None
+    return random.choice(_ACK_PCM_BANK)
 
 
 @app.post("/measure")
@@ -451,6 +571,26 @@ async def run_pipeline_for_segment(
 # ---------------------------------------------------------------------------
 # WebSocket handler
 # ---------------------------------------------------------------------------
+async def _pick_stage_filler_pcm(stage: str) -> bytes | None:
+    """Module-level helper — returns a random PCM for a stage filler, lazy-
+    warming the bank on first call. Lives outside ws_handler so the closure
+    can call it without leaking helpers into the closure body."""
+    import random
+    bank = _STAGE_FILLER_BANK.get(stage, [])
+    if bank:
+        return random.choice(bank)
+    if not _STAGE_BANK_WARMED:
+        try:
+            await _warm_banks_async()
+        except Exception as e:
+            logger.warning("lazy stage[%s] warmup failed: %s", stage, e)
+            return None
+    bank = _STAGE_FILLER_BANK.get(stage, [])
+    if not bank:
+        return None
+    return random.choice(bank)
+
+
 @app.websocket("/ws")
 async def ws_handler(websocket: WebSocket):
     """Main per-connection loop: parse messages, drive VAD, delegate each
@@ -477,6 +617,56 @@ async def ws_handler(websocket: WebSocket):
     async def on_stop_playback() -> None:
         sess.tts_active = False
         await sess.send_json({"type": "barge_in"})
+
+    async def play_ack() -> None:
+        """Send a pre-synthesized backchannel ack PCM (ChatGPT-style "好的").
+
+        Called by BargeInHandler AFTER cleanup tasks have finished (so the
+        browser has already cleared its playback queue via the barge_in
+        control frame emitted by on_stop_playback) and BEFORE transitioning
+        to LISTENING. Picks a random entry from the warmed bank for variety.
+
+        Lazy-warms the bank on first call if startup warmup hasn't finished
+        yet. No-op if profile disabled ack or warmup failed permanently.
+        """
+        pcm = await _pick_ack_pcm()
+        if pcm is None:
+            return
+        sess.bytes_out += len(pcm)
+        await sess.send_binary(pcm)
+
+    async def play_stage_filler(stage: str) -> None:
+        """Send a pre-synthesized stage filler PCM ("让我想想" / "我查一下").
+
+        Called by VoicePipeline at stage transitions so the user gets voice
+        feedback during slow LLM turns. ``stage`` is a key into
+        _STAGE_FILLER_BANK (e.g., "thinking", "tool_call").
+
+        Lazy-warms the bank on first call if startup hasn't finished.
+        No-op if stage is unknown or its bank failed to warm.
+        """
+        pcm = await _pick_stage_filler_pcm(stage)
+        if pcm is None:
+            return
+        sess.bytes_out += len(pcm)
+        await sess.send_binary(pcm)
+
+    async def on_thinking_start() -> None:
+        """Fired by VoicePipeline after ASR transcript, before LLM stream."""
+        await play_stage_filler("thinking")
+
+    async def on_tool_call(tool_name: str | None) -> None:
+        """Fired by VoicePipeline when LLM emits ToolCallStart event."""
+        await play_stage_filler("tool_call")
+
+    async def on_llm_sentence(seq: int, text: str) -> None:
+        """Fired per completed LLM sentence — progressive subtitle frame.
+
+        Optional frame: clients without handling for ``llm_sentence`` simply
+        ignore it. Binary PCM and tts_start/tts_end lifecycle are unchanged.
+        """
+        from ws_protocol import encode_llm_sentence
+        await sess.ws.send_text(encode_llm_sentence(seq, text))
 
     async def on_asr_start(byte_count: int) -> None:
         await sess.send_json({"type": "asr_start", "bytes": byte_count})
@@ -528,6 +718,15 @@ async def ws_handler(websocket: WebSocket):
         on_error=on_error,
         telemetry=_telemetry,
         voice=TTS_VOICE,
+        # play_ack gated on profile config, NOT bank contents — the bank
+        # warms asynchronously in the lifespan handler, so checking
+        # _ACK_PCM_BANK here would permanently disable ack for any session
+        # that connects during the first few seconds. _pick_ack_pcm() no-ops
+        # correctly when the bank is empty (disabled or still warming).
+        play_ack=play_ack if _profile.barge_in_ack else None,
+        on_thinking_start=on_thinking_start,
+        on_tool_call=on_tool_call,
+        on_llm_sentence=on_llm_sentence,
     )
 
     current_pipeline_task: Optional[asyncio.Task] = None

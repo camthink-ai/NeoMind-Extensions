@@ -7,11 +7,50 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Awaitable
 
 logger = logging.getLogger("voice-assistant.orchestrator")
+
+
+# Common ASR hallucination outputs on ambient noise ( SenseVoice on room
+# background, fan noise, keyboard, etc.). Most are short English words even
+# when language=zh, because SenseVoice falls back to its English training data
+# when it can't find clear phonetic content.
+_NOISE_TOKENS = {
+    "", ".", ",", "!", "?", "。", "，", "！", "？",
+    "yeah", "yes", "oh", "ah", "wow", "hey",
+    "嗯", "啊", "哦", "唉", "哈", "嗨",
+    "ok", "okay",
+}
+_NOISE_MAX_LEN = 4  # anything <= 4 chars (after strip+punct removal) is suspect
+
+
+def _is_noise_transcript(text: str) -> bool:
+    """Heuristic: detect ASR hallucinations on ambient noise.
+
+    Triggers if the transcript is a single short token after stripping
+    whitespace and trailing punctuation. Catches "Yeah." / "." / "Oh." /
+    "我." (single CJK char) etc. Legit short utterances like "你好" / "开灯"
+    (2+ chars) pass through.
+    """
+    if not text:
+        return True
+    # Strip leading/trailing whitespace + common punctuation
+    cleaned = text.strip().strip(".,!?。,！？~·…")
+    if not cleaned:
+        return True
+    if cleaned.lower() in _NOISE_TOKENS:
+        return True
+    # Single-character transcript (any language) is almost always hallucination.
+    if len(cleaned) <= 1:
+        return True
+    # Short (≤4 chars) non-CJK string = likely English hallucination.
+    if len(cleaned) <= _NOISE_MAX_LEN and not any('\u4e00' <= c <= '\u9fff' for c in cleaned):
+        return True
+    return False
 
 
 class State(str, Enum):
@@ -101,16 +140,21 @@ class BargeInHandler:
 
     Each action is an async callable; failures are logged but don't halt others.
     Uses a lock to ensure idempotency for concurrent barge-in triggers.
+
+    Optional `play_ack` runs AFTER cleanup (so browser has cleared its
+    playback queue) but BEFORE transitioning to LISTENING — used for
+    ChatGPT-style backchannel acknowledgment ("好的" / "嗯哼").
     """
     cancel_tts_playback: Callable[[], Awaitable[None]]
     cancel_llm_request: Callable[[], Awaitable[None]]
     clear_pending_queues: Callable[[], Awaitable[None]]
     drain_asr_buffer: Callable[[], Awaitable[None]]
+    play_ack: Callable[[], Awaitable[None]] | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _in_progress: bool = field(default=False)
 
     async def handle_barge_in(self, fsm: StateMachine, reason: str) -> None:
-        """Transition to BARGED, run 4 cleanups, transition to LISTENING.
+        """Transition to BARGED, run 4 cleanups, play ack, transition to LISTENING.
 
         Idempotent: if a barge-in is already in progress, return immediately.
         """
@@ -136,6 +180,14 @@ class BargeInHandler:
         for i, r in enumerate(results):
             if isinstance(r, Exception):
                 logger.warning("barge-in cleanup task %d failed: %s", i, r)
+
+        # Backchannel ack — runs after cleanup so browser playback queue is
+        # already cleared by the `barge_in` control frame.
+        if self.play_ack is not None:
+            try:
+                await self.play_ack()
+            except Exception as e:
+                logger.warning("ack playback failed: %s", e)
 
         await fsm.async_transition(State.LISTENING)
         async with self._lock:
@@ -172,6 +224,10 @@ class VoicePipeline:
         on_tts_start=None,
         on_tts_end=None,
         on_error=None,
+        play_ack=None,
+        on_thinking_start=None,
+        on_tool_call=None,
+        on_llm_sentence=None,
     ):
         self.vad = vad
         self.asr = asr
@@ -187,17 +243,27 @@ class VoicePipeline:
         self.on_tts_start = on_tts_start  # async callable()
         self.on_tts_end = on_tts_end  # async callable(metrics: dict)
         self.on_error = on_error  # async callable(phase: str, message: str)
+        # Stage feedback — fire voice fillers so user knows what's happening.
+        # on_thinking_start: no-arg async, fires after ASR transcript confirmed.
+        # on_tool_call: async(tool_name: str | None), fires on LLM ToolCallStart.
+        self.on_thinking_start = on_thinking_start
+        self.on_tool_call = on_tool_call
+        # Phase 2: progressive subtitle callback — async(seq: int, text: str).
+        # Fires once per completed LLM sentence, in order.
+        self.on_llm_sentence = on_llm_sentence
         self.fsm = StateMachine()
         # AEC threshold hack: raise VAD threshold during TTS playback to avoid
         # the assistant's own voice triggering barge-in. Restored after.
         self._original_vad_threshold = getattr(vad, "threshold", None)
         self._pcm_queue: asyncio.Queue | None = None  # set when streaming TTS queue is in use
-        # Barge-in handler — wires the 4 cleanup actions to pipeline-owned state
+        # Barge-in handler — wires the 4 cleanup actions to pipeline-owned state.
+        # play_ack (optional) runs AFTER cleanup, BEFORE transition to LISTENING.
         self.barge_in = BargeInHandler(
             cancel_tts_playback=self._cancel_tts_playback,
             cancel_llm_request=self._cancel_llm,
             clear_pending_queues=self._clear_queues,
             drain_asr_buffer=self._drain_asr,
+            play_ack=play_ack,
         )
 
     async def run_turn(self, segment) -> None:
@@ -257,100 +323,236 @@ class VoicePipeline:
             await self.fsm.async_transition(State.IDLE)
             return
 
-        # ---- LLM streaming ----
-        llm_start = time.perf_counter()
-        full_text = ""
-        first_token_observed = False
-        async for evt in self.llm.stream(transcript, session_id=str(id(self))):
-            # Observe TTFB on first non-empty Content token.
-            if (
-                not first_token_observed
-                and evt.type == "Content"
-                and getattr(evt, "text", None)
-            ):
-                first_token_observed = True
-                if self.telemetry:
-                    self.telemetry.observe(
-                        "llm_ttfb_ms",
-                        (time.perf_counter() - llm_start) * 1000,
-                    )
-            if evt.type == "Content" and getattr(evt, "text", None):
-                full_text += evt.text
-            # Barge-in check after each event. During LLM streaming the
-            # pipeline is in THINKING; any other state (BARGED, or LISTENING
-            # after the BargeInHandler already completed cleanup) means the
-            # turn was interrupted.
-            if self.fsm.state != State.THINKING:
-                if self.telemetry:
-                    self.telemetry.increment_barge_ins()
-                return
+        # Noise filter — ASR (esp. SenseVoice) often hallucinates short
+        # English tokens on ambient noise. Reject transcripts that are too
+        # short or match common hallucination patterns.
+        if _is_noise_transcript(transcript):
+            logger.info("rejecting noise-like transcript: %r", transcript)
+            if self.on_skip is not None:
+                await self.on_skip("noise_transcript")
+            await self.fsm.async_transition(State.IDLE)
+            return
 
-        # No content produced -> back to IDLE.
-        if not full_text.strip():
+        # ---- LLM + TTS bi-streaming ----
+        # Producer (LLM reader) and consumer (sentence-level TTS player) run
+        # as two concurrent tasks wired through a bounded asyncio.Queue.
+        # As soon as the first complete sentence is produced by the LLM, the
+        # consumer starts TTS for it — overlapping LLM generation of later
+        # sentences with TTS playback of earlier ones. This collapses the
+        # N-sentence first-audio latency from "sum(LLM) + sum(TTS)" down to
+        # "first-sentence LLM + first-sentence TTS first-chunk".
+        #
+        # Fire "thinking" stage filler so the user gets immediate voice
+        # feedback before the (potentially slow) LLM produces first token.
+        if self.on_thinking_start is not None:
+            try:
+                await self.on_thinking_start()
+            except Exception as e:
+                logger.warning("on_thinking_start failed: %s", e)
+
+        # Function-local import: sentence_buffer has no heavy deps so this
+        # is effectively free after first import (module cached). Kept local
+        # to minimize orchestrator's top-level surface and match the
+        # pattern of other turn-scoped helpers.
+        from sentence_buffer import SentenceBuffer
+
+        llm_start = time.perf_counter()
+        # tts_start is captured BEFORE the first sentence is enqueued, so it
+        # represents the moment TTS work logically begins (not when the
+        # consumer picks it up). This keeps tts_first_chunk_ms comparable to
+        # the Phase 1 single-stream measurement.
+        tts_start = time.perf_counter()
+        sentence_q: asyncio.Queue[str | None] = asyncio.Queue(maxsize=4)
+        buf = SentenceBuffer()
+        first_token_observed = False
+        llm_first_sentence_observed = False
+        tts_first_ms: float = 0.0  # set by tts_consumer; read by on_tts_end
+        # State shared between producer + consumer. Closed over by both.
+        state = {
+            "first_chunk_delivered": False,
+            "tts_first_ms": 0.0,
+            "llm_produced_any": False,
+        }
+
+        async def _fire_sentence(seq: int, s: str) -> None:
+            """Fire-and-forget wrapper: log callback failures instead of
+            letting them surface as 'Task exception was never retrieved'."""
+            try:
+                await self.on_llm_sentence(seq, s)
+            except Exception as e:
+                logger.warning("on_llm_sentence failed: %s", e)
+
+        async def tts_consumer() -> None:
+            """Pop sentences from the queue; for each, run TTS stream → PCM.
+
+            The THINKING→SPEAKING transition, VAD threshold raise, and
+            on_tts_start callback fire ONCE — right before the first
+            sentence's first chunk is delivered. Barge-in is checked
+            between sentences and between chunks.
+
+            ``on_llm_sentence`` is dispatched fire-and-forget so a slow WS
+            send can't stall TTS first-chunk for the next sentence. ``seq``
+            indexes EMITTED subtitle frames — on barge-in, emitted count
+            may exceed played count (last sentence's TTS was skipped).
+            """
+            nonlocal tts_first_ms
+            seq = 0
+            while True:
+                s = await sentence_q.get()
+                if s is None:
+                    return
+                # Progressive subtitle callback — fires per completed sentence.
+                # create_task on the same loop preserves emission order; the
+                # browser may see a tight burst but never out-of-order frames.
+                if self.on_llm_sentence is not None:
+                    asyncio.create_task(_fire_sentence(seq, s))
+                seq += 1
+                # Barge-in check before starting a new sentence's TTS.
+                if self.fsm.state == State.BARGED:
+                    return
+                # First-sentence setup: FSM → SPEAKING, raise VAD threshold,
+                # fire on_tts_start. Done here (not at producer) so the
+                # SPEAKING window opens just before the first audible PCM.
+                if not state["first_chunk_delivered"]:
+                    await self.fsm.async_transition(State.SPEAKING)
+                    if self._original_vad_threshold is not None:
+                        mult = float(os.environ.get(
+                            "VOICE_ASSISTANT_SPEAKING_VAD_MULT", "30"))
+                        floor = float(os.environ.get(
+                            "VOICE_ASSISTANT_SPEAKING_VAD_FLOOR", "0.4"))
+                        self.vad.threshold = max(
+                            self._original_vad_threshold * mult, floor)
+                    if self.on_tts_start is not None:
+                        await self.on_tts_start()
+                try:
+                    async for chunk in self.tts.stream(s, self.voice):
+                        if self.fsm.state == State.BARGED:
+                            return
+                        await self.on_tts_pcm(chunk.pcm_int16, chunk.sample_rate)
+                        if not state["first_chunk_delivered"]:
+                            state["first_chunk_delivered"] = True
+                            tts_first_ms = (time.perf_counter() - tts_start) * 1000
+                            if self.telemetry:
+                                self.telemetry.observe(
+                                    "tts_first_chunk_ms", tts_first_ms)
+                                self.telemetry.observe(
+                                    "first_audio_out_ms",
+                                    (time.perf_counter() - turn_start) * 1000)
+                except Exception as exc:
+                    logger.exception("TTS failed in tts_consumer")
+                    if self.on_error is not None:
+                        await self.on_error("tts", str(exc))
+                    return
+
+        consumer_task = asyncio.create_task(tts_consumer())
+        try:
+            # ---- Producer: LLM stream → sentence queue ----
+            async for evt in self.llm.stream(transcript, session_id=str(id(self))):
+                # Observe TTFB on first non-empty Content token.
+                if (
+                    not first_token_observed
+                    and evt.type == "Content"
+                    and getattr(evt, "text", None)
+                ):
+                    first_token_observed = True
+                    state["llm_produced_any"] = True
+                    if self.telemetry:
+                        self.telemetry.observe(
+                            "llm_ttfb_ms",
+                            (time.perf_counter() - llm_start) * 1000,
+                        )
+                if evt.type == "Content" and getattr(evt, "text", None):
+                    for sentence in buf.feed(evt.text):
+                        if not llm_first_sentence_observed:
+                            llm_first_sentence_observed = True
+                            if self.telemetry:
+                                self.telemetry.observe(
+                                    "llm_first_sentence_ms",
+                                    (time.perf_counter() - llm_start) * 1000,
+                                )
+                        # Pre-check barge-in before parking on put. If the
+                        # consumer was cancelled mid-stream the queue may be
+                        # full; a blocked put() would only be released by the
+                        # outer current_pipeline_task.cancel() (which server
+                        # .py's ws_handler always fires on barge-in). The
+                        # pre-check avoids the park entirely when we already
+                        # know we're barged.
+                        if self.fsm.state == State.BARGED:
+                            if self.telemetry:
+                                self.telemetry.increment_barge_ins()
+                            consumer_task.cancel()
+                            return
+                        # Bounded put: yields backpressure if LLM outpaces
+                        # TTS (rare; Kokoro is faster than qwen3 LLM).
+                        await sentence_q.put(sentence)
+                # Tool-call stage filler — fire once on first ToolCallStart.
+                if evt.type == "ToolCallStart" and self.on_tool_call is not None:
+                    try:
+                        await self.on_tool_call(getattr(evt, "tool_name", None))
+                    except Exception as e:
+                        logger.warning("on_tool_call failed: %s", e)
+                    self.on_tool_call = None  # fire-once
+                # Barge-in check after each LLM event. With bi-streaming the
+                # consumer legitimately moves THINKING→SPEAKING mid-stream
+                # (first sentence started playing) — that's normal, not an
+                # interrupt. Only BARGED means the user broke in.
+                if self.fsm.state == State.BARGED:
+                    if self.telemetry:
+                        self.telemetry.increment_barge_ins()
+                    consumer_task.cancel()
+                    return
+            # Flush any residual tail as the final sentence.
+            tail = buf.flush()
+            if tail:
+                if not llm_first_sentence_observed:
+                    llm_first_sentence_observed = True
+                    if self.telemetry:
+                        self.telemetry.observe(
+                            "llm_first_sentence_ms",
+                            (time.perf_counter() - llm_start) * 1000,
+                        )
+                await sentence_q.put(tail)
+            await sentence_q.put(None)  # sentinel → consumer exits
+            await consumer_task
+        except BaseException:
+            consumer_task.cancel()
+            raise
+        finally:
+            # Restore VAD threshold after the SPEAKING window closes.
+            if self._original_vad_threshold is not None:
+                self.vad.threshold = self._original_vad_threshold
+
+        # No LLM content produced at all → back to IDLE without TTS.
+        if not state["llm_produced_any"]:
             if self.on_skip is not None:
                 await self.on_skip("empty_llm_output")
             await self.fsm.async_transition(State.IDLE)
             return
 
-        # ---- TTS ----
-        # THINKING -> SPEAKING
-        await self.fsm.async_transition(State.SPEAKING)
-        # Raise VAD threshold during playback to suppress self-trigger.
-        if self._original_vad_threshold is not None:
-            self.vad.threshold = self._original_vad_threshold + 0.2
-
-        if self.on_tts_start is not None:
-            await self.on_tts_start()
-
-        tts_start = time.perf_counter()
-        try:
-            pcm = await self.tts.synthesize(full_text, self.voice)
-        except Exception as exc:
-            logger.exception("TTS failed in run_turn")
-            # Always restore VAD threshold on failure
-            if self._original_vad_threshold is not None:
-                self.vad.threshold = self._original_vad_threshold
-            if self.on_error is not None:
-                await self.on_error("tts", str(exc))
-            # Return to IDLE for next turn
+        # TTS produced no audio (empty reply from model) → skip.
+        # If barge-in fired mid-consumer, leave the state to BargeInHandler.
+        if not state["first_chunk_delivered"] and self.fsm.state != State.BARGED:
+            if self.on_skip is not None:
+                await self.on_skip("empty_tts_output")
             await self.fsm.async_transition(State.IDLE)
             return
-        finally:
-            # Always restore VAD threshold for success path (except path
-            # already restored and returned above; finally runs before the
-            # function returns from except, so this covers both paths safely).
-            if self._original_vad_threshold is not None:
-                self.vad.threshold = self._original_vad_threshold
-
-        tts_ms = (time.perf_counter() - tts_start) * 1000
-        if self.telemetry:
-            self.telemetry.observe("tts_first_chunk_ms", tts_ms)
-
-        # Re-check barge-in right before delivering PCM (may have fired
-        # during TTS synthesis).
-        if self.fsm.state == State.BARGED:
-            if self.telemetry:
-                self.telemetry.increment_barge_ins()
-            return
-
-        # Deliver PCM to player. ZipVoice outputs 24kHz int16 LE.
-        await self.on_tts_pcm(pcm, 24000)
 
         total_ms = (time.perf_counter() - turn_start) * 1000
         if self.telemetry:
-            self.telemetry.observe("first_audio_out_ms", total_ms)
             self.telemetry.observe("full_turn_ms", total_ms)
             self.telemetry.increment_turns()
 
         if self.on_tts_end is not None:
             await self.on_tts_end({
                 "total_ms": total_ms,
-                "tts_first_chunk_ms": tts_ms,
+                "tts_first_chunk_ms": tts_first_ms,
                 "asr_ms": asr_ms,
             })
 
-        # SPEAKING -> IDLE
-        await self.fsm.async_transition(State.IDLE)
+        # SPEAKING -> IDLE. Skip if barge-in fired mid-TTS — the
+        # BargeInHandler owns the BARGED → LISTENING cleanup transition.
+        if self.fsm.state != State.BARGED:
+            await self.fsm.async_transition(State.IDLE)
 
     async def _cancel_tts_playback(self) -> None:
         """Notify the browser to stop audio playback (WS control frame)."""

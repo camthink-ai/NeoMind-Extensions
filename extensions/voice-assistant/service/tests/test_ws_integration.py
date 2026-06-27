@@ -42,9 +42,22 @@ def ws_app(monkeypatch):
     monkeypatch.setattr(server, "_asr_backend", mock_asr)
 
     # Mock TTS — returns short non-zero PCM so _tts_to_browser_pcm yields bytes.
+    # Pipeline uses tts.stream() (async iterator of TtsChunk); also provide
+    # synthesize() for ack-bank warmup compatibility.
+    from contracts import TtsChunk
     mock_tts = MagicMock()
     mock_tts.synthesize = AsyncMock(return_value=b"\x10\x00" * 200)  # 200 int16 samples
+
+    async def _tts_stream(text, voice):
+        yield TtsChunk(pcm_int16=b"\x10\x00" * 200, sample_rate=24000, is_final=False)
+
+    mock_tts.stream = _tts_stream
     monkeypatch.setattr(server, "_tts_backend", mock_tts)
+
+    # Disable barge_in_ack so play_ack doesn't fire (no ack bank in test).
+    monkeypatch.setattr(server._profile, "barge_in_ack", False)
+    # Disable stage fillers so on_thinking_start doesn't try real TTS warmup.
+    monkeypatch.setattr(server._profile, "stage_filler_words", {})
 
     # FakeLLMClient — implements LLMClient Protocol, yields Content then end.
     from backends.llm import FakeLLMClient

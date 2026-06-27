@@ -28,6 +28,18 @@ def encode_barge_in_ack() -> str:
                        "reason": "barge_in"})
 
 
+def encode_llm_sentence(seq: int, text: str) -> str:
+    """Progressive subtitle frame — one per completed LLM sentence.
+
+    Optional frame: clients that don't handle ``llm_sentence`` can ignore
+    it without affecting PCM playback or tts_start/tts_end lifecycle.
+    """
+    return json.dumps(
+        {"type": "llm_sentence", "seq": seq, "text": text},
+        ensure_ascii=False,
+    )
+
+
 def decode_start(frame_text: str) -> dict:
     """Parse a 'start' text frame from browser."""
     obj = json.loads(frame_text)
