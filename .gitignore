@@ -123,3 +123,16 @@ tests/simulators/lorawan_mqtt.py
 tests/simulators/modbus_slave.py
 tests/simulators/README.md
 tests/simulators/requirements.txt
+
+# Python service artifacts
+__pycache__/
+*.py[cod]
+
+# Voice-assistant runtime secrets (NeoMind API keys, encryption material)
+extensions/voice-assistant/service/data/
+
+# Out-of-tree upstream patches (reference-only, not built)
+extensions/voice-assistant/service/patches/
+
+# Per-host latency reports (regenerated each run)
+extensions/voice-assistant/service/latency_*.json
