@@ -214,3 +214,93 @@ def test_ws_client_stop_triggers_no_phantom_pipeline(ws_app):
         ws.send_text(json.dumps({"type": "ping"}))
         msg = ws.receive_text()
         assert json.loads(msg)["type"] == "pong"
+
+
+# ---------------------------------------------------------------------------
+# Greeting (say-first) — Task 6
+# ---------------------------------------------------------------------------
+
+def test_start_emits_greeting_when_enabled(monkeypatch):
+    """When _GREETING_PCM is populated, start frame triggers
+    ready -> greeting -> binary PCM, in that order."""
+    import server
+
+    # Force greeting enabled
+    fake_pcm = b"\x01\x02\x03\x04" * 10
+    monkeypatch.setattr(server, "_GREETING_PCM", fake_pcm)
+    monkeypatch.setattr(server._profile, "greeting_text", "hello greeting")
+
+    # Reuse the ws_app fixture's mock backends by re-applying key patches
+    monkeypatch.setattr(server, "VAD_BACKEND", "energy")
+    monkeypatch.setattr(server, "VAD_ENERGY_THRESHOLD", 0.001)
+    monkeypatch.setattr(server, "VAD_MIN_SPEECH_MS", 90)
+    monkeypatch.setattr(server, "VAD_SILENCE_MS", 150)
+    monkeypatch.setattr(server._profile, "barge_in_ack", False)
+    monkeypatch.setattr(server._profile, "stage_filler_words", {})
+
+    # Mock ASR + TTS so a downstream turn (if any frame triggers it) won't crash
+    from contracts import TtsChunk
+    mock_asr = MagicMock(); mock_asr.transcribe = AsyncMock(return_value="hi")
+    monkeypatch.setattr(server, "_asr_backend", mock_asr)
+    mock_tts = MagicMock()
+    mock_tts.synthesize = AsyncMock(return_value=b"\x10\x00" * 100)
+    async def _stream(text, voice):
+        yield TtsChunk(pcm_int16=b"\x10\x00" * 100, sample_rate=24000, is_final=True)
+    mock_tts.stream = _stream
+    monkeypatch.setattr(server, "_tts_backend", mock_tts)
+
+    client = TestClient(server.app)
+
+    with client.websocket_connect("/ws?session_id=test-greet") as ws:
+        ws.send_json({"type": "start", "sample_rate": 16000})
+        text_frames, binary_frames = _drain_ws(
+            ws, expected_types={"ready", "greeting"}, timeout_s=3.0)
+        # The server's greeting push sends text frame THEN binary frame
+        # synchronously. _drain_ws exits as soon as both text types are
+        # seen, so the binary PCM is still pending in the WS buffer.
+        # Do ONE more receive to grab it — a single frame is guaranteed to
+        # be available because the server completed send_binary() before
+        # yielding. Do NOT loop (ws.receive() has no timeout and would
+        # block forever on an empty queue).
+        extra = ws.receive()
+        if "bytes" in extra and extra["bytes"] is not None:
+            binary_frames.append(extra["bytes"])
+
+    # Ordering assertions
+    types = [f.get("type") for f in text_frames]
+    assert "ready" in types
+    assert "greeting" in types
+    assert types.index("ready") < types.index("greeting")
+    # Greeting text payload
+    greeting_frame = next(f for f in text_frames if f.get("type") == "greeting")
+    assert greeting_frame["text"] == "hello greeting"
+    # At least the greeting binary was pushed
+    assert len(binary_frames) >= 1
+
+
+def test_start_skips_greeting_when_disabled(monkeypatch):
+    """When _GREETING_PCM is None (greeting_text empty), start frame
+    triggers ready only — no greeting frame."""
+    import server
+    monkeypatch.setattr(server, "_GREETING_PCM", None)
+    monkeypatch.setattr(server, "VAD_BACKEND", "energy")
+    monkeypatch.setattr(server, "VAD_ENERGY_THRESHOLD", 0.001)
+    monkeypatch.setattr(server, "VAD_MIN_SPEECH_MS", 90)
+    monkeypatch.setattr(server, "VAD_SILENCE_MS", 150)
+    monkeypatch.setattr(server._profile, "barge_in_ack", False)
+    monkeypatch.setattr(server._profile, "stage_filler_words", {})
+
+    client = TestClient(server.app)
+
+    with client.websocket_connect("/ws?session_id=test-no-greet") as ws:
+        ws.send_json({"type": "start", "sample_rate": 16000})
+        # Drain briefly — we expect ready and nothing else of interest.
+        # Send ping right after ready to give the drain something to terminate on.
+        ws.send_json({"type": "ping"})
+        text_frames, _ = _drain_ws(
+            ws, expected_types={"ready", "pong"}, timeout_s=3.0)
+
+    types = [f.get("type") for f in text_frames]
+    assert "ready" in types
+    assert "greeting" not in types
+    assert "pong" in types

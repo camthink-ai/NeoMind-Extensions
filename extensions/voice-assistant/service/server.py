@@ -827,6 +827,17 @@ async def ws_handler(websocket: WebSocket):
                     "vad_min_speech_ms": VAD_MIN_SPEECH_MS,
                     "vad_energy_threshold": VAD_ENERGY_THRESHOLD,
                 })
+                # Greeting (say-first): push pre-synthesized clip immediately
+                # after ready. MUST be synchronous (not asyncio.create_task)
+                # — measure_common attributes any binary received before the
+                # first asr_start to the greeting window. See design spec.
+                if _GREETING_PCM is not None:
+                    from ws_protocol import encode_greeting
+                    sess.greeting_active = True
+                    sess.tts_active = True
+                    await sess.ws.send_text(encode_greeting(_profile.greeting_text))
+                    await sess.send_binary(_GREETING_PCM)
+                    sess.bytes_out += len(_GREETING_PCM)
             elif mtype == "stop":
                 await pipeline.barge_in.handle_barge_in(
                     pipeline.fsm, reason="client_stop"
