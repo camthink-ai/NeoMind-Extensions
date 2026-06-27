@@ -60,7 +60,7 @@ text-frame companion for browser-side subtitle rendering.
 
 | Component | Change |
 |-----------|--------|
-| `profile.py` | Add `greeting_text: str = ""` to `Profile` dataclass; read from `interaction.greeting_text` in `from_dict` |
+| `profile.py` | Add `greeting_text: str = ""` to `Profile` dataclass; add one line to `from_dict`'s constructor call reading `interaction.get("greeting_text", "")` (sibling to `barge_in_mode`, `ack_words`, etc. at lines 56-60) |
 | `profiles/default.yaml` | Add `interaction.greeting_text: ""` (default disabled) |
 | `server.py` | Add `_GREETING_PCM` module cache + `_warm_greeting()` startup hook + `_pick_greeting_pcm()` accessor; add `sess.greeting_active` flag to `VoiceSession`; on `start` frame, push greeting frame + binary if cache non-empty |
 | `ws_protocol.py` | Add `encode_greeting(text: str) -> str` |
@@ -98,28 +98,61 @@ Add one boolean flag:
 
 ```python
 class VoiceSession:
-    greeting_active: bool = False   # True between greeting push and
-                                    # first real turn's on_stop_playback
+    greeting_active: bool = False   # True between greeting push and the
+                                    # first user-speech detection that
+                                    # ends the greeting window
 ```
 
-The flag is consumed in **one place**: when a new turn's first `on_tts_pcm`
-fires while `greeting_active is True`, the turn-call path emits a
-`{"type":"barge_in"}` frame to the browser **before** pushing the new
-turn's PCM. This flushes any remaining greeting audio from the browser's
-playback queue. The flag is reset to `False` immediately after.
+**Single reset trigger:** the flag flips to `False` inside the
+`pcm_complete is not None` branch of `ws_handler`, **before** the
+existing barge-in check at `server.py:753` and **before** starting the
+new turn at line 767. Concretely, a new guard is added at the top of
+that branch:
 
-This mirrors how user-bar barge-in already works (`on_stop_playback` →
-emits `barge_in` frame → browser flushes queue), just triggered by the
-"first PCM of the new turn after greeting" instead of by an in-turn
-FSM transition.
+```python
+pcm_complete = sess.feed_pcm(samples)
+if pcm_complete is None:
+    continue
+# NEW: flush greeting queue immediately on first speech detection.
+if sess.greeting_active:
+    sess.greeting_active = False
+    sess.tts_active = False
+    await sess.send_json({"type": "barge_in"})  # browser flushes queue
+# Existing: barge-in if a turn is in progress.
+if pipeline.fsm.state in (State.THINKING, State.SPEAKING):
+    ...
+```
+
+This guarantees the browser receives the flush signal within the VAD
+speech-detection latency (~500ms after the user starts talking), NOT
+delayed by ASR + LLM TTFB + TTS first-chunk. Without this guard, the
+greeting would keep playing for 200-500ms after the user speaks, which
+would defeat the goal.
+
+The flag is consumed in **exactly one place** (the new guard above).
+It is never read by `on_tts_pcm`, `on_stop_playback`, or any turn-lifecycle
+callback — those callbacks operate on `sess.tts_active` / FSM state as
+today.
+
+### Barge-in frame shape
+
+The codebase currently has two different barge-in frame shapes:
+
+- `ws_protocol.encode_barge_in_ack()` → `{"type":"control","action":"stop_playback","reason":"barge_in"}`
+- `server.py:619` (`on_stop_playback`) → `{"type":"barge_in"}` (raw)
+
+The greeting-flush frame uses the **second** shape — `{"type":"barge_in"}`
+— to match what `on_stop_playback` already emits and what `poc.html`
+already handles in its `case 'barge_in':` branch. No protocol
+proliferation; reuse the existing raw frame.
 
 ### Barge-in semantics during greeting
 
 | Scenario | Behavior |
 |----------|----------|
-| User waits through greeting silently | Greeting plays in full, then VAD waits for speech. `greeting_active` resets on first new turn. |
-| User speaks during greeting | VAD detects at baseline threshold; new `run_turn` starts. First `on_tts_pcm` of new turn sees `greeting_active=True`, emits `barge_in` frame, browser flushes greeting queue remainder, new turn's TTS plays. |
-| Greeting self-triggers VAD (no AEC, loud speakers) | **Known limitation.** Baseline VAD threshold sees greeting audio as speech; a phantom turn may start. Mitigation = enable AEC in profile (`acoustic.aec: webrtc`) or keep `greeting_text: ""`. This spec does **not** hack VAD threshold during greeting. |
+| User waits through greeting silently | Greeting plays in full; `greeting_active` stays True until next speech. Eventually user speaks → row 2 fires. |
+| User speaks during greeting (interruption) | VAD detects at baseline threshold; `pcm_complete is not None` branch fires; new guard emits `{"type":"barge_in"}`, resets `greeting_active=False` and `tts_active=False`, browser flushes greeting queue remainder; existing barge-in check at line 753 sees `state == IDLE` (greeting is not a turn) → no extra cleanup; new turn starts normally at line 767. |
+| Greeting self-triggers VAD (no AEC, loud speakers) | **Known limitation.** Baseline VAD threshold sees greeting audio as speech; row 2 fires on the phantom speech → greeting gets cut short by its own echo. Mitigation = enable AEC in profile (`acoustic.aec: webrtc`) or keep `greeting_text: ""`. This spec does **not** hack VAD threshold during greeting. |
 
 The AEC gap is the same pre-existing exposure that ack and stage-filler
 PCM have; greeting does not make it worse in kind, only in duration
@@ -159,6 +192,16 @@ and `measure_neomind_e2e.py`. Changes:
    is counted in a new `greeting_pcm_chunks` field, NOT in
    `tts_chunk_count` / `post_tts_pcm_chunks`. This keeps the existing
    bi-stream metrics clean.
+
+   **Determinism note:** this separation depends on the server pushing
+   the greeting binary frames **synchronously** inside the `start`
+   handler in `ws_handler`, before the receive loop resumes. The
+   implementation MUST NOT schedule greeting push via `asyncio.create_task`
+   or any deferred path — doing so would race with the harness's first
+   `feed_audio` chunks and corrupt the PCM attribution. This constraint
+   is part of the contract; the implementer should add an inline comment
+   at the push site documenting why it's synchronous.
+
 3. The NeoMind E2E script's preflight is unchanged — greeting is a
    presentation concern, not a NeoMind-integration concern.
 
@@ -186,9 +229,22 @@ Greeting PCM itself is pushed by the server before the harness's first
 - Set `greeting_text: ""`: connect, send `start`:
   - Assert receive `ready`
   - Assert NO `greeting` frame follows
-- After greeting push, simulate first turn's `on_tts_pcm`:
-  - Assert `barge_in` frame is emitted to client before new PCM
+- After greeting push, simulate first `pcm_complete` (user speech):
+  - Assert `barge_in` frame is emitted to client **before** the new
+    turn's first PCM
   - Assert `sess.greeting_active` resets to False
+  - Assert `sess.tts_active` resets to False (so VAD threshold bumping
+    and AEC windows see a clean state for the new turn)
+
+### AEC / state interaction (`tests/test_ws_integration.py`)
+
+- During greeting push, assert `sess.tts_active == True` (so the AEC
+  echo-window logic in `VoiceSession` correctly treats greeting as
+  "we are emitting audio"). This is what suppresses self-triggered VAD
+  when AEC is enabled.
+- After the barge-in-flush guard fires, assert both `greeting_active`
+  and `tts_active` are False, so the next turn starts from a clean
+  state.
 
 ### Manual / E2E
 
