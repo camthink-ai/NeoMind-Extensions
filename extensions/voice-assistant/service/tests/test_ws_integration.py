@@ -304,3 +304,92 @@ def test_start_skips_greeting_when_disabled(monkeypatch):
     assert "ready" in types
     assert "greeting" not in types
     assert "pong" in types
+
+
+def test_speech_during_greeting_emits_barge_in_immediately(monkeypatch):
+    """When greeting_active=True and user speech is detected (pcm_complete
+    non-None), the ws_handler emits {type:barge_in} BEFORE starting the new
+    turn — so the browser can flush the greeting queue without waiting
+    for the new turn's first TTS PCM (which arrives 200-500ms later)."""
+    import server
+    import json as _json
+
+    fake_greeting = b"\x01\x02\x03\x04" * 1000
+    monkeypatch.setattr(server, "_GREETING_PCM", fake_greeting)
+    monkeypatch.setattr(server._profile, "greeting_text", "hello")
+
+    # Mock ASR returns fast so the new turn starts deterministically
+    from unittest.mock import AsyncMock, MagicMock
+    mock_asr = MagicMock()
+    mock_asr.transcribe = AsyncMock(return_value="user speech")
+    monkeypatch.setattr(server, "_asr_backend", mock_asr)
+
+    # Mock TTS — greeting synth (called in _warm_greeting, but we already
+    # have _GREETING_PCM set, so it won't be called) + turn TTS stream
+    from contracts import TtsChunk
+    mock_tts = MagicMock()
+    mock_tts.synthesize = AsyncMock(return_value=b"\x10\x00" * 100)
+
+    async def _tts_stream(text, voice):
+        yield TtsChunk(pcm_int16=b"\x10\x00" * 100, sample_rate=24000, is_final=True)
+    mock_tts.stream = _tts_stream
+    monkeypatch.setattr(server, "_tts_backend", mock_tts)
+
+    # FakeLLMClient — the real make_llm connects to a live NeoMind WS
+    # (ws://127.0.0.1:9375) and blocks the new turn indefinitely, which
+    # would deadlock the test after the barge_in frame is emitted. Use
+    # the fake that yields a fixed reply synchronously.
+    from backends.llm import FakeLLMClient
+    fake_llm = FakeLLMClient(reply_template="你好啊,我是测试回复")
+    monkeypatch.setattr(server, "make_llm", lambda profile: fake_llm)
+
+    monkeypatch.setattr(server, "VAD_BACKEND", "energy")
+    monkeypatch.setattr(server, "VAD_ENERGY_THRESHOLD", 0.001)
+    monkeypatch.setattr(server, "VAD_MIN_SPEECH_MS", 90)
+    monkeypatch.setattr(server, "VAD_SILENCE_MS", 150)
+    # CRITICAL: greeting push sets sess.tts_active=True, which arms the
+    # AEC echo window (_aec_active_now() returns True while tts_active
+    # and within AEC_TAIL_MS). AEC boosts the effective VAD threshold by
+    # AEC_ENERGY_BOOST, suppressing our test audio below detection —
+    # VAD never fires, pcm_complete stays None, the barge-in guard never
+    # runs, and the test deadlocks. Disable AEC for this test.
+    monkeypatch.setattr(server, "AEC_MODE", "none")
+    monkeypatch.setattr(server._profile, "barge_in_ack", False)
+    monkeypatch.setattr(server._profile, "stage_filler_words", {})
+
+    from fastapi.testclient import TestClient
+    import numpy as np
+    client = TestClient(server.app)
+
+    # Loud PCM chunk that triggers energy VAD — 440Hz sine @ 0.5 amp scaled
+    # to int16 range (same formula as _pcm_loud above).
+    loud = (0.5 * np.sin(2 * np.pi * 440 * np.arange(480) / 16000) * 32767).astype("<i2").tobytes()
+
+    with client.websocket_connect("/ws?session_id=test-greet-bargein") as ws:
+        ws.send_json({"type": "start", "sample_rate": 16000})
+
+        # Drain greeting frames first (ready, greeting, binary PCM) so the
+        # receive buffer is clean before we trigger speech. _drain_ws is
+        # the existing helper that handles Starlette's no-arg receive().
+        _drain_ws(ws, expected_types={"greeting"}, timeout_s=3.0)
+
+        # Now send enough loud audio + silence to trigger VAD speech-end.
+        # 10 chunks of 480-sample loud audio (0.5 amp -> well above 0.001
+        # threshold) followed by 20 chunks of silence.
+        for _ in range(10):
+            ws.send_bytes(loud)
+        silence = b"\x00\x00" * 480
+        for _ in range(20):
+            ws.send_bytes(silence)
+
+        # Drain frames -- barge_in MUST appear. _drain_ws terminates when
+        # the expected type is seen OR timeout. Starlette TestClient's
+        # ws.receive() blocks on the underlying socket; if the server
+        # doesn't emit, we rely on the timeout_s deadline in _drain_ws.
+        text_frames, _ = _drain_ws(
+            ws, expected_types={"barge_in"}, timeout_s=5.0)
+
+    types = [f.get("type") for f in text_frames]
+    assert "barge_in" in types, (
+        "Expected {type:barge_in} frame after user speech during greeting, "
+        f"got text frames: {types}")

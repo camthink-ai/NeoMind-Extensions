@@ -785,6 +785,16 @@ async def ws_handler(websocket: WebSocket):
                 pcm_complete = sess.feed_pcm(samples)
                 if pcm_complete is None:
                     continue
+                # Greeting flush: if greeting was just pushed and user
+                # speech is now detected, tell the browser to flush its
+                # playback queue IMMEDIATELY (before the new turn starts).
+                # Without this, the greeting keeps playing for 200-500ms
+                # until the new turn's first TTS PCM arrives. The new turn
+                # then starts from a clean state.
+                if sess.greeting_active:
+                    sess.greeting_active = False
+                    sess.tts_active = False
+                    await sess.send_json({"type": "barge_in"})
                 # Barge-in: if a turn is in progress, fire handle_barge_in
                 # before starting a new turn.
                 if pipeline.fsm.state in (State.THINKING, State.SPEAKING):
