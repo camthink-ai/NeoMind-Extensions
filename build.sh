@@ -163,6 +163,8 @@ V2_EXTENSIONS=(
     "onvif-bridge"
     "opcua-bridge"
     "locate-anything-v2"
+    "moss-tts-nano"
+    "voice-assistant"
 )
 
 # Filter to single extension if specified

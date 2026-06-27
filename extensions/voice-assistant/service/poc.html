@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NeoMind Voice Assistant PoC</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 24px;
+      background: #0d1117;
+      color: #e6edf3;
+    }
+    h1 { font-size: 20px; margin: 0 0 16px; }
+    .panel {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .row { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
+    button {
+      background: #238636;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:disabled { background: #21262d; color: #6e7681; cursor: not-allowed; }
+    button.danger { background: #da3633; }
+    select, input[type="text"], input[type="number"] {
+      background: #0d1117;
+      color: #e6edf3;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 14px;
+    }
+    .status {
+      font-family: "SF Mono", Menlo, monospace;
+      font-size: 13px;
+      color: #7d8590;
+    }
+    .status .ok { color: #3fb950; }
+    .status .err { color: #f85149; }
+    .status .warn { color: #d29922; }
+    #log {
+      font-family: "SF Mono", Menlo, monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      max-height: 320px;
+      overflow-y: auto;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 12px;
+    }
+    .metric-row {
+      display: grid;
+      grid-template-columns: 180px 80px 80px 80px;
+      gap: 8px;
+      font-family: "SF Mono", Menlo, monospace;
+      font-size: 12px;
+      padding: 4px 0;
+      border-bottom: 1px solid #21262d;
+    }
+    .metric-row.header { font-weight: bold; color: #7d8590; }
+    .metric-row .num { text-align: right; }
+    .transcript {
+      font-size: 16px;
+      padding: 8px 0;
+      border-bottom: 1px dashed #30363d;
+    }
+    .label { color: #7d8590; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>NeoMind Voice Assistant — PoC</h1>
+
+  <div class="panel">
+    <div class="row">
+      <label class="label">WebSocket URL:</label>
+      <input type="text" id="wsUrl" value="ws://127.0.0.1:9384/ws" style="flex:1" />
+    </div>
+    <div class="row">
+      <button id="startBtn">🎙️ Start</button>
+      <button id="stopBtn" class="danger" disabled>⏹ Stop</button>
+      <span class="status" id="status">idle</span>
+    </div>
+    <div class="row">
+      <label class="label">VAD RMS threshold:</label>
+      <input type="number" id="vadThreshold" value="0.015" step="0.005" min="0.001" max="0.5" />
+      <span class="label">(server-side; needs restart to apply)</span>
+    </div>
+    <div class="status" id="audioStatus"></div>
+  </div>
+
+  <div class="panel">
+    <div class="label" style="margin-bottom:8px">Transcripts:</div>
+    <div id="transcripts" style="min-height:60px">
+      <em style="color:#6e7681">No transcripts yet. Click Start and speak.</em>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="label" style="margin-bottom:8px">Latency per utterance (ms):</div>
+    <div class="metric-row header">
+      <span>Reply</span><span class="num">ASR</span><span class="num">TTS-1st</span><span class="num">Total</span>
+    </div>
+    <div id="metrics">
+      <em style="color:#6e7681">No data yet.</em>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="label" style="margin-bottom:8px">Event log:</div>
+    <div id="log"></div>
+  </div>
+
+<script>
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const statusEl = document.getElementById('status');
+const audioStatusEl = document.getElementById('audioStatus');
+const transcriptsEl = document.getElementById('transcripts');
+const metricsEl = document.getElementById('metrics');
+const logEl = document.getElementById('log');
+
+let ws = null;
+let mediaStream = null;
+let audioCtx = null;
+let workletNode = null;
+let playbackCtx = null;
+let playbackQueue = [];
+let isPlaying = false;
+
+function log(msg, level = 'info') {
+  const t = new Date().toISOString().substr(11, 12);
+  const cls = level === 'err' ? 'err' : level === 'warn' ? 'warn' : '';
+  logEl.innerHTML += `<span class="${cls}">[${t}] ${msg}</span>\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setStatus(s, level = '') {
+  statusEl.textContent = s;
+  statusEl.className = 'status ' + level;
+}
+
+// ---- Playback (browser-bound PCM int16 LE 16kHz mono) ----
+// We feed incoming PCM into a queue and play through AudioBufferSourceNode
+// chained back-to-back.
+
+function ensurePlaybackCtx() {
+  if (!playbackCtx) {
+    playbackCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  }
+  if (playbackCtx.state === 'suspended') playbackCtx.resume();
+}
+
+function enqueuePlaybackPcm(int16Bytes) {
+  ensurePlaybackCtx();
+  const i16 = new Int16Array(int16Bytes.buffer.slice(int16Bytes.byteOffset, int16Bytes.byteOffset + int16Bytes.byteLength));
+  const f32 = new Float32Array(i16.length);
+  for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768.0;
+  const buf = playbackCtx.createBuffer(1, f32.length, 16000);
+  buf.copyToChannel(f32, 0);
+  playbackQueue.push(buf);
+  pumpPlayback();
+}
+
+function pumpPlayback() {
+  if (isPlaying) return;
+  if (playbackQueue.length === 0) return;
+  isPlaying = true;
+  const next = playbackQueue.shift();
+  const src = playbackCtx.createBufferSource();
+  src.buffer = next;
+  src.connect(playbackCtx.destination);
+  src.onended = () => {
+    isPlaying = false;
+    pumpPlayback();
+  };
+  src.start();
+}
+
+// ---- WebSocket ----
+
+function onWsMessage(ev) {
+  if (ev.data instanceof ArrayBuffer) {
+    // Binary: PCM int16 LE to play.
+    enqueuePlaybackPcm(new Uint8Array(ev.data));
+    return;
+  }
+  if (ev.data instanceof Blob) {
+    ev.data.arrayBuffer().then(b => enqueuePlaybackPcm(new Uint8Array(b)));
+    return;
+  }
+  // Text: JSON control event.
+  let obj;
+  try { obj = JSON.parse(ev.data); } catch (e) { return; }
+  handleEvent(obj);
+}
+
+function handleEvent(obj) {
+  switch (obj.type) {
+    case 'ready':
+      log(`server ready: asr=${obj.asr_url} tts=${obj.tts_url} voice=${obj.voice}`);
+      break;
+    case 'pong':
+      break;
+    case 'asr_start':
+      log(`asr_start bytes=${obj.bytes}`);
+      break;
+    case 'transcript':
+      log(`transcript (${obj.elapsed_ms?.toFixed(0)}ms): "${obj.text}"`, 'warn');
+      addTranscript(obj.text, obj.language);
+      break;
+    case 'tts_start':
+      log(`tts_start reply="${obj.text}" chars=${obj.reply_chars} mode=${obj.mode || 'single'}`);
+      break;
+    case 'reply_sentence':
+      log(`reply_sentence #${obj.seq} chars=${obj.chars}: "${obj.text}"`);
+      break;
+    case 'tts_end':
+      if (obj.llm_first_sentence_ms !== undefined) {
+        log(`tts_end llm1st=${obj.llm_first_sentence_ms?.toFixed(0)}ms tts1st=${obj.tts_first_chunk_ms?.toFixed(0)}ms ` +
+            `first_audio=${obj.first_audio_to_browser_ms?.toFixed(0)}ms chunks=${obj.total_tts_chunks} sents=${obj.sentences_sent} total=${obj.total_ms?.toFixed(0)}ms`, 'warn');
+      } else {
+        log(`tts_end first=${obj.tts_first_chunk_ms?.toFixed(0)}ms total=${obj.tts_total_ms?.toFixed(0)}ms chunks=${obj.tts_n_chunks}`, 'warn');
+      }
+      addMetricsRow(obj);
+      break;
+    case 'stop':
+      log('stop (utterance complete)');
+      break;
+    case 'barge_in':
+      log('barge_in (user interrupted)', 'warn');
+      playbackQueue = [];
+      break;
+    case 'skip':
+      log(`skip: ${obj.reason}`);
+      break;
+    case 'error':
+      log(`error: ${obj.message} (phase=${obj.phase || '?'})`, 'err');
+      break;
+  }
+}
+
+function addTranscript(text, language) {
+  if (transcriptsEl.querySelector('em')) transcriptsEl.innerHTML = '';
+  const div = document.createElement('div');
+  div.className = 'transcript';
+  const t = new Date().toLocaleTimeString();
+  div.innerHTML = `<span class="label">[${t}] [${language || 'auto'}]</span> ${escapeHtml(text)}`;
+  transcriptsEl.prepend(div);
+}
+
+function addMetricsRow(m) {
+  if (metricsEl.querySelector('em')) metricsEl.innerHTML = '';
+  const row = document.createElement('div');
+  row.className = 'metric-row';
+  row.innerHTML = `
+    <span>${new Date().toLocaleTimeString()}</span>
+    <span class="num">${m.asr_ms?.toFixed(0)}</span>
+    <span class="num">${m.tts_first_chunk_ms?.toFixed(0)}</span>
+    <span class="num">${m.total_ms?.toFixed(0)}</span>
+  `;
+  metricsEl.prepend(row);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ---- Microphone capture (16kHz mono int16 via AudioWorklet) ----
+
+const WORKLET_CODE = `
+class PcmRecorderProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this._frameSize = 3200; // 100ms @ 16kHz = 3200 samples
+    this._buf = new Float32Array(this._frameSize);
+    this._off = 0;
+  }
+  process(inputs) {
+    const input = inputs[0];
+    if (!input || !input[0]) return true;
+    const ch = input[0];
+    let i = 0;
+    while (i < ch.length) {
+      const want = this._frameSize - this._off;
+      const take = Math.min(want, ch.length - i);
+      this._buf.set(ch.subarray(i, i + take), this._off);
+      this._off += take;
+      i += take;
+      if (this._off === this._frameSize) {
+        // Down-sample from ctx sample rate to 16kHz (simple stride if ctx is 48k)
+        // ctx is configured for 16000 in ensureMicCtx, so just copy.
+        const pcm = new Int16Array(this._frameSize);
+        for (let j = 0; j < this._frameSize; j++) {
+          let s = this._buf[j];
+          s = Math.max(-1, Math.min(1, s));
+          pcm[j] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+        this.port.postMessage(pcm.buffer);
+        this._off = 0;
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('pcm-recorder', PcmRecorderProcessor);
+`;
+
+async function startMic() {
+  audioStatusEl.textContent = 'requesting microphone...';
+  mediaStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      channelCount: 1,
+      sampleRate: 16000,
+    },
+    video: false,
+  });
+  audioStatusEl.textContent = 'mic acquired';
+
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  const blob = new Blob([WORKLET_CODE], { type: 'application/javascript' });
+  const url = URL.createObjectURL(blob);
+  await audioCtx.audioWorklet.addModule(url);
+  const src = audioCtx.createMediaStreamSource(mediaStream);
+  workletNode = new AudioWorkletNode(audioCtx, 'pcm-recorder', {
+    numberOfInputs: 1, numberOfOutputs: 0, channelCount: 1,
+  });
+  workletNode.port.onmessage = (ev) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(ev.data);  // ArrayBuffer = int16 LE PCM
+    }
+  };
+  src.connect(workletNode);
+  audioStatusEl.textContent = `capturing @ 16kHz mono`;
+}
+
+function stopMic() {
+  if (workletNode) { workletNode.port.postMessage(null); workletNode.disconnect(); workletNode = null; }
+  if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+  audioStatusEl.textContent = 'mic released';
+}
+
+// ---- Button handlers ----
+
+startBtn.onclick = async () => {
+  startBtn.disabled = true;
+  try {
+    await startMic();
+  } catch (e) {
+    log(`mic error: ${e.message}`, 'err');
+    startBtn.disabled = false;
+    return;
+  }
+  const url = document.getElementById('wsUrl').value;
+  setStatus('connecting...');
+  ws = new WebSocket(url);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => {
+    setStatus('live', 'ok');
+    log(`ws open: ${url}`);
+    stopBtn.disabled = false;
+  };
+  ws.onmessage = onWsMessage;
+  ws.onerror = (e) => { setStatus('ws error', 'err'); log('ws error', 'err'); };
+  ws.onclose = () => {
+    setStatus('closed', 'warn');
+    log('ws closed');
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+  };
+};
+
+stopBtn.onclick = () => {
+  stopMic();
+  if (ws) { ws.close(); ws = null; }
+  playbackQueue = [];
+};
+
+window.addEventListener('beforeunload', () => { stopMic(); if (ws) ws.close(); });
+</script>
+</body>
+</html>
