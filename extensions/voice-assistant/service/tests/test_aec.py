@@ -82,3 +82,24 @@ def test_ring_buffer_empty_peek_returns_zeros():
     out_samples = np.frombuffer(out, dtype="<i2")
     assert len(out_samples) == 1600
     assert (out_samples == 0).all()
+
+
+# ---------------------------------------------------------------------------
+# NoopAECBackend
+# ---------------------------------------------------------------------------
+
+def test_noop_aec_returns_input_unchanged():
+    """NoopAECBackend.process_capture returns mic PCM unchanged."""
+    from backends.aec import NoopAECBackend
+    backend = NoopAECBackend()
+    assert backend.init(16000) is True
+    mic = np.arange(1600, dtype="<i2")
+    ref = np.zeros(1600, dtype="<i2")
+    out = backend.process_capture(mic, ref)
+    assert (out == mic).all()
+
+
+def test_noop_aec_close_is_noop():
+    from backends.aec import NoopAECBackend
+    backend = NoopAECBackend()
+    backend.close()  # must not raise

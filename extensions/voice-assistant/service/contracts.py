@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import AsyncIterator, Protocol
 
+import numpy as np
+
 
 @dataclass
 class VadSegment:
@@ -89,7 +91,23 @@ class TTSBackend(Protocol):
 
 
 class AECBackend(Protocol):
-    """Acoustic Echo Cancellation backend (Phase 2)."""
-    def process(self, mic_pcm: bytes, reference_pcm: bytes) -> bytes:
-        """Subtract echo from mic. 16kHz mono int16."""
+    """Acoustic Echo Cancellation backend.
+
+    Receives mic PCM (post-browser) and the corresponding reference
+    PCM slice (what the server pushed to the speaker `delay_ms` ago).
+    Returns cleaned mic PCM with echo component removed.
+
+    All PCM is 16kHz mono int16 LE numpy array.
+    """
+    def init(self, sample_rate: int) -> bool:
+        """Initialize for the given sample rate. Return True on success,
+        False to trigger caller-side fallback to NoopAECBackend."""
+        ...
+
+    def process_capture(self, mic_pcm: "np.ndarray", reference_pcm: "np.ndarray") -> "np.ndarray":
+        """Subtract echo from mic. Same length & dtype as input."""
+        ...
+
+    def close(self) -> None:
+        """Release native resources. Idempotent."""
         ...
