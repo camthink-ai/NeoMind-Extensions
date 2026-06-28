@@ -279,3 +279,86 @@ def test_webrtc_aec_passthrough_when_uninit(monkeypatch):
     ref = np.zeros(160, dtype="<i2")
     out = backend.process_capture(mic, ref)
     assert (out == mic).all()
+
+
+# ---------------------------------------------------------------------------
+# make_aec factory
+# ---------------------------------------------------------------------------
+
+class _FakeProfile:
+    """Minimal Profile stand-in for factory tests."""
+    def __init__(self, aec_config):
+        self.aec_config = aec_config
+
+
+def test_make_aec_returns_noop_for_none_config():
+    """profile.aec_config=None -> NoopAECBackend."""
+    from backends import make_aec
+    from backends.aec import NoopAECBackend
+    backend = make_aec(_FakeProfile(aec_config=None))
+    assert isinstance(backend, NoopAECBackend)
+
+
+def test_make_aec_returns_noop_for_echo_window_config(caplog):
+    """profile.aec_config={'type':'echo_window'} -> NoopAECBackend
+    (echo_window runs in VAD, not the AEC backend)."""
+    import logging
+    from backends import make_aec
+    from backends.aec import NoopAECBackend
+    with caplog.at_level(logging.INFO):
+        backend = make_aec(_FakeProfile(aec_config={
+            "type": "echo_window", "reference_delay_ms": 200,
+            "ref_buffer_seconds": 3.0, "keep_echo_window": True,
+        }))
+    assert isinstance(backend, NoopAECBackend)
+
+
+def test_make_aec_returns_webrtc_when_available(monkeypatch):
+    """profile.aec_config={'type':'webrtc'} -> WebRtcAECBackend when import works."""
+    from backends import make_aec
+    from backends import aec as aec_module
+    from backends.aec import WebRtcAECBackend
+
+    class FakeAPM:
+        def __init__(self, **kwargs):
+            pass
+        def set_stream_format(self, *a): pass
+        def set_reverse_stream_format(self, *a): pass
+        def set_aec_level(self, *a): pass
+
+    monkeypatch.setattr(aec_module, "_WEBRTC_APM_CLASS", FakeAPM)
+
+    backend = make_aec(_FakeProfile(aec_config={
+        "type": "webrtc", "reference_delay_ms": 200,
+        "ref_buffer_seconds": 3.0, "keep_echo_window": False,
+    }))
+    assert isinstance(backend, WebRtcAECBackend)
+
+
+def test_make_aec_falls_back_to_noop_on_import_failure(monkeypatch, caplog):
+    """profile.aec_config={'type':'webrtc'} + webrtc unavailable -> Noop + warning."""
+    import logging
+    from backends import make_aec
+    from backends import aec as aec_module
+    from backends.aec import NoopAECBackend
+
+    # Force _resolve_webrtc_apm_class to return None
+    monkeypatch.setattr(aec_module, "_WEBRTC_APM_CLASS", None)
+    monkeypatch.setattr(aec_module, "_resolve_webrtc_apm_class", lambda: None)
+
+    with caplog.at_level(logging.WARNING):
+        backend = make_aec(_FakeProfile(aec_config={
+            "type": "webrtc", "reference_delay_ms": 200,
+            "ref_buffer_seconds": 3.0, "keep_echo_window": False,
+        }))
+    assert isinstance(backend, NoopAECBackend)
+    assert any("webrtc" in r.message.lower() and "fallback" in r.message.lower()
+               for r in caplog.records), \
+        "Expected a warning mentioning webrtc and fallback"
+
+
+def test_make_aec_unknown_type_raises():
+    """Unknown type raises ValueError (programmer error, not runtime fallback)."""
+    from backends import make_aec
+    with pytest.raises(ValueError, match="unknown AEC backend"):
+        make_aec(_FakeProfile(aec_config={"type": "bogus"}))

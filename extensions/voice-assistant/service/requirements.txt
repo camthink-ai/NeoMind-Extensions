@@ -1,5 +1,7 @@
 # Runtime deps. Silero VAD ships inside sherpa-onnx.
 sherpa-onnx>=1.10.0
+# Optional: real server-side AEC. If absent, make_aec falls back to Noop.
+webrtc-audio-processing>=0.1.0
 fastapi>=0.110
 uvicorn[standard]>=0.27
 websockets>=12.0

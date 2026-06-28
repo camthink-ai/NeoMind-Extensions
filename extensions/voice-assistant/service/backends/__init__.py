@@ -1,11 +1,16 @@
 """Backend factory — Profile → concrete backend instances."""
 from __future__ import annotations
 
+import logging
+
 from profile import Profile
+from .aec import NoopAECBackend, WebRtcAECBackend  # noqa: F401  (re-export)
 from .vad import SileroVAD, EnergyVAD
 from .asr import SenseVoiceHTTPASR
 from .llm import OllamaHTTPClient, NeoMindWSClient, FakeLLMClient
 from .tts import ZipVoiceHTTP
+
+logger = logging.getLogger(__name__)
 
 
 def make_vad(profile: Profile):
@@ -63,3 +68,34 @@ def make_tts(profile: Profile):
             return ZipVoiceHTTP(**cfg)
         case _:
             raise ValueError(f"unknown TTS backend: {t}")
+
+
+def make_aec(profile: Profile):
+    """Construct an AECBackend from the profile. Always returns something
+    usable; falls back to NoopAECBackend on import/init issues.
+
+    type='none'/'echo_window' -> NoopAECBackend (echo_window is implemented
+        in the VAD layer via _aec_active_now, not as a backend).
+    type='webrtc' -> WebRtcAECBackend if library available, else Noop + warning.
+    """
+    cfg = profile.aec_config
+    if cfg is None:
+        return NoopAECBackend()
+    t = cfg.get("type", "none")
+    if t in ("none", "echo_window"):
+        # echo_window is implemented in VAD (server._aec_active_now),
+        # not as an AEC backend. Noop here; the VAD layer applies the
+        # threshold boost based on the global AEC_MODE.
+        return NoopAECBackend()
+    if t == "webrtc":
+        backend = WebRtcAECBackend()
+        # Verify library can be initialized; fall back if not.
+        from backends import aec as aec_module
+        if aec_module._resolve_webrtc_apm_class() is None:
+            logger.warning(
+                "AEC backend 'webrtc' unavailable (webrtc_audio_processing "
+                "not installed); fallback to Noop"
+            )
+            return NoopAECBackend()
+        return backend
+    raise ValueError(f"unknown AEC backend: {t}")
