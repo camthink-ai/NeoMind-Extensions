@@ -83,13 +83,12 @@ def make_aec(profile: Profile):
         return NoopAECBackend()
     t = cfg.get("type", "none")
     if t in ("none", "echo_window"):
-        # echo_window is implemented in VAD (server._aec_active_now),
-        # not as an AEC backend. Noop here; the VAD layer applies the
-        # threshold boost based on the global AEC_MODE.
+        # echo_window is implemented as a VAD threshold boost in
+        # server.py:VoiceSession._aec_active_now, not as an AEC backend.
+        # Noop here; the VAD layer reads server.AEC_MODE to decide when
+        # to apply the boost.
         return NoopAECBackend()
     if t == "webrtc":
-        backend = WebRtcAECBackend()
-        # Verify library can be initialized; fall back if not.
         from backends import aec as aec_module
         if aec_module._resolve_webrtc_apm_class() is None:
             logger.warning(
@@ -97,5 +96,5 @@ def make_aec(profile: Profile):
                 "not installed); fallback to Noop"
             )
             return NoopAECBackend()
-        return backend
+        return WebRtcAECBackend()
     raise ValueError(f"unknown AEC backend: {t}")

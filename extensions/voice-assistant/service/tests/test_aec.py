@@ -299,17 +299,15 @@ def test_make_aec_returns_noop_for_none_config():
     assert isinstance(backend, NoopAECBackend)
 
 
-def test_make_aec_returns_noop_for_echo_window_config(caplog):
+def test_make_aec_returns_noop_for_echo_window_config():
     """profile.aec_config={'type':'echo_window'} -> NoopAECBackend
     (echo_window runs in VAD, not the AEC backend)."""
-    import logging
     from backends import make_aec
     from backends.aec import NoopAECBackend
-    with caplog.at_level(logging.INFO):
-        backend = make_aec(_FakeProfile(aec_config={
-            "type": "echo_window", "reference_delay_ms": 200,
-            "ref_buffer_seconds": 3.0, "keep_echo_window": True,
-        }))
+    backend = make_aec(_FakeProfile(aec_config={
+        "type": "echo_window", "reference_delay_ms": 200,
+        "ref_buffer_seconds": 3.0, "keep_echo_window": True,
+    }))
     assert isinstance(backend, NoopAECBackend)
 
 
