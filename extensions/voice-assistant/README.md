@@ -555,3 +555,86 @@ Enable only when:
 This is the same AEC gap that affects ack and stage-filler playback;
 greeting just makes it more visible due to its 1-2s duration. See
 spec: `docs/superpowers/specs/2026-06-27-voice-greeting-design.md`.
+
+---
+
+## Acoustic Echo Cancellation (AEC)
+
+Voice-assistant supports three modes for handling speaker→mic echo
+leakage, configured via `acoustic.aec` in profile YAML:
+
+| Mode | Behavior | When to use |
+|------|----------|-------------|
+| `none` | No echo suppression. TTS playback will self-trigger VAD. | A/B measurement baseline only. |
+| `echo_window` (default) | Half-duplex VAD threshold boost during TTS playback + 400ms tail. Cheap, effective at cutting phantom transcripts (<10% rate), but user must speak louder to barge in. | Default; quiet environments; weak hardware. |
+| `webrtc` | Full server-side reference-based AEC via `webrtc-audio-processing` adaptive filter. Reference signal is harvested from the server's own `send_binary` output via a global ring buffer; static delay calibration (`aec_reference_delay_ms`, default 200ms) handles browser playback latency. | Full-duplex barge-in; long greetings/acks/stage-filler clips; production. |
+
+### Configuration
+
+```yaml
+acoustic:
+  aec: echo_window   # or: none | webrtc
+  # The following are optional and only meaningful when aec != none:
+  aec_reference_delay_ms: 200    # static delay calibration (browser playback latency)
+  aec_ref_buffer_seconds: 3.0    # ring buffer capacity
+  aec_keep_echo_window: false    # also apply echo_window boost (default: true for echo_window mode, false for webrtc)
+```
+
+### How it works
+
+```
+Browser mic PCM ──┐
+                  ↓
+              AEC.process_capture(mic, ref)  ← ref_ring_buffer.peek_window(200ms ago)
+                  ↓ cleaned PCM
+              VAD → ASR → LLM → TTS
+                  ↓
+              send_binary(pcm) ──┐
+                                  └─→ ref_ring_buffer.push (all send_binary output)
+```
+
+AEC is a preprocessing step before VAD — no VAD or ASR changes. When
+the configured backend fails to load or initialize (e.g.,
+`webrtc-audio-processing` not installed), the server automatically
+falls back to `NoopAECBackend` (equivalent to `none`) and logs a
+warning.
+
+### Measurement
+
+Use `measure_echo_rejection.py` to compare backends head-to-head:
+
+```bash
+# Server (run separately for each mode):
+VOICE_ASSISTANT_AEC_MODE=webrtc python service/server.py &
+python service/measure_echo_rejection.py --backend webrtc --trials 30
+
+VOICE_ASSISTANT_AEC_MODE=echo_window python service/server.py &
+python service/measure_echo_rejection.py --backend echo_window --trials 30
+
+# Double-talk (full-duplex capture rate):
+python service/measure_echo_rejection.py --backend webrtc --double-talk --trials 30
+```
+
+**Note:** `--double-talk` is wired through the CLI but currently
+reports `n/a` for capture rate until the double-talk utterance
+injection lands. ERLE is not yet reported either: the `_compute_erle`
+helper exists and is unit-tested, but there is no `--compute-erle`
+flag yet because the server-side cleaned-PCM side-channel (needed to
+feed the helper) has not landed.
+
+Decision matrix for flipping the default from `echo_window` to a real
+AEC backend:
+
+1. Phantom rate ≤ `echo_window` rate (real AEC at least as good at easy metric)
+2. Double-talk detection ≥ 80% (full-duplex, which `echo_window` can't do)
+3. ERLE ≥ 15 dB (basic competence)
+
+If no backend clears all three, the default stays `echo_window`. See
+spec: `docs/superpowers/specs/2026-06-28-voice-aec-design.md`.
+
+### Troubleshooting
+
+- **AEC init fails on startup**: install `webrtc-audio-processing` (`pip install webrtc-audio-processing`). Server falls back to Noop and continues.
+- **Phantom transcripts with `webrtc` mode**: try tuning `aec_reference_delay_ms` (typically 100-300ms; too low = under-cancellation, too high = over-cancellation eating speech).
+- **Double-talk detection < 80% with `webrtc`**: ensure `aec_keep_echo_window: false` (the default for webrtc) — if `keep_echo_window: true` is set, the VAD boost will over-suppress legitimate double-talk that AEC preserved.
+- **Module name confusion**: the PyPI package is `webrtc-audio-processing` (hyphenated); the Python import is `webrtc_audio_processing` (underscored); the class is `AudioProcessingModule`.
