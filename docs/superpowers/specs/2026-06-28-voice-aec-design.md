@@ -43,9 +43,11 @@ This spec brings voice-assistant to that pattern.
 2. Maintain a single `ReferenceRingBuffer` that captures **all**
    server-pushed PCM (TTS + greeting + ack + stage-filler) as the
    reference signal, with a profile-tunable static delay.
-3. Stay opt-in: `default.yaml` keeps `acoustic.aec: echo_window`.
-   Users who want full-duplex barge-in flip one field to `sherpa` (or
-   `webrtc` after measurement).
+3. Stay opt-in: `default.yaml` keeps `acoustic.aec: none` (today's
+   actual value). Users who want full-duplex barge-in flip one field
+   to `sherpa` (or `webrtc` after measurement). See "Defaults
+   reconciliation" below for how the previously conflicting `AEC_MODE`
+   env var is brought under profile control.
 4. Auto-fallback: if the configured AEC library fails to import or
    initialize, log a warning and downgrade to `NoopAECBackend`
    (equivalent to AEC off), letting the existing `echo_window` logic
@@ -155,6 +157,66 @@ async def _warm_banks_async() -> None:
     # existing _warm_ack_bank / _warm_stage_fillers / _warm_greeting
 ```
 
+### Constants and their provenance
+
+All AEC tunables follow the codebase's existing pattern: **profile
+field as single source of truth, with env-var override for debugging
+only**. Concretely:
+
+| Constant | Source | Default | Override env var |
+|----------|--------|---------|------------------|
+| `AEC_REFERENCE_DELAY_MS` | `_profile.aec_config["reference_delay_ms"]` | `200` | `VOICE_ASSISTANT_AEC_REFERENCE_DELAY_MS` |
+| `AEC_REF_BUFFER_SECONDS` | `_profile.aec_config["ref_buffer_seconds"]` | `3.0` | `VOICE_ASSISTANT_AEC_REF_BUFFER_SECONDS` |
+| `AEC_MODE` (existing) | `_profile.aec_config["type"]` (NEW) | derived | `VOICE_ASSISTANT_AEC_MODE` (debug-only; profile wins on conflict) |
+
+`AEC_ENERGY_BOOST`, `AEC_SILENCE_BOOST_MS`, `AEC_TAIL_MS` remain
+env-only as today — they apply only when `keep_echo_window=True` and
+are tuning knobs for the fallback mechanism, not core AEC config.
+
+### Defaults reconciliation (critical)
+
+**Today's actual state is split-brain:**
+- `profiles/default.yaml:10` declares `acoustic.aec: none`
+- `server.py:116` defaults `AEC_MODE` env var to `"echo_window"`
+- `_aec_active_now()` consults the env-derived `AEC_MODE` only —
+  the profile's `aec_config` field is **never read by running code**
+- So the runtime default behavior today is **`echo_window`** (env
+  wins), even though the YAML says `none`. `Profile.aec_config` is
+  a dead field.
+
+**Post-AEC contract:** profile becomes single source of truth. At
+startup in `_warm_banks_async`, after loading `_profile`, derive
+`AEC_MODE` from the profile:
+
+```python
+# Reconcile AEC_MODE from profile (profile wins; env is debug override).
+aec_type = _profile.aec_config.get("type", "none") if _profile.aec_config else "none"
+env_override = os.environ.get("VOICE_ASSISTANT_AEC_MODE")
+if env_override and env_override != aec_type:
+    logger.info("AEC_MODE env override: %s (profile said %s)",
+                env_override, aec_type)
+    aec_type = env_override.lower()
+global AEC_MODE
+AEC_MODE = aec_type
+```
+
+This means:
+- Default `default.yaml` (`aec: none`) → `AEC_MODE = "none"` →
+  `_aec_active_now()` returns False → no echo_window VAD boost.
+  **This is a behavior change from today** (today the env default
+  silently makes it `echo_window`). The implementation must call this
+  out in the README and bump the default to `echo_window` in
+  `default.yaml` to preserve observed behavior:
+
+  ```yaml
+  # profiles/default.yaml
+  acoustic:
+    aec: echo_window   # was: none (dead — env always overrode to echo_window)
+  ```
+
+- New users wanting real AEC: set `aec: sherpa` (after measurement).
+- Users wanting pure baseline for A/B measurement: set `aec: none`.
+
 ### `send_binary` instrumentation
 
 Every site that calls `sess.send_binary(pcm_bytes)` is updated to also
@@ -200,18 +262,40 @@ the ring buffer is shared and peek allocates per call.
 ### Interaction with existing `echo_window`
 
 `echo_window` (the half-duplex VAD threshold boost) and real AEC are
-**complementary, not exclusive**:
+**complementary, but their coexistence has a known over-suppression
+risk** that this spec resolves by defaulting `keep_echo_window=False`
+when a real AEC backend is active.
 
-- If `acoustic.aec: echo_window` (default): AEC backend is `NoopAECBackend`,
-  `echo_window` runs unchanged.
-- If `acoustic.aec: sherpa` (opt-in full-duplex): AEC backend is
-  `SherpaAECBackend`, AND `echo_window` may still apply as a second
-  line of defense (configurable via `acoustic.aec_keep_echo_window:
-  false` to fully disable for testing).
+| `acoustic.aec` | AEC backend | `keep_echo_window` default | `_aec_active_now()` returns True? | echo_window VAD boost fires? |
+|----------------|-------------|----------------------------|-----------------------------------|------------------------------|
+| `none` | `NoopAECBackend` | n/a (no echo_window role) | False | No |
+| `echo_window` | `NoopAECBackend` | True (implicit) | True during TTS playback + tail | Yes — today's behavior |
+| `sherpa` | `SherpaAECBackend` | **False** | False (suppressed by profile) | No — real AEC owns echo removal |
+| `webrtc` | `WebRtcAECBackend` | **False** | False (suppressed by profile) | No |
 
-The `_aec_active_now()` function's semantics do NOT change — it still
-reflects "TTS is currently playing". With real AEC, the echo_window
-boost becomes a backup, not the primary mechanism.
+The `keep_echo_window=False` default for real-AEC modes is essential
+for the double-talk metric (Decision matrix #2): if echo_window keeps
+boosting VAD threshold while AEC has already cleaned the signal,
+legitimate double-talk would be over-suppressed and the spec's full-
+duplex goal defeated. Users who want belt-and-suspenders can
+explicitly set `keep_echo_window: true` in profile, but they do so
+knowing the double-talk cost.
+
+Concretely, `_aec_active_now()` semantics are tightened:
+
+```python
+def _aec_active_now(self) -> bool:
+    if AEC_MODE not in ("echo_window",):  # only echo_window uses the boost
+        return False
+    if not self.tts_active:
+        return False
+    elapsed_ms = (time.perf_counter() - self.tts_last_chunk_ts) * 1000.0
+    return elapsed_ms < AEC_TAIL_MS
+```
+
+The `AEC_MODE not in ("echo_window",)` guard replaces today's
+`AEC_MODE != "echo_window"` check — equivalent for today's values
+but makes explicit that real-AEC modes skip the boost entirely.
 
 ### Profile schema changes
 
@@ -222,13 +306,42 @@ boost becomes a backup, not the primary mechanism.
     "type": "sherpa" | "webrtc" | "echo_window" | "none",
     "reference_delay_ms": 200,   # static calibration
     "ref_buffer_seconds": 3.0,   # ring buffer capacity
-    "keep_echo_window": True,    # whether to also apply echo_window boost
+    "keep_echo_window": False,   # only meaningful for real-AEC modes
 }
 ```
 
-`from_dict` populates these with sensible defaults if missing.
-`echo_window` and `none` both result in `NoopAECBackend`, but
-`echo_window` keeps `keep_echo_window=True` implicit.
+**Backward-compatibility contract (critical):**
+
+- When `acoustic.aec` is `none`, `aec_config` remains **`None`** (not
+  a dict) — this preserves the existing test
+  `tests/test_profile_loading.py:24` (`assert prof.aec_config is None`
+  for the headset profile) and avoids forcing all callers to handle
+  a dict-of-defaults when AEC is fully off.
+- When `acoustic.aec` is anything else (`echo_window`, `sherpa`,
+  `webrtc`), `aec_config` is a dict with the four keys above.
+  Missing keys are filled with defaults via `from_dict`.
+- The `type` key inside the dict duplicates the `acoustic.aec` value
+  for ergonomic access by `make_aec(profile)`; the YAML field is the
+  source of truth.
+
+`from_dict` change:
+
+```python
+# profile.py
+aec = acoustic.get("aec", "none")
+aec_config = None if aec == "none" else {
+    "type": aec,
+    "reference_delay_ms": acoustic.get("aec_reference_delay_ms", 200),
+    "ref_buffer_seconds": acoustic.get("aec_ref_buffer_seconds", 3.0),
+    "keep_echo_window": acoustic.get("aec_keep_echo_window",
+                                     aec in ("echo_window",)),  # T for echo_window only
+}
+```
+
+This means:
+- Existing `aec: none` configs: `aec_config is None` — no test breakage.
+- Existing `aec: echo_window` configs: `aec_config = {"type": "echo_window", ..., "keep_echo_window": True}`.
+- New `aec: sherpa` configs: `aec_config = {"type": "sherpa", ..., "keep_echo_window": False}` (real AEC owns echo removal).
 
 ### WS protocol
 
@@ -259,15 +372,28 @@ python measure_echo_rejection.py --backend sherpa --trials 20
 
 Output per run:
 - **Phantom rate**: fraction of trials where ≥1 phantom transcript
-  arrived during TTS playback + tail window. Existing metric.
+  arrived during TTS playback + tail window. Existing metric. The
+  "TTS playback window" is `[tts_start_ts, tts_end_ts + tail_ms]`
+  using existing markers in `measure_echo_rejection.py:140-143`.
 - **ERLE (Echo Return Loss Enhancement)**: `10 * log10(sum(mic²) / sum(cleaned²))`
-  in dB, computed per frame during known-TTS-playback windows.
+  in dB, computed per frame **inside the same `[tts_start_ts, tts_end_ts]`
+  window** the harness already records. The AEC backend exposes a
+  side-channel: cleaned PCM is also written to a per-session debug
+  buffer when `AEC_DEBUG=1`, so the harness can read both the raw mic
+  input and the cleaned output without protocol changes.
   Industry standard AEC quality metric. >15 dB = good, >20 dB = great,
   >25 dB = transparent.
 - **Double-talk detection**: count of legitimate user-utterance
-  transcripts successfully captured DURING TTS playback (should be
-  high with real AEC, ~0 with echo_window alone). This is the
-  full-duplex metric that distinguishes real AEC from the hack.
+  transcripts successfully captured DURING TTS playback. Today the
+  harness only sends "leak" tone (a synthesized sine the user did
+  not produce) during TTS. Measuring double-talk requires a new
+  harness mode `--double-talk` that sends a **pre-recorded 500ms
+  speech sample** (the same `speech_zh.wav` the harness already uses
+  for the primary utterance) at amplitude 0.3, starting 200ms after
+  `tts_start_ts`. A trial counts as "double-talk captured" if a
+  non-empty transcript arrives before `tts_end_ts + 500ms`. Run with
+  `--double-talk --backend sherpa --trials 30` and the same against
+  `echo_window` for the comparison.
 
 ### Decision matrix for default flip
 
@@ -332,11 +458,44 @@ only the measurement infrastructure to enable a data-driven one.
 
 ### Regression
 
-- All 110 existing tests pass unchanged (the AEC step is a no-op
-  bypass when backend is `Noop`, which is what default config yields).
+- All 110 existing tests pass unchanged **except** tests that
+  construct `Profile` directly via the dataclass constructor. The
+  `aec_config` field type doesn't change (still `dict | None`), but
+  any test that asserts `aec_config == {"type": "echo_window"}` (the
+  old shape) needs to update to the new dict shape. The
+  `tests/test_profile_loading.py:24` assertion (`aec_config is None`
+  for `aec: none` profile) is **preserved by design** (see Profile
+  schema section).
+- Factory tests (`tests/test_factory.py`) that build `Profile(...)`
+  via the `_profile()` helper will need `aec_config=None` (already
+  the case today) — no change required.
 - `tests/test_ws_integration.py::test_speech_during_greeting_emits_barge_in_immediately`
-  must keep passing — it explicitly sets `AEC_MODE=none`; with the
-  new code, this also implicitly means `NoopAECBackend`. No change.
+  must keep passing — it explicitly monkeypatches `server.AEC_MODE`
+  to `"none"`; with the new code, this also implicitly means
+  `NoopAECBackend`. No change.
+- New `tests/test_aec.py` adds ~12 tests; expected post-AEC test
+  count: ~122.
+
+## Implementation prerequisite: sherpa-onnx AEC API spike
+
+Before any other implementation task, the implementer must verify the
+exact sherpa-onnx AEC API. This is the load-bearing assumption of
+the entire spec — if the API differs from the assumed shape, the
+`SherpaAECBackend` adapter absorbs the difference, but if the API
+does not exist at all, the spec's primary deliverable is unreachable
+and `WebRtcAECBackend` (currently deferred) becomes the only path.
+
+**Spike deliverable:** a documented set of method signatures
+(class name, init args, sample-rate expectations, frame-size
+constraints, int16 vs float32, return type) written into a
+`docs/notes/sherpa-aec-api.md` note file. The spike is a 30-minute
+task: spawn a Python REPL, `import sherpa.onnx`, `dir()` the AEC
+class, read its docstrings, run a 10-line smoke test against
+synthetic sine input.
+
+**Spike failure plan:** if sherpa-onnx has no AEC module, fall back
+to `webrtc-audio-processing-1` as the primary backend. The spec's
+adapter design supports this without restructuring.
 
 ## Risks
 
