@@ -8,7 +8,10 @@ WebRtcAECBackend (Task 4) wraps webrtc-audio-processing-1.
 """
 from __future__ import annotations
 
+import logging
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class NoopAECBackend:
@@ -31,16 +34,26 @@ _WEBRTC_APM_CLASS = None  # patched by tests; resolved lazily on first init
 
 
 def _resolve_webrtc_apm_class():
-    """Return webrtc_audio_processing.AudioProcessingModule, or None if unavailable."""
+    """Return webrtc_audio_processing.AudioProcessingModule, or None if unavailable.
+
+    Returns None cleanly on ImportError (library not installed). Other
+    exceptions (e.g., native dlopen failure, binding syntax errors) are
+    logged so operators can diagnose AEC falling back to NoopAECBackend.
+    """
     global _WEBRTC_APM_CLASS
     if _WEBRTC_APM_CLASS is not None:
         return _WEBRTC_APM_CLASS
     try:
         from webrtc_audio_processing import AudioProcessingModule
-        _WEBRTC_APM_CLASS = AudioProcessingModule
-        return AudioProcessingModule
-    except Exception:
+    except ImportError:
         return None
+    except Exception as e:
+        logger.warning(
+            "webrtc_audio_processing import failed (AEC will fall back to Noop): %s", e
+        )
+        return None
+    _WEBRTC_APM_CLASS = AudioProcessingModule
+    return AudioProcessingModule
 
 
 class WebRtcAECBackend:
@@ -69,7 +82,9 @@ class WebRtcAECBackend:
             self._apm = cls(aec_type=self._aec_type)
             self._apm.set_stream_format(sample_rate, 1)
             self._apm.set_reverse_stream_format(sample_rate, 1)
-            # Enable AEC at level 1 (WebRTC convention: 0=off, 1=on)
+            # Suppression strength: 0=low, 1=medium, 2=high. Medium is a
+            # reasonable default for typical speaker/mic setups; profile-tunable
+            # later if needed.
             self._apm.set_aec_level(1)
             self._sample_rate = sample_rate
             return True
@@ -80,8 +95,8 @@ class WebRtcAECBackend:
     def process_capture(self, mic_pcm: np.ndarray, reference_pcm: np.ndarray) -> np.ndarray:
         if self._apm is None:
             return mic_pcm
-        mic_bytes = bytes(mic_pcm.tobytes())
-        ref_bytes = bytes(reference_pcm.tobytes())
+        mic_bytes = mic_pcm.tobytes()
+        ref_bytes = reference_pcm.tobytes()
         out_chunks = []
         ref_pos = 0
         for cap_pos in range(0, len(mic_bytes), self.FRAME_BYTES):
@@ -92,7 +107,9 @@ class WebRtcAECBackend:
             if len(ref_chunk) < self.FRAME_BYTES:
                 ref_chunk = ref_chunk + b"\0" * (self.FRAME_BYTES - len(ref_chunk))
             ref_pos += self.FRAME_BYTES
-            # Per-frame delay convention: 10ms (160 samples) of round-trip delay
+            # TODO(tasks 8/9): system_delay currently assumes 10ms (one frame) of
+            # round-trip echo path delay. The real delay should be derived from
+            # the ReferenceRingBuffer's delay_ms parameter once Task 9 wires the ref push.
             try:
                 self._apm.set_system_delay(self.FRAME_SAMPLES)
                 self._apm.process_reverse_stream(ref_chunk)

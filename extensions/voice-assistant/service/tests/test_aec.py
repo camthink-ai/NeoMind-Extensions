@@ -149,6 +149,7 @@ def test_webrtc_aec_init_success(monkeypatch):
     assert "set_stream_format" in method_names
     assert "set_reverse_stream_format" in method_names
     assert "set_aec_level" in method_names
+    assert recorded["init_kwargs"] == {"aec_type": 2}
 
 
 def test_webrtc_aec_init_failure_returns_false(monkeypatch):
@@ -220,3 +221,61 @@ def test_webrtc_aec_process_capture_alternates_ref_and_mic(monkeypatch):
     assert interesting[1][0] == "capture"
     assert interesting[2][0] == "reverse"
     assert interesting[3][0] == "capture"
+
+
+def test_webrtc_aec_process_capture_short_frame_padding(monkeypatch):
+    """Non-multiple-of-10ms inputs are zero-padded and output is truncated back."""
+    from backends import aec as aec_module
+    from backends.aec import WebRtcAECBackend
+
+    class FakeAPM:
+        def __init__(self, **kwargs):
+            self.processed_frame_lengths = []
+
+        def set_stream_format(self, *a):
+            pass
+
+        def set_reverse_stream_format(self, *a):
+            pass
+
+        def set_aec_level(self, *a):
+            pass
+
+        def set_system_delay(self, *a):
+            pass
+
+        def process_reverse_stream(self, data):
+            self.processed_frame_lengths.append(("reverse", len(data)))
+
+        def process_stream(self, data):
+            self.processed_frame_lengths.append(("capture", len(data)))
+            return data
+
+    monkeypatch.setattr(aec_module, "_WEBRTC_APM_CLASS", FakeAPM)
+    backend = WebRtcAECBackend()
+    assert backend.init(16000)
+    # 240 samples = 1.5 frames; should be padded to 2 full 320-byte frames internally
+    mic = np.arange(240, dtype="<i2")
+    ref = np.zeros(240, dtype="<i2")
+    out = backend.process_capture(mic, ref)
+    assert isinstance(out, np.ndarray)
+    assert out.dtype == "<i2"
+    assert len(out) == 240, "output truncated back to original mic length"
+    # Both internal frames should be exactly 320 bytes
+    captures = [n for kind, n in backend._apm.processed_frame_lengths if kind == "capture"]
+    assert captures == [320, 320], "padding added to reach 10ms boundary"
+
+
+def test_webrtc_aec_passthrough_when_uninit(monkeypatch):
+    """If init() never succeeded, process_capture returns mic unchanged."""
+    from backends import aec as aec_module
+    from backends.aec import WebRtcAECBackend
+
+    monkeypatch.setattr(aec_module, "_WEBRTC_APM_CLASS", None)
+    backend = WebRtcAECBackend()
+    # init() returns False because class is None
+    assert backend.init(16000) is False
+    mic = np.arange(160, dtype="<i2")
+    ref = np.zeros(160, dtype="<i2")
+    out = backend.process_capture(mic, ref)
+    assert (out == mic).all()
