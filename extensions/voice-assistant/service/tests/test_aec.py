@@ -625,3 +625,25 @@ def test_send_binary_pushes_to_ref_buffer(monkeypatch):
 
     assert pushed == [payload], "send_binary must mirror to ref ring buffer"
     assert fake_ws.sent == [payload], "ws.send_bytes still called once"
+
+
+# ---------------------------------------------------------------------------
+# _aec_active_now tightening (Task 10)
+# ---------------------------------------------------------------------------
+
+def test_aec_active_now_only_for_echo_window_mode(monkeypatch):
+    """When AEC_MODE is sherpa/webrtc/none, _aec_active_now returns False
+    even if tts_active is True. Only echo_window uses the boost."""
+    import time
+    import server
+
+    sess = server.VoiceSession.__new__(server.VoiceSession)
+    sess.tts_active = True
+    sess.tts_last_chunk_ts = time.perf_counter()  # immediate
+
+    for mode in ("sherpa", "webrtc", "none"):
+        monkeypatch.setattr(server, "AEC_MODE", mode)
+        assert sess._aec_active_now() is False, f"mode={mode} must not activate echo_window"
+
+    monkeypatch.setattr(server, "AEC_MODE", "echo_window")
+    assert sess._aec_active_now() is True

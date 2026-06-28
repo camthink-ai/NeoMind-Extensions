@@ -7,7 +7,7 @@ acoustic:
   vad_threshold: 0.5
   vad_min_speech_ms: 250
   vad_silence_ms: 500
-  aec: none
+  aec: echo_window  # was: none (dead — env always overrode to echo_window at runtime)
 backends:
   asr:
     type: sensevoice_http

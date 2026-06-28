@@ -483,7 +483,11 @@ class VoiceSession:
         self.greeting_active: bool = False
 
     def _aec_active_now(self) -> bool:
-        """True if TTS echo suppression should currently be applied."""
+        """True if TTS echo suppression should currently be applied.
+
+        Only echo_window mode uses the VAD threshold boost; real-AEC modes
+        (webrtc) own the echo removal themselves and would over-suppress
+        legitimate double-talk if the boost also fired."""
         if not self.tts_active:
             return False
         if AEC_MODE != "echo_window":
