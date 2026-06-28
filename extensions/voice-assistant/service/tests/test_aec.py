@@ -595,3 +595,33 @@ def test_feed_pcm_aec_exception_passthrough(monkeypatch):
     # Critical: the module global _aec_backend is NOT mutated (no cross-session downgrade)
     assert isinstance(server._aec_backend, ExplodingBackend), \
         "module global must NOT be downgraded on per-frame exception"
+
+
+# ---------------------------------------------------------------------------
+# send_binary ref buffer instrumentation (Task 9)
+# ---------------------------------------------------------------------------
+
+def test_send_binary_pushes_to_ref_buffer(monkeypatch):
+    """VoiceSession.send_binary should also push to the global ref ring buffer."""
+    import asyncio
+    import server
+
+    pushed = []
+    fake_buf = type("B", (), {"push": lambda self, b: pushed.append(b)})()
+    monkeypatch.setattr(server, "_ref_ring_buffer", fake_buf)
+
+    # Mock the underlying ws
+    class FakeWS:
+        def __init__(self): self.sent = []
+        async def send_bytes(self, b): self.sent.append(b)
+    fake_ws = FakeWS()
+
+    sess = server.VoiceSession.__new__(server.VoiceSession)
+    sess.ws = fake_ws
+    sess.bytes_out = 0
+
+    payload = b"\x01\x02" * 100
+    asyncio.run(sess.send_binary(payload))
+
+    assert pushed == [payload], "send_binary must mirror to ref ring buffer"
+    assert fake_ws.sent == [payload], "ws.send_bytes still called once"

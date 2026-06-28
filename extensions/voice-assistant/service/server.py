@@ -502,6 +502,12 @@ class VoiceSession:
             await self.ws.send_bytes(data)
         except Exception as e:
             logger.warning("send_binary failed: %s", e)
+            return
+
+        # Feed the AEC reference path. Ring buffer is None before lifespan
+        # init completes (early WS connections shouldn't crash); guard for safety.
+        if _ref_ring_buffer is not None:
+            _ref_ring_buffer.push(data)
 
     # ---- VAD ingestion ----
 
