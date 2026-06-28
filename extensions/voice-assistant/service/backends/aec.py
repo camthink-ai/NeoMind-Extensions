@@ -107,7 +107,7 @@ class WebRtcAECBackend:
             if len(ref_chunk) < self.FRAME_BYTES:
                 ref_chunk = ref_chunk + b"\0" * (self.FRAME_BYTES - len(ref_chunk))
             ref_pos += self.FRAME_BYTES
-            # TODO(tasks 8/9): system_delay currently assumes 10ms (one frame) of
+            # TODO(task 9): system_delay currently assumes 10ms (one frame) of
             # round-trip echo path delay. The real delay should be derived from
             # the ReferenceRingBuffer's delay_ms parameter once Task 9 wires the ref push.
             try:

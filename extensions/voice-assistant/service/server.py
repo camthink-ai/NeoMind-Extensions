@@ -58,6 +58,7 @@ logger = logging.getLogger("voice-assistant")
 # ---------------------------------------------------------------------------
 from profile import load_profile
 from backends import make_vad, make_asr, make_llm, make_tts
+from backends.aec import NoopAECBackend
 from orchestrator import VoicePipeline, State
 from telemetry import Telemetry
 
@@ -509,7 +510,6 @@ class VoiceSession:
         when VAD detects speech-end, else None."""
         # AEC preprocessing: subtract speaker echo before VAD sees the signal.
         # Short-circuit for Noop (perf: avoids ring-buffer peek allocation).
-        from backends.aec import NoopAECBackend
         if (_aec_backend is not None
                 and _ref_ring_buffer is not None
                 and not isinstance(_aec_backend, NoopAECBackend)):
