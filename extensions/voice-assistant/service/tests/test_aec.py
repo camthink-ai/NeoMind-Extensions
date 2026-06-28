@@ -482,3 +482,116 @@ def test_startup_falls_back_to_noop_when_backend_init_fails(monkeypatch):
     assert isinstance(server._aec_backend, NoopAECBackend), \
         "server must substitute Noop when backend init fails"
     assert server._ref_ring_buffer is not None
+
+
+# ---------------------------------------------------------------------------
+# feed_pcm AEC preprocessing hook (Task 8)
+# ---------------------------------------------------------------------------
+
+def test_feed_pcm_aec_spy(monkeypatch):
+    """Spy on process_capture to verify feed_pcm invokes it exactly once."""
+    import numpy as np
+    import server
+
+    calls = []
+    class SpyBackend:
+        def init(self, sr): return True
+        def process_capture(self, mic, ref):
+            calls.append((mic.copy(), ref.copy()))
+            return mic
+        def close(self): pass
+
+    monkeypatch.setattr(server, "_aec_backend", SpyBackend())
+    fake_buf = type("B", (), {"peek_window": lambda self, **kw: np.zeros(480, dtype="<i2").tobytes()})()
+    monkeypatch.setattr(server, "_ref_ring_buffer", fake_buf)
+
+    sess = server.VoiceSession.__new__(server.VoiceSession)
+    sess._silero_vad = None
+    sess._fsmn_vad = None
+    monkeypatch.setattr(server, "VAD_BACKEND", "energy")
+    monkeypatch.setattr(server, "VAD_ENERGY_THRESHOLD", 999.0)
+    monkeypatch.setattr(server, "VAD_MIN_SPEECH_MS", 9999)
+    monkeypatch.setattr(server, "VAD_SILENCE_MS", 9999)
+    sess.in_speech = False
+    sess.speech_frames = 0
+    sess._speech_buffer = []
+    # _feed_pcm_energy calls _aec_active_now which reads these; tts_active=False
+    # short-circuits before tts_last_chunk_ts is touched.
+    sess.tts_active = False
+    sess.tts_last_chunk_ts = 0.0
+
+    sess.feed_pcm(np.full(480, 50, dtype="<i2"))
+    assert len(calls) == 1
+    assert (calls[0][0] == 50).all()
+
+
+def test_feed_pcm_skips_aec_when_backend_is_noop(monkeypatch):
+    """When _aec_backend is NoopAECBackend, feed_pcm does NOT call process_capture."""
+    import numpy as np
+    import server
+    from backends.aec import NoopAECBackend
+
+    calls = []
+    orig = NoopAECBackend.process_capture
+    def spy(self, m, r):
+        calls.append((m, r))
+        return orig(self, m, r)
+    monkeypatch.setattr(NoopAECBackend, "process_capture", spy)
+
+    monkeypatch.setattr(server, "_aec_backend", NoopAECBackend())
+
+    sess = server.VoiceSession.__new__(server.VoiceSession)
+    sess._silero_vad = None
+    sess._fsmn_vad = None
+    monkeypatch.setattr(server, "VAD_BACKEND", "energy")
+    monkeypatch.setattr(server, "VAD_ENERGY_THRESHOLD", 999.0)
+    monkeypatch.setattr(server, "VAD_MIN_SPEECH_MS", 9999)
+    monkeypatch.setattr(server, "VAD_SILENCE_MS", 9999)
+    sess.in_speech = False
+    sess.speech_frames = 0
+    sess._speech_buffer = []
+    # Required by _aec_active_now (called inside _feed_pcm_energy)
+    sess.tts_active = False
+    sess.tts_last_chunk_ts = 0.0
+
+    sess.feed_pcm(np.full(480, 50, dtype="<i2"))
+    assert len(calls) == 0, "Noop should be short-circuited (perf optimization)"
+
+
+def test_feed_pcm_aec_exception_passthrough(monkeypatch):
+    """If process_capture raises, feed_pcm logs and passes original mic to VAD."""
+    import numpy as np
+    import server
+    from backends.aec import NoopAECBackend
+
+    class ExplodingBackend:
+        def init(self, sr): return True
+        def process_capture(self, mic, ref):
+            raise RuntimeError("native explosion")
+        def close(self): pass
+
+    monkeypatch.setattr(server, "_aec_backend", ExplodingBackend())
+    fake_buf = type("B", (), {"peek_window": lambda self, **kw: np.zeros(480, dtype="<i2").tobytes()})()
+    monkeypatch.setattr(server, "_ref_ring_buffer", fake_buf)
+
+    sess = server.VoiceSession.__new__(server.VoiceSession)
+    sess._silero_vad = None
+    sess._fsmn_vad = None
+    # Replace _feed_pcm_energy with a spy via bound method
+    captured = []
+    def energy_spy(self_, samples):
+        captured.append(samples.copy())
+        return None
+    monkeypatch.setattr(server.VoiceSession, "_feed_pcm_energy", energy_spy)
+    sess.in_speech = False
+    sess.speech_frames = 0
+    sess._speech_buffer = []
+
+    mic = np.full(480, 50, dtype="<i2")
+    sess.feed_pcm(mic)
+    # VAD path received the ORIGINAL mic (not the exploded result)
+    assert len(captured) == 1
+    assert (captured[0] == 50).all()
+    # Critical: the module global _aec_backend is NOT mutated (no cross-session downgrade)
+    assert isinstance(server._aec_backend, ExplodingBackend), \
+        "module global must NOT be downgraded on per-frame exception"

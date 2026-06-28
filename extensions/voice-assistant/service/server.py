@@ -507,6 +507,25 @@ class VoiceSession:
     def feed_pcm(self, samples_int16: np.ndarray) -> Optional[np.ndarray]:
         """Feed int16 samples. Returns complete utterance PCM (int16 LE bytes)
         when VAD detects speech-end, else None."""
+        # AEC preprocessing: subtract speaker echo before VAD sees the signal.
+        # Short-circuit for Noop (perf: avoids ring-buffer peek allocation).
+        from backends.aec import NoopAECBackend
+        if (_aec_backend is not None
+                and _ref_ring_buffer is not None
+                and not isinstance(_aec_backend, NoopAECBackend)):
+            length_ms = len(samples_int16) / SAMPLE_RATE * 1000
+            ref_bytes = _ref_ring_buffer.peek_window(
+                delay_ms=AEC_REFERENCE_DELAY_MS,
+                length_ms=length_ms,
+                sample_rate=SAMPLE_RATE,
+            )
+            ref = np.frombuffer(ref_bytes, dtype="<i2")
+            try:
+                samples_int16 = _aec_backend.process_capture(samples_int16, ref)
+            except Exception as e:
+                # Per-frame failure: log and pass original mic through. Do NOT
+                # downgrade the module global — that would kill AEC for ALL sessions.
+                logger.warning("AEC process_capture failed: %s; passing mic unprocessed", e)
         if self._silero_vad is not None:
             return self._feed_pcm_silero(samples_int16)
         if self._fsmn_vad is not None:
