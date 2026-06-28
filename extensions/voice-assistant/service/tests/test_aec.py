@@ -647,3 +647,44 @@ def test_aec_active_now_only_for_echo_window_mode(monkeypatch):
 
     monkeypatch.setattr(server, "AEC_MODE", "echo_window")
     assert sess._aec_active_now() is True
+
+
+# ---------------------------------------------------------------------------
+# measure_echo_rejection CLI extensions (Task 11)
+# ---------------------------------------------------------------------------
+
+def test_measure_harness_has_backend_flag():
+    """Argparse should accept --backend and emit it in the report header."""
+    import measure_echo_rejection as mer
+    parser = mer._build_arg_parser()
+    args = parser.parse_args(["--backend", "webrtc", "--n", "5"])
+    assert args.backend == "webrtc"
+    assert args.n == 5
+
+
+def test_measure_harness_has_double_talk_flag():
+    """--double-talk should be a boolean flag."""
+    import measure_echo_rejection as mer
+    parser = mer._build_arg_parser()
+    args = parser.parse_args(["--double-talk"])
+    assert args.double_talk is True
+
+
+def test_erle_computation():
+    """ERLE = 10*log10(sum(mic^2) / sum(cleaned^2))."""
+    import numpy as np
+    import measure_echo_rejection as mer
+    mic = np.full(1600, 1000, dtype="<i2")  # large signal
+    cleaned = np.full(1600, 10, dtype="<i2")  # mostly cancelled
+    erle = mer._compute_erle(mic, cleaned)
+    # 1000^2 / 10^2 = 10000 -> 10*log10(10000) = 40 dB
+    assert 39 <= erle <= 41
+
+
+def test_erle_zero_cleaned_is_inf():
+    """When sum(cleaned^2) == 0, ERLE is +inf (perfect cancellation)."""
+    import numpy as np
+    import measure_echo_rejection as mer
+    mic = np.full(1600, 1000, dtype="<i2")
+    cleaned = np.zeros(1600, dtype="<i2")
+    assert mer._compute_erle(mic, cleaned) == float("inf")

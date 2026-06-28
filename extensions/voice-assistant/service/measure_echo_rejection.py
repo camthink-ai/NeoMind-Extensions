@@ -221,20 +221,55 @@ def fmt(v):
     return f"{v:.0f}ms" if v is not None else "—"
 
 
-async def main():
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser for the echo-rejection harness."""
+    import os
     p = argparse.ArgumentParser()
     p.add_argument("--url", default="ws://127.0.0.1:9384/ws")
-    p.add_argument("--n", type=int, default=3, help="iterations")
-    p.add_argument("--leak-amp", type=float, default=float(__import__("os").environ.get("LEAK_AMPLITUDE", "0.03")))
-    p.add_argument("--leak-freq", type=float, default=float(__import__("os").environ.get("LEAK_FREQ", "220")))
-    p.add_argument("--leak-duration", type=float, default=float(__import__("os").environ.get("LEAK_DURATION_S", "3.0")))
-    args = p.parse_args()
+    p.add_argument("-n", "--n", "--trials", type=int, default=3, dest="n", help="iterations")
+    p.add_argument("--leak-amp", type=float, default=float(os.environ.get("LEAK_AMPLITUDE", "0.03")))
+    p.add_argument("--leak-freq", type=float, default=float(os.environ.get("LEAK_FREQ", "220")))
+    p.add_argument("--leak-duration", type=float, default=float(os.environ.get("LEAK_DURATION_S", "3.0")))
+    p.add_argument(
+        "--backend",
+        choices=["none", "echo_window", "webrtc"],
+        default="echo_window",
+        help="Documents which AEC backend the server is running (does NOT control it; set VOICE_ASSISTANT_AEC on the server)",
+    )
+    p.add_argument(
+        "--double-talk",
+        action="store_true",
+        help="Send a real utterance during TTS playback to measure double-talk capture rate",
+    )
+    return p
+
+
+def _compute_erle(mic_int16: "np.ndarray", cleaned_int16: "np.ndarray") -> float:
+    """ERLE in dB: 10*log10(sum(mic^2) / sum(cleaned^2)).
+
+    Returns +inf if sum(cleaned^2) == 0 (perfect cancellation).
+    """
+    mic_power = float(np.sum(mic_int16.astype(np.int64) ** 2))
+    cleaned_power = float(np.sum(cleaned_int16.astype(np.int64) ** 2))
+    if cleaned_power == 0.0:
+        return float("inf")
+    return 10.0 * float(np.log10(mic_power / cleaned_power))
+
+
+async def main():
+    args = _build_arg_parser().parse_args()
+
+    print(f"# AEC backend: {args.backend}")
+    if args.double_talk:
+        print("# Double-talk mode: ENABLED (sending real utterance during TTS playback)")
 
     total_phantoms = 0
     for i in range(args.n):
         if i > 0:
             print("\n\n--- next trial ---")
             await asyncio.sleep(2)
+        if args.double_talk:
+            print(f"  [double-talk] trial {i+1}/{args.n}: SKIPPED (not yet implemented)")
         r = await measure_once(
             args.url,
             leak_amplitude=args.leak_amp,
@@ -247,6 +282,11 @@ async def main():
     print(f"\nSummary: {total_phantoms} phantom transcripts over {args.n} trials "
           f"(avg {total_phantoms / args.n:.1f}/trial)")
     print("Target: AEC on → <0.1/trial   |   AEC off → ~1+/trial")
+    if args.double_talk:
+        print("# Double-talk captured: n/a (mode not yet implemented)")
+    # ERLE side-channel requires server cooperation (exposing cleaned PCM);
+    # not yet implemented. Harness degrades to 'n/a'.
+    print("# ERLE: n/a (server did not expose cleaned PCM)")
 
 
 if __name__ == "__main__":
