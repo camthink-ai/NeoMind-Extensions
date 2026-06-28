@@ -426,3 +426,43 @@ def test_startup_env_override_wins(monkeypatch):
     assert server.AEC_MODE == "echo_window"
     from backends.aec import NoopAECBackend
     assert isinstance(server._aec_backend, NoopAECBackend)
+
+
+def test_startup_falls_back_to_noop_when_backend_init_fails(monkeypatch):
+    """When make_aec returns a backend whose init() raises, _warm_aec
+    substitutes NoopAECBackend so the pipeline always has a usable backend."""
+    import asyncio
+    import server
+    from backends import aec as aec_module
+
+    # FakeAPM constructs OK but a downstream config call raises,
+    # exercising the server-layer fallback (not just the factory one).
+    class FakeAPM:
+        def __init__(self, **kwargs):
+            pass
+        def set_stream_format(self, *a):
+            raise RuntimeError("native config failure")
+        def set_reverse_stream_format(self, *a): pass
+        def set_aec_level(self, *a): pass
+    monkeypatch.setattr(aec_module, "_WEBRTC_APM_CLASS", FakeAPM)
+
+    monkeypatch.setattr(server, "_profile", type("P", (), {
+        "aec_config": {"type": "webrtc", "reference_delay_ms": 200,
+                       "ref_buffer_seconds": 3.0, "keep_echo_window": False},
+        "greeting_text": "",
+        "barge_in_ack": False,
+        "ack_words": [],
+        "stage_filler_words": {},
+    })())
+    monkeypatch.delenv("VOICE_ASSISTANT_AEC_MODE", raising=False)
+    # Reset module globals so the idempotency short-circuit doesn't skip the test
+    monkeypatch.setattr(server, "_aec_backend", None, raising=False)
+    monkeypatch.setattr(server, "_ref_ring_buffer", None, raising=False)
+
+    asyncio.run(server._warm_banks_async())
+
+    assert server.AEC_MODE == "webrtc"
+    from backends.aec import NoopAECBackend
+    assert isinstance(server._aec_backend, NoopAECBackend), \
+        "server must substitute Noop when backend init fails"
+    assert server._ref_ring_buffer is not None

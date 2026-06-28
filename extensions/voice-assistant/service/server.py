@@ -45,7 +45,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -60,6 +60,10 @@ from profile import load_profile
 from backends import make_vad, make_asr, make_llm, make_tts
 from orchestrator import VoicePipeline, State
 from telemetry import Telemetry
+
+if TYPE_CHECKING:
+    from aec import ReferenceRingBuffer
+    from contracts import AECBackend
 
 _profile = load_profile(os.environ.get("VOICE_ASSISTANT_PROFILE"))
 # VAD/ASR/TTS backends are stateless or thread-safe across sessions — share them.
@@ -127,8 +131,8 @@ AEC_REF_BUFFER_SECONDS = float(os.environ.get("VOICE_ASSISTANT_AEC_REF_BUFFER_SE
 
 # Module globals populated by _warm_banks_async (initialized to safe defaults
 # so import-time references don't AttributeError).
-_aec_backend = None  # type: ignore[var-annotated]
-_ref_ring_buffer = None  # type: ignore[var-annotated]
+_aec_backend: AECBackend | None = None
+_ref_ring_buffer: ReferenceRingBuffer | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -251,10 +255,18 @@ async def _warm_aec() -> None:
     """Reconcile AEC_MODE from profile and build _aec_backend + _ref_ring_buffer.
 
     Profile wins; VOICE_ASSISTANT_AEC_MODE env var is a debug-only override.
-    Idempotent: safe to re-call (e.g., on lazy warmup) — overwrites module globals.
+    Idempotent: safe to re-call (e.g., on lazy warmup) — short-circuits if
+    AEC backend is already initialized. AEC config is fixed at startup; a
+    second invocation would only reassign native handles and risk leaks.
     """
     global AEC_MODE, AEC_REFERENCE_DELAY_MS, AEC_REF_BUFFER_SECONDS
     global _aec_backend, _ref_ring_buffer
+
+    if _aec_backend is not None:
+        # Already initialized — defensive idempotency. AEC config is fixed
+        # at startup; re-running would leak the native APM handle.
+        return
+
     from backends import make_aec
     from aec import ReferenceRingBuffer
 
