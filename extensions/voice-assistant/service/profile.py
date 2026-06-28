@@ -53,7 +53,17 @@ class Profile:
             asr_config=dict(backends.get("asr", {})),
             llm_config=dict(backends.get("llm", {})),
             tts_config=dict(backends.get("tts", {})),
-            aec_config=None if aec == "none" else {"type": aec},
+            aec_config=(
+                None if aec == "none"
+                else {
+                    "type": aec,
+                    "reference_delay_ms": acoustic.get("aec_reference_delay_ms", 200),
+                    "ref_buffer_seconds": acoustic.get("aec_ref_buffer_seconds", 3.0),
+                    "keep_echo_window": acoustic.get(
+                        "aec_keep_echo_window", aec in ("echo_window",)
+                    ),
+                }
+            ),
             barge_in_mode=interaction.get("barge_in", "full"),
             latency_target_ms=interaction.get("latency_target_ms", 1200),
             cpu_threads=hardware.get("cpu_threads", 4),

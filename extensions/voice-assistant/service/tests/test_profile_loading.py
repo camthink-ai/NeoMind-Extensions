@@ -55,3 +55,60 @@ def test_latency_target_informational():
     prof = load_profile(None)
     # Field exists but is informational only
     assert prof.latency_target_ms > 0
+
+
+def test_aec_config_none_for_default_none():
+    """Profile.from_dict with aec=none -> aec_config is None (backward compat)."""
+    from profile import Profile
+    prof = Profile.from_dict({
+        "acoustic": {"aec": "none"},
+        "backends": {},
+    })
+    assert prof.aec_config is None
+
+
+def test_aec_config_full_dict_for_echo_window():
+    """aec=echo_window -> aec_config is the new dict shape with keep_echo_window=True."""
+    from profile import Profile
+    prof = Profile.from_dict({
+        "acoustic": {"aec": "echo_window"},
+        "backends": {},
+    })
+    assert prof.aec_config == {
+        "type": "echo_window",
+        "reference_delay_ms": 200,
+        "ref_buffer_seconds": 3.0,
+        "keep_echo_window": True,
+    }
+
+
+def test_aec_config_full_dict_for_webrtc():
+    """aec=webrtc -> aec_config dict with keep_echo_window=False by default."""
+    from profile import Profile
+    prof = Profile.from_dict({
+        "acoustic": {"aec": "webrtc"},
+        "backends": {},
+    })
+    assert prof.aec_config == {
+        "type": "webrtc",
+        "reference_delay_ms": 200,
+        "ref_buffer_seconds": 3.0,
+        "keep_echo_window": False,
+    }
+
+
+def test_aec_config_respects_yaml_overrides():
+    """User-supplied aec_reference_delay_ms etc. override defaults."""
+    from profile import Profile
+    prof = Profile.from_dict({
+        "acoustic": {
+            "aec": "webrtc",
+            "aec_reference_delay_ms": 350,
+            "aec_ref_buffer_seconds": 5.0,
+            "aec_keep_echo_window": True,
+        },
+        "backends": {},
+    })
+    assert prof.aec_config["reference_delay_ms"] == 350
+    assert prof.aec_config["ref_buffer_seconds"] == 5.0
+    assert prof.aec_config["keep_echo_window"] is True
