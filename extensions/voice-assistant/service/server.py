@@ -118,6 +118,18 @@ AEC_SILENCE_BOOST_MS = int(os.environ.get("VOICE_ASSISTANT_AEC_SILENCE_BOOST_MS"
 AEC_ENERGY_BOOST = float(os.environ.get("VOICE_ASSISTANT_AEC_ENERGY_BOOST", "0.020"))
 AEC_TAIL_MS = int(os.environ.get("VOICE_ASSISTANT_AEC_TAIL_MS", "400"))
 
+# AEC reference path (Task 7 of AEC spec).
+# These default to profile-derived values, but the module-level
+# constants are populated in _warm_banks_async after profile loads.
+# Env vars are debug-only overrides; profile wins.
+AEC_REFERENCE_DELAY_MS = int(os.environ.get("VOICE_ASSISTANT_AEC_REFERENCE_DELAY_MS", "200"))
+AEC_REF_BUFFER_SECONDS = float(os.environ.get("VOICE_ASSISTANT_AEC_REF_BUFFER_SECONDS", "3.0"))
+
+# Module globals populated by _warm_banks_async (initialized to safe defaults
+# so import-time references don't AttributeError).
+_aec_backend = None  # type: ignore[var-annotated]
+_ref_ring_buffer = None  # type: ignore[var-annotated]
+
 
 # ---------------------------------------------------------------------------
 # Pre-synthesized PCM banks for instant voice feedback.
@@ -170,6 +182,9 @@ async def _warm_banks_async() -> None:
     lazily if a bank is still empty on first use.
     """
     global _ACK_BANK_WARMED, _STAGE_BANK_WARMED
+    # AEC init MUST come first — ref ring buffer must exist before
+    # any send_binary call could fire (defensive ordering).
+    await _warm_aec()
 
     # ---- ack bank ----
     if not _ACK_BANK_WARMED:
@@ -230,6 +245,51 @@ async def _warm_greeting() -> None:
     except Exception as e:
         logger.warning("greeting synth failed — greeting disabled: %s", e)
         _GREETING_PCM = None
+
+
+async def _warm_aec() -> None:
+    """Reconcile AEC_MODE from profile and build _aec_backend + _ref_ring_buffer.
+
+    Profile wins; VOICE_ASSISTANT_AEC_MODE env var is a debug-only override.
+    Idempotent: safe to re-call (e.g., on lazy warmup) — overwrites module globals.
+    """
+    global AEC_MODE, AEC_REFERENCE_DELAY_MS, AEC_REF_BUFFER_SECONDS
+    global _aec_backend, _ref_ring_buffer
+    from backends import make_aec
+    from aec import ReferenceRingBuffer
+
+    aec_cfg = _profile.aec_config or {"type": "none"}
+    aec_type = aec_cfg.get("type", "none")
+    AEC_REFERENCE_DELAY_MS = int(aec_cfg.get("reference_delay_ms", AEC_REFERENCE_DELAY_MS))
+    AEC_REF_BUFFER_SECONDS = float(aec_cfg.get("ref_buffer_seconds", AEC_REF_BUFFER_SECONDS))
+
+    # Env override (debug only)
+    env_override = os.environ.get("VOICE_ASSISTANT_AEC_MODE")
+    if env_override and env_override.lower() != aec_type:
+        logger.info("AEC_MODE env override: %s (profile said %s)",
+                    env_override, aec_type)
+        aec_type = env_override.lower()
+    AEC_MODE = aec_type
+
+    _aec_backend = make_aec(_profile)
+    if not await _maybe_init_aec(_aec_backend):
+        from backends.aec import NoopAECBackend
+        logger.warning("AEC backend init failed; falling back to Noop")
+        _aec_backend = NoopAECBackend()
+
+    capacity_bytes = int(AEC_REF_BUFFER_SECONDS * SAMPLE_RATE * 2)
+    _ref_ring_buffer = ReferenceRingBuffer(capacity_bytes)
+    logger.info("AEC backend ready: %s, ref buffer %.1fs",
+                type(_aec_backend).__name__, AEC_REF_BUFFER_SECONDS)
+
+
+async def _maybe_init_aec(backend) -> bool:
+    """Call backend.init(); return False on any failure."""
+    try:
+        return bool(backend.init(SAMPLE_RATE))
+    except Exception as e:
+        logger.warning("AEC backend init raised: %s", e)
+        return False
 
 
 # ---------------------------------------------------------------------------

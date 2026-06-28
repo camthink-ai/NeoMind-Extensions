@@ -360,3 +360,69 @@ def test_make_aec_unknown_type_raises():
     from backends import make_aec
     with pytest.raises(ValueError, match="unknown AEC backend"):
         make_aec(_FakeProfile(aec_config={"type": "bogus"}))
+
+
+# ---------------------------------------------------------------------------
+# Server startup reconciliation (Task 7)
+# ---------------------------------------------------------------------------
+
+def test_startup_reconciles_aec_mode_from_profile(monkeypatch):
+    """_warm_banks_async sets AEC_MODE from profile.aec_config['type']."""
+    import asyncio
+    import server
+    from backends import aec as aec_module
+
+    # Force webrtc "available"
+    class FakeAPM:
+        def __init__(self, **kwargs):
+            pass
+        def set_stream_format(self, *a): pass
+        def set_reverse_stream_format(self, *a): pass
+        def set_aec_level(self, *a): pass
+    monkeypatch.setattr(aec_module, "_WEBRTC_APM_CLASS", FakeAPM)
+
+    # Profile says webrtc
+    monkeypatch.setattr(server, "_profile", type("P", (), {
+        "aec_config": {"type": "webrtc", "reference_delay_ms": 200,
+                       "ref_buffer_seconds": 3.0, "keep_echo_window": False},
+        "greeting_text": "",
+        "barge_in_ack": False,
+        "ack_words": [],
+        "stage_filler_words": {},
+    })())
+    # No env override
+    monkeypatch.delenv("VOICE_ASSISTANT_AEC_MODE", raising=False)
+    # Reset module globals to defaults so the test is deterministic
+    monkeypatch.setattr(server, "_aec_backend", None, raising=False)
+    monkeypatch.setattr(server, "_ref_ring_buffer", None, raising=False)
+
+    asyncio.run(server._warm_banks_async())
+
+    assert server.AEC_MODE == "webrtc"
+    from backends.aec import WebRtcAECBackend
+    assert isinstance(server._aec_backend, WebRtcAECBackend)
+    assert server._ref_ring_buffer is not None
+
+
+def test_startup_env_override_wins(monkeypatch):
+    """VOICE_ASSISTANT_AEC_MODE env var overrides profile for debugging."""
+    import asyncio
+    import server
+
+    monkeypatch.setattr(server, "_profile", type("P", (), {
+        "aec_config": {"type": "webrtc", "reference_delay_ms": 200,
+                       "ref_buffer_seconds": 3.0, "keep_echo_window": False},
+        "greeting_text": "",
+        "barge_in_ack": False,
+        "ack_words": [],
+        "stage_filler_words": {},
+    })())
+    monkeypatch.setenv("VOICE_ASSISTANT_AEC_MODE", "echo_window")
+    monkeypatch.setattr(server, "_aec_backend", None, raising=False)
+    monkeypatch.setattr(server, "_ref_ring_buffer", None, raising=False)
+
+    asyncio.run(server._warm_banks_async())
+
+    assert server.AEC_MODE == "echo_window"
+    from backends.aec import NoopAECBackend
+    assert isinstance(server._aec_backend, NoopAECBackend)
