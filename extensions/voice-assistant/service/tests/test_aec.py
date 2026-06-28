@@ -84,6 +84,22 @@ def test_ring_buffer_empty_peek_returns_zeros():
     assert (out_samples == 0).all()
 
 
+def test_ring_buffer_push_truncates_odd_length_input():
+    """Odd-length input is truncated by one byte to preserve int16 alignment."""
+    from aec import ReferenceRingBuffer
+    SAMPLE_RATE = 16000
+    buf = ReferenceRingBuffer(capacity_bytes=SAMPLE_RATE * 2 * 1)
+    # 1601 bytes (800 samples + 1 trailing byte)
+    odd_input = np.arange(800, dtype="<i2").tobytes() + b"\x7f"
+    buf.push(odd_input)
+    out = buf.peek_window(delay_ms=0, length_ms=50, sample_rate=SAMPLE_RATE)
+    out_samples = np.frombuffer(out, dtype="<i2")
+    # Should be the first 800 samples (last 800 of arange(800) since capacity>input),
+    # no garbage from the odd trailing byte
+    assert len(out_samples) == 800
+    assert (out_samples == np.arange(800, dtype="<i2")).all()
+
+
 # ---------------------------------------------------------------------------
 # NoopAECBackend
 # ---------------------------------------------------------------------------

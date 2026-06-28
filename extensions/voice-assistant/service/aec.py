@@ -24,6 +24,10 @@ class ReferenceRingBuffer:
         """Append PCM to the ring. Wraps FIFO; overwrites oldest data."""
         if not pcm_int16_bytes:
             return
+        # Drop trailing byte if odd-length — int16 samples require even byte count.
+        # This is defensive; well-formed callers always send whole-sample PCM.
+        if len(pcm_int16_bytes) % 2 != 0:
+            pcm_int16_bytes = pcm_int16_bytes[:-1]
         data = pcm_int16_bytes
         n = len(data)
         if n >= self._capacity:
