@@ -25,6 +25,8 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+mod extract_frame;
+
 // ============================================================================
 // Video Source Types
 // ============================================================================
@@ -523,10 +525,27 @@ impl Extension for StreamPlayerExtension {
                 samples: vec![json!({})],
                 parameter_groups: vec![],
             },
+            ExtensionCommand {
+                name: "extract_frame".to_string(),
+                display_name: "Extract Frame".to_string(),
+                description:
+                    "Open a video URL and return the first/latest frame as JPEG \
+                     (base64 or file output). One-shot, no running session needed."
+                        .to_string(),
+                payload_template: r#"{"url":"rtsp://host/stream"}"#.to_string(),
+                parameters: vec![],
+                fixed_values: HashMap::new(),
+                samples: vec![
+                    json!({ "url": "rtsp://host/stream" }),
+                    json!({ "url": "rtsp://host/stream", "output": "file" }),
+                    json!({ "url": "/tmp/clip.mp4", "output": "base64", "quality": 80 }),
+                ],
+                parameter_groups: vec![],
+            },
         ]
     }
 
-    async fn execute_command(&self, command: &str, _args: &serde_json::Value) -> Result<serde_json::Value> {
+    async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
         match command {
             "list_sources" => {
                 Ok(json!({
@@ -560,6 +579,15 @@ impl Extension for StreamPlayerExtension {
             "configure" => {
                 // Accept config silently - can be extended for real config handling
                 Ok(json!({"status": "ok"}))
+            }
+            "extract_frame" => {
+                // FFmpeg is blocking — run on a worker thread.
+                let args_owned = args.clone();
+                tokio::task::spawn_blocking(move || {
+                    extract_frame::handle_command_blocking(&args_owned)
+                })
+                .await
+                .map_err(|e| ExtensionError::ExecutionFailed(format!("join error: {}", e)))?
             }
 
             _ => Err(ExtensionError::CommandNotFound(command.to_string())),

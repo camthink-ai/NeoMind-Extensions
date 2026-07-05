@@ -34,6 +34,48 @@ Universal video player supporting RTSP, RTMP, HLS, local files via FFmpeg transc
 |---------|-------------|------------|
 | `list_sources` | List supported video source formats and example URLs | None |
 | `get_player_info` | Get current player status, active sessions, and stream stats | None |
+| `extract_frame` | Open a video URL one-shot and return the latest frame as JPEG | See below |
+
+### `extract_frame` — One-shot Frame Extraction
+
+Opens a video URL, decodes the **first available frame** (= "latest" for live sources, = first frame for files), encodes as JPEG, and returns. No running stream session needed.
+
+**Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `url` | string | ✅ | — | Video source (RTSP/RTMP/HLS/HTTP/file) |
+| `output` | string | ❌ | `"base64"` | `"base64"` or `"file"` |
+| `output_path` | string | ❌ | auto temp | Where to save when `output="file"` |
+| `width` | integer | ❌ | source width | Must specify with `height` |
+| `height` | integer | ❌ | source height | Must specify with `width` |
+| `quality` | integer | ❌ | `85` | JPEG quality 1-100 |
+
+**Examples:**
+
+```jsonc
+// Default: base64 from live RTSP
+{ "url": "rtsp://host:554/stream" }
+
+// Save to file
+{ "url": "rtsp://host/stream", "output": "file" }
+
+// Custom size + quality
+{ "url": "/tmp/clip.mp4", "output": "base64", "width": 320, "height": 240, "quality": 70 }
+```
+
+**Response (base64):**
+```json
+{ "success": true, "width": 640, "height": 480, "mime": "image/jpeg", "size_bytes": 45321, "data": "<base64...>" }
+```
+
+**Response (file):**
+```json
+{ "success": true, "width": 640, "height": 480, "path": "/tmp/neomind-frame-xxx.jpg", "size_bytes": 45321 }
+```
+
+Errors: `ExecutionFailed` with descriptive message on open failure, decode timeout (15s), or invalid params.
+
 
 ## Metrics
 
