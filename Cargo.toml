@@ -55,7 +55,7 @@ ort = { version = "2.0.0-rc.10", default-features = false, features = ["half", "
 
 ndarray = "0.16"
 
-neomind-extension-sdk = "0.6.3"
+neomind-extension-sdk = "0.6.4"
 
 # Patch usls to skip unreliable is_available() check for CUDA EP.
 # When ORT is loaded dynamically (load-dynamic), GetAvailableProviders()
