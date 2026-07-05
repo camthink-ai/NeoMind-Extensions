@@ -1,6 +1,6 @@
 [package]
 name = "sensevoice-asr"
-version = "2.7.6"
+version = "2.7.7"
 edition = "2021"
 authors = ["NeoMind Team"]
 license = "Apache-2.0"

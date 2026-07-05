@@ -1,12 +1,12 @@
 {
   "id": "voice-edge-tts",
   "name": "voice edge tts",
-  "version": "2.7.6",
+  "version": "2.7.7",
   "description": "Edge TTS (sherpa-onnx ZipVoice) extension — cross-platform CPU streaming TTS",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
   "type": "native",
   "categories": ["utility"],
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/voice-edge-tts",
-  "builds": {"darwin-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.6/voice-edge-tts-2.7.6-darwin_aarch64.nep"},"darwin-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.6/voice-edge-tts-2.7.6-darwin_x86_64.nep"},"linux-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.6/voice-edge-tts-2.7.6-linux_amd64.nep"},"linux-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.6/voice-edge-tts-2.7.6-linux_arm64.nep"},"windows-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.6/voice-edge-tts-2.7.6-windows_amd64.nep"}}
+  "builds": {"darwin-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/voice-edge-tts-2.7.7-darwin_aarch64.nep"},"darwin-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/voice-edge-tts-2.7.7-darwin_x86_64.nep"},"linux-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/voice-edge-tts-2.7.7-linux_amd64.nep"},"linux-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/voice-edge-tts-2.7.7-linux_arm64.nep"},"windows-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/voice-edge-tts-2.7.7-windows_amd64.nep"}}
 }
