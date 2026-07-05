@@ -18,7 +18,7 @@
 
 pub mod detector;
 pub mod video_source;
-use video_source::FrameResult;
+use video_source::{FrameResult, SourceType};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -29,6 +29,8 @@ use neomind_extension_sdk::{
     Extension, ExtensionMetadata, ExtensionError, ExtensionMetricValue,
     MetricDescriptor, ExtensionCommand, MetricDataType, ParameterDefinition,
     ParamMetricValue, Result, send_push_output,
+    DynamicMetricsRegistry, MetricTemplate,
+    dynamic_metrics::sanitize_label,
 };
 use neomind_extension_sdk::prelude::{
     FlowControl, StreamCapability, StreamMode, StreamDirection, StreamDataType,
@@ -269,6 +271,8 @@ struct ActiveStream {
     tracker: ObjectTracker,
     /// Cumulative line crossing counts: line_id → (A→B count, B→A count)
     line_counts: HashMap<String, (u64, u64)>,
+    /// Snapshot of last computed ROI stats (for metric collection without re-scanning detections)
+    last_roi_stats: Vec<RoiStat>,
     /// Runtime state per capture rule
     capture_rule_states: HashMap<String, CaptureRuleState>,
     /// Pending capture events (max 10)
@@ -654,8 +658,10 @@ impl StreamProcessor {
     pub async fn start_stream(self: &Arc<Self>, config: StreamConfig) -> Result<StreamInfo> {
         let stream_id = Uuid::new_v4().to_string();
 
+        // Stream dimensions reported to the frontend. The actual decode may be 1920x1080
+        // internally, but the output (draw + JPEG) is capped at 960x540 to accelerate the CPU pipeline.
         let (width, height) = if config.source_url.contains("1920") || config.source_url.contains("rtsp") {
-            (1920, 1080)
+            (960, 540)
         } else {
             (640, 480)
         };
@@ -677,6 +683,7 @@ impl StreamProcessor {
             dropped_frames: 0,
             tracker: ObjectTracker::new(),
             line_counts: HashMap::new(),
+            last_roi_stats: Vec::new(),
             capture_rule_states: HashMap::new(),
             pending_captures: Vec::new(),
         }));
@@ -862,12 +869,73 @@ impl Default for StreamProcessor {
 
 pub struct YoloVideoProcessorV2 {
     processor: Arc<StreamProcessor>,
+    /// Per-stream dynamic metric registry. Each active stream produces a
+    /// labeled family (`fps.cam1`, `dropped_frames.cam1`, …) so dashboards
+    /// can chart multiple streams independently. Extension-level aggregates
+    /// (`active_streams`, `total_frames_processed`, …) remain in the static
+    /// `metrics()` list below.
+    dynamic: DynamicMetricsRegistry,
+}
+
+/// Derive a stable, human-readable label from a stream source URL.
+///
+/// Examples:
+///   `rtsp://192.168.1.10/cam1` → `cam1`
+///   `camera://0`                → `camera_0`
+///   `rtsp://host/path/cam2/`    → `cam2`
+///   `` / unknown                → `stream`
+///
+/// The same `source_url` always yields the same label, so reconnects
+/// continue the same time series instead of spawning new ones.
+fn derive_label(source_url: &str) -> String {
+    let trimmed = source_url.trim();
+    if trimmed.is_empty() {
+        return "stream".to_string();
+    }
+    // Strip scheme prefix if present.
+    let after_scheme = trimmed.split_once("://").map(|(_, rest)| rest).unwrap_or(trimmed);
+    // Take the last path segment (after the final '/'), drop query strings,
+    // and trim trailing slashes so `rtsp://host/path/cam2/` → `cam2`.
+    let last_segment = after_scheme.split('?').next().unwrap_or(after_scheme);
+    let last_segment = last_segment.trim_end_matches('/');
+    let last = last_segment.rsplit('/').next().unwrap_or(last_segment).trim();
+    if last.is_empty() {
+        // Fall back to host:port-ish identifier with non-alphanumerics replaced.
+        let fallback: String = after_scheme
+            .chars()
+            .take(24)
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect::<String>()
+            .trim_matches('_')
+            .to_string();
+        return if fallback.is_empty() {
+            "stream".to_string()
+        } else {
+            fallback
+        };
+    }
+    sanitize_label(last)
 }
 
 impl YoloVideoProcessorV2 {
     pub fn new() -> Self {
+        let dynamic = DynamicMetricsRegistry::new(vec![
+            MetricTemplate::new("fps", "FPS · {}", MetricDataType::Float)
+                .with_unit("fps")
+                .with_min(0.0),
+            MetricTemplate::new("dropped_frames", "Dropped · {}", MetricDataType::Integer)
+                .with_unit("frames")
+                .with_min(0.0),
+            MetricTemplate::new("frame_count", "Frames · {}", MetricDataType::Integer)
+                .with_unit("frames")
+                .with_min(0.0),
+            MetricTemplate::new("detection_count", "Detections · {}", MetricDataType::Integer)
+                .with_unit("count")
+                .with_min(0.0),
+        ]);
         Self {
             processor: Arc::new(StreamProcessor::new()),
+            dynamic,
         }
     }
 
@@ -901,6 +969,7 @@ impl YoloVideoProcessorV2 {
             dropped_frames: 0,
             tracker: ObjectTracker::new(),
             line_counts: HashMap::new(),
+            last_roi_stats: Vec::new(),
             capture_rule_states: HashMap::new(),
             pending_captures: Vec::new(),
         };
@@ -912,6 +981,16 @@ impl YoloVideoProcessorV2 {
             eprintln!("[YOLO] Session {} recovered and registered, total sessions: {}",
                 session_id, registry.streams.len());
         }
+        // Recovered sessions don't know their original source_url; derive a
+        // short, human-readable label from the session id (UUIDs are
+        // unreadable on dashboards). Use the first 8 chars, which is enough
+        // to disambiguate a handful of recovered streams.
+        let recovered_label = if session_id.len() >= 8 {
+            format!("recovered-{}", &session_id[..8])
+        } else {
+            "recovered".to_string()
+        };
+        self.dynamic.upsert(session_id, &recovered_label);
 
         tracing::info!(
             session_id = %session_id,
@@ -950,13 +1029,26 @@ impl Extension for YoloVideoProcessorV2 {
                 "YOLO Video V2",
                 "2.0.0",
             )
-            .with_description("Real-time video stream processing with YOLOv11 for the NeoMind isolated runtime")
+            .with_description("Real-time video stream object detection with YOLOv11, RTSP/camera support, ROI analytics, line crossing, smart capture rules, and MJPEG streaming")
             .with_author("NeoMind Team")
+            .with_config_parameters(vec![
+                ParameterDefinition {
+                    name: "collect_interval".to_string(),
+                    display_name: "Metrics Collection Interval".to_string(),
+                    description: "Seconds between metric collections. 0 = disabled. Default 30.".to_string(),
+                    param_type: MetricDataType::Integer,
+                    required: false,
+                    default_value: Some(ParamMetricValue::Integer(30)),
+                    min: Some(0.0),
+                    max: Some(3600.0),
+                    options: Vec::new(),
+                },
+            ])
         })
     }
 
     fn metrics(&self) -> Vec<MetricDescriptor> {
-        vec![
+        let mut m = vec![
             MetricDescriptor {
                 name: "active_streams".to_string(),
                 display_name: "Active Streams".to_string(),
@@ -1002,7 +1094,67 @@ impl Extension for YoloVideoProcessorV2 {
                 max: None,
                 required: false,
             },
-        ]
+            MetricDescriptor {
+                name: "current_fps".to_string(),
+                display_name: "Current FPS".to_string(),
+                data_type: MetricDataType::Float,
+                unit: "fps".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "dropped_frames".to_string(),
+                display_name: "Dropped Frames".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "frames".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "detected_classes".to_string(),
+                display_name: "Detected Classes".to_string(),
+                data_type: MetricDataType::String,
+                unit: "json".to_string(),
+                min: None,
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "line_crossings".to_string(),
+                display_name: "Line Crossings".to_string(),
+                data_type: MetricDataType::String,
+                unit: "json".to_string(),
+                min: None,
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "roi_counts".to_string(),
+                display_name: "ROI Counts".to_string(),
+                data_type: MetricDataType::String,
+                unit: "json".to_string(),
+                min: None,
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "streams_status".to_string(),
+                display_name: "Streams Status".to_string(),
+                data_type: MetricDataType::String,
+                unit: "json".to_string(),
+                min: None,
+                max: None,
+                required: false,
+            },
+        ];
+        // Append per-stream descriptors (`fps.cam1`, …) for each active
+        // stream. The host's metrics collector refreshes this list via
+        // `GetDescriptor` IPC, so newly-started streams appear on the
+        // dashboard within `descriptor_ttl` (default 60s).
+        m.extend(self.dynamic.descriptors());
+        m
     }
 
     fn commands(&self) -> Vec<ExtensionCommand> {
@@ -1119,13 +1271,20 @@ impl Extension for YoloVideoProcessorV2 {
 
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let info = self.processor.start_stream(config).await?;
+                    let info = self.processor.start_stream(config.clone()).await?;
+                    // Register a dynamic metric instance for this stream so
+                    // `fps.<label>`, `dropped_frames.<label>`, … appear on
+                    // the dashboard. Same source_url → same label on reconnect
+                    // (see `derive_label`).
+                    let label = derive_label(&config.source_url);
+                    self.dynamic.upsert(&info.stream_id, &label);
                     Ok(serde_json::to_value(info)
                         .map_err(|e| ExtensionError::ExecutionFailed(e.to_string()))?)
                 }
 
                 #[cfg(target_arch = "wasm32")]
                 {
+                    let _ = &config; // silence unused on wasm
                     let info = StreamInfo {
                         stream_id: "wasm-mock-stream".to_string(),
                         stream_url: "/api/extensions/yolo-video-v2/stream/wasm-mock-stream".to_string(),
@@ -1145,6 +1304,11 @@ impl Extension for YoloVideoProcessorV2 {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     self.processor.stop_stream(stream_id)?;
+                    // Drop the dynamic metric instance so the dashboard
+                    // descriptor list eventually prunes it (next TTL
+                    // refresh). Historical data already stored for this
+                    // label remains queryable.
+                    self.dynamic.remove(stream_id);
                 }
 
                 Ok(json!({"success": true}))
@@ -1221,11 +1385,65 @@ impl Extension for YoloVideoProcessorV2 {
         // Aggregate from all active streams
         let mut total_frames: i64 = 0;
         let mut total_detections: i64 = 0;
+        let mut total_dropped: i64 = 0;
+        let mut max_fps: f64 = 0.0;
         let mut latest_capture_json = String::new();
-        for stream_arc in registry.streams.values() {
+        // Aggregated maps for JSON metrics (merge across streams)
+        let mut classes_map: HashMap<String, u32> = HashMap::new();
+        // line_id → (name, forward_total, backward_total)
+        let mut lines_agg: HashMap<String, (String, u64, u64)> = HashMap::new();
+        let mut rois_list: Vec<serde_json::Value> = Vec::new();
+        // Per-stream status entries (lets multi-instance dashboards disambiguate)
+        let mut streams_status: Vec<serde_json::Value> = Vec::new();
+        for (session_id, stream_arc) in &registry.streams {
             let s = stream_arc.lock();
             total_frames += s.frame_count as i64;
             total_detections += s.total_detections as i64;
+            total_dropped += s.dropped_frames as i64;
+            if (s.fps as f64) > max_fps { max_fps = s.fps as f64; }
+            // Refresh this stream's per-instance dynamic metric values
+            // so `self.dynamic.values(now)` below emits them.
+            // Skip sessions that haven't produced a frame yet — frame_count=0
+            // means warm-up (RTSP handshake in progress, first frame not
+            // arrived). Once any frame is produced, fps/dropped can dip to
+            // 0 legitimately and we keep emitting them as real signals.
+            if s.frame_count > 0 {
+                self.dynamic.set(session_id, "fps", ParamMetricValue::Float(s.fps as f64));
+                self.dynamic.set(session_id, "dropped_frames", ParamMetricValue::Integer(s.dropped_frames as i64));
+                self.dynamic.set(session_id, "frame_count", ParamMetricValue::Integer(s.frame_count as i64));
+                self.dynamic.set(session_id, "detection_count", ParamMetricValue::Integer(s.total_detections as i64));
+            }
+            streams_status.push(serde_json::json!({
+                "session_id": session_id,
+                "source_url": s._config.source_url,
+                "fps": s.fps as f64,
+                "dropped_frames": s.dropped_frames,
+                "frame_count": s.frame_count,
+                "total_detections": s.total_detections,
+            }));
+            // Merge per-class counts
+            for (label, count) in &s.detected_objects {
+                *classes_map.entry(label.clone()).or_insert(0) += count;
+            }
+            // Build line_id → name lookup from this stream's config, then merge counts
+            let line_names: HashMap<&String, &String> = s._config.lines.iter()
+                .map(|l| (&l.id, &l.name)).collect();
+            for (line_id, (fwd, bwd)) in &s.line_counts {
+                let name = line_names.get(line_id).map(|n| (*n).clone())
+                    .unwrap_or_else(|| line_id.clone());
+                let entry = lines_agg.entry(line_id.clone())
+                    .or_insert_with(|| (name.clone(), 0, 0));
+                entry.1 += fwd;
+                entry.2 += bwd;
+            }
+            // Collect ROI stats snapshots
+            for stat in &s.last_roi_stats {
+                rois_list.push(serde_json::json!({
+                    "id": stat.id,
+                    "name": stat.name,
+                    "count": stat.count,
+                }));
+            }
             // Take the latest capture event from any stream
             if latest_capture_json.is_empty() {
                 if let Some(evt) = s.pending_captures.last() {
@@ -1233,6 +1451,16 @@ impl Extension for YoloVideoProcessorV2 {
                 }
             }
         }
+
+        // Build line crossings JSON with explicit direction labels
+        let lines_list: Vec<serde_json::Value> = lines_agg.iter()
+            .map(|(id, (name, fwd, bwd))| serde_json::json!({
+                "id": id,
+                "name": name,
+                "forward": fwd,
+                "backward": bwd,
+            }))
+            .collect();
 
         let mut metrics = vec![
             ExtensionMetricValue {
@@ -1255,7 +1483,51 @@ impl Extension for YoloVideoProcessorV2 {
                 value: ParamMetricValue::Integer(registry.capture_events_count as i64),
                 timestamp: now,
             },
+            ExtensionMetricValue {
+                name: "current_fps".to_string(),
+                value: ParamMetricValue::Float(max_fps),
+                timestamp: now,
+            },
+            ExtensionMetricValue {
+                name: "dropped_frames".to_string(),
+                value: ParamMetricValue::Integer(total_dropped),
+                timestamp: now,
+            },
         ];
+
+        // JSON aggregate fields: only emit when there is content. Empty
+        // sessions (no streams, no ROI configured, no lines crossed, no
+        // detections) used to write the literal "[]" / "{}" string every
+        // 60s, polluting the time-series store with rows that carry no
+        // information. Guards mirror the `latest_capture` pattern below.
+        if !classes_map.is_empty() {
+            metrics.push(ExtensionMetricValue {
+                name: "detected_classes".to_string(),
+                value: ParamMetricValue::String(serde_json::to_string(&classes_map).unwrap_or_default()),
+                timestamp: now,
+            });
+        }
+        if !lines_list.is_empty() {
+            metrics.push(ExtensionMetricValue {
+                name: "line_crossings".to_string(),
+                value: ParamMetricValue::String(serde_json::to_string(&lines_list).unwrap_or_default()),
+                timestamp: now,
+            });
+        }
+        if !rois_list.is_empty() {
+            metrics.push(ExtensionMetricValue {
+                name: "roi_counts".to_string(),
+                value: ParamMetricValue::String(serde_json::to_string(&rois_list).unwrap_or_default()),
+                timestamp: now,
+            });
+        }
+        if !streams_status.is_empty() {
+            metrics.push(ExtensionMetricValue {
+                name: "streams_status".to_string(),
+                value: ParamMetricValue::String(serde_json::to_string(&streams_status).unwrap_or_default()),
+                timestamp: now,
+            });
+        }
 
         if !latest_capture_json.is_empty() {
             metrics.push(ExtensionMetricValue {
@@ -1264,6 +1536,12 @@ impl Extension for YoloVideoProcessorV2 {
                 timestamp: now,
             });
         }
+
+        // Append per-stream dynamic metric values (`fps.cam1`, …).
+        // Each active stream contributes one value per base metric it has
+        // set during the loop above. Stale instances (no current value)
+        // are omitted, so this is empty when no streams are active.
+        metrics.extend(self.dynamic.values(now));
 
         Ok(metrics)
     }
@@ -1324,6 +1602,7 @@ impl Extension for YoloVideoProcessorV2 {
             dropped_frames: 0,
             tracker: ObjectTracker::new(),
             line_counts: HashMap::new(),
+            last_roi_stats: Vec::new(),
             capture_rule_states: HashMap::new(),
             pending_captures: Vec::new(),
         };
@@ -1348,6 +1627,12 @@ impl Extension for YoloVideoProcessorV2 {
             
             registry.streams.insert(stream_id.clone(), Arc::new(Mutex::new(stream)));
         }
+
+        // Register this stream with the dynamic-metrics registry so its
+        // per-instance metrics (`fps.<label>`, …) appear in `metrics()`.
+        let label = derive_label(&source_url);
+        self.dynamic.upsert(&stream_id, &label);
+        tracing::debug!(session_id = %stream_id, label = %label, "Dynamic metrics registered");
 
         if is_network_stream {
             tracing::info!("Network stream session initialized: {} ({})", stream_id, source_url);
@@ -1430,8 +1715,14 @@ impl Extension for YoloVideoProcessorV2 {
             let mut reconnect_count = 0u32;
             const MAX_RECONNECT: u32 = 3;
 
+            // NOTE: send_push_output is non-blocking at the IPC layer (runner uses a
+            // bounded buffer + main mpsc try_send + watch "latest-wins"), so we can
+            // call it directly from the decode/detect loop without per-frame gating.
+            // The previous push_in_flight wrapper was redundant and dropped frames
+            // unnecessarily.
+
             // Open the stream via FFmpeg
-            let mut video_source = match crate::video_source::FfmpegVideoSource::new(&source_type) {
+            let mut video_source_opt: Option<crate::video_source::FfmpegVideoSource> = match crate::video_source::FfmpegVideoSource::new(&source_type) {
                 Ok(vs) => {
                     tracing::info!("[Stream {}] FFmpeg connected to: {}", sid, source_url);
                     let _ = send_push_output(
@@ -1439,7 +1730,7 @@ impl Extension for YoloVideoProcessorV2 {
                             "type": "status", "status": "streaming"
                         })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
                     );
-                    vs
+                    Some(vs)
                 }
                 Err(e) => {
                     tracing::error!("[Stream {}] FFmpeg failed to connect: {}", sid, e);
@@ -1464,8 +1755,57 @@ impl Extension for YoloVideoProcessorV2 {
 
                 let frame_start = std::time::Instant::now();
 
-                // Decode next frame from FFmpeg (blocking)
-                let frame_result = video_source.next_frame();
+                // Decode next frame via watchdog. RTSP `stimeout` should fire at ~5s on
+                // network stalls, but some server/pathology combinations can hold the
+                // underlying recv() much longer (TCP keepalive alive but no video data).
+                // If next_frame doesn't return within WATCHDOG_MS, we leak the worker
+                // thread (it'll die when it finally unblocks and the receiver is gone)
+                // and force a fresh source via FfmpegVideoSource::new.
+                const WATCHDOG_MS: u64 = 30_000;
+                let frame_result = {
+                    let mut src = match video_source_opt.take() {
+                        Some(s) => s,
+                        None => {
+                            tracing::error!("[Stream {}] Source missing (watchdog recovery failed previously?)", sid);
+                            break;
+                        }
+                    };
+                    let (tx, rx) = std::sync::mpsc::sync_channel::<(crate::video_source::FfmpegVideoSource, crate::video_source::FrameResult)>(1);
+                    let builder_tx = tx.clone();
+                    let _handle = std::thread::Builder::new()
+                        .name(format!("yolo-frame-{}", sid))
+                        .spawn(move || {
+                            let r = src.next_frame();
+                            let _ = builder_tx.send((src, r));
+                        });
+                    match rx.recv_timeout(std::time::Duration::from_millis(WATCHDOG_MS)) {
+                        Ok((src_back, r)) => {
+                            video_source_opt = Some(src_back);
+                            r
+                        }
+                        Err(_) => {
+                            tracing::error!(
+                                "[Stream {}] Watchdog: next_frame did not return in {}ms; forcing reconnect",
+                                sid, WATCHDOG_MS
+                            );
+                            // rx dropped → spawned thread's send will fail when it eventually runs.
+                            // Make a fresh source. If even that fails, fall through to Error path.
+                            drop(tx);
+                            match crate::video_source::FfmpegVideoSource::new(&source_type) {
+                                Ok(new_src) => {
+                                    video_source_opt = Some(new_src);
+                                    crate::video_source::FrameResult::Error(format!(
+                                        "watchdog timeout after {}ms", WATCHDOG_MS
+                                    ))
+                                }
+                                Err(e) => {
+                                    tracing::error!("[Stream {}] Watchdog reconnect failed: {}", sid, e);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                };
 
                 match frame_result {
                     FrameResult::Frame(video_frame) => {
@@ -1483,10 +1823,21 @@ impl Extension for YoloVideoProcessorV2 {
                         let (orig_width, orig_height) = (original_image.width(), original_image.height());
 
                         // Resize to 640x640 for YOLO inference
+                        // Triangle (bilinear) is ~5-10x faster than CatmullRom for real-time video
                         let inference_image = image::imageops::resize(
                             &original_image, 640, 640,
-                            image::imageops::FilterType::CatmullRom,
+                            image::imageops::FilterType::Triangle,
                         );
+
+                        // Output resolution: cap at 960x540 to accelerate draw/encode.
+                        // Keeps 16:9 aspect; if source is smaller, leaves it untouched.
+                        const OUT_W: u32 = 960;
+                        const OUT_H: u32 = 540;
+                        let (out_w, out_h) = if orig_width > OUT_W || orig_height > OUT_H {
+                            (OUT_W, OUT_H)
+                        } else {
+                            (orig_width, orig_height)
+                        };
 
                         // Run YOLO detection
                         let detections = match processor.get_detector() {
@@ -1494,8 +1845,10 @@ impl Extension for YoloVideoProcessorV2 {
                                 let dets = detector.detect(&inference_image, confidence, max_obj);
                                 eprintln!("[YOLO-Detect] raw detections: {}", dets.len());
                                 if !dets.is_empty() {
-                                    let scale_x = orig_width as f32 / 640.0;
-                                    let scale_y = orig_height as f32 / 640.0;
+                                    // Scale coords directly into output resolution
+                                    // (avoids full-res coordinate path downstream)
+                                    let scale_x = out_w as f32 / 640.0;
+                                    let scale_y = out_h as f32 / 640.0;
                                     let scaled: Vec<_> = dets.into_iter().map(|mut d| {
                                         d.bbox.x *= scale_x;
                                         d.bbox.y *= scale_y;
@@ -1511,17 +1864,24 @@ impl Extension for YoloVideoProcessorV2 {
                             _ => vec![],
                         };
 
-                        // Draw detections on original-resolution image
-                        let mut output_image = original_image;
+                        // Build output image at (out_w, out_h): downscale once, then draw + encode there.
+                        let mut output_image = if (out_w, out_h) == (orig_width, orig_height) {
+                            original_image
+                        } else {
+                            image::imageops::resize(
+                                &original_image, out_w, out_h,
+                                image::imageops::FilterType::Triangle,
+                            )
+                        };
                         if draw_boxes {
                             draw_detections(&mut output_image, &detections);
                         }
 
-                        // ROI counting and line crossing detection
+                        // ROI counting and line crossing detection (normalized against output dims)
                         let norm_dets: Vec<(f32, f32, &str)> = detections.iter()
                             .filter_map(|d| {
-                                let cx = (d.bbox.x + d.bbox.width / 2.0) / orig_width as f32;
-                                let cy = (d.bbox.y + d.bbox.height / 2.0) / orig_height as f32;
+                                let cx = (d.bbox.x + d.bbox.width / 2.0) / out_w as f32;
+                                let cy = (d.bbox.y + d.bbox.height / 2.0) / out_h as f32;
                                 if cx >= 0.0 && cx <= 1.0 && cy >= 0.0 && cy <= 1.0 {
                                     Some((cx, cy, d.label.as_str()))
                                 } else {
@@ -1544,13 +1904,15 @@ impl Extension for YoloVideoProcessorV2 {
                             let mut s = stream_arc.lock();
 
                             let roi_stats = count_roi_detections(&norm_dets, &s._config.rois);
+            s.last_roi_stats = roi_stats.clone();
+                            s.last_roi_stats = roi_stats.clone();
 
                             let lines_cfg = s._config.lines.clone();
                             let line_stats = if !lines_cfg.is_empty() {
                                 let track_dets: Vec<(f32, f32, u32, &str)> = detections.iter()
                                     .filter_map(|d| {
-                                        let cx = (d.bbox.x + d.bbox.width / 2.0) / orig_width as f32;
-                                        let cy = (d.bbox.y + d.bbox.height / 2.0) / orig_height as f32;
+                                        let cx = (d.bbox.x + d.bbox.width / 2.0) / out_w as f32;
+                                        let cy = (d.bbox.y + d.bbox.height / 2.0) / out_h as f32;
                                         Some((cx, cy, d.class_id as u32, d.label.as_str()))
                                     })
                                     .collect();
@@ -1611,8 +1973,8 @@ impl Extension for YoloVideoProcessorV2 {
                             )
                         };
 
-                        // Encode to JPEG
-                        let jpeg_data = encode_jpeg(&output_image, 75);
+                        // Encode to JPEG — quality 65 is plenty for streaming preview and faster than 75/85
+                        let jpeg_data = encode_jpeg(&output_image, 65);
 
                         // Update stream statistics (quick lock)
                         {
@@ -1636,7 +1998,10 @@ impl Extension for YoloVideoProcessorV2 {
                             registry.capture_events_count += capture_events.len() as u64;
                         }
 
-                        // Push to frontend via FFI
+                        // Push to frontend via FFI. Fire-and-forget on a worker thread so a slow
+                        // IPC path cannot stall the decode/detect loop. If the previous push is
+                        // still in flight, drop this frame (counter still increments so the
+                        // frontend can detect drops via sequence gaps).
                         let output = PushOutputMessage::image_jpeg(&sid, sequence, jpeg_data)
                             .with_metadata(serde_json::json!({
                                 "detections": detections,
@@ -1649,14 +2014,10 @@ impl Extension for YoloVideoProcessorV2 {
                             eprintln!("[YOLO-Push] frame {} detections={} size={}KB", sequence, detections.len(), output.data.len() / 1024);
                         }
 
-                        match send_push_output(&output) {
-                            Ok(_) => sequence += 1,
-                            Err(e) => {
-                                eprintln!("[YOLO-Push] send_push_output FAILED: {}", e);
-                                tracing::warn!("[Stream {}] Push output failed: {}", sid, e);
-                                break;
-                            }
+                        if let Err(e) = send_push_output(&output) {
+                            tracing::warn!("[Stream {}] send_push_output failed: {}", sid, e);
                         }
+                        sequence += 1;
 
                         // Frame rate throttling
                         let elapsed = frame_start.elapsed();
@@ -1668,23 +2029,110 @@ impl Extension for YoloVideoProcessorV2 {
                         std::thread::sleep(std::time::Duration::from_millis(5));
                     }
                     FrameResult::EndOfStream => {
-                        // For local files (MP4), reconnect to loop playback
-                        let is_file = source_url.starts_with('/') || source_url.ends_with(".mp4")
-                            || source_url.ends_with(".avi") || source_url.ends_with(".mkv")
-                            || source_url.ends_with(".mov");
+                        // Use source_type (authoritative) for the File decision.
+                        // parse_source_url maps http(s):// URLs to SourceType::File,
+                        // so HTTP video files take the seek-based loop path here, not
+                        // the network-reconnect path. This matters because reconnect()
+                        // re-downloads the whole HTTP resource on every loop (15-30s),
+                        // while seek_to_start() reuses the open context (milliseconds).
+                        let is_file = matches!(source_type, SourceType::File { .. });
+                        let is_network = source_url.starts_with("rtsp://")
+                            || source_url.starts_with("rtmp://")
+                            || source_url.starts_with("http://")
+                            || source_url.starts_with("https://");
                         if is_file {
-                            tracing::info!("[Stream {}] File ended, reconnecting to loop", sid);
-                            match video_source.reconnect() {
+                            // Seamless seek-based loop: try seek first (fast), fall
+                            // back to full reopen if the source doesn't support seeking.
+                            let looped = if let Some(src) = video_source_opt.as_mut() {
+                                match src.seek_to_start() {
+                                    Ok(()) => {
+                                        tracing::info!("[Stream {}] File looped via seek", sid);
+                                        true
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "[Stream {}] seek_to_start failed ({}), falling back to reconnect",
+                                            sid, e
+                                        );
+                                        match src.reconnect() {
+                                            Ok(()) => {
+                                                tracing::info!("[Stream {}] File looped via reconnect", sid);
+                                                true
+                                            }
+                                            Err(e) => {
+                                                tracing::error!("[Stream {}] Reconnect failed: {}", sid, e);
+                                                false
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                tracing::error!("[Stream {}] Source missing on EOF", sid);
+                                false
+                            };
+                            if looped {
+                                let _ = send_push_output(
+                                    &PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                        "type": "status", "status": "looping"
+                                    })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                                );
+                                continue;
+                            }
+                            // seek + reconnect both failed — exit the loop
+                            break;
+                        } else if is_network {
+                            // RTSP/RTMP/HLS stream hit EndOfStream: in practice this means a
+                            // network stall (FFmpeg's stimeout=5s fired) or the server closed
+                            // the connection. The old code would `break` here, leaving the
+                            // frontend frozen on the last frame forever. Treat it like a
+                            // transient Error and retry with exponential backoff up to
+                            // MAX_RECONNECT times. Each successful frame resets the counter.
+                            tracing::warn!(
+                                "[Stream {}] Network stream ended (likely stall/disconnect), attempting reconnect",
+                                sid
+                            );
+                            reconnect_count += 1;
+                            if reconnect_count > MAX_RECONNECT {
+                                tracing::error!(
+                                    "[Stream {}] Max reconnect attempts reached after stream end",
+                                    sid
+                                );
+                                let _ = send_push_output(
+                                    &PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                        "type": "error",
+                                        "message": format!(
+                                            "Stream ended after {} reconnect attempts",
+                                            MAX_RECONNECT
+                                        )
+                                    })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                                );
+                                break;
+                            }
+                            let backoff = std::time::Duration::from_secs(1 << (reconnect_count - 1));
+                            tracing::info!(
+                                "[Stream {}] Reconnecting in {:?} ({}/{})",
+                                sid, backoff, reconnect_count, MAX_RECONNECT
+                            );
+                            let _ = send_push_output(
+                                &PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                    "type": "status", "status": "reconnecting"
+                                })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                            );
+                            std::thread::sleep(backoff);
+                            match video_source_opt.as_mut().map(|s| s.reconnect()).unwrap_or_else(|| Err("source lost".into())) {
                                 Ok(()) => {
+                                    tracing::info!("[Stream {}] Reconnected after stream end", sid);
                                     let _ = send_push_output(
                                         &PushOutputMessage::json(&sid, sequence, serde_json::json!({
-                                            "type": "status", "status": "looping"
+                                            "type": "status", "status": "streaming"
                                         })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
                                     );
                                     continue;
                                 }
                                 Err(e) => {
-                                    tracing::error!("[Stream {}] Reconnect failed: {}", sid, e);
+                                    tracing::error!("[Stream {}] Reconnect after stream end failed: {}", sid, e);
+                                    // loop and try again next iteration with longer backoff
+                                    continue;
                                 }
                             }
                         }
@@ -1719,7 +2167,7 @@ impl Extension for YoloVideoProcessorV2 {
                         );
                         std::thread::sleep(backoff);
 
-                        match video_source.reconnect() {
+                        match video_source_opt.as_mut().map(|s| s.reconnect()).unwrap_or_else(|| Err("source lost".into())) {
                             Ok(()) => {
                                 tracing::info!("[Stream {}] Reconnected", sid);
                                 let _ = send_push_output(
@@ -1930,11 +2378,12 @@ impl Extension for YoloVideoProcessorV2 {
 
         // ✨ OPTIMIZATION: Resize in-place for inference to avoid extra allocation
         // We'll scale detection coordinates back to original size later
+        // Triangle (bilinear) is ~5-10x faster than CatmullRom for real-time video
         let inference_image = image::imageops::resize(
             &original_image,
             640,
             640,
-            image::imageops::FilterType::CatmullRom
+            image::imageops::FilterType::Triangle
         );
 
         // Get configuration from stream
@@ -2034,6 +2483,7 @@ impl Extension for YoloVideoProcessorV2 {
             }
 
             let roi_stats = count_roi_detections(&norm_dets, &s._config.rois);
+            s.last_roi_stats = roi_stats.clone();
 
             let lines_cfg = s._config.lines.clone();
             let line_stats = if !lines_cfg.is_empty() {
@@ -2188,6 +2638,11 @@ impl Extension for YoloVideoProcessorV2 {
                 SessionStats::default()
             }
         };
+
+        // Drop the per-instance dynamic metrics so `fps.<label>` etc.
+        // disappear from `/api/extensions`. Historical data already
+        // stored by the host is unaffected.
+        self.dynamic.remove(&session_id_owned);
 
         tracing::info!("YOLO session closed: {}", session_id);
         eprintln!("[YOLO] Session closed: {}", session_id);
@@ -2766,7 +3221,7 @@ mod tests {
         assert_eq!(meta.name, "YOLO Video V2");
         assert_eq!(
             meta.description.as_deref(),
-            Some("Real-time video stream processing with YOLOv11 for the NeoMind isolated runtime")
+            Some("Real-time video stream object detection with YOLOv11, RTSP/camera support, ROI analytics, line crossing, smart capture rules, and MJPEG streaming")
         );
     }
 
@@ -2793,14 +3248,214 @@ mod tests {
     fn test_extension_metrics() {
         let ext = YoloVideoProcessorV2::new();
         let metrics = ext.metrics();
-        assert_eq!(metrics.len(), 5);
+        // 11 static descriptors only — the dynamic registry emits zero
+        // descriptors when no stream instances are registered (base
+        // descriptors were dropped because they collide with the static
+        // aggregates of the same name).
+        assert_eq!(metrics.len(), 11);
+        // Required static descriptors still present.
+        let names: Vec<&str> = metrics.iter().map(|m| m.name.as_str()).collect();
+        for required in [
+            "active_streams",
+            "total_frames_processed",
+            "total_detections",
+            "current_fps",
+            "dropped_frames",
+        ] {
+            assert!(names.contains(&required), "missing metric {}", required);
+        }
+    }
+
+    /// Helper: build a minimal `ActiveStream` with the given `frame_count`.
+    /// All other fields default to empty/zero — just enough to drive
+    /// `produce_metrics` without touching real video I/O.
+    fn make_fake_stream(session_id: &str, frame_count: u64) -> ActiveStream {
+        ActiveStream {
+            _id: session_id.to_string(),
+            _config: StreamConfig::default(),
+            started_at: Instant::now(),
+            frame_count,
+            total_detections: 0,
+            last_frame: None,
+            last_detections: Vec::new(),
+            last_frame_time: None,
+            fps: 0.0,
+            running: true,
+            detected_objects: HashMap::new(),
+            push_task: None,
+            last_process_time: None,
+            dropped_frames: 0,
+            tracker: ObjectTracker::new(),
+            line_counts: HashMap::new(),
+            last_roi_stats: Vec::new(),
+            capture_rule_states: HashMap::new(),
+            pending_captures: Vec::new(),
+        }
+    }
+
+    /// Empty state (no sessions, no detections, no ROI/lines): the 4 JSON
+    /// aggregate metrics must NOT be emitted. Previously they were written
+    /// as literal `"[]"` strings every collect cycle, polluting the
+    /// time-series store with rows that carry no information.
+    #[test]
+    fn test_produce_metrics_skips_empty_aggregates() {
+        let ext = YoloVideoProcessorV2::new();
+        // Make sure the global registry is empty for this test. Other
+        // tests in this module don't touch the registry, but defensive
+        // clearing guards against future additions.
+        {
+            let mut registry = get_registry().lock();
+            registry.streams.clear();
+            registry.capture_events_count = 0;
+        }
+        let metrics = ext.produce_metrics().expect("produce_metrics ok");
+        let names: Vec<&str> = metrics.iter().map(|m| m.name.as_str()).collect();
+        for skipped in [
+            "detected_classes",
+            "line_crossings",
+            "roi_counts",
+            "streams_status",
+            "latest_capture",
+        ] {
+            assert!(
+                !names.contains(&skipped),
+                "empty aggregate should be skipped, but found {}",
+                skipped
+            );
+        }
+        // Base scalar metrics are still emitted unconditionally.
+        for required in [
+            "active_streams",
+            "total_frames_processed",
+            "total_detections",
+            "current_fps",
+            "dropped_frames",
+            "total_roi_alerts",
+        ] {
+            assert!(names.contains(&required), "missing scalar {}", required);
+        }
+    }
+
+    /// Warm-up session: a session registered but no frame produced yet
+    /// (`frame_count == 0`). Its per-instance dynamic values
+    /// (`fps.{label}`, etc.) must NOT be emitted — they read as 0 but
+    /// represent "unknown" while RTSP handshake / first decode is pending.
+    /// Once `frame_count >= 1`, dynamic values resume (a real fps of 0
+    /// after the first frame is a genuine signal we want to keep).
+    #[test]
+    fn test_produce_metrics_skips_warmup_session_dynamic() {
+        let ext = YoloVideoProcessorV2::new();
+        let session_id = "warmup-test-session".to_string();
+        // Insert a warm-up session (frame_count=0) and register its label
+        // so `dynamic.values()` would otherwise emit it.
+        {
+            let mut registry = get_registry().lock();
+            registry.streams.clear();
+            registry.streams.insert(
+                session_id.clone(),
+                Arc::new(Mutex::new(make_fake_stream(&session_id, 0))),
+            );
+        }
+        ext.dynamic.upsert(&session_id, "warmuplabel");
+        // Note: we do NOT pre-seed `dynamic.set(...)` here. In real
+        // operation, `dynamic.set` for these per-stream metrics is only
+        // ever called from inside `produce_metrics`'s loop. The warm-up
+        // guard (`if s.frame_count > 0`) therefore prevents the value
+        // from ever being written.
+
+        // Warm-up: dynamic values suppressed.
+        let warm = ext.produce_metrics().expect("produce_metrics ok");
+        let warm_names: Vec<&str> = warm.iter().map(|m| m.name.as_str()).collect();
+        assert!(
+            !warm_names.contains(&"fps.warmuplabel"),
+            "warm-up session must not emit fps.{{label}}"
+        );
+        // streams_status is also suppressed for this warm-up session
+        // because the only stream has no detections/ROI/lines and — wait,
+        // streams_status aggregates ALL registered streams regardless of
+        // frame_count. So with one warm-up session, streams_status SHOULD
+        // be emitted (it's non-empty). Verify that scalar aggregates
+        // still see the session:
+        let active_streams_metric = warm.iter().find(|m| m.name == "active_streams");
+        assert!(active_streams_metric.is_some(), "active_streams scalar still emitted");
+        // streams_status present because there IS a registered stream.
+        assert!(
+            warm_names.contains(&"streams_status"),
+            "streams_status emitted when at least one stream is registered"
+        );
+
+        // Promote the session past warm-up: bump frame_count to 1.
+        {
+            let registry = get_registry().lock();
+            if let Some(stream_arc) = registry.streams.get(&session_id) {
+                let mut s = stream_arc.lock();
+                s.frame_count = 1;
+                s.fps = 15.0;
+            }
+        }
+        let live = ext.produce_metrics().expect("produce_metrics ok");
+        let live_names: Vec<&str> = live.iter().map(|m| m.name.as_str()).collect();
+        assert!(
+            live_names.contains(&"fps.warmuplabel"),
+            "after first frame, fps.{{label}} should be emitted"
+        );
+
+        // Cleanup so we don't leak state into other tests.
+        {
+            let mut registry = get_registry().lock();
+            registry.streams.clear();
+        }
+        ext.dynamic.remove(&session_id);
+    }
+
+    #[test]
+    fn test_dynamic_metrics_per_stream() {
+        let ext = YoloVideoProcessorV2::new();
+        // No instances → no per-instance descriptors or values.
+        assert_eq!(ext.dynamic.values(0).len(), 0);
+        assert!(ext.dynamic.descriptors().is_empty());
+
+        ext.dynamic.upsert("s1", "cam1");
+        ext.dynamic.upsert("s2", "cam2");
+        ext.dynamic.set("s1", "fps", ParamMetricValue::Float(29.97));
+        ext.dynamic.set("s2", "fps", ParamMetricValue::Float(24.0));
+
+        let descriptors = ext.metrics();
+        let has_cam1 = descriptors.iter().any(|m| m.name == "fps.cam1");
+        let has_cam2 = descriptors.iter().any(|m| m.name == "fps.cam2");
+        assert!(has_cam1 && has_cam2);
+
+        let values = ext.dynamic.values(1_000);
+        assert_eq!(values.len(), 2);
+        // Removing an instance drops its descriptors + values.
+        ext.dynamic.remove("s1");
+        let after = ext.metrics();
+        assert!(!after.iter().any(|m| m.name == "fps.cam1"));
+    }
+
+    #[test]
+    fn test_derive_label() {
+        assert_eq!(derive_label("rtsp://192.168.1.10/cam1"), "cam1");
+        assert_eq!(derive_label("rtsp://host/path/cam2/"), "cam2");
+        assert_eq!(derive_label("camera://0"), "0");
+        assert_eq!(derive_label(""), "stream");
+        // Same input → same output (stability across reconnects).
+        let l1 = derive_label("rtsp://example.com/front-door");
+        let l2 = derive_label("rtsp://example.com/front-door");
+        assert_eq!(l1, l2);
+        assert_eq!(l1, "front-door");
+        // Edge cases: query string, trailing slash after port, host-only.
+        assert_eq!(derive_label("rtsp://host/cam3?token=abc"), "cam3");
+        assert_eq!(derive_label("rtsp://host:8554/"), "host:8554");
+        // IP-only URLs produce a host:port-ish label (dots sanitized).
+        assert_eq!(derive_label("rtsp://10.0.0.5:554"), "10_0_0_5:554");
     }
 
     #[test]
     fn test_extension_commands() {
         let ext = YoloVideoProcessorV2::new();
         let commands = ext.commands();
-        assert_eq!(commands.len(), 4);
+        assert_eq!(commands.len(), 5);
         assert_eq!(commands[0].name, "start_stream");
     }
 

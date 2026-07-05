@@ -139,20 +139,27 @@ const STYLES = `
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px;
+  padding: 3px 8px;
   border-bottom: 1px solid var(--yolo-border);
 }
 .yolo-title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   color: var(--yolo-fg);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
+  line-height: 1;
+}
+.yolo-title-cluster {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 .yolo-title-icon {
-  width: 16px;
-  height: 16px;
+  width: 12px;
+  height: 12px;
   color: var(--yolo-accent);
 }
 .yolo-controls {
@@ -186,17 +193,26 @@ const STYLES = `
   50% { opacity: 0.3; }
 }
 .yolo-btn {
-  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 10px;
   font-size: 11px;
   font-weight: 500;
   color: var(--yolo-on-primary);
   background: var(--yolo-accent);
   border: none;
-  border-radius: 4px;
+  border-radius: 5px;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: filter .15s ease, transform .05s ease;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
-.yolo-btn:hover { opacity: 0.9; }
+.yolo-btn:hover { filter: brightness(1.08); }
+.yolo-btn:active { transform: scale(0.97); }
+.yolo-btn:focus-visible { outline: 2px solid var(--yolo-accent); outline-offset: 2px; }
 .yolo-btn-stop {
   background: var(--yolo-error);
 }
@@ -266,55 +282,46 @@ const STYLES = `
   to { transform: rotate(360deg); }
 }
 
-/* Stats Bar */
-.yolo-stats {
-  display: flex;
+/* Floating video overlays — glass pills sitting on the video, freeing bottom layout space */
+.yolo-overlay-stats {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 6px 10px;
-  border-top: 1px solid var(--yolo-border);
-  gap: 8px;
+  gap: 5px;
+  padding: 4px 8px;
   font-size: 10px;
+  color: rgba(255,255,255,0.85);
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 999px;
+  pointer-events: none;
 }
-.yolo-stat-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.yolo-stat {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  color: var(--yolo-muted);
-}
-.yolo-stat-icon {
-  width: 12px;
-  height: 12px;
-  flex-shrink: 0;
-}
-.yolo-stat-val {
-  font-weight: 600;
-  color: var(--yolo-fg);
-}
+.yolo-overlay-stat-icon { width: 11px; height: 11px; opacity: 0.7; flex-shrink: 0; }
+.yolo-overlay-stat-val { font-weight: 600; color: #fff; }
+.yolo-overlay-sep { width: 1px; height: 9px; background: rgba(255,255,255,0.18); display: inline-block; }
 
-/* Detections */
-.yolo-detections {
-  padding: 6px 10px;
-  border-top: 1px solid var(--yolo-border);
-  max-height: 60px;
-  overflow-y: auto;
-}
-.yolo-detections-title {
-  font-size: 9px;
-  color: var(--yolo-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  margin-bottom: 4px;
-}
-.yolo-detections-list {
+.yolo-overlay-detections {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+  justify-content: flex-end;
+  max-width: 65%;
+  pointer-events: none;
+}
+.yolo-overlay-detections .yolo-detection-tag {
+  font-size: 9px;
+  padding: 1px 5px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 .yolo-detection-tag {
   display: inline-flex;
@@ -367,12 +374,12 @@ const STYLES = `
   background: rgba(255,255,255,0.1);
 }
 
-/* Drawing Toolbar */
+/* Drawing Toolbar — aligned with NeoMind button system */
 .yolo-draw-toolbar {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
+  gap: 6px;
+  padding: 6px 10px;
   border-top: 1px solid var(--yolo-border);
   border-bottom: 1px solid var(--yolo-border);
   background: var(--yolo-card);
@@ -381,57 +388,254 @@ const STYLES = `
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  width: 26px;
-  height: 26px;
+  gap: 4px;
+  width: 22px;
+  height: 22px;
   padding: 0;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--yolo-muted);
-  background: var(--yolo-card);
+  background: transparent;
   border: 1px solid var(--yolo-border);
-  border-radius: 4px;
+  border-radius: 5px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: color .15s ease, background-color .15s ease, border-color .15s ease, transform .05s ease;
   white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
 .yolo-draw-btn:hover {
   color: var(--yolo-fg);
+  background: var(--yolo-accent-soft, rgba(59,130,246,0.08));
   border-color: var(--yolo-accent);
+}
+.yolo-draw-btn:active {
+  transform: scale(0.96);
+}
+.yolo-draw-btn:focus-visible {
+  outline: 2px solid var(--yolo-accent);
+  outline-offset: 1px;
 }
 .yolo-draw-btn.yolo-draw-active {
   color: var(--yolo-on-primary);
   background: var(--yolo-accent);
   border-color: var(--yolo-accent);
 }
+.yolo-draw-btn.yolo-draw-active:hover {
+  background: var(--yolo-accent-hover, var(--yolo-accent));
+  filter: brightness(1.08);
+}
+.yolo-draw-btn.yolo-draw-success {
+  color: var(--yolo-on-primary);
+  background: var(--yolo-success, #22c55e);
+  border-color: var(--yolo-success, #22c55e);
+}
+.yolo-draw-btn.yolo-draw-success:hover {
+  filter: brightness(1.08);
+}
 .yolo-draw-btn.yolo-draw-danger {
   color: var(--yolo-error);
-  border-color: rgba(239,68,68,0.3);
+  border-color: var(--yolo-error-border, rgba(239,68,68,0.3));
+  background: transparent;
 }
 .yolo-draw-btn.yolo-draw-danger:hover {
   background: var(--yolo-error);
-  color: white;
+  color: var(--yolo-on-primary);
+  border-color: var(--yolo-error);
+}
+.yolo-draw-divider {
+  width: 1px;
+  height: 14px;
+  background: var(--yolo-border);
+  margin: 0 3px;
+  flex-shrink: 0;
 }
 
-/* ROI / Line List */
-/* Regions & Lines Panel — grid card layout */
-.yolo-regions {
-  padding: 6px 8px;
-  border-top: 1px solid var(--yolo-border);
+/* Floating regions widget — chip (collapsed) / popover panel (expanded).
+   Sits over the video bottom-left so it consumes zero layout height. */
+.yolo-regions-float {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 5;
+  max-width: calc(100% - 16px);
+}
+.yolo-regions-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  font-size: 10px;
+  color: rgba(255,255,255,0.9);
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color .15s ease, transform .05s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.yolo-regions-chip:hover { background: rgba(0,0,0,0.75); }
+.yolo-regions-chip:active { transform: scale(0.97); }
+.yolo-regions-chip b { color: #fff; font-weight: 700; }
+.yolo-regions-chip-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--yolo-success, #22c55e);
+}
+.yolo-regions-chip-sep { opacity: 0.4; }
+.yolo-regions-chip-arrow { opacity: 0.5; font-size: 9px; margin-left: 1px; }
+
+.yolo-regions-panel {
+  background: var(--yolo-card);
+  border: 1px solid var(--yolo-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  overflow: hidden;
+  min-width: 220px;
+  max-width: 360px;
+  animation: yolo-panel-in .12s ease-out;
+}
+@keyframes yolo-panel-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.yolo-regions-panel::-webkit-scrollbar { width: 4px; }
+.yolo-regions-panel::-webkit-scrollbar-thumb { background: var(--yolo-border); border-radius: 2px; }
+.yolo-regions-panel-header {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 160px;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--yolo-border);
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--yolo-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  transition: color .15s ease;
+}
+.yolo-regions-panel-header:hover { color: var(--yolo-fg); }
+.yolo-regions-summary { display: inline-flex; align-items: center; gap: 4px; }
+.yolo-regions-count { color: var(--yolo-fg); font-weight: 600; }
+.yolo-regions-dot { opacity: 0.5; }
+.yolo-regions-toggle { font-size: 9px; opacity: 0.6; }
+
+/* Compact region pill strip — horizontal wrap, minimal height */
+.yolo-region-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 5px 6px;
+  max-height: 96px;   /* ~3 rows max, then scroll */
   overflow-y: auto;
 }
-.yolo-regions::-webkit-scrollbar { width: 3px; }
-.yolo-regions::-webkit-scrollbar-thumb { background: var(--yolo-border); border-radius: 2px; }
+.yolo-region-pills::-webkit-scrollbar { width: 3px; }
+.yolo-region-pills::-webkit-scrollbar-thumb { background: var(--yolo-border); border-radius: 2px; }
 
-/* Grid for cards */
-.yolo-section-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 6px;
+.yolo-region-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 4px 1px 6px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--yolo-fg);
+  background: var(--yolo-card);
+  border: 1px solid var(--yolo-border);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.yolo-region-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.yolo-region-pill-name {
+  font-weight: 600;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.yolo-region-pill-name-editable {
+  cursor: text;
+  border-radius: 3px;
+  padding: 0 1px;
+  transition: background-color .12s ease;
+}
+.yolo-region-pill-name-editable:hover {
+  background: rgba(0,0,0,0.06);
+  outline: 1px dashed var(--yolo-border);
+}
+.yolo-region-pill-input {
+  font: inherit;
+  font-weight: 600;
+  font-size: 10px;
+  color: var(--yolo-fg);
+  background: var(--yolo-bg, #fff);
+  border: 1px solid var(--yolo-accent);
+  border-radius: 3px;
+  padding: 0 3px;
+  outline: none;
+  width: 90px;
+  height: 16px;
+  line-height: 1;
+}
+.yolo-region-pill-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 13px;
+  padding: 0 3px;
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 7px;
+  line-height: 1;
+}
+.yolo-region-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--yolo-muted);
+  border-radius: 50%;
+  transition: color .15s, background-color .15s, opacity .12s;
+  /* Hidden by default; revealed on pill hover/focus to avoid covering name/counts. */
+  opacity: 0;
+  pointer-events: none;
+}
+.yolo-region-pill:hover .yolo-region-pill-btn,
+.yolo-region-pill:focus-within .yolo-region-pill-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+.yolo-region-pill-btn:hover { color: var(--yolo-error); background: rgba(239,68,68,0.1); }
+.yolo-region-pill-edit:hover { color: var(--yolo-accent) !important; background: rgba(59,130,246,0.1) !important; }
+/* When rules are being edited, keep buttons visible so toggle state is clear. */
+.yolo-region-pill[data-rules-open="true"] .yolo-region-pill-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+.yolo-region-pill-rule {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 3px 0 5px;
+  font-size: 9px;
+  color: var(--yolo-muted);
+  background: var(--yolo-bg, rgba(0,0,0,0.04));
+  border-radius: 7px;
+  margin-left: 2px;
 }
 
 /* Individual card */
@@ -758,6 +962,7 @@ const ICONS: Record<string, string> = {
   plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
   edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
   x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+  close: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
 }
 
 const Icon = ({ name, className = '', style }: { name: string; className?: string; style?: React.CSSProperties }) => (
@@ -854,6 +1059,9 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
   const [captureEvents, setCaptureEvents] = useState<CaptureEvent[]>([])
   const [editingRuleRoiId, setEditingRuleRoiId] = useState<string | null>(null)  // which ROI is being configured
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)  // capture image lightbox
+  const [regionsCollapsed, setRegionsCollapsed] = useState(true)  // ROI/Lines panel collapsed by default
+  const [editingNameId, setEditingNameId] = useState<string | null>(null)  // which region name is being edited
+  const [nameDraft, setNameDraft] = useState('')
 
   // Determine mode based on source URL
   const isNetworkStream = sourceUrl.startsWith('rtsp://')
@@ -893,6 +1101,23 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
   // Pending frame data for rAF loop — bypasses React render per frame
   const pendingFrameRef = useRef<string | null>(null)
   const rafIdRef = useRef<number>(0)
+  // Tracks whether the loading overlay has already been dismissed by the
+  // first received frame. Subsequent frames are drawn via rAF on canvas —
+  // they don't need a React re-render, so we skip setFrameData() after the
+  // first one to keep commit frequency low during streaming.
+  const hasFirstFrameRef = useRef(false)
+
+  // ── Auto-reconnect refs ──────────────────────────────────────────────
+  // userWantsStreamRef: true when the user clicked Start, false on Stop /
+  // unmount. Drives whether onclose should schedule a reconnect.
+  const userWantsStreamRef = useRef(false)
+  // pausedForVisibilityRef: true while the tab is hidden. Prevents onclose
+  // from immediately scheduling a reconnect (which would race with the
+  // browser throttling timers); the visibility handler reconnects on return.
+  const pausedForVisibilityRef = useRef(false)
+  // Reconnect backoff bookkeeping
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const reconnectAttemptsRef = useRef(0)
 
   // Config update: debounced hot-update via REST API (no stream restart)
   const configUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -925,17 +1150,33 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
   // Hot-update ROI/Line config on running stream (no restart)
   const sendConfigUpdate = useCallback(async () => {
     const sessionId = sessionIdRef.current
-    if (!sessionId) return
+    if (!sessionId) {
+      console.warn('[YOLO] Cannot update config: no active session (start the stream first)')
+      return
+    }
+    // The command endpoint requires auth — without this the request 401s
+    // silently and ROI/line config never reaches the backend, so detection
+    // stats never update. Mirror the WS auth scheme (token from storage).
+    const token = localStorage.getItem('neomind_token')
+      || sessionStorage.getItem('neomind_token_session')
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (token) headers['Authorization'] = `Bearer ${token}`
     try {
-      await fetch(`${getApiBaseUrl()}/api/extensions/${extensionId}/command`, {
+      const resp = await fetch(`${getApiBaseUrl()}/api/extensions/${extensionId}/command`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           command: 'update_stream_config',
           args: { stream_id: sessionId, rois: roisRef.current, lines: linesRef.current, capture_rules: captureRulesRef.current },
         }),
       })
-    } catch (e) { console.warn('[YOLO] Config update failed:', e) }
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => '')
+        console.warn(`[YOLO] Config update failed: HTTP ${resp.status}`, body)
+      } else {
+        console.log(`[YOLO] Config updated: ${roisRef.current.length} ROI(s), ${linesRef.current.length} line(s)`)
+      }
+    } catch (e) { console.warn('[YOLO] Config update error:', e) }
   }, [getApiBaseUrl, extensionId])
 
   // Debounced: coalesce rapid clicks into one REST call
@@ -1078,6 +1319,8 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
     ws.binaryType = 'arraybuffer'
 
     ws.onopen = () => {
+      // Connection established — reset reconnect backoff.
+      reconnectAttemptsRef.current = 0
       const initMsg = {
         type: 'init',
         config: {
@@ -1144,7 +1387,13 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
             // Image frame from backend stream
             if (msg.data && msg.data_type === 'image/jpeg') {
               setStreamStatus('streaming')
-              setFrameData(msg.data)  // Update so overlay hides
+              // setFrameData only needs to fire once to dismiss the loading
+              // overlay; further frames are rendered directly to canvas via
+              // rAF, so we skip the React re-render to keep commit rate low.
+              if (!hasFirstFrameRef.current) {
+                hasFirstFrameRef.current = true
+                setFrameData(msg.data)
+              }
               pendingFrameRef.current = msg.data  // rAF loop handles decode+draw
               updateFps()
               if (msg.metadata?.detections) {
@@ -1178,7 +1427,10 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
               } else if (isWaiting) {
                 // No frame yet from FFmpeg, keep waiting
               } else if (typeof msg.data === 'string' && msg.data.length > 0) {
-                setFrameData(msg.data)  // Update so overlay hides
+                if (!hasFirstFrameRef.current) {
+                  hasFirstFrameRef.current = true
+                  setFrameData(msg.data)  // dismiss loading overlay
+                }
                 pendingFrameRef.current = msg.data  // rAF loop handles decode+draw
                 updateFps()
                 if (msg.metadata?.frame_count) {
@@ -1229,32 +1481,105 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
       // Ignore errors from manual close - onclose will handle cleanup
       if (isManualCloseRef.current) return
       console.error('[YOLO] WebSocket error:', e)
-      setError('WebSocket connection error')
+      // Some failure modes (SSL error, connection refused, host unreachable)
+      // fire onerror but never deliver onclose — the WS ends up in CLOSING
+      // forever. If onclose hasn't run shortly, force a reconnect ourselves
+      // so the stream isn't stuck dead.
+      const wsAtError = wsRef.current
+      if (wsAtError) {
+        const ticket = reconnectAttemptsRef.current
+        setTimeout(() => {
+          // Only act if the socket is still the one that errored AND onclose
+          // hasn't already handled things (ticket unchanged + ws still stuck).
+          if (
+            wsRef.current === wsAtError &&
+            wsRef.current &&
+            (wsRef.current.readyState === WebSocket.CLOSING ||
+             wsRef.current.readyState === WebSocket.CLOSED)
+          ) {
+            console.warn('[YOLO] onclose not fired after onerror — forcing reconnect')
+            // Synthesize the close: detach and trigger reconnect path.
+            wsRef.current = null
+            sessionIdRef.current = null
+            sendingRef.current = false
+            if (sessionTimerRef.current) {
+              clearInterval(sessionTimerRef.current)
+              sessionTimerRef.current = null
+            }
+            if (frameTimerRef.current) {
+              clearInterval(frameTimerRef.current)
+              frameTimerRef.current = null
+            }
+            if (ticket === reconnectAttemptsRef.current && userWantsStreamRef.current) {
+              setStreamStatus('reconnecting')
+              const delay = Math.min(1000 * 2 ** reconnectAttemptsRef.current, 30000)
+              reconnectTimerRef.current = setTimeout(() => {
+                reconnectAttemptsRef.current++
+                reconnectTimerRef.current = null
+                connectWebSocket()
+              }, delay)
+            }
+          }
+        }, 2000)
+      }
     }
 
     ws.onclose = () => {
       const wasManual = isManualCloseRef.current
       wsRef.current = null
-      setIsRunning(false)
-      setStreamStatus('idle')
       sessionIdRef.current = null
       sendingRef.current = false
       isManualCloseRef.current = false
 
-      // Clear error on manual close
-      if (wasManual) {
-        setError(null)
-      }
-
+      // Clear per-session timers
       if (sessionTimerRef.current) {
         clearInterval(sessionTimerRef.current)
         sessionTimerRef.current = null
       }
-
       if (frameTimerRef.current) {
         clearInterval(frameTimerRef.current)
         frameTimerRef.current = null
       }
+
+      // Case 1: user clicked Stop — go fully idle, no reconnect.
+      if (wasManual || !userWantsStreamRef.current) {
+        setError(null)
+        setStreamStatus('idle')
+        setIsRunning(false)
+        setDetections([])
+        reconnectAttemptsRef.current = 0
+        return
+      }
+
+      // Case 2: tab hidden — don't reconnect now; visibility handler
+      // reconnects when the tab is visible again.
+      if (pausedForVisibilityRef.current) {
+        setStreamStatus('reconnecting')
+        return
+      }
+
+      // Case 3: silent disconnect (server closed, network blip, WS send
+      // timeout on the backend, etc.). Schedule an automatic reconnect
+      // with exponential backoff so the stream recovers without a refresh.
+      const MAX_RECONNECT_ATTEMPTS = 10
+      const attempts = reconnectAttemptsRef.current
+      if (attempts >= MAX_RECONNECT_ATTEMPTS) {
+        setError(`连接断开，自动重连失败（已尝试 ${MAX_RECONNECT_ATTEMPTS} 次），请手动重新开始`)
+        setStreamStatus('error')
+        setIsRunning(false)
+        userWantsStreamRef.current = false
+        reconnectAttemptsRef.current = 0
+        return
+      }
+      const delay = Math.min(1000 * 2 ** attempts, 30000)
+      console.log(`[YOLO] 连接断开，${delay}ms 后自动重连 (${attempts + 1}/${MAX_RECONNECT_ATTEMPTS})`)
+      setStreamStatus('reconnecting')
+      // Keep isRunning true so the UI stays in "running" state during reconnect.
+      reconnectTimerRef.current = setTimeout(() => {
+        reconnectAttemptsRef.current++
+        reconnectTimerRef.current = null
+        connectWebSocket()
+      }, delay)
     }
 
     wsRef.current = ws
@@ -1274,6 +1599,14 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
 
   // Disconnect WebSocket (simple synchronous close)
   const disconnectWebSocket = useCallback(() => {
+    // Cancel any pending reconnect and mark that the user no longer wants
+    // the stream — prevents onclose from scheduling an auto-reconnect.
+    userWantsStreamRef.current = false
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
+    reconnectAttemptsRef.current = 0
     if (wsRef.current) {
       isManualCloseRef.current = true
       if (wsRef.current.readyState === WebSocket.OPEN) {
@@ -1304,6 +1637,9 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
     setFrameData(null)
     setFps(0)
     setFrameCount(0)
+    hasFirstFrameRef.current = false
+    userWantsStreamRef.current = true
+    reconnectAttemptsRef.current = 0
     fpsCounterRef.current = { frames: 0, lastTime: Date.now() }
 
     if (mode === 'camera') {
@@ -1326,12 +1662,68 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
     setFrameCount(0)
     setSessionTime(0)
     setFrameData(null)
+    hasFirstFrameRef.current = false
     pendingFrameRef.current = null
     frameImgRef.current = null
     setRoiStats([])
     setLineStats([])
     setCaptureEvents([])
   }, [mode, stopCamera, disconnectWebSocket])
+
+  // Page Visibility handling: when the tab is hidden, the browser throttles
+  // / suspends JS timers and stops draining the WebSocket receive buffer. This
+  // triggers TCP backpressure → server socket.send().await blocks indefinitely
+  // → the stream appears frozen and only a manual refresh recovers.
+  //
+  // Strategy: proactively close the WS on hide (server stops sending, zero
+  // backpressure). On return, reconnect immediately with a fresh session.
+  // The close is marked via pausedForVisibilityRef so onclose knows not to
+  // schedule its own backoff-based reconnect (we handle it here instead).
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.hidden) {
+        // Tab hidden — drop the connection to avoid TCP backpressure buildup.
+        if (wsRef.current) {
+          pausedForVisibilityRef.current = true
+          if (wsRef.current.readyState === WebSocket.OPEN) {
+            try { wsRef.current.send(JSON.stringify({ type: 'close' })) } catch { /* ignore */ }
+          }
+          wsRef.current.close()
+          wsRef.current = null
+          setStreamStatus('reconnecting')
+        }
+      } else {
+        // Tab visible again — reconnect immediately if the user still wants
+        // the stream. Cancel any pending backoff reconnect first.
+        pausedForVisibilityRef.current = false
+        if (
+          userWantsStreamRef.current &&
+          (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN)
+        ) {
+          if (reconnectTimerRef.current) {
+            clearTimeout(reconnectTimerRef.current)
+            reconnectTimerRef.current = null
+          }
+          reconnectAttemptsRef.current = 0
+          connectWebSocket()
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [connectWebSocket])
+
+  // Unmount cleanup: cancel any pending auto-reconnect so we don't try to
+  // connect after the component is gone.
+  useEffect(() => {
+    return () => {
+      userWantsStreamRef.current = false
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
+    }
+  }, [])
 
   // Drawing tool handlers
 
@@ -1427,6 +1819,33 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
       debouncedConfigUpdate()
     }
   }, [isRunning, debouncedConfigUpdate])
+
+  // Start inline rename for a region/line
+  const startRename = useCallback((id: string, currentName: string) => {
+    setEditingNameId(id)
+    setNameDraft(currentName)
+  }, [])
+
+  // Commit rename: update rois or lines, then sync config
+  const commitRename = useCallback((id: string) => {
+    const trimmed = nameDraft.trim()
+    setEditingNameId(null)
+    if (!trimmed) return
+    let changed = false
+    setRois(prev => prev.map(r => {
+      if (r.id === id && r.name !== trimmed) { changed = true; return { ...r, name: trimmed } }
+      return r
+    }))
+    setLines(prev => prev.map(l => {
+      if (l.id === id && l.name !== trimmed) { changed = true; return { ...l, name: trimmed } }
+      return l
+    }))
+    setRoiStats(prev => prev.map(s => s.id === id ? { ...s, name: trimmed } : s))
+    setLineStats(prev => prev.map(s => s.id === id ? { ...s, name: trimmed } : s))
+    if (changed && isRunning) debouncedConfigUpdate()
+  }, [nameDraft, isRunning, debouncedConfigUpdate])
+
+  const cancelRename = useCallback(() => setEditingNameId(null), [])
 
   // Capture rule management
   const addCaptureRule = useCallback((roiId: string, condition: CaptureCondition, cooldown: number) => {
@@ -1804,9 +2223,17 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
       <div className="yolo-card">
         {/* Header */}
         <div className="yolo-header">
-          <div className="yolo-title">
-            <Icon name="camera" className="yolo-title-icon" />
-            {title}
+          <div className="yolo-title-cluster">
+            <div className="yolo-title">
+              <Icon name="camera" className="yolo-title-icon" />
+              {title}
+            </div>
+            {isRunning && (
+              <div className="yolo-status">
+                <span className={`yolo-status-dot${streamStatus === 'reconnecting' ? ' yolo-status-warning' : streamStatus === 'error' ? ' yolo-status-error' : ''}`} />
+                {getModeLabel()}
+              </div>
+            )}
           </div>
           <div className="yolo-controls">
             {/* Drawing tools - icon only */}
@@ -1832,17 +2259,17 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
             </button>
             {drawingTool === 'roi' && drawingPoints.length >= 3 && (
               <button className="yolo-draw-btn" onClick={finishRoi} title="Finish ROI">
-                <Icon name="play" style={{ width: 10, height: 10 }} />
+                <Icon name="play" style={{ width: 11, height: 11 }} />
               </button>
             )}
             {drawingTool === 'line' && lineStart && lineEnd && (
-              <button className="yolo-draw-btn" style={{ background: 'var(--color-success, #22c55e)', borderColor: 'var(--color-success, #22c55e)', color: 'var(--yolo-on-primary)' }} onClick={saveLine} title="Save line">
-                <Icon name="play" style={{ width: 10, height: 10 }} />
+              <button className="yolo-draw-btn yolo-draw-success" onClick={saveLine} title="Save line">
+                <Icon name="play" style={{ width: 11, height: 11 }} />
               </button>
             )}
             {drawingTool !== 'none' && (
               <button className="yolo-draw-btn yolo-draw-danger" onClick={cancelDrawing} title="Cancel">
-                &times;
+                <Icon name="close" style={{ width: 12, height: 12 }} />
               </button>
             )}
             {rois.length + lines.length > 0 && drawingTool === 'none' && (
@@ -1850,24 +2277,18 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
                 onClick={() => { setRois([]); setLines([]); setRoiStats([]); setLineStats([]); if (isRunning) debouncedConfigUpdate() }}
                 title="Clear all"
               >
-                <Icon name="trash" style={{ width: 10, height: 10 }} />
+                <Icon name="trash" style={{ width: 12, height: 12 }} />
               </button>
             )}
-            <span style={{ width: 1, height: 12, background: 'var(--yolo-border)', margin: '0 2px' }} />
-            {isRunning && (
-              <div className="yolo-status">
-                <span className={`yolo-status-dot${streamStatus === 'reconnecting' ? ' yolo-status-warning' : streamStatus === 'error' ? ' yolo-status-error' : ''}`} />
-                {getModeLabel()}
-              </div>
-            )}
+            <span className="yolo-draw-divider" />
             {!isRunning ? (
               <button onClick={startStream} className="yolo-btn">
-                <Icon name="play" style={{ width: 12, height: 12, display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />
+                <Icon name="play" style={{ width: 12, height: 12 }} />
                 Start
               </button>
             ) : (
               <button onClick={stopStream} className="yolo-btn yolo-btn-stop">
-                <Icon name="stop" style={{ width: 12, height: 12, display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />
+                <Icon name="stop" style={{ width: 12, height: 12 }} />
                 Stop
               </button>
             )}
@@ -1921,40 +2342,22 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
               </div>
             </div>
           )}
-        </div>
 
-        {/* Stats Bar */}
-        {isRunning && showStats && (
-          <div className="yolo-stats">
-            <div className="yolo-stat-group">
-              <div className="yolo-stat">
-                <Icon name="clock" className="yolo-stat-icon" />
-                <span className="yolo-stat-val">{formatTime(sessionTime)}</span>
-              </div>
-              <div className="yolo-stat">
-                <Icon name="activity" className="yolo-stat-icon" />
-                <span className="yolo-stat-val">{fps}</span>
-                <span>FPS</span>
-              </div>
-              <div className="yolo-stat">
-                <Icon name="layers" className="yolo-stat-icon" />
-                <span className="yolo-stat-val">{frameCount}</span>
-                <span>frames</span>
-              </div>
+          {/* Floating stats overlay (top-left) */}
+          {isRunning && showStats && (
+            <div className="yolo-overlay-stats">
+              <Icon name="clock" className="yolo-overlay-stat-icon" />
+              <span className="yolo-overlay-stat-val">{formatTime(sessionTime)}</span>
+              <span className="yolo-overlay-sep" />
+              <span className="yolo-overlay-stat-val">{fps}</span><span>fps</span>
+              <span className="yolo-overlay-sep" />
+              <span className="yolo-overlay-stat-val">{detections.length}</span><span>obj</span>
             </div>
-            <div className="yolo-stat">
-              <Icon name="eye" className="yolo-stat-icon" />
-              <span className="yolo-stat-val">{detections.length}</span>
-              <span>objects</span>
-            </div>
-          </div>
-        )}
+          )}
 
-        {/* Detections - aggregated by class */}
-        {isRunning && detections.length > 0 && (
-          <div className="yolo-detections">
-            <div className="yolo-detections-title">Detected Objects</div>
-            <div className="yolo-detections-list">
+          {/* Floating detections overlay (top-right) */}
+          {isRunning && detections.length > 0 && (
+            <div className="yolo-overlay-detections">
               {(() => {
                 const classMap = new Map<number, { label: string; count: number }>()
                 for (const det of detections) {
@@ -1970,105 +2373,142 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
                     <span key={classId} className="yolo-detection-tag"
                       style={{ backgroundColor: color.bg, color: color.fg, border: `1px solid ${color.border}` }}>
                       {label}
-                      <span style={{ opacity: 0.8, fontWeight: 700 }}>x{count}</span>
+                      <span style={{ opacity: 0.8, fontWeight: 700 }}>×{count}</span>
                     </span>
                   )
                 })
               })()}
             </div>
-          </div>
-        )}
+          )}
 
-        {/* ROI & Line Cards */}
-        {(roiStats.length > 0 || lineStats.length > 0 || rois.length > 0 || lines.length > 0) && (
-          <div className="yolo-regions">
-            <div className="yolo-section-grid">
-              {/* ROI with stats */}
-              {roiStats.map(stat => {
-                const roi = rois.find(r => r.id === stat.id)
-                const color = roi?.color || '#3b82f6'
-                const rulesForRoi = captureRules.filter(r => r.roi_id === stat.id)
-                return (
-                  <div key={stat.id} className="yolo-card">
-                    <div className="yolo-card-row">
-                      <span className="yolo-card-name">{stat.name}</span>
-                      <span className="yolo-card-actions">
-                        <button className="yolo-card-btn yolo-card-btn-edit" onClick={() => setEditingRuleRoiId(editingRuleRoiId === stat.id ? null : stat.id)} title="Edit capture rules"><Icon name="edit" style={{ width: 10, height: 10 }} /></button>
-                        <button className="yolo-card-btn" onClick={() => removeRoi(stat.id)} title="Delete"><Icon name="x" style={{ width: 10, height: 10 }} /></button>
-                      </span>
-                    </div>
-                    {(stat.count > 0 || rulesForRoi.length > 0) && (
-                      <div className="yolo-card-data">
-                        <span className="yolo-card-badge" style={{ background: hexToRgba(color, 0.15), color }}>{stat.count}</span>
-                        {rulesForRoi.map(rule => (
-                          <span key={rule.id} className="yolo-rule-pill">
-                            {rule.condition.type === 'threshold' ? `${rule.condition.class_name}≥${rule.condition.threshold}` : rule.condition.type === 'presence' ? `${rule.condition.class_name}↑` : `${rule.condition.class_name}↓`}
-                            <button className="yolo-rule-pill-btn" onClick={() => removeCaptureRule(rule.id)}><Icon name="x" style={{ width: 8, height: 8 }} /></button>
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-              {/* ROI without stats */}
-              {rois.filter(r => !roiStats.some(s => s.id === r.id)).map(roi => {
-                const rulesForRoi = captureRules.filter(r => r.roi_id === roi.id)
-                return (
-                  <div key={roi.id} className="yolo-card">
-                    <div className="yolo-card-row">
-                      <span className="yolo-card-name">{roi.name}</span>
-                      <span className="yolo-card-actions">
-                        <button className="yolo-card-btn yolo-card-btn-edit" onClick={() => setEditingRuleRoiId(editingRuleRoiId === roi.id ? null : roi.id)} title="Edit capture rules"><Icon name="edit" style={{ width: 10, height: 10 }} /></button>
-                        <button className="yolo-card-btn" onClick={() => removeRoi(roi.id)} title="Delete"><Icon name="x" style={{ width: 10, height: 10 }} /></button>
-                      </span>
-                    </div>
-                    {rulesForRoi.length > 0 && (
-                      <div className="yolo-card-data">
-                        {rulesForRoi.map(rule => (
-                          <span key={rule.id} className="yolo-rule-pill">
-                            {rule.condition.type === 'threshold' ? `${rule.condition.class_name}≥${rule.condition.threshold}` : rule.condition.type === 'presence' ? `${rule.condition.class_name}↑` : `${rule.condition.class_name}↓`}
-                            <button className="yolo-rule-pill-btn" onClick={() => removeCaptureRule(rule.id)}><Icon name="x" style={{ width: 8, height: 8 }} /></button>
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-              {/* Lines with stats */}
-              {lineStats.map(stat => {
-                const line = lines.find(l => l.id === stat.id)
-                const color = line?.color || '#22c55e'
-                return (
-                  <div key={stat.id} className="yolo-card">
-                    <div className="yolo-card-row">
-                      <span className="yolo-card-name">{stat.name}</span>
-                      <span className="yolo-card-actions">
-                        <button className="yolo-card-btn" onClick={() => removeLine(stat.id)} title="Delete"><Icon name="x" style={{ width: 10, height: 10 }} /></button>
-                      </span>
-                    </div>
-                    <div className="yolo-card-data">
-                      <span className="yolo-line-dir" style={{ background: 'rgba(34,197,94,0.12)', color: '#22c55e' }}>→{stat.forward_count}</span>
-                      <span className="yolo-line-dir" style={{ background: 'rgba(59,130,246,0.12)', color: '#3b82f6' }}>←{stat.backward_count}</span>
-                    </div>
-                  </div>
-                )
-              })}
-              {/* Lines without stats */}
-              {lines.filter(l => !lineStats.some(s => s.id === l.id)).map(line => (
-                <div key={line.id} className="yolo-card">
-                  <div className="yolo-card-row">
-                    <span className="yolo-card-name">{line.name}</span>
-                    <span className="yolo-card-actions">
-                      <button className="yolo-card-btn" onClick={() => removeLine(line.id)} title="Delete"><Icon name="x" style={{ width: 10, height: 10 }} /></button>
+          {/* Floating regions widget (bottom-left) — chip + expandable popover.
+              Frees the bottom layout entirely; video gets full height. */}
+          {(roiStats.length > 0 || lineStats.length > 0 || rois.length > 0 || lines.length > 0) && (
+            <div className="yolo-regions-float">
+              {regionsCollapsed ? (
+                <button
+                  className="yolo-regions-chip"
+                  onClick={() => setRegionsCollapsed(false)}
+                  title="Show regions & lines"
+                >
+                  <span className="yolo-regions-chip-dot" />
+                  {rois.length > 0 && <><b>{rois.length}</b> ROI{rois.length > 1 ? 's' : ''}</>}
+                  {rois.length > 0 && lines.length > 0 && <span className="yolo-regions-chip-sep">·</span>}
+                  {lines.length > 0 && <><b>{lines.length}</b> Line{lines.length > 1 ? 's' : ''}</>}
+                  <span className="yolo-regions-chip-arrow">▸</span>
+                </button>
+              ) : (
+                <div className="yolo-regions-panel">
+                  <button
+                    className="yolo-regions-panel-header"
+                    onClick={() => setRegionsCollapsed(true)}
+                    title="Collapse"
+                  >
+                    <span className="yolo-regions-summary">
+                      {rois.length > 0 && <><span className="yolo-regions-count">{rois.length}</span> ROI{rois.length > 1 ? 's' : ''}</>}
+                      {rois.length > 0 && lines.length > 0 && <span className="yolo-regions-dot">·</span>}
+                      {lines.length > 0 && <><span className="yolo-regions-count">{lines.length}</span> Line{lines.length > 1 ? 's' : ''}</>}
                     </span>
+                    <span className="yolo-regions-toggle">▾</span>
+                  </button>
+                  <div className="yolo-region-pills">
+                    {/* ROI with stats */}
+                    {roiStats.map(stat => {
+                      const roi = rois.find(r => r.id === stat.id)
+                      const color = roi?.color || '#3b82f6'
+                      const rulesForRoi = captureRules.filter(r => r.roi_id === stat.id)
+                      return (
+                        <span key={stat.id} className="yolo-region-pill" data-rules-open={editingRuleRoiId === stat.id} style={{ borderColor: hexToRgba(color, 0.4) }}>
+                          <span className="yolo-region-pill-dot" style={{ background: color }} />
+                          {editingNameId === stat.id ? (
+                            <input className="yolo-region-pill-input" value={nameDraft} autoFocus
+                              onChange={e => setNameDraft(e.target.value)}
+                              onBlur={() => commitRename(stat.id)}
+                              onClick={e => e.stopPropagation()}
+                              onKeyDown={e => { if (e.key === 'Enter') commitRename(stat.id); else if (e.key === 'Escape') cancelRename(); }} />
+                          ) : (
+                            <span className="yolo-region-pill-name yolo-region-pill-name-editable"
+                              onDoubleClick={() => startRename(stat.id, stat.name)} title="Double-click to rename">{stat.name}</span>
+                          )}
+                          {stat.count > 0 && <span className="yolo-region-pill-count" style={{ background: hexToRgba(color, 0.15), color }}>{stat.count}</span>}
+                          <button className="yolo-region-pill-btn yolo-region-pill-edit" onClick={() => setEditingRuleRoiId(editingRuleRoiId === stat.id ? null : stat.id)} title="Edit capture rules"><Icon name="edit" style={{ width: 9, height: 9 }} /></button>
+                          <button className="yolo-region-pill-btn" onClick={() => removeRoi(stat.id)} title="Delete"><Icon name="x" style={{ width: 9, height: 9 }} /></button>
+                          {rulesForRoi.map(rule => (
+                            <span key={rule.id} className="yolo-region-pill-rule">
+                              {rule.condition.type === 'threshold' ? `${rule.condition.class_name}≥${rule.condition.threshold}` : rule.condition.type === 'presence' ? `${rule.condition.class_name}↑` : `${rule.condition.class_name}↓`}
+                              <button className="yolo-rule-pill-btn" onClick={() => removeCaptureRule(rule.id)}><Icon name="x" style={{ width: 7, height: 7 }} /></button>
+                            </span>
+                          ))}
+                        </span>
+                      )
+                    })}
+                    {/* ROI without stats */}
+                    {rois.filter(r => !roiStats.some(s => s.id === r.id)).map(roi => {
+                      const rulesForRoi = captureRules.filter(r => r.roi_id === roi.id)
+                      return (
+                        <span key={roi.id} className="yolo-region-pill" data-rules-open={editingRuleRoiId === roi.id} style={{ borderColor: hexToRgba(roi.color, 0.4) }}>
+                          <span className="yolo-region-pill-dot" style={{ background: roi.color }} />
+                          {editingNameId === roi.id ? (
+                            <input className="yolo-region-pill-input" value={nameDraft} autoFocus
+                              onChange={e => setNameDraft(e.target.value)}
+                              onBlur={() => commitRename(roi.id)}
+                              onClick={e => e.stopPropagation()}
+                              onKeyDown={e => { if (e.key === 'Enter') commitRename(roi.id); else if (e.key === 'Escape') cancelRename(); }} />
+                          ) : (
+                            <span className="yolo-region-pill-name yolo-region-pill-name-editable"
+                              onDoubleClick={() => startRename(roi.id, roi.name)} title="Double-click to rename">{roi.name}</span>
+                          )}
+                          <button className="yolo-region-pill-btn yolo-region-pill-edit" onClick={() => setEditingRuleRoiId(editingRuleRoiId === roi.id ? null : roi.id)} title="Edit capture rules"><Icon name="edit" style={{ width: 9, height: 9 }} /></button>
+                          <button className="yolo-region-pill-btn" onClick={() => removeRoi(roi.id)} title="Delete"><Icon name="x" style={{ width: 9, height: 9 }} /></button>
+                          {rulesForRoi.map(rule => (
+                            <span key={rule.id} className="yolo-region-pill-rule">
+                              {rule.condition.type === 'threshold' ? `${rule.condition.class_name}≥${rule.condition.threshold}` : rule.condition.type === 'presence' ? `${rule.condition.class_name}↑` : `${rule.condition.class_name}↓`}
+                              <button className="yolo-rule-pill-btn" onClick={() => removeCaptureRule(rule.id)}><Icon name="x" style={{ width: 7, height: 7 }} /></button>
+                            </span>
+                          ))}
+                        </span>
+                      )
+                    })}
+                    {/* Lines with stats */}
+                    {lineStats.map(stat => (
+                      <span key={stat.id} className="yolo-region-pill yolo-region-pill-line">
+                        {editingNameId === stat.id ? (
+                          <input className="yolo-region-pill-input" value={nameDraft} autoFocus
+                            onChange={e => setNameDraft(e.target.value)}
+                            onBlur={() => commitRename(stat.id)}
+                            onClick={e => e.stopPropagation()}
+                            onKeyDown={e => { if (e.key === 'Enter') commitRename(stat.id); else if (e.key === 'Escape') cancelRename(); }} />
+                        ) : (
+                          <span className="yolo-region-pill-name yolo-region-pill-name-editable"
+                            onDoubleClick={() => startRename(stat.id, stat.name)} title="Double-click to rename">{stat.name}</span>
+                        )}
+                        <span className="yolo-region-pill-count" style={{ background: 'rgba(34,197,94,0.15)', color: '#22c55e' }}>→{stat.forward_count}</span>
+                        <span className="yolo-region-pill-count" style={{ background: 'rgba(59,130,246,0.15)', color: '#3b82f6' }}>←{stat.backward_count}</span>
+                        <button className="yolo-region-pill-btn" onClick={() => removeLine(stat.id)} title="Delete"><Icon name="x" style={{ width: 9, height: 9 }} /></button>
+                      </span>
+                    ))}
+                    {/* Lines without stats */}
+                    {lines.filter(l => !lineStats.some(s => s.id === l.id)).map(line => (
+                      <span key={line.id} className="yolo-region-pill yolo-region-pill-line">
+                        {editingNameId === line.id ? (
+                          <input className="yolo-region-pill-input" value={nameDraft} autoFocus
+                            onChange={e => setNameDraft(e.target.value)}
+                            onBlur={() => commitRename(line.id)}
+                            onClick={e => e.stopPropagation()}
+                            onKeyDown={e => { if (e.key === 'Enter') commitRename(line.id); else if (e.key === 'Escape') cancelRename(); }} />
+                        ) : (
+                          <span className="yolo-region-pill-name yolo-region-pill-name-editable"
+                            onDoubleClick={() => startRename(line.id, line.name)} title="Double-click to rename">{line.name}</span>
+                        )}
+                        <button className="yolo-region-pill-btn" onClick={() => removeLine(line.id)} title="Delete"><Icon name="x" style={{ width: 9, height: 9 }} /></button>
+                      </span>
+                    ))}
                   </div>
                 </div>
-              ))}
+              )}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Capture Rule Editor Popup */}
         {editingRuleRoiId && (

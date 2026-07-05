@@ -2,6 +2,6 @@
   "id": "yolo-video-v2",
   "name": "YOLO Video V2",
   "version": "2.0.0",
-  "description": "Real-time video stream processing with YOLOv11 for the NeoMind isolated runtime",
+  "description": "Real-time video stream object detection with YOLOv11, RTSP/camera support, ROI analytics, line crossing, smart capture rules, and MJPEG streaming",
   "author": "NeoMind Team"
 }

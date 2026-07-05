@@ -182,12 +182,24 @@ impl FfmpegVideoSource {
             25.0
         };
 
-        // Create scaler: decode format → RGB24
+        // Cap output resolution at 960x540 (16:9). Decoding + YUV→RGB conversion is one of
+        // the biggest CPU costs in the pipeline; doing the downscale inside FFmpeg's scaler
+        // avoids a second CPU resize later and keeps the rest of the pipeline working on a
+        // small image. If the source is already smaller, leave it untouched.
+        const OUT_W: u32 = 960;
+        const OUT_H: u32 = 540;
+        let (out_w, out_h) = if width > OUT_W || height > OUT_H {
+            (OUT_W, OUT_H)
+        } else {
+            (width, height)
+        };
+
+        // Create scaler: decode format → RGB24 (with optional downscale)
         let scaler = ff::software::scaling::Context::get(
             decoder.format(),
             width, height,
             ff::format::Pixel::RGB24,
-            width, height,
+            out_w, out_h,
             ff::software::scaling::flag::Flags::BILINEAR,
         ).map_err(|e| format!("Failed to create scaler: {}", e))?;
 
@@ -195,8 +207,8 @@ impl FfmpegVideoSource {
 
         Ok(Self {
             info: SourceInfo {
-                width,
-                height,
+                width: out_w,
+                height: out_h,
                 fps: fps_float,
                 codec: codec_name,
                 is_live: !matches!(source_type, SourceType::File { .. }),
@@ -271,6 +283,30 @@ impl FfmpegVideoSource {
         self.active = false;
         let new_source = Self::new(&self.source_type)?;
         *self = new_source;
+        Ok(())
+    }
+
+    /// Seek back to the start of the source for seamless looping.
+    ///
+    /// Unlike `reconnect()`, this does NOT reopen the file / re-download the
+    /// HTTP resource — it reuses the already-open input context, decoder, and
+    /// scaler, so it completes in milliseconds instead of 15-30s.
+    ///
+    /// Works for local files and most HTTP sources (when the server supports
+    /// Range requests). Live streams (RTSP/RTMP/HLS) don't support seeking;
+    /// caller should fall back to `reconnect()` on `Err`.
+    pub fn seek_to_start(&mut self) -> Result<(), String> {
+        // Flush decoder buffers — otherwise stale frames buffered before EOF
+        // would be emitted first after seeking, causing a brief glitch.
+        let _ = self.decoder.flush();
+        // Seek to timestamp 0 (beginning of stream). ffmpeg-next's `seek`
+        // takes a Range<i64> as the second arg — `..` means accept any
+        // resulting position (no strict boundary).
+        self.input_ctx
+            .seek(0, ..)
+            .map_err(|e| format!("seek to start failed: {}", e))?;
+        self.frame_count = 0;
+        self.active = true;
         Ok(())
     }
 
