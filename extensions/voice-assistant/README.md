@@ -46,44 +46,38 @@ real-time voice pipeline inside the NeoMind extension system.
 
 ## Setup
 
-### 1. Prerequisites
+Default mode is **all-in-one**: SenseVoice ASR + ZipVoice TTS run in-process via
+`sherpa_onnx` Python APIs. No separate ASR/TTS services required. Only the
+NeoMind LLM endpoint (`ws://127.0.0.1:9375`) must be reachable.
 
-- moss-tts-nano service running on port 9382 (see its README)
-- sensevoice-asr service running on port 9383 (see its README)
+**Trade-off:** `pip install` pulls ~700MB of ONNX Runtime natives. Acceptable
+for single-host setups; the upside is zero HTTP serialization overhead and
+one process instead of three.
 
-### 2. Install orchestrator dependencies
+### 1. Install + run
 
 ```bash
 cd extensions/voice-assistant/service
-pip install -r requirements.txt
-```
-
-### 3. Run the latency measurement (no extension needed)
-
-This independently validates MOSS-TTS first-chunk latency — the riskiest
-unknown in the architecture.
-
-```bash
-python measure_latency.py --out latency_report.json
-```
-
-Look for "TTS first-chunk" numbers. Target: < 500ms.
-
-### 4. Run the orchestrator
-
-```bash
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ./start.sh
-# or: python server.py --host 127.0.0.1 --port 9384
 ```
 
-### 5. Build the extension
+The NeoMind API token can be set either via env var (`export NEOMIND_TOKEN=nmk_xxx`)
+or entered in the NeoMind card configuration dialog (recommended — the dialog
+pushes it to the orchestrator on each session start).
 
-```bash
-./build.sh --dev --single voice-assistant
-# Restart NeoMind to pick up the new extension.
-```
+First run downloads ~400MB of model weights into `~/.cache/sherpa-onnx/`:
 
-### 6. Open the test page
+- `sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/` (~230MB, ASR)
+- `sherpa-onnx-zipvoice-distill-int8-zh-en-emilia/` (~170MB, TTS encoder/decoder)
+- `vocos_24khz.onnx` (~22MB, TTS vocoder)
+
+Subsequent runs load from cache (~2-3s startup). The default zero-shot TTS
+prompt audio (`service/assets/default_prompt.{wav,txt}`) is bundled, so
+`voice='中文女'` works out of the box.
+
+### 2. Open the test page
 
 Just open `extensions/voice-assistant/service/poc.html` in Chrome.
 Set WS URL to `ws://127.0.0.1:9384/ws` (default).
@@ -93,6 +87,22 @@ WebSocket, bypassing the Rust extension. This is intentional — it lets you
 validate the Python pipeline before integrating with NeoMind. Once the
 pipeline works, point the WS URL at NeoMind's `/api/extensions/voice-assistant/stream`
 endpoint to validate the extension path.
+
+### 3. Build + install the extension
+
+```bash
+./build.sh --dev --single voice-assistant
+# Restart NeoMind to pick up the new extension.
+```
+
+### Distributed mode (optional)
+
+For multi-host deployments (e.g. ASR/TTS on a GPU server, orchestrator on
+edge), use the HTTP-split backend stack instead. Run the separate
+`sensevoice-asr` (port 9383) and `voice-edge-tts` (port 9386) extensions,
+then select a profile that points at them — e.g. `neomind-demo.yaml` for
+kokoro+qwen3, or write your own profile with `type: sensevoice_http` /
+`zipvoice_http` and the right URLs.
 
 ## Protocol
 
@@ -118,16 +128,61 @@ the WS loop, this gives true barge-in without SDK-level CancellationToken.
 
 ## Configuration
 
-Environment variables (orchestrator):
+There are two layers: **profiles** (loaded once at startup) and **runtime
+config** (pushed by the frontend at session start via HTTP `POST /config`).
+
+### Profiles (startup)
+
+Profiles live in `service/profiles/`. Each is a YAML describing VAD, ASR, LLM,
+TTS backends + interaction tuning. Pick one via `VOICE_ASSISTANT_PROFILE=<name>`
+(before `./start.sh`).
+
+| Profile | Use case |
+|---------|----------|
+| `default` (default) | All-in-one: in-proc SenseVoice + ZipVoice + NeoMind LLM. Single process. |
+| `edge-arm` | RK3588 / Jetson Orin Nano with local ollama LLM |
+| `noisy-env` | High ambient noise — raises VAD threshold |
+| `headset` | Near-field mic, no echo path |
+| `neomind-demo` | Kokoro TTS + Qwen3 ASR (HTTP) demo stack |
+| `kokoro-qwen3` | Kokoro + Qwen3 benchmark profile |
+| `ollama-bench` | Ollama benchmark profile |
+
+### Runtime config (NeoMind UI)
+
+The NeoMind card configuration dialog exposes these fields. They are pushed
+to the orchestrator via HTTP before each session opens, so changing them in
+the UI takes effect on the next mic toggle without restarting the service.
+
+| Field | Type | Effect |
+|-------|------|--------|
+| `wsUrl` | string | Orchestrator base URL (HTTP or WS, with or without `/ws` suffix). Default `http://127.0.0.1:9384`. |
+| `profile` | dropdown | Switch profile at runtime. Triggers a backend reload (~1–3s on in-proc models). |
+| `neoMindToken` | string (password) | NeoMind API token. Stored only in orchestrator process memory via env var. |
+| `language` | dropdown | ASR language hint (`auto` / `zh` / `en` / `ja` / `ko` / `yue`). Instant. |
+| `voice` | string | TTS voice ID (e.g. `中文女`). Instant. |
+| `showTranscripts` | boolean | UI display toggle. |
+| `showMetrics` | boolean | UI display toggle. |
+
+### HTTP config endpoints
+
+| Method | Path | Body / Returns |
+|--------|------|----------------|
+| `GET` | `/config` | `{current: {...}, available_profiles: [...], available_languages: [...], reloading: bool}` — token is returned masked. |
+| `POST` | `/config` | `{profile?, neoMindToken?, language?, voice?, numThreads?: {asr?, tts?}}` — see field table above for semantics. Returns `{applied: [...], reloaded: bool, reload_seconds: float?, current: {...}}`. |
+| `POST` | `/config` while reloading | HTTP 503 `{error: "reload_in_progress"}` — client should retry. |
+
+During a reload, new WS connections are rejected with close code `1013 Try Again Later`. Existing sessions keep their captured backends and run to completion.
+
+### Environment variables (orchestrator)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SENSEVOICE_ASR_URL` | `http://127.0.0.1:9383` | ASR HTTP service base URL |
-| `MOSS_TTS_URL` | `http://127.0.0.1:9382` | TTS HTTP service base URL |
-| `VOICE_ASSISTANT_VOICE` | `Junhao` | TTS voice preset |
-| `VOICE_ASSISTANT_VAD_SILENCE_MS` | `500` | Trailing silence to trigger speech-end |
-| `VOICE_ASSISTANT_VAD_MIN_SPEECH_MS` | `300` | Min continuous speech to start an utterance |
-| `VOICE_ASSISTANT_VAD_ENERGY` | `0.015` | RMS threshold (0-1); raise in noisy rooms |
+| `VOICE_ASSISTANT_PROFILE` | `default` | Initial profile name (without `.yaml`). Overridden by `POST /config`. |
+| `VOICE_ASSISTANT_VAD_BACKEND` | `silero` | Override VAD type from profile |
+| `VOICE_ASSISTANT_HOST` / `VOICE_ASSISTANT_PORT` | `127.0.0.1` / `9384` | Listen address |
+| `SENSEVOICE_ASR_MODEL_DIR` | `~/.cache/sherpa-onnx` | Where to cache ASR model |
+| `VOICE_EDGE_TTS_MODEL_DIR` | `~/.cache/sherpa-onnx` | Where to cache TTS model + vocoder |
+| `NEOMIND_TOKEN` | (required) | NeoMind LLM API token. Can also be set via `POST /config`. |
 
 Environment variables (extension):
 
@@ -638,3 +693,88 @@ spec: `docs/superpowers/specs/2026-06-28-voice-aec-design.md`.
 - **Phantom transcripts with `webrtc` mode**: try tuning `aec_reference_delay_ms` (typically 100-300ms; too low = under-cancellation, too high = over-cancellation eating speech).
 - **Double-talk detection < 80% with `webrtc`**: ensure `aec_keep_echo_window: false` (the default for webrtc) — if `keep_echo_window: true` is set, the VAD boost will over-suppress legitimate double-talk that AEC preserved.
 - **Module name confusion**: the PyPI package is `webrtc-audio-processing` (hyphenated); the Python import is `webrtc_audio_processing` (underscored); the class is `AudioProcessingModule`.
+
+## Stream Endpoint Mode (Capability Path)
+
+Since v2.7.7, the frontend defaults to NeoMind's **extension stream endpoint**
+(`/api/extensions/voice-assistant/stream`) instead of connecting directly to
+the Python orchestrator WS. This routes LLM calls through the host's
+**ChatStream capability**, making the extension token-free: no `NEOMIND_TOKEN`
+needs to leave the host process.
+
+### Architecture (stream mode, default)
+
+```
+Browser
+  │  WS: /api/extensions/voice-assistant/stream?token=<jwt>
+  │  ↑ binary PCM (8-byte BE seq + raw)
+  │  ↓ push_output JSON {data_type: audio/pcm | application/json, data: base64}
+  ▼
+NeoMind host (neomind-api)
+  │  extension_stream.rs (Bidirectional Push mode)
+  │    ws_task ──text──▶ ws_in_rx ──▶ client_msg dispatch
+  │    ws_task ──binary──▶ binary_in_rx ──▶ ext.process_session_chunk()
+  │    rx (PushOutput) ──▶ ws_out_tx (mpsc 64) ──▶ ws_task.send()
+  ▼
+voice-assistant Rust extension (run_session_pump)
+  │  browser ↔ Python orchestrator WS bridge
+  │  chat_stream_request text frame ──▶ CapabilityContext.invoke_capability("chat_stream")
+  │  AgentStreamChunk events (handle_event) ──▶ chat_streams[sid] ──▶ pump ──▶ WS text
+  ▼
+Python orchestrator (port 9384)
+  │  NeoMindCapabilityLLM.stream() sends chat_stream_request, consumes chat_rx_queue
+  │  ASR (qwen3_http) → LLM (capability) → TTS (kokoro_http)
+  ▼
+NeoMind host SessionManager  (via ChatStreamCapabilityProvider)
+   AgentEvent stream ──▶ EventBus::publish(AgentStreamChunk) ──▶ EventDispatcher
+```
+
+### Stream mode vs Direct mode
+
+| Aspect | Stream mode (default) | Direct mode (`directMode: true`) |
+|--------|----------------------|----------------------------------|
+| Frontend connects to | `/api/extensions/{id}/stream` (host) | `ws://127.0.0.1:9384/ws` (Python) |
+| LLM token holder | host SessionManager (token-free from extension's POV) | Python orchestrator (`NEOMIND_TOKEN`) |
+| Default profile | `neomind-capability` | `default` (or any profile) |
+| Use case | Production / Tauri builds | Debugging the Python orchestrator in isolation |
+| Host visibility | host sees every LLM call (audit, rate-limit,治理) | host is bypassed; no governance |
+
+Toggle via the **Direct Python WS Mode** checkbox in the card config dialog.
+Switching modes requires the card to remount (close + reopen, or refresh).
+
+### Barge-in behavior
+
+- **Server-side VAD barge-in** (speaking during TTS interrupts): works in
+  both modes — VAD runs in the Python orchestrator regardless of transport.
+- **Manual stop button** (explicit barge-in by tap): available in direct
+  mode only. Stream mode has no "send control message" channel in the
+  stream protocol v1; the mic toggle just stops local capture. Planned
+  follow-up: expose a `stop` extension command and have the frontend POST
+  `/api/extensions/voice-assistant/execute/stop`.
+
+### Troubleshooting (Tauri terminal `[VA]` checkpoints)
+
+Per turn, the Rust extension should log this sequence:
+
+```
+[VA] chat_stream_request received, invoking capability...
+[VA] capability returned: {"success":true,"session_id":"..."}
+[VA] handle_event: AgentStreamChunk sid=... chunk_type=Some("Content")  (repeated)
+[VA] handle_event: AgentStreamChunk sid=... chunk_type=Some("end")
+```
+
+- **Stuck on "Thinking…"**: capability never returned, or events not routed.
+  Verify `window.NeoMindStream.urlFor('voice-assistant')` returns a URL in
+  the browser console, and that `[VA] chat_stream_request received` appears.
+  If capability returned but no Content chunks follow, the host's
+  `EventDispatcher` is filtering events — check
+  `event_subscriptions()` includes `"AgentStreamChunk"`.
+- **401 / stream connection refused**: JWT expired. The stream WS stays
+  open once authenticated, but reconnects fail. Reload the page to refresh
+  the token.
+- **Mic captures but no transcript**: PCM not reaching Python. Check the
+  binary framing — `sendChunk` must emit 8-byte BE sequence + raw PCM.
+  Verify `[VA]` pump logs show inbound binary chunks.
+- **`Stream URL unavailable`**: the host web app did not register
+  `window.NeoMindStream.urlFor`. Check `App.tsx`'s `useEffect` and that
+  `tokenManager.getToken()` returns a non-null JWT.

@@ -10,16 +10,17 @@ acoustic:
   aec: none
 backends:
   asr:
-    type: sensevoice_http
-    url: http://127.0.0.1:9383
+    type: sensevoice_inproc
+    language: auto
+    num_threads: 3
   llm:
     type: ollama_http
     url: http://127.0.0.1:11434
     model: qwen3:1.7b
   tts:
-    type: zipvoice_http
-    url: http://127.0.0.1:9386
+    type: zipvoice_inproc
     voice: 中文女
+    num_threads: 3
 interaction:
   barge_in: full
   latency_target_ms: 1500

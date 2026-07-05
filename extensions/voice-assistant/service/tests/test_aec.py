@@ -477,7 +477,12 @@ def test_startup_falls_back_to_noop_when_backend_init_fails(monkeypatch):
 
     asyncio.run(server._warm_banks_async())
 
-    assert server.AEC_MODE == "webrtc"
+    # Profile said webrtc but init failed → Noop fallback. Reconciliation
+    # must downgrade AEC_MODE to echo_window so half-duplex echo
+    # suppression still runs (otherwise _aec_active_now() returns False
+    # for both 'webrtc' and 'none', and the assistant's own TTS would
+    # trigger barge-in).
+    assert server.AEC_MODE == "echo_window"
     from backends.aec import NoopAECBackend
     assert isinstance(server._aec_backend, NoopAECBackend), \
         "server must substitute Noop when backend init fails"

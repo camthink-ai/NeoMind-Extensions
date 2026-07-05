@@ -1,0 +1,90 @@
+{
+  "id": "voice-assistant",
+  "version": "2.7.6",
+  "entrypoint": "voice-assistant-components.umd.cjs",
+  "components": [
+    {
+      "name": "VoiceAssistantCard",
+      "type": "card",
+      "displayName": "Voice Assistant",
+      "description": "Real-time voice assistant with orb visualizer, streaming ASR/LLM/TTS, and barge-in support",
+      "icon": "mic",
+      "defaultSize": { "width": 400, "height": 480 },
+      "minSize": { "width": 320, "height": 380 },
+      "maxSize": { "width": 600, "height": 600 },
+      "configSchema": {
+        "wsUrl": {
+          "type": "string",
+          "title": "Orchestrator URL",
+          "description": "Python orchestrator HTTP/WS base URL (e.g. http://127.0.0.1:9384)",
+          "default": "http://127.0.0.1:9384"
+        },
+        "profile": {
+          "type": "string",
+          "title": "Profile",
+          "description": "Acoustic + backend profile. Switching triggers a ~1-3s reload on the server.",
+          "enum": ["default", "edge-arm", "noisy-env", "headset", "neomind-demo", "neomind-capability"],
+          "enumTitles": [
+            "Default (in-proc SenseVoice + ZipVoice)",
+            "Edge ARM (in-proc + local Ollama)",
+            "Noisy environment",
+            "Headset (near-field, no echo)",
+            "NeoMind Demo (HTTP kokoro+qwen3)",
+            "NeoMind Capability (token-free ChatStream LLM)"
+          ],
+          "default": "default"
+        },
+        "neoMindToken": {
+          "type": "string",
+          "title": "NeoMind API Token",
+          "description": "Required for the default profile (NeoMind cloud LLM). Stored only in the Python orchestrator process memory.",
+          "default": ""
+        },
+        "language": {
+          "type": "string",
+          "title": "ASR Language",
+          "description": "Speech recognition language hint. 'auto' detects automatically.",
+          "enum": ["auto", "zh", "en", "ja", "ko", "yue"],
+          "enumTitles": ["Auto-detect", "Chinese", "English", "Japanese", "Korean", "Cantonese"],
+          "default": "auto"
+        },
+        "voice": {
+          "type": "string",
+          "title": "TTS Voice",
+          "description": "Voice ID passed to TTS backend (e.g. '中文女' for ZipVoice)",
+          "default": "中文女"
+        },
+        "showTranscripts": {
+          "type": "boolean",
+          "title": "Show Transcripts",
+          "default": true
+        },
+        "showMetrics": {
+          "type": "boolean",
+          "title": "Show Latency Metrics",
+          "default": true
+        },
+        "directMode": {
+          "type": "boolean",
+          "title": "Direct Python WS Mode",
+          "description": "Debug only. Bypass the NeoMind stream endpoint and connect directly to the Python orchestrator WS. Disables capability-path LLM.",
+          "default": false
+        }
+      },
+      "uiHints": {
+        "fieldOrder": [
+          "wsUrl",
+          "profile",
+          "neoMindToken",
+          "language",
+          "voice",
+          "showTranscripts",
+          "showMetrics",
+          "directMode"
+        ]
+      },
+      "refreshable": false,
+      "refreshInterval": 0
+    }
+  ]
+}

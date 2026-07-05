@@ -40,6 +40,19 @@ def encode_llm_sentence(seq: int, text: str) -> str:
     )
 
 
+def encode_partial_transcript(text: str) -> str:
+    """Live subtitle frame — partial ASR transcript from streaming ASR.
+
+    The UI overwrites its current subtitle with each partial. The terminal
+    full transcript is delivered separately via ``encode_transcript`` once
+    ASR completes; clients that don't handle this frame can ignore it.
+    """
+    return json.dumps(
+        {"type": "partial_transcript", "text": text},
+        ensure_ascii=False,
+    )
+
+
 def encode_greeting(text: str) -> str:
     """Greeting (say-first) frame — emitted once on session start,
     followed by the pre-synthesized greeting PCM as binary frames.

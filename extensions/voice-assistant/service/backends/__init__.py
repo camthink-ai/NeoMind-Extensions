@@ -6,9 +6,9 @@ import logging
 from profile import Profile
 from .aec import NoopAECBackend, WebRtcAECBackend  # noqa: F401  (re-export)
 from .vad import SileroVAD, EnergyVAD
-from .asr import SenseVoiceHTTPASR
-from .llm import OllamaHTTPClient, NeoMindWSClient, FakeLLMClient
-from .tts import ZipVoiceHTTP
+from .asr import SenseVoiceHTTPASR, SenseVoiceInprocASR, Qwen3LlamaCppASR
+from .llm import OllamaHTTPClient, NeoMindCapabilityLLM, NeoMindWSClient, FakeLLMClient
+from .tts import ZipVoiceHTTP, ZipVoiceInprocTTS
 
 logger = logging.getLogger(__name__)
 
@@ -39,17 +39,42 @@ def make_asr(profile: Profile):
         # qwen3_asr_http shares the same /asr contract as sensevoice-asr;
         # the SenseVoiceHTTPASR class is a generic HTTP ASR client.
         case "sensevoice_http" | "qwen3_asr_http":
+            # `num_threads` is a SenseVoiceInprocASR-only knob; it survives
+            # profile deep_merge when default.yaml uses inproc but a named
+            # profile switches to http. Pop so HTTP backend doesn't choke.
+            cfg.pop("num_threads", None)
+            # `streaming` is a Qwen3LlamaCppASR-only knob; the HTTP backend
+            # is batched and ignores it. Pop to avoid TypeError.
+            cfg.pop("streaming", None)
             return SenseVoiceHTTPASR(**cfg)
+        case "sensevoice_inproc":
+            return SenseVoiceInprocASR(**cfg)
+        case "qwen3_llamacpp_asr":
+            return Qwen3LlamaCppASR(**cfg)
         case _:
             raise ValueError(f"unknown ASR backend: {t}")
 
 
-def make_llm(profile: Profile):
+def make_llm(profile: Profile, ws=None, chat_rx=None):
     cfg = dict(profile.llm_config)
     t = cfg.pop("type")
     match t:
         case "neomind_ws":
             return NeoMindWSClient(**cfg)
+        case "neomind_capability":
+            # Capability path requires the live WS to the Rust extension and
+            # the demultiplex queue fed by the main ws_handler receive loop.
+            if ws is None or chat_rx is None:
+                raise ValueError(
+                    "neomind_capability LLM backend requires `ws` and `chat_rx` "
+                    "(passed by server.ws_handler)"
+                )
+            # Pop neomind_ws-only fields that survive deep_merge from
+            # default.yaml (url/token_env/auth_mode/voice_mode). Capability
+            # path has no URL — host platform routes internally.
+            for k in ("url", "token_env", "auth_mode", "voice_mode", "token"):
+                cfg.pop(k, None)
+            return NeoMindCapabilityLLM(ws=ws, chat_rx=chat_rx, **cfg)
         case "ollama_http":
             return OllamaHTTPClient(**cfg)
         case "fake":
@@ -65,7 +90,11 @@ def make_tts(profile: Profile):
         # zipvoice_http / moss_tts_http / kokoro_http all share the same
         # NDJSON /tts/stream contract; the class name is historical.
         case "zipvoice_http" | "moss_tts_http" | "kokoro_http":
+            # Pop inproc-only knobs that survive deep_merge from default.yaml.
+            cfg.pop("num_threads", None)
             return ZipVoiceHTTP(**cfg)
+        case "zipvoice_inproc":
+            return ZipVoiceInprocTTS(**cfg)
         case _:
             raise ValueError(f"unknown TTS backend: {t}")
 

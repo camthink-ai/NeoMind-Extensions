@@ -62,7 +62,9 @@ def ws_app(monkeypatch):
     # FakeLLMClient — implements LLMClient Protocol, yields Content then end.
     from backends.llm import FakeLLMClient
     fake_llm = FakeLLMClient(reply_template="你好啊,我是测试回复")
-    monkeypatch.setattr(server, "make_llm", lambda profile: fake_llm)
+    monkeypatch.setattr(
+        server, "make_llm", lambda profile, **kw: fake_llm
+    )
 
     return server.app
 
@@ -340,7 +342,9 @@ def test_speech_during_greeting_emits_barge_in_immediately(monkeypatch):
     # the fake that yields a fixed reply synchronously.
     from backends.llm import FakeLLMClient
     fake_llm = FakeLLMClient(reply_template="你好啊,我是测试回复")
-    monkeypatch.setattr(server, "make_llm", lambda profile: fake_llm)
+    monkeypatch.setattr(
+        server, "make_llm", lambda profile, **kw: fake_llm
+    )
 
     monkeypatch.setattr(server, "VAD_BACKEND", "energy")
     monkeypatch.setattr(server, "VAD_ENERGY_THRESHOLD", 0.001)

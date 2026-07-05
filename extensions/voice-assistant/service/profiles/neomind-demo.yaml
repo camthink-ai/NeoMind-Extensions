@@ -1,18 +1,20 @@
-name: default
-description: "Single-process: in-proc SenseVoice + ZipVoice + NeoMind LLM. No external ASR/TTS services needed."
+name: neomind-demo
+description: "End-to-end demo: Kokoro TTS + Qwen3 ASR + NeoMind chat WS"
 hardware:
   cpu_threads: 4
 acoustic:
   vad_backend: silero
   vad_threshold: 0.5
-  vad_min_speech_ms: 250
+  vad_min_speech_ms: 300
   vad_silence_ms: 500
-  aec: echo_window
+  # Browser-side echoCancellation:true already cleans the loopback.
+  # Server-side echo_window boost is unnecessary and blocks barge-in.
+  aec: none
 backends:
   asr:
-    type: sensevoice_inproc
+    type: qwen3_asr_http
+    url: http://127.0.0.1:9383
     language: auto
-    num_threads: 2
   llm:
     type: neomind_ws
     url: ws://127.0.0.1:9375/api/chat
@@ -20,15 +22,14 @@ backends:
     auth_mode: api_key
     voice_mode: true
   tts:
-    type: zipvoice_inproc
-    voice: 中文女
-    num_threads: 2
+    type: kokoro_http
+    url: http://127.0.0.1:9385
+    voice: zf_xiaoxiao
 interaction:
   barge_in: full
-  latency_target_ms: 1200
+  latency_target_ms: 1500
   barge_in_ack: true
   ack_words: ["好的", "嗯哼", "明白"]
   stage_filler_words:
     thinking: ["让我想想", "嗯,让我想想", "稍等一下"]
     tool_call: ["我查一下", "搜索中", "查一下资料"]
-  greeting_text: ""

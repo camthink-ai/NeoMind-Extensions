@@ -59,6 +59,7 @@ logger = logging.getLogger("voice-assistant")
 from profile import load_profile
 from backends import make_vad, make_asr, make_llm, make_tts
 from backends.aec import NoopAECBackend
+from erle import ErleTracker
 from orchestrator import VoicePipeline, State
 from telemetry import Telemetry
 
@@ -130,10 +131,25 @@ AEC_TAIL_MS = int(os.environ.get("VOICE_ASSISTANT_AEC_TAIL_MS", "400"))
 AEC_REFERENCE_DELAY_MS = int(os.environ.get("VOICE_ASSISTANT_AEC_REFERENCE_DELAY_MS", "200"))
 AEC_REF_BUFFER_SECONDS = float(os.environ.get("VOICE_ASSISTANT_AEC_REF_BUFFER_SECONDS", "3.0"))
 
+# AEC residual-echo gate for barge-in (P0-3). When VAD detects a speech
+# segment during the echo window, we additionally require the post-AEC
+# mic signal to exceed the reference signal by this ratio before
+# trusting the segment as genuine user speech. With a healthy AEC the
+# post-AEC signal is much smaller than the reference; if ref is louder
+# than mic post-AEC, the "speech" is almost certainly echo leak.
+# 1.5 = "mic must be at least 1.5x louder than reference post-AEC".
+# Set to +inf via env to disable the gate entirely.
+AEC_BARGE_IN_REF_RATIO = float(os.environ.get("VOICE_ASSISTANT_AEC_BARGE_IN_REF_RATIO", "1.5"))
+
 # Module globals populated by _warm_banks_async (initialized to safe defaults
 # so import-time references don't AttributeError).
 _aec_backend: AECBackend | None = None
 _ref_ring_buffer: ReferenceRingBuffer | None = None
+# Running total of VAD segments suppressed as residual echo across all
+# sessions since process start. Exposed via /measure so operators can
+# see how often the AEC gate is firing (high counts vs barge_in_count
+# hint at AEC convergence problems or an over-eager ref-ratio threshold).
+_erle_rejected_barge_ins_total: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +306,21 @@ async def _warm_aec() -> None:
         logger.warning("AEC backend init failed; falling back to Noop")
         _aec_backend = NoopAECBackend()
 
+    # Reconcile AEC_MODE with the backend we actually got. Without this,
+    # a profile that says ``aec: webrtc`` on a host without
+    # webrtc_audio_processing ends up with AEC_MODE='webrtc' (server.py:285)
+    # but a Noop backend. _aec_active_now() only fires for 'echo_window',
+    # so neither real-AEC nor half-duplex echo suppression would run —
+    # the assistant's own TTS would trigger barge-in.
+    from backends.aec import NoopAECBackend as _NoopAEC
+    if AEC_MODE == "webrtc" and isinstance(_aec_backend, _NoopAEC):
+        logger.warning(
+            "AEC mode 'webrtc' requested but library unavailable; "
+            "downgrading to 'echo_window' (half-duplex). "
+            "Install webrtc-audio-processing for full-duplex."
+        )
+        AEC_MODE = "echo_window"
+
     capacity_bytes = int(AEC_REF_BUFFER_SECONDS * SAMPLE_RATE * 2)
     _ref_ring_buffer = ReferenceRingBuffer(capacity_bytes)
     logger.info("AEC backend ready: %s, ref buffer %.1fs",
@@ -371,10 +402,223 @@ async def measure(req: dict | None = None):
     return {
         "turn_count": _telemetry.turn_count,
         "barge_in_count": _telemetry.barge_in_count,
+        "aec_rejected_barge_ins": _erle_rejected_barge_ins_total,
         "target_ms": _profile.latency_target_ms,
         "target_met": target_met,
         **snap,
     }
+
+
+# ---------------------------------------------------------------------------
+# Runtime configuration — POST /config reloads profile/backends on demand.
+# ---------------------------------------------------------------------------
+# Reload state. _reloading=True blocks new WS connections (close 1013) until
+# the rebuild finishes. _reload_lock serializes concurrent POST /config calls.
+_reloading = False
+_reload_lock: asyncio.Lock | None = None  # lazily bound to running loop
+
+
+def _get_reload_lock() -> asyncio.Lock:
+    """Lazy-init the lock so it binds to the running asyncio loop."""
+    global _reload_lock
+    if _reload_lock is None:
+        _reload_lock = asyncio.Lock()
+    return _reload_lock
+
+
+def _available_profile_names() -> list[str]:
+    """List profile YAMLs in service/profiles/ (without extension)."""
+    profiles_dir = Path(__file__).parent / "profiles"
+    if not profiles_dir.is_dir():
+        return ["default"]
+    return sorted(
+        p.stem for p in profiles_dir.glob("*.yaml")
+    )
+
+
+def _config_snapshot() -> dict:
+    """Current effective config for GET /config. Token is masked."""
+    token_env = _profile.llm_config.get("token_env", "NEOMIND_TOKEN")
+    token_val = os.environ.get(token_env, "")
+    masked = (token_val[:4] + "***") if token_val else ""
+    return {
+        "profile": _profile.name,
+        "language": _profile.asr_config.get("language", "auto"),
+        "voice": _profile.tts_config.get("voice", "中文女"),
+        "neoMindTokenMasked": masked,
+        "neoMindTokenSet": bool(token_val),
+        "asrType": _profile.asr_config.get("type"),
+        "ttsType": _profile.tts_config.get("type"),
+        "llmType": _profile.llm_config.get("type"),
+        "numThreads": {
+            "asr": _profile.asr_config.get("num_threads"),
+            "tts": _profile.tts_config.get("num_threads"),
+        },
+    }
+
+
+async def _apply_config(payload: dict) -> dict:
+    """Apply a POST /config payload. Returns summary of what happened.
+
+    Field handling:
+      language / voice / neoMindToken  -> instant (no backend rebuild)
+      profile / numThreads.*           -> full reload (close+rebuild backends,
+                                           re-warm PCM banks)
+
+    Existing WS sessions keep their captured backend references and are NOT
+    interrupted; new connections during reload are rejected with 1013.
+    """
+    global _reloading, _profile, _vad_backend, _asr_backend, _tts_backend
+    global ASR_URL, TTS_URL, TTS_VOICE, VAD_BACKEND
+
+    applied: list[str] = []
+    reloaded = False
+    reload_seconds: float | None = None
+
+    # ---- instant overrides ----
+    if "language" in payload and payload["language"]:
+        new_lang = payload["language"]
+        _profile.asr_config["language"] = new_lang
+        # In-proc/HTTP ASR backends cache language at construction; patch the
+        # instance attr so the change takes effect without a reload.
+        if hasattr(_asr_backend, "language"):
+            try:
+                _asr_backend.language = new_lang
+            except Exception:
+                pass
+        applied.append("language")
+        logger.info("config: language -> %s", new_lang)
+
+    if "voice" in payload and payload["voice"]:
+        new_voice = payload["voice"]
+        _profile.tts_config["voice"] = new_voice
+        TTS_VOICE = new_voice  # backward-compat global read by VoicePipeline
+        if hasattr(_tts_backend, "voice"):
+            try:
+                _tts_backend.voice = new_voice
+            except Exception:
+                pass
+        applied.append("voice")
+        logger.info("config: voice -> %s", new_voice)
+
+    if "neoMindToken" in payload and payload["neoMindToken"]:
+        token_env = _profile.llm_config.get("token_env", "NEOMIND_TOKEN")
+        os.environ[token_env] = payload["neoMindToken"]
+        applied.append("neoMindToken")
+        logger.info("config: neoMindToken updated (env=%s)", token_env)
+
+    # ---- full reload triggers ----
+    profile_changed = (
+        "profile" in payload
+        and payload["profile"]
+        and payload["profile"] != _profile.name
+    )
+    threads_in = payload.get("numThreads") or {}
+    cur_threads = {
+        "asr": _profile.asr_config.get("num_threads"),
+        "tts": _profile.tts_config.get("num_threads"),
+    }
+    # Only count as changed when the user actually supplied the field with
+    # a non-None value; absent fields must NOT trigger a reload.
+    threads_changed = any(
+        k in threads_in and threads_in[k] is not None
+        and threads_in[k] != cur_threads.get(k)
+        for k in ("asr", "tts")
+    )
+
+    if profile_changed or threads_changed:
+        async with _get_reload_lock():
+            _reloading = True
+            t0 = time.perf_counter()
+            try:
+                new_name = payload.get("profile") or _profile.name
+                logger.info("config: reloading profile=%s ...", new_name)
+                new_profile = load_profile(new_name)
+
+                # Preserve instant overrides on top of the freshly loaded profile
+                # so the user doesn't lose language/voice when switching profiles.
+                if "language" in _profile.asr_config:
+                    new_profile.asr_config["language"] = _profile.asr_config["language"]
+                if "voice" in _profile.tts_config:
+                    new_profile.tts_config["voice"] = _profile.tts_config["voice"]
+                if "asr" in threads_in and threads_in["asr"] is not None:
+                    new_profile.asr_config["num_threads"] = threads_in["asr"]
+                if "tts" in threads_in and threads_in["tts"] is not None:
+                    new_profile.tts_config["num_threads"] = threads_in["tts"]
+
+                # Best-effort close of old backends (none currently implement
+                # close(), but the hook is here for future AEC/native resources).
+                for backend in (_vad_backend, _asr_backend, _tts_backend):
+                    close = getattr(backend, "close", None)
+                    if close:
+                        try:
+                            close()
+                        except Exception as e:
+                            logger.warning("backend close failed: %s", e)
+
+                _profile = new_profile
+                _vad_backend = make_vad(_profile)
+                _asr_backend = make_asr(_profile)
+                _tts_backend = make_tts(_profile)
+                ASR_URL = _profile.asr_config.get("url", "http://127.0.0.1:9383")
+                TTS_URL = _profile.tts_config.get("url", "http://127.0.0.1:9386")
+                TTS_VOICE = _profile.tts_config.get("voice", "中文女")
+                VAD_BACKEND = _profile.vad_backend_type
+
+                # Reset PCM banks so the next request re-synthesizes with the
+                # new TTS backend/voice. Fire-and-forget; TTS may take seconds.
+                global _ACK_BANK_WARMED, _STAGE_BANK_WARMED, _GREETING_PCM
+                _ACK_PCM_BANK.clear()
+                _STAGE_FILLER_BANK.clear()
+                _ACK_BANK_WARMED = False
+                _STAGE_BANK_WARMED = False
+                _GREETING_PCM = None
+                asyncio.create_task(_warm_banks_async())
+
+                reload_seconds = time.perf_counter() - t0
+                reloaded = True
+                if "profile" in payload:
+                    applied.append("profile")
+                if threads_changed:
+                    applied.append("numThreads")
+                logger.info(
+                    "config: reload complete (%.2fs, profile=%s)",
+                    reload_seconds, _profile.name,
+                )
+            finally:
+                _reloading = False
+
+    return {
+        "applied": applied,
+        "reloaded": reloaded,
+        "reload_seconds": reload_seconds,
+        "current": _config_snapshot(),
+    }
+
+
+@app.get("/config")
+async def get_config():
+    """Return current effective config + available options for the UI."""
+    return {
+        "current": _config_snapshot(),
+        "available_profiles": _available_profile_names(),
+        "available_languages": ["auto", "zh", "en", "ja", "ko", "yue"],
+        "reloading": _reloading,
+    }
+
+
+@app.post("/config")
+async def post_config(payload: dict):
+    """Apply runtime config changes. See _apply_config for field semantics.
+
+    Returns 503 if another reload is in progress.
+    """
+    if _reloading:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "reload_in_progress", "reloading": True},
+        )
+    return await _apply_config(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +719,9 @@ class VoiceSession:
         # ---- AEC echo-window state ----
         self.tts_active: bool = False
         self.tts_last_chunk_ts: float = 0.0
+        # ERLE tracker — fed during echo_window only; queried to gate
+        # barge-in when VAD trips on possible residual echo.
+        self._erle = ErleTracker()
         # Greeting (say-first) — True between greeting push and the first
         # user-speech detection that ends the greeting window. Used by
         # ws_handler's pcm_complete branch to emit barge_in immediately
@@ -517,9 +764,18 @@ class VoiceSession:
 
     def feed_pcm(self, samples_int16: np.ndarray) -> Optional[np.ndarray]:
         """Feed int16 samples. Returns complete utterance PCM (int16 LE bytes)
-        when VAD detects speech-end, else None."""
+        when VAD detects speech-end, else None.
+
+        During the AEC echo window, also updates the ERLE tracker and
+        applies a residual-echo gate: if VAD returns a speech segment but
+        the reference signal still dominates the post-AEC mic signal, the
+        segment is suppressed as residual echo (returns None) instead of
+        triggering a spurious barge-in.
+        """
         # AEC preprocessing: subtract speaker echo before VAD sees the signal.
         # Short-circuit for Noop (perf: avoids ring-buffer peek allocation).
+        ref_arr: np.ndarray | None = None
+        mic_pre_aec = samples_int16
         if (_aec_backend is not None
                 and _ref_ring_buffer is not None
                 and not isinstance(_aec_backend, NoopAECBackend)):
@@ -529,18 +785,54 @@ class VoiceSession:
                 length_ms=length_ms,
                 sample_rate=SAMPLE_RATE,
             )
-            ref = np.frombuffer(ref_bytes, dtype="<i2")
+            ref_arr = np.frombuffer(ref_bytes, dtype="<i2")
             try:
-                samples_int16 = _aec_backend.process_capture(samples_int16, ref)
+                samples_int16 = _aec_backend.process_capture(samples_int16, ref_arr)
             except Exception as e:
                 # Per-frame failure: log and pass original mic through. Do NOT
                 # downgrade the module global — that would kill AEC for ALL sessions.
                 logger.warning("AEC process_capture failed: %s; passing mic unprocessed", e)
+                ref_arr = None  # AEC didn't actually run; skip ERLE update
+
+        # ERLE tracking — fed only while the echo window is active so the
+        # rolling stats reflect the current TTS playback period. Clear the
+        # history once the window closes so stale samples don't bleed into
+        # the next playback period.
+        if self._aec_active_now() and ref_arr is not None:
+            mic_f = mic_pre_aec.astype(np.float32) / 32768.0
+            post_f = samples_int16.astype(np.float32) / 32768.0
+            ref_f = ref_arr.astype(np.float32) / 32768.0
+            mic_rms = float(np.sqrt(np.mean(mic_f * mic_f))) if mic_f.size else 0.0
+            post_rms = float(np.sqrt(np.mean(post_f * post_f))) if post_f.size else 0.0
+            ref_rms = float(np.sqrt(np.mean(ref_f * ref_f))) if ref_f.size else 0.0
+            self._erle.update(mic_rms, post_rms, ref_rms)
+        elif not self._aec_active_now() and self._erle.has_samples():
+            self._erle.reset()
+
         if self._silero_vad is not None:
-            return self._feed_pcm_silero(samples_int16)
-        if self._fsmn_vad is not None:
-            return self._feed_pcm_fsmn(samples_int16)
-        return self._feed_pcm_energy(samples_int16)
+            seg = self._feed_pcm_silero(samples_int16)
+        elif self._fsmn_vad is not None:
+            seg = self._feed_pcm_fsmn(samples_int16)
+        else:
+            seg = self._feed_pcm_energy(samples_int16)
+
+        # Residual-echo gate: VAD detected a complete segment during the
+        # echo window. If the reference signal still dominates the post-AEC
+        # mic signal, the "speech" is almost certainly echo leak — drop the
+        # segment rather than fire a false barge-in.
+        if seg is not None and self._aec_active_now() and self._erle.has_samples():
+            ratio = self._erle.ref_dominance_ratio()
+            if ratio > AEC_BARGE_IN_REF_RATIO:
+                self._erle.rejected_barge_ins += 1
+                global _erle_rejected_barge_ins_total
+                _erle_rejected_barge_ins_total += 1
+                logger.info(
+                    "AEC residual-echo gate: suppressing segment "
+                    "(ref_dominance=%.2f, erle_db=%.1f, threshold=%.2f)",
+                    ratio, self._erle.instant_erle_db(), AEC_BARGE_IN_REF_RATIO,
+                )
+                return None
+        return seg
 
     def _feed_pcm_energy(self, samples_int16: np.ndarray) -> Optional[np.ndarray]:
         """Energy-based VAD with AEC echo-window suppression."""
@@ -642,12 +934,33 @@ class VoiceSession:
         return pcm_bytes
 
     def _feed_pcm_silero(self, samples_int16: np.ndarray) -> Optional[np.ndarray]:
-        """Silero neural VAD via sherpa-onnx with AEC echo-window suppression."""
+        """Silero neural VAD via sherpa-onnx with AEC echo-window suppression.
+
+        echo_window mode (half-duplex fallback when webrtc lib unavailable):
+        sherpa-onnx Silero threshold is fixed at config creation time, so
+        unlike energy/FSMN VAD we can't dynamically boost it during TTS
+        playback. Previously this method returned None outright during the
+        AEC window — which meant the mic was fully muted and barge-in was
+        impossible while TTS played.
+
+        Now we apply an RMS energy pre-filter: if the mic input is quieter
+        than (VAD_ENERGY_THRESHOLD + AEC_ENERGY_BOOST), treat it as TTS
+        echo and skip the Silero feed. The user's loud speech will exceed
+        this boost, reach Silero, and trigger barge-in. This matches the
+        boost strategy energy VAD has used all along (server.py:781-783).
+        """
         if self._silero_vad is None:
             return self._feed_pcm_energy(samples_int16)
 
         if self._aec_active_now():
-            return None
+            # Energy pre-filter during TTS playback. Without this, Silero's
+            # fixed 0.5 threshold would fire on TTS echo and cause false
+            # barge-in. The user's speech must be louder than the speaker
+            # echo to break through — same contract as half-duplex AEC.
+            audio_f32_check = samples_int16.astype(np.float32) / 32768.0
+            rms = float(np.sqrt(np.mean(audio_f32_check * audio_f32_check)))
+            if rms < VAD_ENERGY_THRESHOLD + AEC_ENERGY_BOOST:
+                return None  # too quiet — likely TTS echo, skip Silero feed
 
         audio_f32 = (samples_int16.astype(np.float32) / 32768.0).tolist()
         self._silero_vad.accept_waveform(audio_f32)
@@ -733,6 +1046,11 @@ async def _pick_stage_filler_pcm(stage: str) -> bytes | None:
 async def ws_handler(websocket: WebSocket):
     """Main per-connection loop: parse messages, drive VAD, delegate each
     turn to VoicePipeline.run_turn()."""
+    # Reject new sessions during a config reload so they don't bind to
+    # half-rebuilt backends. Frontend retries after /config returns.
+    if _reloading:
+        await websocket.close(code=1013)  # Try Again Later
+        return
     await websocket.accept()
 
     # session_id is passed as a query parameter (?session_id=xxx) — the
@@ -817,6 +1135,11 @@ async def ws_handler(websocket: WebSocket):
             "elapsed_ms": elapsed_ms,
         })
 
+    async def on_asr_partial(text: str) -> None:
+        """Live subtitle frame — partial ASR transcript (streaming backends)."""
+        from ws_protocol import encode_partial_transcript
+        await sess.ws.send_text(encode_partial_transcript(text))
+
     async def on_skip(reason: str) -> None:
         await sess.send_json({"type": "skip", "reason": reason})
 
@@ -839,7 +1162,13 @@ async def ws_handler(websocket: WebSocket):
     # Per-session LLM backend — NeoMindWSClient holds live WS state as instance
     # attributes; a single shared instance would cross-corrupt concurrent
     # sessions. Other backends are stateless and shared.
-    llm_backend = make_llm(_profile)
+    #
+    # For the `neomind_capability` backend, we hand the live WebSocket and a
+    # per-session demultiplex queue to the LLM client; the main receive loop
+    # below routes inbound chat_chunk / chat_stream_* text frames into the
+    # queue, and NeoMindCapabilityLLM.stream() consumes them.
+    chat_rx_queue: asyncio.Queue = asyncio.Queue()
+    llm_backend = make_llm(_profile, ws=websocket, chat_rx=chat_rx_queue)
 
     pipeline = VoicePipeline(
         _vad_backend,
@@ -865,6 +1194,7 @@ async def ws_handler(websocket: WebSocket):
         on_thinking_start=on_thinking_start,
         on_tool_call=on_tool_call,
         on_llm_sentence=on_llm_sentence,
+        on_asr_partial=on_asr_partial,
     )
 
     current_pipeline_task: Optional[asyncio.Task] = None
@@ -925,6 +1255,16 @@ async def ws_handler(websocket: WebSocket):
             except json.JSONDecodeError:
                 continue
             mtype = obj.get("type")
+            # Demultiplex chat-stream frames away from the existing
+            # transcript/pong/stop handlers. These frames are produced by the
+            # Rust extension when it forwards AgentStreamChunk events from
+            # the ChatStream capability — they belong to the LLM backend,
+            # not the browser-facing control protocol.
+            if mtype in ("chat_chunk", "chat_stream_started",
+                         "chat_stream_end", "chat_stream_error",
+                         "chat_session_turn_started"):
+                await chat_rx_queue.put(obj)
+                continue
             if mtype == "ping":
                 await sess.send_json({"type": "pong"})
             elif mtype == "start":

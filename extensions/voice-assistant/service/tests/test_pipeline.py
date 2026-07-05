@@ -147,7 +147,7 @@ async def test_pipeline_records_telemetry():
 
 @pytest.mark.asyncio
 async def test_pipeline_barge_in_invokes_handler_and_cancels_llm():
-    """End-to-end: handle_barge_in transitions to BARGED, runs 4 cleanups
+    """End-to-end: handle_barge_in transitions to BARGED, runs 3 cleanups
     (cancel_llm should call llm.cancel), then transitions to LISTENING."""
     vad, asr, llm, tts = _make_mocks()
     cancelled = asyncio.Event()

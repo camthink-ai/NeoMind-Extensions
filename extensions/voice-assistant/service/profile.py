@@ -107,8 +107,6 @@ def load_profile(name: str | None = None) -> Profile:
     # Env overrides
     if v := os.environ.get("VOICE_ASSISTANT_VAD_BACKEND"):
         acoustic["vad_backend"] = v.lower()
-    if v := os.environ.get("VOICE_ASSISTANT_TTS_URL"):
-        tts["url"] = v
     if v := os.environ.get("VOICE_ASSISTANT_VOICE"):
         tts["voice"] = v
 

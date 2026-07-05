@@ -5,7 +5,7 @@ import pytest
 
 from backends import make_vad, make_asr, make_llm, make_tts
 from backends.vad import SileroVAD, EnergyVAD
-from backends.asr import SenseVoiceHTTPASR
+from backends.asr import SenseVoiceHTTPASR, Qwen3LlamaCppASR
 from backends.llm import OllamaHTTPClient, NeoMindWSClient, FakeLLMClient
 from backends.tts import ZipVoiceHTTP
 from profile import Profile
@@ -41,6 +41,28 @@ def test_make_vad_energy():
 def test_make_asr():
     asr = make_asr(_profile())
     assert isinstance(asr, SenseVoiceHTTPASR)
+
+
+def test_make_asr_qwen3_llamacpp():
+    """Factory wires qwen3_llamacpp_asr → Qwen3LlamaCppASR with streaming flag."""
+    asr = make_asr(_profile(
+        asr_config={
+            "type": "qwen3_llamacpp_asr",
+            "url": "http://localhost:8080",
+            "model": "qwen3-asr",
+            "language": "auto",
+            "streaming": True,
+        },
+    ))
+    assert isinstance(asr, Qwen3LlamaCppASR)
+    assert asr.url == "http://localhost:8080"
+    assert asr.model == "qwen3-asr"
+    assert asr.streaming is True
+
+
+def test_make_asr_unknown_raises():
+    with pytest.raises(ValueError):
+        make_asr(_profile(asr_config={"type": "nonexistent", "url": "x"}))
 
 
 def test_make_llm_ollama():

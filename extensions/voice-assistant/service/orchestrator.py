@@ -61,12 +61,15 @@ class State(str, Enum):
     BARGED = "barged"
 
 
-# Valid transitions: from_state → set of allowed target states
+# Valid transitions: from_state → set of allowed target states. The table
+# is AUTHORITATIVE — no runtime special-casing. BARGED is listed in every
+# interruptible source state so barge-in is always admissible by table
+# lookup alone.
 _VALID_TRANSITIONS: dict[State, set[State]] = {
     # THINKING allowed from IDLE: VoicePipeline.run_turn starts a fresh turn
     # from IDLE (between turns) without going through LISTENING, which is only
     # entered during VAD detection in server.py's ws_handler.
-    State.IDLE: {State.LISTENING, State.THINKING},
+    State.IDLE: {State.LISTENING, State.THINKING, State.BARGED},
     State.LISTENING: {State.THINKING, State.BARGED, State.IDLE},
     State.THINKING: {State.SPEAKING, State.BARGED, State.IDLE},
     State.SPEAKING: {State.IDLE, State.BARGED},
@@ -99,10 +102,9 @@ class StateMachine:
         if target == self._state:
             return
         if target not in _VALID_TRANSITIONS.get(self._state, set()):
-            if target != State.BARGED:  # BARGED is special — allowed from almost anywhere
-                raise ValueError(
-                    f"Invalid transition {self._state.value} → {target.value}"
-                )
+            raise ValueError(
+                f"Invalid transition {self._state.value} → {target.value}"
+            )
         prev = self._state
         self._state = target
         logger.debug("FSM: %s → %s", prev.value, target.value)
@@ -118,10 +120,7 @@ class StateMachine:
             # Self-transition is a no-op (idempotency for concurrent barge-ins)
             if target == self._state:
                 return
-            # BARGED is always allowed as an interrupt
-            if target == State.BARGED:
-                pass
-            elif target not in _VALID_TRANSITIONS.get(self._state, set()):
+            if target not in _VALID_TRANSITIONS.get(self._state, set()):
                 raise ValueError(
                     f"Invalid transition {self._state.value} → {target.value}"
                 )
@@ -136,10 +135,14 @@ class StateMachine:
 
 @dataclass
 class BargeInHandler:
-    """Coordinates the 4 parallel cleanup actions on barge-in.
+    """Coordinates the 3 parallel cleanup actions on barge-in.
 
     Each action is an async callable; failures are logged but don't halt others.
     Uses a lock to ensure idempotency for concurrent barge-in triggers.
+
+    ASR-drain was previously a 4th action but the orchestrator has no ASR
+    state — server.py's VoiceSession owns the VAD ring buffer and resets
+    via its own FSM→LISTENING path. Kept as 3 actions.
 
     Optional `play_ack` runs AFTER cleanup (so browser has cleared its
     playback queue) but BEFORE transitioning to LISTENING — used for
@@ -148,13 +151,12 @@ class BargeInHandler:
     cancel_tts_playback: Callable[[], Awaitable[None]]
     cancel_llm_request: Callable[[], Awaitable[None]]
     clear_pending_queues: Callable[[], Awaitable[None]]
-    drain_asr_buffer: Callable[[], Awaitable[None]]
     play_ack: Callable[[], Awaitable[None]] | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _in_progress: bool = field(default=False)
 
     async def handle_barge_in(self, fsm: StateMachine, reason: str) -> None:
-        """Transition to BARGED, run 4 cleanups, play ack, transition to LISTENING.
+        """Transition to BARGED, run 3 cleanups, play ack, transition to LISTENING.
 
         Idempotent: if a barge-in is already in progress, return immediately.
         """
@@ -174,7 +176,6 @@ class BargeInHandler:
             self.cancel_tts_playback(),
             self.cancel_llm_request(),
             self.clear_pending_queues(),
-            self.drain_asr_buffer(),
         ]
         results = await asyncio.gather(*cleanup_tasks, return_exceptions=True)
         for i, r in enumerate(results):
@@ -228,6 +229,7 @@ class VoicePipeline:
         on_thinking_start=None,
         on_tool_call=None,
         on_llm_sentence=None,
+        on_asr_partial=None,
     ):
         self.vad = vad
         self.asr = asr
@@ -251,18 +253,28 @@ class VoicePipeline:
         # Phase 2: progressive subtitle callback — async(seq: int, text: str).
         # Fires once per completed LLM sentence, in order.
         self.on_llm_sentence = on_llm_sentence
+        # Streaming-ASR partial-transcript callback — async(text: str). Fires
+        # per partial chunk from backends that implement stream(). None for
+        # backends that only do batched transcribe().
+        self.on_asr_partial = on_asr_partial
+        # Whether to use streaming ASR when the backend supports it. Toggled
+        # by profile config (streaming: true under backends.asr).
+        self._streaming_asr = bool(
+            os.environ.get("VOICE_ASSISTANT_ASR_STREAMING", "")
+        ) or getattr(getattr(asr, "streaming", None), "__bool__", lambda: False)()
         self.fsm = StateMachine()
         # AEC threshold hack: raise VAD threshold during TTS playback to avoid
         # the assistant's own voice triggering barge-in. Restored after.
         self._original_vad_threshold = getattr(vad, "threshold", None)
-        self._pcm_queue: asyncio.Queue | None = None  # set when streaming TTS queue is in use
-        # Barge-in handler — wires the 4 cleanup actions to pipeline-owned state.
+        # Per-turn sentence queue, lifted to instance scope so barge-in can
+        # drain it. Reassigned fresh at the top of each run_turn.
+        self._sentence_q: asyncio.Queue | None = None
+        # Barge-in handler — wires the 3 cleanup actions to pipeline-owned state.
         # play_ack (optional) runs AFTER cleanup, BEFORE transition to LISTENING.
         self.barge_in = BargeInHandler(
             cancel_tts_playback=self._cancel_tts_playback,
             cancel_llm_request=self._cancel_llm,
             clear_pending_queues=self._clear_queues,
-            drain_asr_buffer=self._drain_asr,
             play_ack=play_ack,
         )
 
@@ -280,6 +292,21 @@ class VoicePipeline:
 
         # IDLE -> THINKING (a fresh turn starts from IDLE between turns).
         await self.fsm.async_transition(State.THINKING)
+        # Raise VAD threshold during THINKING too. Without this, the bare
+        # threshold + AEC fallback (echo_window half-duplex) leaks false
+        # positives from prior TTS playback residue into the THINKING
+        # window → premature barge-in kills the slow-but-real LLM
+        # response (qwen3.5 with tools has ~2.5s first-token latency).
+        # Same bump as SPEAKING below (line ~440) so THINKING and
+        # SPEAKING share one "user can't interrupt for a moment" contract.
+        if self._original_vad_threshold is not None:
+            mult = float(os.environ.get(
+                "VOICE_ASSISTANT_THINKING_VAD_MULT",
+                os.environ.get("VOICE_ASSISTANT_SPEAKING_VAD_MULT", "30")))
+            floor = float(os.environ.get(
+                "VOICE_ASSISTANT_THINKING_VAD_FLOOR", "0.4"))
+            self.vad.threshold = max(
+                self._original_vad_threshold * mult, floor)
         turn_start = time.perf_counter()
 
         # Compute PCM byte count for the segment (int16 = 2 bytes per sample).
@@ -292,9 +319,7 @@ class VoicePipeline:
 
         # ---- ASR ----
         try:
-            transcript = await self.asr.transcribe(
-                segment.samples, segment.sample_rate
-            )
+            transcript = await self._run_asr(segment.samples, segment.sample_rate)
         except Exception as exc:
             logger.exception("ASR failed in run_turn")
             if self.on_error is not None:
@@ -310,6 +335,14 @@ class VoicePipeline:
 
         if self.on_asr_complete is not None:
             await self.on_asr_complete(transcript, asr_ms)
+
+        logger.info(
+            "ASR transcript: %r (len=%d, state=%s, asr_ms=%.1f, "
+            "pcm_bytes=%d, sample_rate=%d, duration_ms=%.0f)",
+            transcript, len(transcript), self.fsm.state, asr_ms,
+            pcm_byte_count, segment.sample_rate,
+            pcm_byte_count / 2.0 / segment.sample_rate * 1000.0,
+        )
 
         if self.fsm.state == State.BARGED:
             if self.telemetry:
@@ -362,7 +395,10 @@ class VoicePipeline:
         # consumer picks it up). This keeps tts_first_chunk_ms comparable to
         # the Phase 1 single-stream measurement.
         tts_start = time.perf_counter()
+        # Lifted to instance scope so _clear_queues (barge-in) can drain it.
+        # Fresh queue per turn; old reference is replaced atomically.
         sentence_q: asyncio.Queue[str | None] = asyncio.Queue(maxsize=4)
+        self._sentence_q = sentence_q
         buf = SentenceBuffer()
         first_token_observed = False
         llm_first_sentence_observed = False
@@ -462,7 +498,9 @@ class VoicePipeline:
                             (time.perf_counter() - llm_start) * 1000,
                         )
                 if evt.type == "Content" and getattr(evt, "text", None):
+                    logger.info("LLM Content token: %r", evt.text)
                     for sentence in buf.feed(evt.text):
+                        logger.info("TTS sentence queued: %r", sentence)
                         if not llm_first_sentence_observed:
                             llm_first_sentence_observed = True
                             if self.telemetry:
@@ -563,19 +601,56 @@ class VoicePipeline:
         """Cancel the in-flight LLM stream."""
         await self.llm.cancel(session_id=str(id(self)))
 
+    async def _run_asr(self, samples, sample_rate: int) -> str:
+        """Run ASR, preferring streaming when the backend + profile enable it.
+
+        Streaming fires ``on_asr_partial`` per partial transcript so the UI
+        can show a live subtitle while the model finishes decoding. If the
+        backend has no ``stream()`` method, or the profile disabled
+        streaming, falls back to one-shot ``transcribe()``.
+
+        Aborts early (returns whatever has been accumulated so far) on
+        barge-in mid-transcription.
+
+        Note: we check ``type(self.asr)`` rather than the instance to avoid
+        ``AsyncMock`` (used heavily in tests) auto-creating a ``stream``
+        attribute that pretends to be a streaming backend.
+        """
+        # Inspect the class so AsyncMock (which auto-creates per-instance
+        # attributes) doesn't accidentally enable the streaming branch.
+        has_stream = (
+            hasattr(type(self.asr), "stream")
+            and callable(getattr(type(self.asr), "stream", None))
+        )
+        if has_stream and self._streaming_asr:
+            transcript = ""
+            async for pt in self.asr.stream(samples, sample_rate):
+                if self.fsm.state == State.BARGED:
+                    return transcript
+                transcript = pt.text
+                if not pt.is_final and self.on_asr_partial is not None:
+                    try:
+                        await self.on_asr_partial(pt.text)
+                    except Exception as e:
+                        logger.warning("on_asr_partial failed: %s", e)
+                if pt.is_final:
+                    break
+            return transcript
+        return await self.asr.transcribe(samples, sample_rate)
+
     async def _clear_queues(self) -> None:
-        """Drop any buffered PCM chunks not yet sent to the browser."""
-        if self._pcm_queue is None:
+        """Drop any buffered sentences not yet consumed by the TTS consumer.
+
+        The bi-streaming pipeline parks the producer on ``sentence_q.put``
+        when the LLM outpaces TTS; on barge-in we want those buffered
+        sentences discarded so the consumer doesn't wake up to enqueue more
+        TTS work after we've already told the browser to silence playback.
+        """
+        q = self._sentence_q
+        if q is None:
             return
-        while not self._pcm_queue.empty():
+        while not q.empty():
             try:
-                self._pcm_queue.get_nowait()
+                q.get_nowait()
             except asyncio.QueueEmpty:
                 break
-
-    async def _drain_asr(self) -> None:
-        """ASR is stateless at the Protocol level; nothing to drain.
-
-        Orchestrator-level reset happens via the FSM transition to LISTENING.
-        """
-        pass

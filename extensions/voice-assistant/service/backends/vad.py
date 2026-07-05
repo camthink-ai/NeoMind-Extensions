@@ -35,20 +35,40 @@ SILERO_VAD_SILENCE_MS = int(os.environ.get("SILERO_VAD_SILENCE_MS", "500"))
 # ---------------------------------------------------------------------------
 _SILERO_VAD_CONFIG = None  # sherpa_onnx.VadModelConfig | None
 
+# Known-good mirrors for silero_vad.onnx. The original snakers4/silero-vad
+# repo path returned 404 mid-2026; fall back through these in order.
+# k2-fsa/sherpa-onnx release asset is the canonical sherpa-onnx-compatible
+# copy (same bytes the orchestrator loads at startup).
+_SILERO_VAD_URLS = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
+    "https://github.com/snakers4/silero-vad/raw/master/files/silero_vad.onnx",
+)
+
 
 def _ensure_silero_config():
     """Lazily load Silero VAD config, auto-download model if missing.
 
     Returns the VadModelConfig or None on failure. Idempotent — safe to
-    call repeatedly; only the first call performs the load.
+    call repeatedly. The cached config is re-validated against the model
+    file on every call so that an external deletion (cache wipe, reinstall)
+    triggers a fresh download rather than silently pointing at a missing
+    path.
 
     This is a logic-preserving port of the inline init block that lived in
-    server.py (originally L531-557). Constants, download URL, and the
-    fallback-to-None-on-failure behavior are identical.
+    server.py (originally L531-557), plus two hardening fixes:
+      - Try multiple mirror URLs (the original snakers4 path 404'd).
+      - Re-check `Path.is_file()` on cache hits; reset if missing.
     """
     global _SILERO_VAD_CONFIG
-    if _SILERO_VAD_CONFIG is not None:
+    cached_path = (
+        getattr(_SILERO_VAD_CONFIG.silero_vad, "model", None)
+        if _SILERO_VAD_CONFIG is not None else None
+    )
+    if _SILERO_VAD_CONFIG is not None and cached_path and Path(cached_path).is_file():
         return _SILERO_VAD_CONFIG
+    # Either first call, or the cached config points at a file that no
+    # longer exists. Force a reload.
+    _SILERO_VAD_CONFIG = None
     try:
         import sherpa_onnx
 
@@ -56,9 +76,29 @@ def _ensure_silero_config():
         if not silero_path.is_file():
             silero_path.parent.mkdir(parents=True, exist_ok=True)
             import urllib.request
-            url = "https://github.com/snakers4/silero-vad/raw/master/files/silero_vad.onnx"
-            logger.info("Downloading Silero VAD model → %s", silero_path)
-            urllib.request.urlretrieve(url, silero_path)
+            last_err: Exception | None = None
+            for url in _SILERO_VAD_URLS:
+                try:
+                    logger.info("Downloading Silero VAD model ← %s", url)
+                    urllib.request.urlretrieve(url, silero_path)
+                    # Sanity-check: a valid ONNX file is at least a few KB
+                    # (real model is ~600KB). Reject HTML error pages saved
+                    # by urlretrieve on 404/etc.
+                    if silero_path.stat().st_size < 1024:
+                        raise RuntimeError(
+                            f"downloaded file too small ({silero_path.stat().st_size}B)"
+                        )
+                    last_err = None
+                    break
+                except Exception as e:
+                    last_err = e
+                    logger.warning("Silero VAD download from %s failed: %s", url, e)
+                    try:
+                        silero_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+            if last_err is not None:
+                raise RuntimeError(f"all silero VAD mirrors failed: {last_err}")
 
         cfg = sherpa_onnx.VadModelConfig()
         cfg.silero_vad.model = str(silero_path)

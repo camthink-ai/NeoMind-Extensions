@@ -12,9 +12,9 @@ def test_default_profile_loads():
     prof = load_profile(None)
     assert prof.name == "default"
     assert prof.vad_backend_type == "silero"
-    assert prof.asr_config["type"] == "sensevoice_http"
+    assert prof.asr_config["type"] == "sensevoice_inproc"
     assert prof.llm_config["type"] == "neomind_ws"
-    assert prof.tts_config["type"] == "zipvoice_http"
+    assert prof.tts_config["type"] == "zipvoice_inproc"
     assert prof.barge_in_mode == "full"
 
 
@@ -43,12 +43,6 @@ def test_env_override_vad(monkeypatch):
     monkeypatch.setenv("VOICE_ASSISTANT_VAD_BACKEND", "energy")
     prof = load_profile(None)
     assert prof.vad_backend_type == "energy"
-
-
-def test_env_override_tts_url(monkeypatch):
-    monkeypatch.setenv("VOICE_ASSISTANT_TTS_URL", "http://example:9999")
-    prof = load_profile(None)
-    assert prof.tts_config["url"] == "http://example:9999"
 
 
 def test_latency_target_informational():

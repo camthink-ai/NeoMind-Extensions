@@ -1,0 +1,38 @@
+name: neomind-capability
+description: "NeoMind chat via platform ChatStream capability (no NEOMIND_TOKEN needed). Kokoro TTS + Qwen3 ASR."
+hardware:
+  cpu_threads: 4
+acoustic:
+  vad_backend: silero
+  vad_threshold: 0.5
+  vad_min_speech_ms: 300
+  vad_silence_ms: 500
+  aec: webrtc
+backends:
+  asr:
+    type: qwen3_asr_http
+    url: http://127.0.0.1:9383
+    language: auto
+    # Streaming ASR gives live-subtitle UX feedback after VAD endpoint
+    # fires. Requires a streaming-capable backend (qwen3_llamacpp_asr);
+    # the default qwen3_asr_http backend is batched and ignores this flag.
+    streaming: false
+  llm:
+    # Uses the platform's ChatStream capability via the Rust extension's
+    # chat_stream_request WS bridge. No URL/token — the host platform
+    # routes the chat through its own SessionManager.
+    type: neomind_capability
+    voice_hint: "[语音助手模式] 请用1-3个短句口语化回答,不要 markdown,不要分点列清单,总字数控制在80字以内。"
+    timeout: 60.0
+  tts:
+    type: kokoro_http
+    url: http://127.0.0.1:9385
+    voice: zf_xiaoyi
+interaction:
+  barge_in: full
+  latency_target_ms: 1500
+  barge_in_ack: true
+  ack_words: ["好的", "嗯哼", "明白"]
+  stage_filler_words:
+    thinking: ["让我想想", "嗯,让我想想", "稍等一下"]
+    tool_call: ["我查一下", "搜索中", "查一下资料"]
