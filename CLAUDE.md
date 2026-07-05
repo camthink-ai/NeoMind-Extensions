@@ -515,6 +515,7 @@ Connects Modbus TCP/RTU devices (PLCs, power meters, sensors) with background po
 ## Documentation
 
 - **`EXTENSION_FRONTEND_DESIGN_GUIDE.md`** - Extension 前端设计规范（CSS 变量、组件模板、暗色模式、fallback 模式）
+- **`HARDWARE_ACCELERATION.zh.md`** - AI 扩展硬件加速指南（macOS CoreML / Linux CUDA / **Jetson 部署必须重新编译** / Windows）
 - `EXTENSION_GUIDE.md` - Detailed extension development guide
 - `EXTENSION_GUIDE.zh.md` - Chinese version
 - `QUICKSTART.md` - Quick start guide

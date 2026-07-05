@@ -137,3 +137,6 @@ extensions/voice-assistant/service/patches/
 
 # Per-host latency reports (regenerated each run)
 extensions/voice-assistant/service/latency_*.json
+
+# Local runtime data (api_keys.redb, encryption_key, etc.)
+/data/

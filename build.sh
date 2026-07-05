@@ -905,7 +905,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                                 }) | add // {}),
                                 "ui_hints": (if .uiHints then {
                                     "field_order": .uiHints.fieldOrder,
-                                    "visibility_rules": (.uiHints.visibilityRules | map({
+                                    "visibility_rules": ((.uiHints.visibilityRules // []) | map({
                                         "field": .field,
                                         "condition": .condition,
                                         "value": .value,
@@ -972,7 +972,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                                 }) | add // {}),
                                 "ui_hints": (if .uiHints then {
                                     "field_order": .uiHints.fieldOrder,
-                                    "visibility_rules": (.uiHints.visibilityRules | map({
+                                    "visibility_rules": ((.uiHints.visibilityRules // []) | map({
                                         "field": .field,
                                         "condition": .condition,
                                         "value": .value,
