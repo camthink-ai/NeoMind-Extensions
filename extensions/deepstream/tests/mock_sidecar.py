@@ -11,6 +11,11 @@ Env vars:
                        N seconds via a background thread.
   MOCK_IGNORE_HEALTHCHECK  If "1"/"true"/"yes", health_check pings are silently
                            dropped (no pong). Used by heartbeat timeout tests.
+  MOCK_IGNORE_SHUTDOWN If "1"/"true"/"yes", shutdown control messages are silently
+                       dropped (no bye, no exit). Used by shutdown SIGTERM tests.
+  MOCK_IGNORE_SIGTERM   If "1"/"true"/"yes", the SIGTERM handler is NOT installed
+                       so SIGTERM kills the process outright. Used by shutdown
+                       SIGKILL escalation tests.
 """
 import json
 import os
@@ -27,6 +32,14 @@ RTSP_PREFIX = "rtsp://mock:8554/ds/"
 # If true, health_check pings are silently dropped (no pong emitted).
 # Lets the Rust heartbeat task test the timeout path without a real hang.
 MOCK_IGNORE_HEALTHCHECK = os.environ.get("MOCK_IGNORE_HEALTHCHECK", "").lower() in ("1", "true", "yes")
+
+# If true, shutdown control messages are silently dropped (no bye, no exit).
+# Lets the Rust shutdown() test the SIGTERM escalation path.
+MOCK_IGNORE_SHUTDOWN = os.environ.get("MOCK_IGNORE_SHUTDOWN", "").lower() in ("1", "true", "yes")
+
+# If true, the SIGTERM handler is NOT installed so SIGTERM kills the process
+# via the default action. Lets the Rust shutdown() test the SIGKILL escalation path.
+MOCK_IGNORE_SIGTERM = os.environ.get("MOCK_IGNORE_SIGTERM", "").lower() in ("1", "true", "yes")
 
 # Global shutdown flag
 _stopping = False
@@ -109,6 +122,9 @@ def handle_control(msg):
         else:
             emit({"type": "pong", "ts": msg.get("ts", 0)})
     elif t == "shutdown":
+        if MOCK_IGNORE_SHUTDOWN:
+            log("shutdown ignored (MOCK_IGNORE_SHUTDOWN=true)")
+            return
         emit_bye("graceful", 0)
         sys.exit(0)
     else:
@@ -159,8 +175,9 @@ def emit_scripted_file(path):
 
 
 def main():
-    signal.signal(signal.SIGTERM, sigterm_handler)
-    signal.signal(signal.SIGINT, sigterm_handler)
+    if not MOCK_IGNORE_SIGTERM:
+        signal.signal(signal.SIGTERM, sigterm_handler)
+    signal.signal(signal.SIGINT, sigterm_handler)  # SIGINT always handled
 
     die_at = os.environ.get("MOCK_DIE_AT_SECONDS")
     if die_at:

@@ -29,11 +29,13 @@ pub struct SidecarHandle {
     /// can call recv() via shared `&SidecarHandle` references. The Mutex serializes actual
     /// recv calls — mpsc::UnboundedReceiver is single-consumer anyway.
     event_rx: Mutex<mpsc::UnboundedReceiver<SidecarEvent>>,
-    /// Dedicated priority channel for `Pong` events (spec §4.6).
+    /// Dedicated priority channel for `Pong` and `Bye` events (spec §4.6, §4.8.1).
     ///
-    /// Splitting pong from the main event_rx means the heartbeat task cannot be starved
+    /// Splitting these from the main event_rx means the heartbeat task cannot be starved
     /// by a flood of Detection/Analytics events — even with thousands queued on event_rx,
-    /// `recv_pong()` sees the next Pong immediately.
+    /// `recv_pong()` sees the next Pong immediately. `Bye` rides the same channel so
+    /// shutdown's graceful-wait cannot be starved either (during shutdown the heartbeat
+    /// task is cancelled, so `recv_pong()` is free for `shutdown()` to use).
     pong_rx: Mutex<mpsc::UnboundedReceiver<SidecarEvent>>,
     /// Number of health_check pings sent since spawn (Observable for tests + diagnostics).
     /// Atomic because it's write-heavy (incremented each ping) and never needs `await`
@@ -131,31 +133,68 @@ impl SidecarHandle {
         self.ping_count.load(Ordering::SeqCst)
     }
 
-    /// Graceful shutdown.
+    /// Graceful shutdown with escalation (spec §4.8.1).
     ///
-    /// Strategy:
-    ///   1. Close stdin by taking and dropping the ChildStdin — sends EOF to the sidecar.
-    ///      The sidecar's main loop sees EOF and exits gracefully (mock emits `bye` first).
-    ///   2. Wait up to 5s for the child to exit on its own.
-    ///   3. If still alive after 5s, escalate to SIGKILL and reap.
+    /// Sequence:
+    ///   1. Send `shutdown {graceful_secs: 5}` control message.
+    ///   2. Wait up to 5s for `bye` event on the priority channel.
+    ///   3. If `bye` received: wait for process exit (≤2s), done.
+    ///   4. If timeout: close stdin (backup EOF signal), send SIGTERM, wait 2s.
+    ///   5. If still alive: SIGKILL.
     ///
     /// Returns `Err` only if the underlying wait/kill syscalls fail (not on
-    /// timeout — timeout triggers the kill path which is itself best-effort).
+    /// timeout — timeout triggers the escalation path which is itself best-effort).
     pub async fn shutdown(&self) -> std::io::Result<()> {
-        // 1. Close stdin by taking and dropping the ChildStdin — sends EOF to the sidecar.
-        //    The sidecar's main loop sees EOF and exits gracefully (mock emits `bye` first).
-        {
-            let mut guard = self.stdin.lock().await;
-            let _taken = guard.take();  // Drops the ChildStdin, closing the pipe
+        const GRACEFUL_SECS: u64 = 5;
+        const PROCESS_EXIT_SECS: u64 = 2;
+        const SIGTERM_WAIT_SECS: u64 = 2;
+
+        // 1. Try to send the shutdown control message. If send fails (broken pipe
+        //    because sidecar already died), skip straight to the SIGTERM path.
+        let sent_msg = self
+            .send(&ControlMessage::Shutdown { graceful_secs: GRACEFUL_SECS as u32 })
+            .await
+            .is_ok();
+
+        if sent_msg {
+            // 2. Wait up to GRACEFUL_SECS for `bye` on the priority channel.
+            if let Ok(Some(SidecarEvent::Bye { .. })) = tokio::time::timeout(
+                Duration::from_secs(GRACEFUL_SECS),
+                self.recv_pong(),
+            ).await {
+                // 3. bye received — wait for the process to exit (≤2s).
+                let mut child = self.child.lock().await;
+                match tokio::time::timeout(Duration::from_secs(PROCESS_EXIT_SECS), child.wait()).await {
+                    Ok(Ok(_status)) => return Ok(()),
+                    Ok(Err(e)) => return Err(e),
+                    Err(_) => { /* fall through to SIGTERM */ }
+                }
+            }
         }
 
-        // 2. Wait up to 5s for the child to exit on its own.
+        // 4. Close stdin as a backup signal (in case the shutdown message was lost
+        //    or the sidecar's main loop is stuck before reading it).
+        {
+            let mut guard = self.stdin.lock().await;
+            let _taken = guard.take();
+        }
+
+        // 5. SIGTERM escalation (Unix) or direct kill (Windows).
         let mut child = self.child.lock().await;
-        match tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await {
-            Ok(Ok(_status)) => Ok(()),
+        // Brief wait — process might be exiting from stdin close alone.
+        match tokio::time::timeout(Duration::from_millis(500), child.wait()).await {
+            Ok(Ok(_)) => return Ok(()),
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {}
+        }
+
+        send_sigterm_or_kill(&mut child).await?;
+
+        // 6. Wait SIGTERM_WAIT_SECS; if still alive, SIGKILL.
+        match tokio::time::timeout(Duration::from_secs(SIGTERM_WAIT_SECS), child.wait()).await {
+            Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) => Err(e),
-            Err(_elapsed) => {
-                // 3. Graceful shutdown failed — escalate to SIGKILL.
+            Err(_) => {
                 child.kill().await?;
                 child.wait().await?;
                 Ok(())
@@ -164,12 +203,35 @@ impl SidecarHandle {
     }
 }
 
+/// Send SIGTERM on Unix; on Windows there's no SIGTERM so go straight to SIGKILL.
+#[cfg(unix)]
+async fn send_sigterm_or_kill(child: &mut tokio::process::Child) -> std::io::Result<()> {
+    let pid = child.id().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::Other, "child has no pid (already reaped?)")
+    })?;
+    // SAFETY: libc::kill with a real PID and a signal number is safe.
+    // Returns 0 on success, -1 on error (errno set).
+    let rc = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+    if rc != 0 {
+        // Fall back to SIGKILL via tokio (always available).
+        child.kill().await?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn send_sigterm_or_kill(child: &mut tokio::process::Child) -> std::io::Result<()> {
+    // Windows has no SIGTERM analog; escalate directly to TerminateProcess.
+    child.kill().await
+}
+
 /// Background task: read JSONL messages from the sidecar's stdout until EOF or error,
-/// demuxing each parsed event to either the event channel or the priority pong channel.
+/// demuxing each parsed event to either the event channel or the priority channel.
 ///
-/// Pong events go to `pong_tx` (consumed by the heartbeat task); everything else
-/// goes to `event_tx` (consumed by user-facing recv()). This split means a flood of
-/// Detection events cannot starve the heartbeat's pong wait (spec §4.6).
+/// Pong and Bye events go to `pong_tx` (consumed by the heartbeat task and the
+/// shutdown sequence); everything else goes to `event_tx` (consumed by user-facing
+/// recv()). This split means a flood of Detection events cannot starve the heartbeat's
+/// pong wait (spec §4.6) or shutdown's bye wait (spec §4.8.1).
 ///
 /// The BufReader is owned here so leftover bytes after a newline are preserved
 /// across reads (the bug that prompted the Part A refactor).
@@ -182,11 +244,13 @@ async fn stdout_reader_loop(
     loop {
         match read_message::<_, SidecarEvent>(&mut reader).await {
             Ok(ev) => {
-                // Demux: Pong goes to the dedicated priority channel,
+                // Demux: Pong and Bye go to the dedicated priority channel,
                 // everything else to event_rx. This means heartbeat pong
-                // waits cannot be starved by event floods (spec §4.6).
-                let is_pong = matches!(ev, SidecarEvent::Pong { .. });
-                let tx = if is_pong { &pong_tx } else { &event_tx };
+                // waits cannot be starved by event floods (spec §4.6), and
+                // shutdown's bye wait (spec §4.8.1) cannot be starved either —
+                // even with thousands of buffered Detection events ahead of it.
+                let is_priority = matches!(ev, SidecarEvent::Pong { .. } | SidecarEvent::Bye { .. });
+                let tx = if is_priority { &pong_tx } else { &event_tx };
                 if tx.send(ev).is_err() {
                     // Receiver dropped — SidecarHandle is gone. Stop reading.
                     break;
