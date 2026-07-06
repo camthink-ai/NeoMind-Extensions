@@ -191,7 +191,7 @@ async fn stdout_reader_loop(
                 }
             }
             Err(e) => {
-                eprintln!("[deepstream-v2] sidecar stdout reader error: {:?}", e);
+                eprintln!("[deepstream] sidecar stdout reader error: {:?}", e);
                 break;
             }
         }

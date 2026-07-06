@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use neomind_extension_deepstream_v2::protocol::ControlMessage;
-use neomind_extension_deepstream_v2::sidecar::{heartbeat_loop, SidecarHandle};
+use neomind_extension_deepstream::protocol::ControlMessage;
+use neomind_extension_deepstream::sidecar::{heartbeat_loop, SidecarHandle};
 use std::path::PathBuf;
 
 fn mock_script() -> PathBuf {

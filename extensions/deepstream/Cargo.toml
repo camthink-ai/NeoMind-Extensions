@@ -1,5 +1,5 @@
 [package]
-name = "deepstream-v2"
+name = "deepstream"
 version = "2.7.7"
 edition = "2021"
 authors = ["NeoMind Team"]
@@ -7,7 +7,7 @@ license = "Apache-2.0"
 description = "NVIDIA DeepStream extension for multi-stream RTSP video inference on Jetson"
 
 [lib]
-name = "neomind_extension_deepstream_v2"
+name = "neomind_extension_deepstream"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

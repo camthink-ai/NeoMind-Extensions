@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Mock sidecar for deepstream-v2 integration tests.
+"""Mock sidecar for deepstream integration tests.
 
-Speaks the JSONL protocol defined in extensions/deepstream-v2/src/protocol.rs
+Speaks the JSONL protocol defined in extensions/deepstream/src/protocol.rs
 but with no DeepStream/GPU dependency. Lets Rust supervisor tests run on any host.
 
 Env vars:

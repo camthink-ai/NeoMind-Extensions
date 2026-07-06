@@ -25,7 +25,7 @@ impl Extension for DeepStreamExtension {
     fn metadata(&self) -> &ExtensionMetadata {
         static META: std::sync::OnceLock<ExtensionMetadata> = std::sync::OnceLock::new();
         META.get_or_init(|| {
-            ExtensionMetadata::new("deepstream-v2", "NVIDIA DeepStream", env!("CARGO_PKG_VERSION"))
+            ExtensionMetadata::new("deepstream", "NVIDIA DeepStream", env!("CARGO_PKG_VERSION"))
                 .with_description("Multi-stream RTSP video inference via NVIDIA DeepStream")
                 .with_author("NeoMind Team")
         })
@@ -51,7 +51,7 @@ mod tests {
 
     #[test]
     fn metadata_id() {
-        assert_eq!(DeepStreamExtension::new().metadata().id, "deepstream-v2");
+        assert_eq!(DeepStreamExtension::new().metadata().id, "deepstream");
     }
 
     #[test]

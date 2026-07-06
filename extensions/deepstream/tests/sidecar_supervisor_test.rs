@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use tokio::time::timeout;
 
-use neomind_extension_deepstream_v2::protocol::{ControlMessage, SidecarEvent};
-use neomind_extension_deepstream_v2::sidecar::SidecarHandle;
+use neomind_extension_deepstream::protocol::{ControlMessage, SidecarEvent};
+use neomind_extension_deepstream::sidecar::SidecarHandle;
 
 fn mock_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/mock_sidecar.py")
