@@ -351,11 +351,14 @@ impl SidecarSupervisor {
         )
         .await?;
         let handle = Arc::new(handle);
+        // Set state=Running BEFORE publishing the handle in `current` so the
+        // state transition is complete before any reader_task-exit observation
+        // can race a `state()` reader (I1 ordering invariant).
+        *self.state.lock().await = SupervisorState::Running;
         *self.current.lock().await = Some(SupervisorEntry {
             handle: handle.clone(),
             reader_task,
         });
-        *self.state.lock().await = SupervisorState::Running;
 
         // 2. Launch the watch loop. The callback is wrapped in Arc<F> so the
         //    spawned task can own it (Fn is ?Sized).
@@ -368,6 +371,12 @@ impl SidecarSupervisor {
     /// Cumulative restart count (for metrics / diagnostics).
     pub fn restart_count(&self) -> u64 {
         self.restart_count.load(Ordering::SeqCst)
+    }
+
+    /// Current supervisor state. Useful for the host to detect `Failed`
+    /// (rate-limit tripped or spawn failure) and surface it to the user.
+    pub async fn state(&self) -> SupervisorState {
+        *self.state.lock().await
     }
 
     /// Initiate graceful shutdown: stop the watch loop (prevents respawn) and
@@ -426,34 +435,32 @@ where
             }
         }
 
-        // 3. Sliding-window rate limit. Prune entries older than the window,
-        //    then check if we've already used up our budget.
+        // 3. Sliding-window rate limit + backoff computation.
+        //    Single critical section on restart_history: prune stale entries,
+        //    check the rate limit (returning the histogram length for backoff
+        //    indexing if we're still within budget), then drop the guard BEFORE
+        //    touching `state` to avoid any nested-lock risk (C1).
         let now = Instant::now();
-        {
+        let backoff_secs = {
             let mut hist = sup.restart_history.lock().await;
             hist.retain(|t| now.duration_since(*t) < Duration::from_secs(RESTART_WINDOW_SECS));
             if hist.len() >= MAX_RESTARTS_IN_WINDOW {
+                // Drop the guard explicitly before acquiring `state` (C1).
+                drop(hist);
                 *sup.state.lock().await = SupervisorState::Failed;
                 eprintln!(
-                    "[deepstream] supervisor giving up: {} restarts in {}s window",
-                    hist.len(),
+                    "[deepstream] supervisor giving up: rate limit ({} restarts in {}s window) exceeded",
+                    MAX_RESTARTS_IN_WINDOW,
                     RESTART_WINDOW_SECS
                 );
                 return;
             }
-        }
-
-        // 4. Compute backoff from the pre-increment restart count so the
-        //    first crash uses index 0 (1s), the next uses index 1 (2s), etc.
-        let backoff_idx = {
-            let hist = sup.restart_history.lock().await;
-            std::cmp::min(hist.len(), BACKOFF_SCHEDULE_SECS.len() - 1)
+            // Compute backoff from the current restart count in the window
+            // (before recording this attempt). hist.len() is 0 on the first
+            // crash → backoff[0] = 1s; the next crash → backoff[1] = 2s; etc.
+            let backoff_idx = std::cmp::min(hist.len(), BACKOFF_SCHEDULE_SECS.len() - 1);
+            BACKOFF_SCHEDULE_SECS[backoff_idx]
         };
-        let backoff_secs = BACKOFF_SCHEDULE_SECS[backoff_idx];
-
-        // Record this restart attempt in the sliding window NOW (before sleep)
-        // so concurrent failures don't slip past the rate limit.
-        sup.restart_history.lock().await.push(now);
 
         eprintln!(
             "[deepstream] sidecar crashed; backoff {}s before restart (attempt {})",
@@ -461,7 +468,7 @@ where
             sup.restart_count.load(Ordering::SeqCst) + 1
         );
 
-        // 5. Sleep the backoff. We re-check state after the sleep so a
+        // 4. Sleep the backoff. We re-check state after the sleep so a
         //    concurrent shutdown() interrupts the respawn path.
         tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
         {
@@ -471,7 +478,7 @@ where
             }
         }
 
-        // 6. Respawn. On spawn failure, mark the supervisor Failed and exit —
+        // 5. Respawn. On spawn failure, mark the supervisor Failed and exit —
         //    we treat a spawn failure as fatal (distinct from a child crash).
         let (handle, reader_task) = match SidecarHandle::spawn_with_env(
             &sup.python_bin,
@@ -491,13 +498,21 @@ where
             }
         };
         let handle = Arc::new(handle);
+
+        // Record this restart in the sliding window AFTER the successful
+        // respawn (C2). The timestamp reflects when the restart actually
+        // happened — not when we decided to retry — so a 30s backoff followed
+        // by a spawn failure doesn't count as "a restart in the window".
+        // Capture a fresh Instant because the sleep above invalidated `now`.
+        sup.restart_history.lock().await.push(Instant::now());
+
         *sup.current.lock().await = Some(SupervisorEntry {
             handle: handle.clone(),
             reader_task,
         });
         sup.restart_count.fetch_add(1, Ordering::SeqCst);
 
-        // 7. Notify the caller that a fresh handle is available. The future
+        // 6. Notify the caller that a fresh handle is available. The future
         //    replay logic (spec §4.7) will live in this callback body.
         on_restart(handle);
 
