@@ -1,0 +1,28 @@
+[package]
+name = "deepstream-v2"
+version = "2.7.7"
+edition = "2021"
+authors = ["NeoMind Team"]
+license = "Apache-2.0"
+description = "NVIDIA DeepStream extension for multi-stream RTSP video inference on Jetson"
+
+[lib]
+name = "neomind_extension_deepstream_v2"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neomind-extension-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "process", "signal", "sync", "time", "io-util"] }
+parking_lot = "0.12"
+tracing = "0.1"
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+thiserror = { workspace = true }
+url = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+tempfile = "3"
