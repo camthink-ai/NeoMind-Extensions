@@ -1,0 +1,12 @@
+# PaddleOCR-VL backend dependencies
+# Install PaddlePaddle first (CPU or GPU), then these:
+#   pip install paddlepaddle==3.2.1    # CPU   (https://www.paddlepaddle.org.cn/install/quick)
+#   pip install paddlepaddle-gpu==3.2.1  # NVIDIA GPU (CUDA 12.6)
+# Then:
+#   pip install -r requirements.txt
+
+paddleocr[doc-parser]>=3.3
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.0
+Pillow>=10.0
