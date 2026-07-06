@@ -3,6 +3,8 @@
 // Placeholder. Real implementation lands in Phase 4 (tier/preset/downloader)
 // and Phase 6 (OcrEngine + Extension trait).
 
+mod tier;
+
 use async_trait::async_trait;
 use neomind_extension_sdk::{Extension, ExtensionMetadata};
 
