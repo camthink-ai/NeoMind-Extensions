@@ -1,9 +1,11 @@
 //! DeepStream extension — see docs/superpowers/specs/2026-07-06-deepstream-extension-design.md
 
+pub mod event_router;
 pub mod protocol;
 pub mod sidecar;
 pub mod stream_manager;
 pub mod system_status;
+pub mod url_redact;
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
