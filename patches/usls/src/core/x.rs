@@ -258,6 +258,47 @@ impl X {
         self
     }
 
+    /// Swap R/B channels (channel 0 <-> channel 2) in the channel dimension.
+    ///
+    /// `nchw`: when true, channel dim is axis 1 (NCHW); when false, axis 3 (NHWC).
+    /// The tensor must have 3 channels. No-op if channel count != 3.
+    pub fn swap_rgb_channels(mut self, nchw: bool) -> Result<Self> {
+        use ndarray::s;
+        let channel_axis = if nchw { 1 } else { 3 };
+        let ndim = self.0.ndim();
+        if ndim != 4 {
+            anyhow::bail!(
+                "swap_rgb_channels expects a 4-D tensor, got {}-D",
+                ndim
+            );
+        }
+        let n_channels = self.0.shape()[channel_axis];
+        if n_channels != 3 {
+            tracing::debug!(
+                "swap_rgb_channels: channel count {} != 3, skipping swap",
+                n_channels
+            );
+            return Ok(self);
+        }
+
+        // Extract channels 0 and 2, then swap them
+        if nchw {
+            // NCHW: (N, C, H, W)
+            let r = self.0.slice(s![.., 0, .., ..]).to_owned();
+            let b = self.0.slice(s![.., 2, .., ..]).to_owned();
+            self.0.slice_mut(s![.., 0, .., ..]).assign(&b);
+            self.0.slice_mut(s![.., 2, .., ..]).assign(&r);
+        } else {
+            // NHWC: (N, H, W, C)
+            let r = self.0.slice(s![.., .., .., 0]).to_owned();
+            let b = self.0.slice(s![.., .., .., 2]).to_owned();
+            self.0.slice_mut(s![.., .., .., 0]).assign(&b);
+            self.0.slice_mut(s![.., .., .., 2]).assign(&r);
+        }
+
+        Ok(self)
+    }
+
     pub fn resize(xs: &[DynamicImage], height: u32, width: u32, filter: &str) -> Result<Self> {
         Ok(Self::from(Ops::resize(xs, height, width, filter)?))
     }

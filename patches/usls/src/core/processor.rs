@@ -34,6 +34,8 @@ pub struct Processor {
     pub pad_size: usize,
     pub up_scale: f32,
     pub do_resize: bool,
+    /// Swap R/B channels (BGR input) before feeding the model.
+    pub swap_rgb: bool,
 }
 
 impl Default for Processor {
@@ -59,6 +61,7 @@ impl Default for Processor {
             pad_size: 8,
             up_scale: 2.,
             do_resize: true,
+            swap_rgb: false,
         }
     }
 }
@@ -105,6 +108,7 @@ impl Processor {
             pad_image: config.pad_image,
             pad_size: config.pad_size,
             up_scale: config.up_scale,
+            swap_rgb: config.swap_rgb,
             #[cfg(feature = "tokenizers")]
             tokenizer,
             vocab,
@@ -311,8 +315,15 @@ impl Processor {
             };
 
             // Convert image to Vec<f32>
-            let vec = image_processed.to_f32s();
+            let mut vec = image_processed.to_f32s();
             let do_standardize = !self.image_std.is_empty() && !self.image_mean.is_empty();
+
+            // Swap R/B channels (BGR input) if configured
+            if self.swap_rgb {
+                vec.par_chunks_mut(3).for_each(|pixel| {
+                    pixel.swap(0, 2);
+                });
+            }
 
             // Transformation
             let tensor = match self.image_tensor_layout {
@@ -607,6 +618,10 @@ impl Processor {
 
         if self.unsigned {
             x = x.unsigned();
+        }
+
+        if self.swap_rgb {
+            x = x.swap_rgb_channels(self.nchw)?;
         }
 
         Ok(x)

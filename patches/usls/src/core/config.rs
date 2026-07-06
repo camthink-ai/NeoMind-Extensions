@@ -190,6 +190,11 @@ impl Config {
         self.visual_projection = try_commit(self.name, self.visual_projection)?;
         self.textual_projection = try_commit(self.name, self.textual_projection)?;
 
+        // Propagate swap_rgb into processor config for the processor pipeline
+        if let Some(true) = self.swap_rgb {
+            self.processor.swap_rgb = true;
+        }
+
         Ok(self)
     }
 
