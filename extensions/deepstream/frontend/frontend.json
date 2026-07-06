@@ -2,7 +2,89 @@
   "id": "deepstream",
   "version": "2.7.7",
   "entrypoint": "deepstream-components.umd.cjs",
-  "components": [],
+  "components": [
+    {
+      "name": "DeepStreamStatsCard",
+      "type": "card",
+      "displayName": "DeepStream System Stats",
+      "description": "Sidecar status, GPU utilization, memory, active stream count, total throughput, and restart count for the NVIDIA DeepStream extension.",
+      "icon": "cpu",
+      "defaultSize": { "width": 320, "height": 220 },
+      "minSize": { "width": 240, "height": 180 },
+      "maxSize": { "width": 480, "height": 360 },
+      "refreshable": true,
+      "refreshInterval": 5000,
+      "hasDataSource": false,
+      "configSchema": {
+        "title": {
+          "type": "string",
+          "title": "Card title",
+          "description": "Override the card header text",
+          "default": "DeepStream"
+        }
+      }
+    },
+    {
+      "name": "DeepStreamOverviewCard",
+      "type": "card",
+      "displayName": "DeepStream Stream Overview",
+      "description": "Grid of stream thumbnails with live snapshot polling and status dots. Click a tile to drill into a single stream.",
+      "icon": "video",
+      "defaultSize": { "width": 640, "height": 480 },
+      "minSize": { "width": 400, "height": 300 },
+      "maxSize": { "width": 1200, "height": 800 },
+      "refreshable": true,
+      "refreshInterval": 5000,
+      "hasDataSource": false,
+      "configSchema": {
+        "title": {
+          "type": "string",
+          "title": "Card title",
+          "default": "DeepStream Streams"
+        },
+        "snapshotToken": {
+          "type": "string",
+          "title": "Snapshot auth token",
+          "description": "Required for live thumbnail polling. Leave empty to show placeholders only."
+        }
+      }
+    },
+    {
+      "name": "DeepStreamStreamCard",
+      "type": "card",
+      "displayName": "DeepStream Single Stream",
+      "description": "Large snapshot, RTSP URL with copy button, live counts (persons / vehicles / line crosses / ROI alerts), and an event feed filtered to one stream.",
+      "icon": "video",
+      "defaultSize": { "width": 480, "height": 640 },
+      "minSize": { "width": 360, "height": 480 },
+      "maxSize": { "width": 800, "height": 1000 },
+      "refreshable": true,
+      "refreshInterval": 5000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": ["extension-command"],
+      "configSchema": {
+        "title": {
+          "type": "string",
+          "title": "Card title",
+          "description": "Defaults to the bound stream_id"
+        },
+        "streamId": {
+          "type": "string",
+          "title": "Stream ID",
+          "description": "Explicit stream to display. Overrides the data source binding."
+        },
+        "snapshotToken": {
+          "type": "string",
+          "title": "Snapshot auth token",
+          "description": "Required for live snapshot polling."
+        }
+      }
+    }
+  ],
+  "i18n": {
+    "defaultLanguage": "en",
+    "supportedLanguages": ["en", "zh"]
+  },
   "dependencies": {
     "react": ">=18.0.0"
   }
