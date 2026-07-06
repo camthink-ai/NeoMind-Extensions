@@ -140,3 +140,6 @@ extensions/voice-assistant/service/latency_*.json
 
 # Local runtime data (api_keys.redb, encryption_key, etc.)
 /data/
+
+# Local design docs / specs (kept locally, not committed)
+docs/
