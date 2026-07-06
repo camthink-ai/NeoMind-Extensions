@@ -376,6 +376,7 @@ def _extract_table_html(res: Any) -> str:
 # ---- Endpoints ---------------------------------------------------------
 
 @app.get("/health")
+@app.post("/health")
 def health():
     """Liveness probe — doesn't load the model."""
     loaded = any_pipeline_loaded()
