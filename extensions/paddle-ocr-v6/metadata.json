@@ -1,38 +1,12 @@
 {
-  "id": "ocr-device-inference",
-  "name": "ocr device inference",
+  "id": "paddle-ocr-v6",
+  "name": "paddle ocr v6",
   "version": "2.7.7",
-  "description": "Automatic OCR text recognition bound to device image streams with SVTR model, bounding box drawing, and real-time metric output",
+  "description": "PP-OCRv6 native ONNX inference extension with multi-tier model support (tiny/small/medium)",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
   "type": "native",
-  "categories": [
-    "ai",
-    "computer-vision",
-    "device-integration"
-  ],
-  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/ocr-device-inference",
-  "builds": {
-    "darwin-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/ocr-device-inference-2.7.7-darwin_aarch64.nep"
-    },
-    "darwin-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/ocr-device-inference-2.7.7-darwin_x86_64.nep"
-    },
-    "linux-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/ocr-device-inference-2.7.7-linux_amd64.nep"
-    },
-    "linux-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/ocr-device-inference-2.7.7-linux_arm64.nep"
-    },
-    "windows-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/ocr-device-inference-2.7.7-windows_amd64.nep"
-    }
-  },
-  "frontend": {
-    "components": [
-      "OcrDeviceCard"
-    ],
-    "entrypoint": "ocr-device-inference-components.umd.cjs"
-  }
+  "categories": ["ai", "ocr", "device-integration"],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/paddle-ocr-v6",
+  "builds": {"darwin-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/paddle-ocr-v6-2.7.7-darwin_aarch64.nep"},"darwin-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/paddle-ocr-v6-2.7.7-darwin_x86_64.nep"},"linux-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/paddle-ocr-v6-2.7.7-linux_amd64.nep"},"linux-aarch64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/paddle-ocr-v6-2.7.7-linux_arm64.nep"},"windows-x86_64":{"url":"https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/paddle-ocr-v6-2.7.7-windows_amd64.nep"}}
 }
