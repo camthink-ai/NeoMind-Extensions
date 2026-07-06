@@ -12,8 +12,11 @@ export function useStream(streamId: string | null | undefined, pollMs: number = 
     setLoading(true);
     try {
       const r = await dsCommands.getStreamInfo(streamId);
+      // get_stream_info returns the Stream projection directly at the top level
+      // (see lib.rs cmd_get_stream_info) — there is no `{ stream: ... }`
+      // wrapper. r.data IS the stream.
       if (r.success && r.data) {
-        setStream(r.data.stream);
+        setStream(r.data);
         setError(null);
       } else setError(r.error ?? 'get_stream_info failed');
     } catch (e: any) {
