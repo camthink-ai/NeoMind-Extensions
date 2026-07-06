@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 use std::io;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
 
@@ -43,6 +45,54 @@ pub fn serialize_line(msg: &ControlMessage) -> Result<String, ProtocolError> {
 pub fn deserialize_line(line: &str) -> Result<ControlMessage, ProtocolError> {
     if line.len() > MAX_LINE_BYTES { return Err(ProtocolError::LineTooLong); }
     Ok(serde_json::from_str(line)?)
+}
+
+pub async fn write_message<W: AsyncWrite + Unpin>(
+    w: &mut W,
+    msg: &ControlMessage,
+) -> Result<(), ProtocolError> {
+    let mut line = serde_json::to_string(msg)?;
+    if line.len() > MAX_LINE_BYTES {
+        return Err(ProtocolError::LineTooLong);
+    }
+    line.push('\n');
+    w.write_all(line.as_bytes()).await.map_err(ProtocolError::Io)?;
+    Ok(())
+}
+
+pub async fn read_message<R: AsyncRead + Unpin, T: DeserializeOwned>(
+    r: &mut R,
+) -> Result<T, ProtocolError> {
+    let mut reader = tokio::io::BufReader::new(r);
+    let mut buf: Vec<u8> = Vec::with_capacity(4096);
+
+    loop {
+        let mut chunk = vec![0u8; 4096];
+        let n = reader.read(&mut chunk).await.map_err(ProtocolError::Io)?;
+        if n == 0 {
+            if buf.is_empty() {
+                return Err(ProtocolError::Io(std::io::ErrorKind::UnexpectedEof.into()));
+            }
+            break;
+        }
+        let chunk = &chunk[..n];
+        if let Some(idx) = chunk.iter().position(|&b| b == b'\n') {
+            buf.extend_from_slice(&chunk[..idx]);
+            break;
+        } else {
+            buf.extend_from_slice(chunk);
+            if buf.len() > MAX_LINE_BYTES {
+                return Err(ProtocolError::LineTooLong);
+            }
+        }
+    }
+
+    if buf.len() > MAX_LINE_BYTES {
+        return Err(ProtocolError::LineTooLong);
+    }
+
+    let s = std::str::from_utf8(&buf).map_err(|_| ProtocolError::LineTooLong)?;
+    Ok(serde_json::from_str(s)?)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,5 +230,84 @@ mod tests {
             }
             _ => panic!(),
         }
+    }
+
+    #[tokio::test]
+    async fn round_trip_three_messages_via_duplex() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (mut tx, mut rx) = tokio::io::duplex(8 * 1024);
+        let msgs = vec![
+            ControlMessage::AddStream {
+                id: "r1".into(),
+                config: serde_json::json!({"source":{"type":"rtsp","url":"rtsp://a"}}),
+            },
+            ControlMessage::RemoveStream {
+                id: "r2".into(),
+                stream_id: "r1".into(),
+                graceful_secs: 2,
+            },
+            ControlMessage::HealthCheck { ts: 12345 },
+        ];
+
+        let writer = tokio::spawn(async move {
+            for m in &msgs {
+                write_message(&mut tx, m).await.unwrap();
+            }
+            tx.shutdown().await.unwrap();
+        });
+
+        let mut buf = Vec::new();
+        rx.read_to_end(&mut buf).await.unwrap();
+        writer.await.unwrap();
+
+        let text = String::from_utf8(buf).unwrap();
+        let lines: Vec<&str> = text.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(lines.len(), 3);
+        let parsed: Vec<ControlMessage> = lines.iter()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert!(matches!(parsed[0], ControlMessage::AddStream { .. }));
+        assert!(matches!(parsed[1], ControlMessage::RemoveStream { .. }));
+        assert!(matches!(parsed[2], ControlMessage::HealthCheck { .. }));
+    }
+
+    #[tokio::test]
+    async fn write_message_appends_newline() {
+        use tokio::io::AsyncReadExt;
+        let (mut tx, mut rx) = tokio::io::duplex(1024);
+        write_message(&mut tx, &ControlMessage::HealthCheck { ts: 1 }).await.unwrap();
+        tx.shutdown().await.unwrap();
+        let mut buf = Vec::new();
+        rx.read_to_end(&mut buf).await.unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.ends_with('\n'));
+        assert_eq!(s.matches('\n').count(), 1);
+    }
+
+    #[tokio::test]
+    async fn read_message_round_trip_sidecar_event() {
+        use tokio::io::AsyncWriteExt;
+        let (mut tx, mut rx) = tokio::io::duplex(8 * 1024);
+        let event_line = r#"{"type":"pong","ts":999}"#;
+        tx.write_all(event_line.as_bytes()).await.unwrap();
+        tx.write_all(b"\n").await.unwrap();
+
+        let ev = read_message::<_, SidecarEvent>(&mut rx).await.unwrap();
+        match ev {
+            SidecarEvent::Pong { ts } => assert_eq!(ts, 999),
+            _ => panic!("expected Pong"),
+        }
+    }
+
+    #[tokio::test]
+    async fn read_message_rejects_line_over_4mb() {
+        use tokio::io::AsyncWriteExt;
+        let (mut tx, mut rx) = tokio::io::duplex(8 * 1024 * 1024);
+        let huge = format!("{}\n", "x".repeat(4 * 1024 * 1024 + 1));
+        tx.write_all(huge.as_bytes()).await.unwrap();
+        tx.shutdown().await.unwrap();
+
+        let err = read_message::<_, SidecarEvent>(&mut rx).await.unwrap_err();
+        assert!(matches!(err, ProtocolError::LineTooLong), "got {:?}", err);
     }
 }
