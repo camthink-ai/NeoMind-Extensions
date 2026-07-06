@@ -9,6 +9,8 @@ Env vars:
                        on a 100ms timer (flood/backpressure testing).
   MOCK_DIE_AT_SECONDS  If set, hard-exit (code 139, simulating segfault) after
                        N seconds via a background thread.
+  MOCK_IGNORE_HEALTHCHECK  If "1"/"true"/"yes", health_check pings are silently
+                           dropped (no pong). Used by heartbeat timeout tests.
 """
 import json
 import os
@@ -21,6 +23,10 @@ PROTOCOL_VER = 1
 DS_VER = "7.1.0-mock"
 PYDS_VER = "1.1.1-mock"
 RTSP_PREFIX = "rtsp://mock:8554/ds/"
+
+# If true, health_check pings are silently dropped (no pong emitted).
+# Lets the Rust heartbeat task test the timeout path without a real hang.
+MOCK_IGNORE_HEALTHCHECK = os.environ.get("MOCK_IGNORE_HEALTHCHECK", "").lower() in ("1", "true", "yes")
 
 # Global shutdown flag
 _stopping = False
@@ -97,7 +103,11 @@ def handle_control(msg):
             "message": "list_state not supported in mock",
         })
     elif t == "health_check":
-        emit({"type": "pong", "ts": msg.get("ts", 0)})
+        if MOCK_IGNORE_HEALTHCHECK:
+            log("health_check ignored (MOCK_IGNORE_HEALTHCHECK=true)")
+            # Silently drop — supervisor heartbeat should time out
+        else:
+            emit({"type": "pong", "ts": msg.get("ts", 0)})
     elif t == "shutdown":
         emit_bye("graceful", 0)
         sys.exit(0)
