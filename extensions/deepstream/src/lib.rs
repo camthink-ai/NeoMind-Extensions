@@ -2,6 +2,7 @@
 
 pub mod protocol;
 pub mod sidecar;
+pub mod stream_manager;
 pub mod system_status;
 
 use async_trait::async_trait;
