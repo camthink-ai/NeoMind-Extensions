@@ -9,6 +9,8 @@ pub const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
 pub enum ProtocolError {
     #[error("line exceeds {MAX_LINE_BYTES} bytes")]
     LineTooLong,
+    #[error("invalid utf-8 in line")]
+    InvalidUtf8,
     #[error("io: {0}")]
     Io(#[from] io::Error),
     #[error("json: {0}")]
@@ -61,9 +63,8 @@ pub async fn write_message<W: AsyncWrite + Unpin>(
 }
 
 pub async fn read_message<R: AsyncRead + Unpin, T: DeserializeOwned>(
-    r: &mut R,
+    reader: &mut tokio::io::BufReader<R>,
 ) -> Result<T, ProtocolError> {
-    let mut reader = tokio::io::BufReader::new(r);
     let mut buf: Vec<u8> = Vec::with_capacity(4096);
 
     loop {
@@ -91,7 +92,7 @@ pub async fn read_message<R: AsyncRead + Unpin, T: DeserializeOwned>(
         return Err(ProtocolError::LineTooLong);
     }
 
-    let s = std::str::from_utf8(&buf).map_err(|_| ProtocolError::LineTooLong)?;
+    let s = std::str::from_utf8(&buf).map_err(|_| ProtocolError::InvalidUtf8)?;
     Ok(serde_json::from_str(s)?)
 }
 
@@ -286,13 +287,14 @@ mod tests {
 
     #[tokio::test]
     async fn read_message_round_trip_sidecar_event() {
-        use tokio::io::AsyncWriteExt;
-        let (mut tx, mut rx) = tokio::io::duplex(8 * 1024);
+        use tokio::io::{AsyncWriteExt, BufReader};
+        let (mut tx, rx) = tokio::io::duplex(8 * 1024);
         let event_line = r#"{"type":"pong","ts":999}"#;
         tx.write_all(event_line.as_bytes()).await.unwrap();
         tx.write_all(b"\n").await.unwrap();
 
-        let ev = read_message::<_, SidecarEvent>(&mut rx).await.unwrap();
+        let mut reader = BufReader::new(rx);
+        let ev = read_message::<_, SidecarEvent>(&mut reader).await.unwrap();
         match ev {
             SidecarEvent::Pong { ts } => assert_eq!(ts, 999),
             _ => panic!("expected Pong"),
@@ -301,13 +303,14 @@ mod tests {
 
     #[tokio::test]
     async fn read_message_rejects_line_over_4mb() {
-        use tokio::io::AsyncWriteExt;
-        let (mut tx, mut rx) = tokio::io::duplex(8 * 1024 * 1024);
+        use tokio::io::{AsyncWriteExt, BufReader};
+        let (mut tx, rx) = tokio::io::duplex(8 * 1024 * 1024);
         let huge = format!("{}\n", "x".repeat(4 * 1024 * 1024 + 1));
         tx.write_all(huge.as_bytes()).await.unwrap();
         tx.shutdown().await.unwrap();
 
-        let err = read_message::<_, SidecarEvent>(&mut rx).await.unwrap_err();
+        let mut reader = BufReader::new(rx);
+        let err = read_message::<_, SidecarEvent>(&mut reader).await.unwrap_err();
         assert!(matches!(err, ProtocolError::LineTooLong), "got {:?}", err);
     }
 }
