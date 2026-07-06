@@ -447,6 +447,12 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/paddle-ocr-v6-2.7.7-windows_amd64.nep"
         }
       },
+      "frontend": {
+        "components": [
+          "PaddleOcrV6Card"
+        ],
+        "entrypoint": "paddle-ocr-v6-components.umd.cjs"
+      },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/paddle-ocr-v6/metadata.json"
     },
     {

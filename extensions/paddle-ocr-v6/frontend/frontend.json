@@ -1,0 +1,52 @@
+{
+  "id": "paddle-ocr-v6",
+  "version": "1.0.0",
+  "entrypoint": "paddle-ocr-v6-components.umd.cjs",
+  "components": [
+    {
+      "name": "PaddleOcrV6Card",
+      "type": "widget",
+      "displayName": "PaddleOCR v6",
+      "description": "Upload an image to run PP-OCRv6 detection + multilingual recognition. Shows text bounding boxes and full text.",
+      "icon": "file-text",
+      "defaultSize": { "width": 480, "height": 540 },
+      "minSize": { "width": 360, "height": 420 },
+      "maxSize": { "width": 720, "height": 900 },
+      "configSchema": {
+        "drawBoxes": {
+          "type": "boolean",
+          "default": true,
+          "title": "Draw Bounding Boxes",
+          "description": "Draw text bounding boxes on the image"
+        },
+        "showConfidence": {
+          "type": "boolean",
+          "default": true,
+          "title": "Show Confidence",
+          "description": "Show per-block confidence score"
+        },
+        "tier": {
+          "type": "string",
+          "title": "Tier",
+          "description": "Model tier (tiny is bundled; small/medium lazy-download)",
+          "enum": ["auto", "tiny", "small", "medium"],
+          "enumTitles": ["Auto", "Tiny (~6 MB)", "Small (~18 MB)", "Medium (~132 MB)"],
+          "default": "auto"
+        }
+      },
+      "uiHints": {
+        "fieldOrder": ["tier", "drawBoxes", "showConfidence"]
+      },
+      "refreshable": false,
+      "refreshInterval": 0,
+      "hasDataSource": false
+    }
+  ],
+  "i18n": {
+    "defaultLanguage": "zh",
+    "supportedLanguages": ["zh", "en"]
+  },
+  "dependencies": {
+    "react": ">=18.0.0"
+  }
+}
