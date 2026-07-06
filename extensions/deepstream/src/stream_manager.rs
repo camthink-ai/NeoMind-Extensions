@@ -10,10 +10,41 @@
 //! half-applied transition.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
+
+use crate::protocol::{ControlMessage, SidecarEvent};
+use crate::sidecar::SidecarHandle;
+
+/// Per-stream timeout for config replay. Generous because DeepStream engine
+/// compilation can take 10–20s on first run (spec §4.7).
+pub const REPLAY_TIMEOUT_SECS: u64 = 30;
+
+// ---------------------------------------------------------------------------
+// Replay summary types (Task 4.3)
+// ---------------------------------------------------------------------------
+
+/// Outcome of a replay-to-sidecar operation. Each stream ends up in exactly
+/// one of `succeeded` or `failed`.
+#[derive(Debug, Clone)]
+pub struct ReplaySummary {
+    /// stream_ids that received a matching `StreamAdded` from the sidecar.
+    pub succeeded: Vec<String>,
+    /// stream_ids whose AddStream timed out, was rejected, or whose channel closed.
+    pub failed: Vec<ReplayFailure>,
+}
+
+/// One stream's replay failure with a human-readable cause.
+#[derive(Debug, Clone)]
+pub struct ReplayFailure {
+    pub stream_id: String,
+    /// Human-readable error: "send failed: ...", "sidecar rejected: ...",
+    /// "timeout after Ns", or "sidecar stdout closed".
+    pub error: String,
+}
 
 // ---------------------------------------------------------------------------
 // Config types — mirror spec §3.1.1 `add_stream` payload
@@ -308,6 +339,144 @@ impl StreamManager {
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.streams.read().is_empty()
+    }
+
+    // -------------------------------------------------------------------
+    // Config replay (Task 4.3 — spec §4.7)
+    // -------------------------------------------------------------------
+
+    /// Replay all stored stream configs to a fresh sidecar using the default
+    /// per-stream timeout ([`REPLAY_TIMEOUT_SECS`]).
+    ///
+    /// Delegates to [`Self::replay_to_with_timeout`].
+    pub async fn replay_to(&self, handle: &SidecarHandle) -> ReplaySummary {
+        self.replay_to_with_timeout(handle, Duration::from_secs(REPLAY_TIMEOUT_SECS))
+            .await
+    }
+
+    /// Replay all stored stream configs to a fresh sidecar with a custom
+    /// per-stream timeout (test seam).
+    ///
+    /// For each stream currently in the manager whose status is not `Stopped`:
+    ///   1. Send `ControlMessage::AddStream { id, config }`
+    ///   2. Wait up to `per_stream_timeout` for a `SidecarEvent::StreamAdded`
+    ///      whose `id` matches, draining any non-matching events meanwhile.
+    ///   3. On success: update rtsp_url via `set_rtsp_url()`, transition to Running.
+    ///   4. On timeout / ErrorResponse / channel-closed: transition to Error,
+    ///      record failure.
+    ///
+    /// Streams are replayed serially. Bounded concurrency (max 4 in flight,
+    /// per spec §4.7) is deferred until the response multiplexer (Task 5.1)
+    /// lands — until then `SidecarHandle::recv()` is single-consumer, so
+    /// concurrent recvs would race on the lock.
+    ///
+    // TODO(Phase 5): Replace serial replay with bounded-concurrency (max 4 in flight)
+    // replay once the response multiplexer (Task 5.1) lands. The multiplexer will
+    // correlate request/response by `id` so multiple AddStream sends can overlap
+    // without recv() contention.
+    //
+    // KNOWN LIMITATION: when an event arrives for a different stream_id than
+    // the one we're waiting for, we keep reading (drain). We don't requeue it.
+    // If a previous burst left orphan events in the channel, this can starve
+    // other consumers of `handle.recv()`. For the integration test (5 fresh
+    // streams on a fresh mock sidecar), this won't trigger.
+    pub async fn replay_to_with_timeout(
+        &self,
+        handle: &SidecarHandle,
+        per_stream_timeout: Duration,
+    ) -> ReplaySummary {
+        // Snapshot streams under read lock; release before any await so we
+        // don't hold the lock across sidecar I/O.
+        let snapshot: Vec<(String, StreamConfig)> = {
+            let streams = self.streams.read();
+            streams
+                .iter()
+                .filter(|(_, s)| s.status != StreamStatus::Stopped)
+                .map(|(id, s)| (id.clone(), s.config.clone()))
+                .collect()
+        };
+
+        let mut succeeded = Vec::new();
+        let mut failed = Vec::new();
+
+        for (id, config) in snapshot {
+            let send_result = handle
+                .send(&ControlMessage::AddStream {
+                    id: id.clone(),
+                    config: serde_json::to_value(&config).unwrap_or_default(),
+                })
+                .await;
+
+            if let Err(e) = send_result {
+                let _ = self.transition(&id, StreamStatus::Error);
+                failed.push(ReplayFailure {
+                    stream_id: id,
+                    error: format!("send failed: {}", e),
+                });
+                continue;
+            }
+
+            // Wait up to per_stream_timeout for matching StreamAdded or ErrorResponse.
+            // Drain non-matching events (see KNOWN LIMITATION above).
+            let outcome = tokio::time::timeout(per_stream_timeout, async {
+                loop {
+                    match handle.recv().await {
+                        Some(SidecarEvent::StreamAdded {
+                            id: resp_id,
+                            stream_id,
+                            rtsp_url,
+                        }) if resp_id == id =>
+                        {
+                            return Ok((stream_id, rtsp_url));
+                        }
+                        Some(SidecarEvent::ErrorResponse {
+                            id: resp_id,
+                            code,
+                            message,
+                        }) if resp_id == id =>
+                        {
+                            return Err(format!("sidecar rejected: {} ({})", message, code));
+                        }
+                        Some(_) => continue, // not ours, keep draining
+                        None => return Err("sidecar stdout closed".to_string()),
+                    }
+                }
+            })
+            .await;
+
+            match outcome {
+                Ok(Ok((stream_id, rtsp_url))) => {
+                    // Best-effort: update rtsp_url + transition to Running.
+                    let _ = self.set_rtsp_url(&id, rtsp_url);
+                    let _ = self.transition(&id, StreamStatus::Running);
+                    succeeded.push(id.clone());
+                    info!(
+                        stream_id = %id,
+                        side_stream_id = %stream_id,
+                        "replay succeeded"
+                    );
+                }
+                Ok(Err(msg)) => {
+                    let _ = self.transition(&id, StreamStatus::Error);
+                    failed.push(ReplayFailure {
+                        stream_id: id,
+                        error: msg,
+                    });
+                }
+                Err(_elapsed) => {
+                    let _ = self.transition(&id, StreamStatus::Error);
+                    failed.push(ReplayFailure {
+                        stream_id: id,
+                        error: format!(
+                            "timeout after {}s",
+                            per_stream_timeout.as_secs()
+                        ),
+                    });
+                }
+            }
+        }
+
+        ReplaySummary { succeeded, failed }
     }
 }
 

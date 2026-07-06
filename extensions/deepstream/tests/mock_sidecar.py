@@ -16,6 +16,9 @@ Env vars:
   MOCK_IGNORE_SIGTERM   If "1"/"true"/"yes", the SIGTERM handler is NOT installed
                        so SIGTERM kills the process outright. Used by shutdown
                        SIGKILL escalation tests.
+  MOCK_IGNORE_ADD_STREAM If "1"/"true"/"yes", add_stream control messages are
+                        silently dropped (no stream_added emitted). Used by
+                        config replay timeout tests.
 """
 import json
 import os
@@ -40,6 +43,10 @@ MOCK_IGNORE_SHUTDOWN = os.environ.get("MOCK_IGNORE_SHUTDOWN", "").lower() in ("1
 # If true, the SIGTERM handler is NOT installed so SIGTERM kills the process
 # via the default action. Lets the Rust shutdown() test the SIGKILL escalation path.
 MOCK_IGNORE_SIGTERM = os.environ.get("MOCK_IGNORE_SIGTERM", "").lower() in ("1", "true", "yes")
+
+# If true, add_stream control messages are silently dropped (no stream_added
+# emitted). Lets the Rust replay-to test exercise the per-stream timeout path.
+MOCK_IGNORE_ADD_STREAM = os.environ.get("MOCK_IGNORE_ADD_STREAM", "").lower() in ("1", "true", "yes")
 
 # Global shutdown flag
 _stopping = False
@@ -85,6 +92,9 @@ def handle_control(msg):
             "models_loaded": ["yolov8n-coco"],
         })
     elif t == "add_stream":
+        if MOCK_IGNORE_ADD_STREAM:
+            log("add_stream ignored (MOCK_IGNORE_ADD_STREAM=true)")
+            return
         cfg = msg.get("config", {})
         stream_id = cfg.get("stream_id") or msg_id
         emit({
