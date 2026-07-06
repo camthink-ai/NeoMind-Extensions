@@ -3,6 +3,7 @@
 // Placeholder. Real implementation lands in Phase 4 (tier/preset/downloader)
 // and Phase 6 (OcrEngine + Extension trait).
 
+mod preset;
 mod tier;
 
 use async_trait::async_trait;
