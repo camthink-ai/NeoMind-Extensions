@@ -20,10 +20,10 @@ use crate::protocol::{read_message, write_message, ControlMessage, ProtocolError
 /// that drains events parsed from the child's stdout by a background reader task.
 pub struct SidecarHandle {
     child: Mutex<Child>,
-    stdin: Mutex<ChildStdin>,
-    // Mutex (not &mut self) so the heartbeat task (Task 2.3) can drain Pong events
-    // concurrently with user-facing recv calls. The lock is held only for the
-    // duration of one `recv()` call.
+    stdin: Mutex<Option<ChildStdin>>,
+    /// Mutex (not `&mut self`) so both the heartbeat task (Task 2.3) AND user-facing code
+    /// can call recv() via shared `&SidecarHandle` references. The Mutex serializes actual
+    /// recv calls — mpsc::UnboundedReceiver is single-consumer anyway.
     event_rx: Mutex<mpsc::UnboundedReceiver<SidecarEvent>>,
 }
 
@@ -58,7 +58,7 @@ impl SidecarHandle {
         Ok((
             Self {
                 child: Mutex::new(child),
-                stdin: Mutex::new(stdin),
+                stdin: Mutex::new(Some(stdin)),
                 event_rx: Mutex::new(rx),
             },
             reader_task,
@@ -67,8 +67,14 @@ impl SidecarHandle {
 
     /// Send a control message to the sidecar's stdin.
     pub async fn send(&self, msg: &ControlMessage) -> Result<(), ProtocolError> {
-        let mut stdin = self.stdin.lock().await;
-        write_message(&mut *stdin, msg).await
+        let mut guard = self.stdin.lock().await;
+        let stdin = guard.as_mut().ok_or_else(|| {
+            ProtocolError::Io(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "sidecar stdin already closed",
+            ))
+        })?;
+        write_message(stdin, msg).await
     }
 
     /// Receive the next event from the sidecar's stdout.
@@ -83,30 +89,28 @@ impl SidecarHandle {
     /// Graceful shutdown.
     ///
     /// Strategy:
-    ///   1. Close stdin (drop the lock first so the close takes effect).
-    ///   2. Wait up to 5s for the child to exit on its own (Python sees EOF,
-    ///      emits `bye`, and exits 0).
+    ///   1. Close stdin by taking and dropping the ChildStdin — sends EOF to the sidecar.
+    ///      The sidecar's main loop sees EOF and exits gracefully (mock emits `bye` first).
+    ///   2. Wait up to 5s for the child to exit on its own.
     ///   3. If still alive after 5s, escalate to SIGKILL and reap.
     ///
     /// Returns `Err` only if the underlying wait/kill syscalls fail (not on
     /// timeout — timeout triggers the kill path which is itself best-effort).
     pub async fn shutdown(&self) -> std::io::Result<()> {
-        // Closing stdin signals the sidecar to exit. We can't drop the stdin
-        // field in place (it's behind a Mutex), so instead we rely on the
-        // child seeing EOF when we kill it, or on the Python main loop's
-        // stdin-closed branch. The lock is released before we touch the child
-        // lock to avoid holding both simultaneously.
+        // 1. Close stdin by taking and dropping the ChildStdin — sends EOF to the sidecar.
+        //    The sidecar's main loop sees EOF and exits gracefully (mock emits `bye` first).
         {
-            let _stdin = self.stdin.lock().await;
-            // Lock dropped here; nothing else to do — stdin close happens when
-            // the Child is dropped/killed below.
+            let mut guard = self.stdin.lock().await;
+            let _taken = guard.take();  // Drops the ChildStdin, closing the pipe
         }
+
+        // 2. Wait up to 5s for the child to exit on its own.
         let mut child = self.child.lock().await;
         match tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await {
             Ok(Ok(_status)) => Ok(()),
             Ok(Err(e)) => Err(e),
             Err(_elapsed) => {
-                // Timed out waiting — escalate to SIGKILL.
+                // 3. Graceful shutdown failed — escalate to SIGKILL.
                 child.kill().await?;
                 child.wait().await?;
                 Ok(())
