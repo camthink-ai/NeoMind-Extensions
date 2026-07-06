@@ -2,6 +2,7 @@
 
 pub mod protocol;
 pub mod sidecar;
+pub mod system_status;
 
 use async_trait::async_trait;
 use neomind_extension_sdk::{
