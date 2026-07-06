@@ -7,12 +7,14 @@
 //! Concurrency: stdin/stdout/child are independent locks so heartbeat writes (Task 2.3)
 //! can't block user `add_stream` writes.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, Mutex};
+use tokio::task::JoinHandle;
 
 use crate::protocol::{read_message, write_message, ControlMessage, ProtocolError, SidecarEvent};
 
@@ -242,5 +244,263 @@ where
                 return;
             }
         }
+    }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// SidecarSupervisor — crash recovery with exponential backoff (Task 2.4)
+//
+// Owns the live SidecarHandle and runs a background watch loop that respawns
+// the sidecar when its stdout reader task terminates unexpectedly. Respawn is
+// rate-limited by a sliding-window counter (5 restarts / 60s) and the inter-
+// restart gap is governed by the BACKOFF_SCHEDULE_SECS table (spec §4.7).
+//
+// Exit-code classification (spec §4.7 — code 2 = DS missing = no restart,
+// code 3 = GPU OOM = backoff, etc.) is intentionally NOT handled here yet;
+// every unexpected reader_task termination triggers the backoff path. That
+// classification is a later task.
+//
+// The "Restart replay protocol" (spec §4.7 — replaying stored stream configs
+// after a respawn) is also out of scope. `on_restart(new_handle)` is the seam
+// the future replay logic will be wired into from DeepStreamExtension.
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Backoff schedule for sidecar restarts (spec §4.7).
+/// Indexed by `min(restart_count_in_window, len-1)` so it caps at 30s.
+const BACKOFF_SCHEDULE_SECS: &[u64] = &[1, 2, 5, 10, 30];
+
+/// Max restarts allowed within the sliding window before marking the
+/// supervisor `Failed`.
+const MAX_RESTARTS_IN_WINDOW: usize = 5;
+
+/// Sliding window length for the restart-rate limit.
+const RESTART_WINDOW_SECS: u64 = 60;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SupervisorState {
+    /// Watch loop is active; a sidecar is running (or about to be respawn).
+    Running,
+    /// `shutdown()` was called — do NOT respawn on the next reader_task exit.
+    Stopping,
+    /// Rate-limit tripped (5-in-60s) or spawn failed; supervisor has given up.
+    Failed,
+}
+
+pub struct SidecarSupervisor {
+    python_bin: String,
+    script_path: PathBuf,
+    extra_env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    /// Current sidecar instance + its stdout reader task JoinHandle.
+    /// `None` when between restarts or after shutdown.
+    current: Mutex<Option<SupervisorEntry>>,
+    /// Cumulative count of restarts since `start()` (for diagnostics / metrics).
+    restart_count: AtomicU64,
+    /// Wall-clock timestamps of recent restarts, used for the sliding-window
+    /// rate limit. Pruned to entries within `RESTART_WINDOW_SECS`.
+    restart_history: Mutex<Vec<Instant>>,
+    /// Supervisor state — prevents respawn after shutdown/failure.
+    state: Mutex<SupervisorState>,
+}
+
+struct SupervisorEntry {
+    handle: Arc<SidecarHandle>,
+    reader_task: JoinHandle<()>,
+}
+
+impl SidecarSupervisor {
+    pub fn new(python_bin: &str, script_path: PathBuf) -> Self {
+        Self {
+            python_bin: python_bin.to_string(),
+            script_path,
+            extra_env: Vec::new(),
+            current: Mutex::new(None),
+            restart_count: AtomicU64::new(0),
+            restart_history: Mutex::new(Vec::new()),
+            state: Mutex::new(SupervisorState::Stopping),
+        }
+    }
+
+    /// Add an env var to be passed to every (re)spawn of the sidecar.
+    pub fn with_env(mut self, key: &str, value: &str) -> Self {
+        self.extra_env.push((
+            std::ffi::OsString::from(key),
+            std::ffi::OsString::from(value),
+        ));
+        self
+    }
+
+    /// Start the supervisor: spawn the initial sidecar and launch the watch
+    /// loop. Returns the initial handle (for sending user commands) and the
+    /// watch-loop `JoinHandle`.
+    ///
+    /// The caller should hold the `JoinHandle` (dropping it does NOT cancel
+    /// the loop — call `shutdown()` to stop). The `on_restart` callback is
+    /// invoked on each successful respawn with the new `SidecarHandle`.
+    pub async fn start<F>(
+        self: Arc<Self>,
+        on_restart: F,
+    ) -> std::io::Result<(Arc<SidecarHandle>, JoinHandle<()>)>
+    where
+        F: Fn(Arc<SidecarHandle>) + Send + Sync + 'static,
+    {
+        // 1. Initial spawn — failure here is fatal and bubbles to the caller.
+        let (handle, reader_task) = SidecarHandle::spawn_with_env(
+            &self.python_bin,
+            &self.script_path,
+            self.extra_env.iter().cloned(),
+        )
+        .await?;
+        let handle = Arc::new(handle);
+        *self.current.lock().await = Some(SupervisorEntry {
+            handle: handle.clone(),
+            reader_task,
+        });
+        *self.state.lock().await = SupervisorState::Running;
+
+        // 2. Launch the watch loop. The callback is wrapped in Arc<F> so the
+        //    spawned task can own it (Fn is ?Sized).
+        let on_restart = Arc::new(on_restart);
+        let watch_task = tokio::spawn(watch_loop(self.clone(), on_restart));
+
+        Ok((handle, watch_task))
+    }
+
+    /// Cumulative restart count (for metrics / diagnostics).
+    pub fn restart_count(&self) -> u64 {
+        self.restart_count.load(Ordering::SeqCst)
+    }
+
+    /// Initiate graceful shutdown: stop the watch loop (prevents respawn) and
+    /// shut down the live sidecar.
+    pub async fn shutdown(&self) -> std::io::Result<()> {
+        // State guard: even if the watch loop wakes up after we tear down the
+        // child, it will see Stopping and exit without respawning.
+        *self.state.lock().await = SupervisorState::Stopping;
+
+        // Take the current entry so the watch loop's next await on
+        // reader_task resolves immediately, and so we can call shutdown on
+        // the handle exactly once.
+        let entry = self.current.lock().await.take();
+        if let Some(e) = entry {
+            e.handle.shutdown().await?;
+        }
+        Ok(())
+    }
+}
+
+/// Background watch loop: waits for the current sidecar's reader task to
+/// finish (child exited / stdout closed), then respawns with backoff.
+///
+/// Terminates without respawning when:
+///   - supervisor state is not `Running` (shutdown or already-failed)
+///   - sliding-window rate limit hit (5 restarts / 60s) → marks state Failed
+///   - respawn spawn call fails → marks state Failed
+async fn watch_loop<F>(sup: Arc<SidecarSupervisor>, on_restart: Arc<F>)
+where
+    F: Fn(Arc<SidecarHandle>) + Send + Sync + 'static,
+{
+    loop {
+        // 1. Wait for the current reader_task to finish. We can't clone a
+        //    JoinHandle, so take the whole entry out of the mutex (under the
+        //    lock), await the reader task outside the lock, then either
+        //    respawn or re-store the entry on shutdown.
+        let SupervisorEntry { handle, reader_task } = {
+            let mut cur = sup.current.lock().await;
+            match cur.take() {
+                Some(e) => e,
+                None => return, // No current sidecar — supervisor shut down before we started.
+            }
+        };
+        let _ = reader_task.await;
+
+        // 2. Honor supervisor state — don't respawn if we're shutting down or
+        //    failed. Note: shutdown() sets state=Stopping and then takes the
+        //    entry from `current`. Because we hold the entry here (we already
+        //    took it), shutdown() found None and couldn't shut the child down
+        //    itself — so we do it here.
+        {
+            let st = sup.state.lock().await;
+            if *st != SupervisorState::Running {
+                let _ = handle.shutdown().await;
+                return;
+            }
+        }
+
+        // 3. Sliding-window rate limit. Prune entries older than the window,
+        //    then check if we've already used up our budget.
+        let now = Instant::now();
+        {
+            let mut hist = sup.restart_history.lock().await;
+            hist.retain(|t| now.duration_since(*t) < Duration::from_secs(RESTART_WINDOW_SECS));
+            if hist.len() >= MAX_RESTARTS_IN_WINDOW {
+                *sup.state.lock().await = SupervisorState::Failed;
+                eprintln!(
+                    "[deepstream] supervisor giving up: {} restarts in {}s window",
+                    hist.len(),
+                    RESTART_WINDOW_SECS
+                );
+                return;
+            }
+        }
+
+        // 4. Compute backoff from the pre-increment restart count so the
+        //    first crash uses index 0 (1s), the next uses index 1 (2s), etc.
+        let backoff_idx = {
+            let hist = sup.restart_history.lock().await;
+            std::cmp::min(hist.len(), BACKOFF_SCHEDULE_SECS.len() - 1)
+        };
+        let backoff_secs = BACKOFF_SCHEDULE_SECS[backoff_idx];
+
+        // Record this restart attempt in the sliding window NOW (before sleep)
+        // so concurrent failures don't slip past the rate limit.
+        sup.restart_history.lock().await.push(now);
+
+        eprintln!(
+            "[deepstream] sidecar crashed; backoff {}s before restart (attempt {})",
+            backoff_secs,
+            sup.restart_count.load(Ordering::SeqCst) + 1
+        );
+
+        // 5. Sleep the backoff. We re-check state after the sleep so a
+        //    concurrent shutdown() interrupts the respawn path.
+        tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+        {
+            let st = sup.state.lock().await;
+            if *st != SupervisorState::Running {
+                return;
+            }
+        }
+
+        // 6. Respawn. On spawn failure, mark the supervisor Failed and exit —
+        //    we treat a spawn failure as fatal (distinct from a child crash).
+        let (handle, reader_task) = match SidecarHandle::spawn_with_env(
+            &sup.python_bin,
+            &sup.script_path,
+            sup.extra_env.iter().cloned(),
+        )
+        .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!(
+                    "[deepstream] respawn failed: {:?}; supervisor exiting",
+                    e
+                );
+                *sup.state.lock().await = SupervisorState::Failed;
+                return;
+            }
+        };
+        let handle = Arc::new(handle);
+        *sup.current.lock().await = Some(SupervisorEntry {
+            handle: handle.clone(),
+            reader_task,
+        });
+        sup.restart_count.fetch_add(1, Ordering::SeqCst);
+
+        // 7. Notify the caller that a fresh handle is available. The future
+        //    replay logic (spec §4.7) will live in this callback body.
+        on_restart(handle);
+
+        // Loop: wait for the new reader_task to exit.
     }
 }
