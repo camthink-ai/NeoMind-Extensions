@@ -429,9 +429,67 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             fi
 
             if [ -n "$ORT_LIB" ] && [ -f "$ORT_LIB" ]; then
+                # ort crate (>=2.0.0-rc) dlopens the unversioned libonnxruntime.{dylib|so}
+                # at init time and panics if GetVersionString() doesn't match its pinned
+                # MINOR_VERSION (rc.10 → 1.22.x). Brew/macports often ship 1.21.x which
+                # is incompatible. Probe for a known-good 1.22 binary in sibling NeoMind
+                # extensions before falling back to the build-env discovery.
+                ORT_BASENAME=$(basename "$ORT_LIB")
+                ORT_MINOR=""
+                if [ "$OS" = "Darwin" ] && command -v otool &> /dev/null; then
+                    ORT_MINOR=$(otool -L "$ORT_LIB" 2>/dev/null | grep -oE 'current version [0-9]+\.[0-9]+' | head -1 | awk '{print $3}' | cut -d. -f2)
+                fi
+                if [ -z "$ORT_MINOR" ] && [ "$LIB_EXT" = "dylib" ]; then
+                    ORT_MINOR=$(echo "$ORT_BASENAME" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 | cut -d. -f2)
+                fi
+
+                # ort-sys 2.0.0-rc.10 requires ORT 1.22.x. If the discovered dylib is older,
+                # try to grab a known-good 1.22 binary from an already-installed NeoMind
+                # extension (ocr-device-inference, yolo-device-inference, etc. all share
+                # the same CoreML-enabled 33MB 1.22 build).
+                if [ "$LIB_EXT" = "dylib" ] && [ -n "$ORT_MINOR" ] && [ "$ORT_MINOR" != "22" ]; then
+                    echo -e "    ${YELLOW}⚠${NC} Found ORT 1.${ORT_MINOR}.x at $ORT_LIB but ort crate needs 1.22.x"
+                    NEOMIND_EXT_DIR="$HOME/Library/Application Support/com.neomind.neomind/data/extensions"
+                    FALLBACK=""
+                    if [ -d "$NEOMIND_EXT_DIR" ]; then
+                        for cand in ocr-device-inference yolo-device-inference image-analyzer-v2 yolo-video-v2; do
+                            cand_lib="$NEOMIND_EXT_DIR/$cand/binaries/$PLATFORM/libonnxruntime.dylib"
+                            if [ -f "$cand_lib" ]; then
+                                cand_minor=$(otool -L "$cand_lib" 2>/dev/null | grep -oE 'current version [0-9]+\.[0-9]+' | head -1 | awk '{print $3}' | cut -d. -f2)
+                                if [ "$cand_minor" = "22" ]; then
+                                    FALLBACK="$cand_lib"
+                                    echo -e "    ${GREEN}→${NC} Using known-good ORT 1.22 from $cand"
+                                    break
+                                fi
+                            fi
+                        done
+                    fi
+                    if [ -n "$FALLBACK" ]; then
+                        ORT_LIB="$FALLBACK"
+                        ORT_BASENAME=$(basename "$ORT_LIB")
+                    else
+                        echo -e "    ${RED}✗${NC} No ORT 1.22 fallback found. ort crate will panic at load time."
+                        echo -e "    Install onnxruntime 1.22.x (brew install onnxruntime@1.22 or download from"
+                        echo -e "    https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0) and re-run."
+                        exit 1
+                    fi
+                fi
+
                 cp "$ORT_LIB" "$BINARY_DIR/"
                 chmod +x "$BINARY_DIR/$(basename $ORT_LIB)"
                 echo -e "    ${GREEN}→${NC} Bundled ONNX Runtime: $(basename $ORT_LIB)"
+
+                # Always provide the unversioned alias (ort crate dlopens it at init).
+                # Use `cp` not `ln -sf` — symlinks don't survive zip packaging.
+                ORT_BASENAME_NO_VER="libonnxruntime.$LIB_EXT"
+                if [ "$LIB_EXT" = "dll" ]; then
+                    ORT_BASENAME_NO_VER="onnxruntime.dll"
+                fi
+                if [ "$(basename $ORT_LIB)" != "$ORT_BASENAME_NO_VER" ]; then
+                    cp "$ORT_LIB" "$BINARY_DIR/$ORT_BASENAME_NO_VER"
+                    chmod +x "$BINARY_DIR/$ORT_BASENAME_NO_VER"
+                    echo -e "    ${GREEN}→${NC} Unversioned alias: $ORT_BASENAME_NO_VER (real copy, not symlink)"
+                fi
 
                 # Verify architecture matches the target platform
                 if [ "$OS" = "Darwin" ] && command -v file &> /dev/null; then

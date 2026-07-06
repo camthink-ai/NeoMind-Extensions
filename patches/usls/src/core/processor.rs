@@ -77,6 +77,11 @@ impl Processor {
         let tokenizer = config.try_build_tokenizer()?;
 
         // try to build vocab from `vocab.txt`
+        // PP-OCRv4+ dict convention: the dict file lists real characters
+        // only; the recognizer's character list is `['blank'] + dict_lines`,
+        // with the CTC blank at index 0. The postprocess filter `id != 0`
+        // skips the blank, so we prepend an empty-string placeholder to keep
+        // `vocab[id]` aligned with the model's character indices.
         let vocab: Vec<String> = match &config.vocab_txt {
             Some(x) => {
                 let file = if !std::path::PathBuf::from(&x).exists() {
@@ -84,10 +89,14 @@ impl Processor {
                 } else {
                     x.to_string()
                 };
-                std::fs::read_to_string(file)?
-                    .lines()
-                    .map(|line| line.to_string())
-                    .collect()
+                let mut v: Vec<String> = Vec::new();
+                v.push(String::new()); // blank placeholder at index 0
+                v.extend(
+                    std::fs::read_to_string(file)?
+                        .lines()
+                        .map(|line| line.to_string()),
+                );
+                v
             }
             None => vec![],
         };

@@ -7,9 +7,8 @@
 //!
 //! - det: box_thresh (0.40 tiny / 0.45 others), unclip_ratio=1.4,
 //!        BGR input (swap_rgb=true)
-//! - rec: normalize=false (v6 trained on raw [0,255] pixels, unlike
-//!        v5 which expected normalized [0,1]), BGR input, dynamic
-//!        width opt=320..3200
+//! - rec: PaddleOCR v6 NormalizeImage (scale=1/255, mean=[0.5]*3,
+//!        std=[0.5]*3), BGR input, dynamic width opt=320..3200
 //!
 //! Failure to apply any one of these overrides silently produces
 //! garbage recognition output (boxes around nothing, or rec producing
@@ -73,15 +72,19 @@ pub fn ppocr_rec_v6(tier: Tier, models_dir: &std::path::Path) -> Config {
     Config::svtr()
         .with_model_file(&rec_path_str)
         .with_vocab_txt(&dict_path_str)
-        // Rec input shape: [batch, channel=3, height=320, width∈(320,960,3200)]
+        // Rec input shape: [batch, channel=3, height=48, width∈(320,960,3200)]
         // Width is dynamic to handle text crops of varying length.
+        // (height=48 is usls::svtr() default — leave it.)
         .with_model_ixx(0, 3, (320, 960, 3200).into())
-        // CRITICAL: v6 rec was trained WITHOUT NormalizeImage in the
-        // preprocessing pipeline — it expects raw [0,255] pixels.
-        // usls::Config::svtr() defaults to normalize=true (which is
-        // correct for v4/v5). Leaving normalize on produces values
-        // in [0,1] which the v6 model has never seen → garbage output.
-        .with_normalize(false)
+        // PaddleOCR v6 rec YAML: NormalizeImage with
+        //   scale=1./255., mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5]
+        // usls `normalize=true` applies the 1/255 scale; mean/std
+        // (both 0.5) drive the per-channel standardize step.
+        // Without this the model sees raw [0,255] values and
+        // recognition accuracy collapses for non-CJK scripts.
+        .with_normalize(true)
+        .with_image_mean(&[0.5, 0.5, 0.5])
+        .with_image_std(&[0.5, 0.5, 0.5])
         .with_swap_rgb(true)
 }
 
@@ -139,8 +142,11 @@ mod tests {
         let cfg = ppocr_rec_v6(Tier::Small, std::path::Path::new("/tmp"));
         // swap_rgb at Config level
         assert_eq!(cfg.swap_rgb, Some(true));
-        // Processor-level normalize was flipped to false (svtr default is true)
-        assert!(!cfg.processor.normalize, "rec processor.normalize must be false for v6");
+        // Normalize + standardize enabled (PaddleOCR v6 rec YAML uses
+        // NormalizeImage with mean/std 0.5).
+        assert!(cfg.processor.normalize, "rec processor.normalize must be true for v6");
+        assert_eq!(cfg.processor.image_mean, vec![0.5, 0.5, 0.5]);
+        assert_eq!(cfg.processor.image_std, vec![0.5, 0.5, 0.5]);
         // vocab path was set
         assert_eq!(
             cfg.processor.vocab_txt.as_deref(),

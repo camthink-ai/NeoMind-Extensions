@@ -74,9 +74,16 @@ impl SVTR {
 
                 preds.dedup_by(|a, b| a.0 == b.0);
 
+                // PP-OCR recognizer output dim = dict_size + N (where N covers
+                // blank + possible BOS/EOS specials). Filter out indices that
+                // fall outside the loaded vocab so model-vs-dict size
+                // mismatches don't panic the worker thread.
+                let vocab_len = self.processor.vocab().len();
                 let (text, confs): (String, Vec<f32>) = preds
                     .into_iter()
-                    .filter(|(id, &conf)| *id != 0 && conf >= self.confs[0])
+                    .filter(|(id, &conf)| {
+                        *id != 0 && *id < vocab_len && conf >= self.confs[0]
+                    })
                     .map(|(id, &conf)| (self.processor.vocab()[id].clone(), conf))
                     .collect();
 
