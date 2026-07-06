@@ -63,6 +63,11 @@ pub struct ProcessorConfig {
     pub up_scale: f32,
     /// Image tensor layout format.
     pub image_tensor_layout: ImageTensorLayout,
+    /// Swap R/B channels (BGR input). When true, the processor swaps
+    /// channels 0 and 2 in the channel dimension before feeding ONNX.
+    /// PP-OCRv6 det/rec models train with BGR; usls default pipeline
+    /// forces RGB via DynamicImage::to_rgb8().
+    pub swap_rgb: bool,
 
     // Text
     /// Maximum sequence length for tokenization.
@@ -97,6 +102,7 @@ impl Default for ProcessorConfig {
             resize_filter: Some("Bilinear"),
             padding_value: 114,
             image_tensor_layout: ImageTensorLayout::NCHW,
+            swap_rgb: false,
             normalize: true,
             image_std: vec![],
             image_mean: vec![],

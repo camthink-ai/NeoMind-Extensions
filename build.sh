@@ -152,6 +152,7 @@ V2_EXTENSIONS=(
     "yolo-video-v2"
     "yolo-device-inference"
     "ocr-device-inference"
+    "paddle-ocr-v6"
     "face-recognition"
     "stream-player"
     "wasm-demo"

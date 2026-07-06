@@ -63,6 +63,10 @@ pub struct Config {
     pub min_height: Option<f32>,
     pub db_unclip_ratio: Option<f32>,
     pub db_binary_thresh: Option<f32>,
+    /// Swap R/B channels (BGR input). PP-OCRv6 det/rec train with BGR;
+    /// usls default pipeline forces RGB. When Some(true), the processor
+    /// flips the channel dimension before feeding ONNX.
+    pub swap_rgb: Option<bool>,
     #[cfg(feature = "sam")]
     pub sam_kind: Option<SamKind>,
     #[cfg(feature = "sam")]
@@ -97,6 +101,7 @@ impl Default for Config {
             min_height: None,
             db_unclip_ratio: Some(1.5),
             db_binary_thresh: Some(0.2),
+            swap_rgb: None,
             #[cfg(feature = "sam")]
             sam_kind: None,
             #[cfg(feature = "sam")]
@@ -184,6 +189,11 @@ impl Config {
         self.coord_decoder = try_commit(self.name, self.coord_decoder)?;
         self.visual_projection = try_commit(self.name, self.visual_projection)?;
         self.textual_projection = try_commit(self.name, self.textual_projection)?;
+
+        // Propagate swap_rgb into processor config for the processor pipeline
+        if let Some(true) = self.swap_rgb {
+            self.processor.swap_rgb = true;
+        }
 
         Ok(self)
     }
