@@ -3,6 +3,7 @@
 // Placeholder. Real implementation lands in Phase 4 (tier/preset/downloader)
 // and Phase 6 (OcrEngine + Extension trait).
 
+mod downloader;
 mod preset;
 mod tier;
 
