@@ -16,6 +16,7 @@ mod tier;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::io::Read;
 
 use async_trait::async_trait;
 use neomind_extension_sdk::{
@@ -23,10 +24,109 @@ use neomind_extension_sdk::{
     MetricDescriptor, MetricValue, ParameterDefinition, Result,
 };
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::downloader::Downloader;
 use crate::tier::Tier;
+
+// ---------------------------------------------------------------------------
+// Result types (returned by `recognize`)
+// ---------------------------------------------------------------------------
+
+/// Normalized bounding box. All coordinates in `[0, 1]` relative to
+/// the source image dimensions, so callers don't need to know pixel
+/// dimensions to render overlays.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BoundingBox {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// One recognized text region.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextBlock {
+    pub text: String,
+    pub confidence: f32,
+    pub bbox: BoundingBox,
+    /// Raw detection polygon in pixel coordinates of the source image.
+    /// Useful for non-axis-aligned text (rotated, curved). Optional
+    /// because some detections may collapse to a degenerate polygon.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub polygon: Option<Vec<[f32; 2]>>,
+}
+
+/// Result of a `recognize` call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OcrResult {
+    pub text_blocks: Vec<TextBlock>,
+    pub full_text: String,
+    pub total_blocks: usize,
+    pub avg_confidence: f32,
+    pub processing_time_ms: u64,
+    pub image_width: u32,
+    pub image_height: u32,
+    /// Active tier when this result was produced. Lets callers
+    /// correlate accuracy/speed with tier choice.
+    pub tier: String,
+}
+
+// ---------------------------------------------------------------------------
+// Geometry helpers (copied from ocr-device-inference, simplified)
+// ---------------------------------------------------------------------------
+
+/// Crop the axis-aligned bounding rectangle of a detection polygon.
+/// Returns None for crops smaller than 8x8 (too small for SVTR).
+fn crop_polygon(img: &usls::Image, polygon: &usls::Polygon) -> Option<usls::Image> {
+    let coords = polygon.points();
+    if coords.is_empty() {
+        return None;
+    }
+
+    let xs: Vec<f32> = coords.iter().map(|p| p[0]).collect();
+    let ys: Vec<f32> = coords.iter().map(|p| p[1]).collect();
+
+    let img_w = img.width() as f32;
+    let img_h = img.height() as f32;
+
+    let x_min = xs.iter().cloned().fold(f32::INFINITY, f32::min).max(0.0).min(img_w - 1.0) as u32;
+    let x_max = xs.iter().cloned().fold(f32::NEG_INFINITY, f32::max).max(0.0).min(img_w - 1.0) as u32;
+    let y_min = ys.iter().cloned().fold(f32::INFINITY, f32::min).max(0.0).min(img_h - 1.0) as u32;
+    let y_max = ys.iter().cloned().fold(f32::NEG_INFINITY, f32::max).max(0.0).min(img_h - 1.0) as u32;
+
+    let w = x_max.saturating_sub(x_min) + 1;
+    let h = y_max.saturating_sub(y_min) + 1;
+
+    const MIN_CROP_SIZE: u32 = 8;
+    if w < MIN_CROP_SIZE || h < MIN_CROP_SIZE {
+        tracing::debug!("[paddle-ocr-v6] skipping small crop: {}x{}", w, h);
+        return None;
+    }
+
+    let cropped = img.to_dyn().crop_imm(x_min, y_min, w, h);
+    Some(cropped.into())
+}
+
+/// Convert a detection polygon into a normalized bounding box.
+fn polygon_to_bbox(polygon: &usls::Polygon, img_w: u32, img_h: u32) -> BoundingBox {
+    let coords = polygon.points();
+    let xs: Vec<f32> = coords.iter().map(|p| p[0]).collect();
+    let ys: Vec<f32> = coords.iter().map(|p| p[1]).collect();
+
+    let x_min = xs.iter().cloned().fold(f32::INFINITY, f32::min);
+    let x_max = xs.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let y_min = ys.iter().cloned().fold(f32::INFINITY, f32::min);
+    let y_max = ys.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+
+    BoundingBox {
+        x: x_min / img_w as f32,
+        y: y_min / img_h as f32,
+        width: (x_max - x_min) / img_w as f32,
+        height: (y_max - y_min) / img_h as f32,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // OcrEngine — detector + single multilingual recognizer
@@ -99,6 +199,135 @@ impl OcrEngine {
         }
         self.loaded = true;
         self.load_error = None;
+    }
+
+    /// Run detect → crop → recognize on a raw decoded image.
+    /// `image_data` must be PNG / JPEG / similar bytes. The caller
+    /// is responsible for fetching (from base64 / URL) before calling.
+    pub fn recognize(&mut self, image_data: &[u8]) -> Result<OcrResult> {
+        let start = std::time::Instant::now();
+
+        if !self.loaded {
+            return Err(ExtensionError::ExecutionFailed(
+                "models not loaded — call ensure_loaded() first".to_string(),
+            ));
+        }
+
+        // Decode image bytes → DynamicImage → usls::Image
+        let dyn_img = image::load_from_memory(image_data).map_err(|e| {
+            ExtensionError::InvalidArguments(format!("decode image failed: {}", e))
+        })?;
+        let img_w = dyn_img.width();
+        let img_h = dyn_img.height();
+        let img: usls::Image = dyn_img.into();
+
+        // ---- Detect text regions (DB) ------------------------------------
+        let det_results = {
+            let detector = self.detector.as_mut().ok_or_else(|| {
+                ExtensionError::ExecutionFailed("detector missing".to_string())
+            })?;
+            detector
+                .forward(&[img.clone()])
+                .map_err(|e| ExtensionError::ExecutionFailed(format!("detect failed: {}", e)))?
+        };
+
+        // ---- Crop each detection polygon ---------------------------------
+        let mut crops: Vec<usls::Image> = Vec::new();
+        let mut bboxes: Vec<BoundingBox> = Vec::new();
+        let mut polygons: Vec<Option<Vec<[f32; 2]>>> = Vec::new();
+
+        if let Some(det_result) = det_results.first() {
+            for polygon in &det_result.polygons {
+                if let Some(crop) = crop_polygon(&img, polygon) {
+                    let bbox = polygon_to_bbox(polygon, img_w, img_h);
+                    let poly_norm = Some(
+                        polygon
+                            .points()
+                            .iter()
+                            .map(|p| [p[0] / img_w as f32, p[1] / img_h as f32])
+                            .collect(),
+                    );
+                    crops.push(crop);
+                    bboxes.push(bbox);
+                    polygons.push(poly_norm);
+                }
+            }
+        }
+
+        // ---- Recognize crops in a single batch (SVTR) --------------------
+        let mut text_blocks: Vec<TextBlock> = Vec::with_capacity(bboxes.len());
+        let mut total_conf = 0.0_f32;
+
+        if !crops.is_empty() {
+            let rec_results = {
+                let recognizer = self.recognizer.as_mut().ok_or_else(|| {
+                    ExtensionError::ExecutionFailed("recognizer missing".to_string())
+                })?;
+                recognizer
+                    .forward(&crops)
+                    .map_err(|e| ExtensionError::ExecutionFailed(format!("recognize failed: {}", e)))?
+            };
+
+            for (i, rec_y) in rec_results.iter().enumerate() {
+                if i >= bboxes.len() {
+                    break;
+                }
+                // Each crop may yield multiple text objects (rare); we
+                // concatenate text and use the highest confidence.
+                if rec_y.texts.is_empty() {
+                    // No text recognized for this crop — emit a
+                    // zero-confidence placeholder so bboxes stay aligned.
+                    text_blocks.push(TextBlock {
+                        text: String::new(),
+                        confidence: 0.0,
+                        bbox: bboxes[i].clone(),
+                        polygon: polygons[i].clone(),
+                    });
+                    continue;
+                }
+                let mut best_text = String::new();
+                let mut best_conf: f32 = 0.0;
+                for t in &rec_y.texts {
+                    let s = t.text().to_string();
+                    let c = t.confidence().unwrap_or(0.0);
+                    if c >= best_conf {
+                        best_conf = c;
+                        best_text = s;
+                    }
+                }
+                total_conf += best_conf;
+                text_blocks.push(TextBlock {
+                    text: best_text,
+                    confidence: best_conf,
+                    bbox: bboxes[i].clone(),
+                    polygon: polygons[i].clone(),
+                });
+            }
+        }
+
+        let total_blocks = text_blocks.len();
+        let avg_confidence = if total_blocks == 0 {
+            0.0
+        } else {
+            total_conf / total_blocks as f32
+        };
+        let full_text = text_blocks
+            .iter()
+            .map(|b| b.text.as_str())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        Ok(OcrResult {
+            text_blocks,
+            full_text,
+            total_blocks,
+            avg_confidence,
+            processing_time_ms: start.elapsed().as_millis() as u64,
+            image_width: img_w,
+            image_height: img_h,
+            tier: self.tier.as_str().to_string(),
+        })
     }
 }
 
@@ -323,10 +552,42 @@ impl Extension for PaddleOcrV6Extension {
 
 impl PaddleOcrV6Extension {
     async fn cmd_recognize(&self, args: &Value) -> Result<Value> {
-        // Phase 6.2 implements the actual detect→crop→recognize flow.
-        // For now, return a placeholder so commands route end-to-end.
-        let _ = args;
-        let engine = self.engine.read();
+        // Resolve image bytes from one of three input shapes.
+        // Priority: explicit base64 > explicit URL > (none).
+        let image_base64 = args.get("image_base64").and_then(|v| v.as_str());
+        let image_url = args.get("image_url").and_then(|v| v.as_str());
+
+        let image_bytes: Vec<u8> = if let Some(b64) = image_base64 {
+            // Accept data-URL prefix (`data:image/png;base64,...`) or raw base64.
+            let raw = b64
+                .strip_prefix("data:")
+                .and_then(|s| s.split(',').nth(1))
+                .unwrap_or(b64);
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD
+                .decode(raw)
+                .map_err(|e| ExtensionError::InvalidArguments(format!("base64 decode: {}", e)))?
+        } else if let Some(url) = image_url {
+            // Sync HTTP fetch (ureq to avoid Tokio runtime issues inside cdylib).
+            Self::fetch_url(url)?
+        } else {
+            return Err(ExtensionError::InvalidArguments(
+                "missing 'image_base64' or 'image_url' parameter".to_string(),
+            ));
+        };
+
+        // Hold the write lock only for the duration of inference. Note:
+        // a long OCR run will block parallel switch_tier calls — that's
+        // acceptable for v1 (switch_tier is rare). If it becomes a real
+        // bottleneck, snapshot the engine state and release the lock.
+        let mut engine = self.engine.write();
+        if !engine.loaded {
+            // Lazy-load on first recognize using configured tier. This
+            // makes the extension work out-of-the-box if models are on
+            // disk (tiny tier ships in the .nep).
+            let tier = *self.configured_tier.read();
+            engine.ensure_loaded(tier, None);
+        }
         if !engine.loaded {
             if let Some(err) = &engine.load_error {
                 return Err(ExtensionError::ExecutionFailed(format!(
@@ -338,12 +599,11 @@ impl PaddleOcrV6Extension {
                 "models not loaded — call switch_tier first".to_string(),
             ));
         }
-        Ok(json!({
-            "text_blocks": [],
-            "full_text": "",
-            "processing_time_ms": 0_u64,
-            "tier": engine.tier.as_str(),
-        }))
+
+        let result = engine.recognize(&image_bytes)?;
+        serde_json::to_value(&result).map_err(|e| {
+            ExtensionError::ExecutionFailed(format!("serialize result failed: {}", e))
+        })
     }
 
     async fn cmd_switch_tier(&self, args: &Value) -> Result<Value> {
@@ -396,6 +656,27 @@ impl PaddleOcrV6Extension {
             "models_dir": engine.models_dir.to_string_lossy(),
             "load_error": engine.load_error.clone(),
         })
+    }
+
+    /// Synchronous HTTP fetch. Uses ureq (not async) to avoid pulling a
+    /// Tokio runtime into the cdylib — same pattern as downloader.rs.
+    fn fetch_url(url: &str) -> Result<Vec<u8>> {
+        let resp = ureq::get(url)
+            .timeout(std::time::Duration::from_secs(30))
+            .call()
+            .map_err(|e| ExtensionError::ExecutionFailed(format!("HTTP {}: {}", url, e)))?;
+        let status = resp.status();
+        if status >= 400 {
+            return Err(ExtensionError::ExecutionFailed(format!(
+                "HTTP {} for {}",
+                status, url
+            )));
+        }
+        let mut buf = Vec::with_capacity(1 << 16);
+        resp.into_reader()
+            .read_to_end(&mut buf)
+            .map_err(|e| ExtensionError::ExecutionFailed(format!("read body {}: {}", url, e)))?;
+        Ok(buf)
     }
 }
 
