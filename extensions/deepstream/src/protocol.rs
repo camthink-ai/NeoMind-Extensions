@@ -153,13 +153,7 @@ pub enum SidecarEvent {
         ts: i64,
         snapshot: serde_json::Value,
     },
-    Stats {
-        ts: i64,
-        global_fps: f32,
-        gpu_utilization_percent: f32,
-        gpu_memory_used_mb: f32,
-        per_stream: Vec<StreamStat>,
-    },
+    Stats(Stats),
     Pong { ts: i64 },
     ErrorResponse {
         id: String,
@@ -195,6 +189,20 @@ pub struct StreamStat {
     pub frame_count: u64,
     pub object_count: u32,
     pub status: String,
+}
+
+/// Sidecar-wide stats snapshot. Carried by [`SidecarEvent::Stats`].
+///
+/// `global_fps` is the aggregate throughput across all streams; it surfaces
+/// as the `total_throughput_fps` metric on the host side (the rename reflects
+/// the metric's display semantics, not a semantic change to the data).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Stats {
+    pub ts: i64,
+    pub global_fps: f32,
+    pub gpu_utilization_percent: f32,
+    pub gpu_memory_used_mb: f32,
+    pub per_stream: Vec<StreamStat>,
 }
 
 #[cfg(test)]

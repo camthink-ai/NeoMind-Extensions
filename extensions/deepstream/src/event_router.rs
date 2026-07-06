@@ -408,7 +408,7 @@ impl EventRouter {
             }
 
             // Stats channel.
-            SidecarEvent::Stats { .. } => (
+            SidecarEvent::Stats(_) => (
                 Channel::Stats,
                 "deepstream.stats",
                 serde_json::to_value(&event).unwrap_or(serde_json::Value::Null),
@@ -576,7 +576,7 @@ mod tests {
     }
 
     fn sample_stats() -> SidecarEvent {
-        SidecarEvent::Stats {
+        SidecarEvent::Stats(crate::protocol::Stats {
             ts: 1,
             global_fps: 30.0,
             gpu_utilization_percent: 50.0,
@@ -589,7 +589,7 @@ mod tests {
                 object_count: 0,
                 status: "running".into(),
             }],
-        }
+        })
     }
 
     fn sample_stream_error() -> SidecarEvent {

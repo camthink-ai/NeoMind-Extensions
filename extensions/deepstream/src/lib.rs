@@ -1,6 +1,7 @@
 //! DeepStream extension — see docs/superpowers/specs/2026-07-06-deepstream-extension-design.md
 
 pub mod event_router;
+pub mod metrics_bridge;
 pub mod protocol;
 pub mod sidecar;
 pub mod stream_manager;
@@ -63,6 +64,10 @@ pub struct DeepStreamExtension {
     /// Used when spawning the sidecar (wired in a future task).
     #[allow(dead_code)]
     python_bin: RwLock<Option<String>>,
+    /// Metrics bridge: 7 global atomics + 9 per-stream dynamic templates.
+    /// Wired into `metrics()` / `produce_metrics()`; `apply_stats()` will be
+    /// called by the sidecar supervisor's Stats-event handler in Phase 8.
+    metrics: Arc<metrics_bridge::MetricsBridge>,
 }
 
 impl Default for DeepStreamExtension {
@@ -80,6 +85,7 @@ impl DeepStreamExtension {
             sidecar: Arc::new(RwLock::new(None)),
             restart_count: Arc::new(AtomicU64::new(0)),
             python_bin: RwLock::new(None),
+            metrics: Arc::new(metrics_bridge::MetricsBridge::new()),
         }
     }
 
@@ -108,6 +114,7 @@ impl DeepStreamExtension {
             sidecar: Arc::new(RwLock::new(Some(sidecar))),
             restart_count: Arc::new(AtomicU64::new(0)),
             python_bin: RwLock::new(None),
+            metrics: Arc::new(metrics_bridge::MetricsBridge::new()),
         }
     }
 
@@ -704,7 +711,11 @@ impl Extension for DeepStreamExtension {
     }
 
     fn metrics(&self) -> Vec<neomind_extension_sdk::MetricDescriptor> {
-        vec![]
+        // Dynamic per-stream descriptors (empty until a stream is registered)
+        // followed by the 7 static global descriptors.
+        let mut out = self.metrics.dynamic.descriptors();
+        out.extend(metrics_bridge::global_metric_descriptors());
+        out
     }
 
     async fn execute_command(
@@ -728,7 +739,7 @@ impl Extension for DeepStreamExtension {
     }
 
     fn produce_metrics(&self) -> Result<Vec<neomind_extension_sdk::ExtensionMetricValue>> {
-        Ok(vec![])
+        Ok(self.metrics.produce_values())
     }
 }
 
@@ -854,5 +865,35 @@ mod tests {
                     && m.get("preset").and_then(|v| v.as_bool()) == Some(false)),
             "registered missing: {models:?}"
         );
+    }
+
+    #[test]
+    fn produce_metrics_on_fresh_extension_returns_7_globals() {
+        let ext = DeepStreamExtension::new();
+        let vals = ext.produce_metrics().expect("produce_metrics ok");
+        assert_eq!(vals.len(), 7, "expected 7 globals on fresh extension, got {vals:?}");
+        let names: Vec<&str> = vals.iter().map(|v| v.name.as_str()).collect();
+        let expected = [
+            "active_stream_count",
+            "total_throughput_fps",
+            "gpu_utilization_percent",
+            "gpu_memory_used_mb",
+            "sidecar_status",
+            "sidecar_uptime_secs",
+            "restart_count",
+        ];
+        for e in expected {
+            assert!(names.contains(&e), "missing global {e} in {names:?}");
+        }
+    }
+
+    #[test]
+    fn metrics_descriptors_on_fresh_extension_returns_7_globals() {
+        // Fresh extension has no streams registered → dynamic.descriptors() is
+        // empty; we should still advertise the 7 static globals so the host
+        // knows the metric series exists.
+        let ext = DeepStreamExtension::new();
+        let d = ext.metrics();
+        assert_eq!(d.len(), 7, "descriptors: {:?}", d.iter().map(|m| &m.name).collect::<Vec<_>>());
     }
 }
