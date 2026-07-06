@@ -1,4 +1,7 @@
 //! DeepStream extension — see docs/superpowers/specs/2026-07-06-deepstream-extension-design.md
+
+mod protocol;
+
 use async_trait::async_trait;
 use neomind_extension_sdk::{
     Extension, ExtensionError, ExtensionMetadata, Result,
