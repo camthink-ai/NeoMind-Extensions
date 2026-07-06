@@ -1,0 +1,9 @@
+{
+  "id": "deepstream",
+  "version": "2.7.7",
+  "entrypoint": "deepstream-components.umd.cjs",
+  "components": [],
+  "dependencies": {
+    "react": ">=18.0.0"
+  }
+}
