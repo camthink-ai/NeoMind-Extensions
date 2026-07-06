@@ -23,6 +23,7 @@ members = [
     "extensions/cosyvoice-3",
     "extensions/voice-edge-tts",
     "extensions/voice-assistant",
+    "extensions/paddle-ocr-v6",
     # "extensions/final-test",
     # "extensions/cli-test-ext",
 ]
