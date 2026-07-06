@@ -1,0 +1,38 @@
+{
+  "id": "paddle-ocr-vl",
+  "name": "paddle ocr vl",
+  "version": "2.7.7",
+  "description": "PaddleOCR-VL bridge extension — high-accuracy multilingual OCR, table recognition, and key information extraction via a remote PaddleOCR-VL inference service",
+  "author": "NeoMind Team",
+  "license": "Apache-2.0",
+  "type": "native",
+  "categories": [
+    "ai",
+    "ocr",
+    "device-integration"
+  ],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/paddle-ocr-vl",
+  "builds": {
+    "darwin-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/paddle-ocr-vl-2.7.7-darwin_aarch64.nep"
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/paddle-ocr-vl-2.7.7-darwin_x86_64.nep"
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/paddle-ocr-vl-2.7.7-linux_amd64.nep"
+    },
+    "linux-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/paddle-ocr-vl-2.7.7-linux_arm64.nep"
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/paddle-ocr-vl-2.7.7-windows_amd64.nep"
+    }
+  },
+  "frontend": {
+    "components": [
+      "PaddleOcrCard"
+    ],
+    "entrypoint": "paddle-ocr-vl-components.umd.cjs"
+  }
+}

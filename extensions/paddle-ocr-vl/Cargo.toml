@@ -1,0 +1,41 @@
+[package]
+name = "paddle-ocr-vl"
+version = "2.7.7"
+edition = "2021"
+authors = ["NeoMind Team"]
+license = "Apache-2.0"
+description = "PaddleOCR-VL bridge extension — high-accuracy multilingual OCR, table recognition, and key information extraction via a remote PaddleOCR-VL inference service"
+
+[lib]
+name = "neomind_extension_paddle_ocr_vl"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neomind-extension-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+
+# Sync HTTP client — required for cdylib (avoid Tokio runtime conflicts)
+ureq = { version = "2", features = ["json"] }
+
+# Image base64 handling
+base64 = "0.22"
+
+# Efficient locking
+parking_lot = "0.12"
+
+# Tokio is required by SDK's FFI macro (RwLock wrapper)
+tokio = { version = "1", features = ["rt", "sync"] }
+
+# Timestamp generation for metrics
+chrono = "0.4"
+
+[features]
+default = []
+native = []
+wasm = []
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "test-util"] }

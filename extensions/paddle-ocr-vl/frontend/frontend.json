@@ -1,0 +1,22 @@
+{
+  "id": "paddle-ocr-vl",
+  "version": "2.7.7",
+  "entrypoint": "paddle-ocr-vl-components.umd.cjs",
+  "components": [
+    {
+      "name": "PaddleOcrCard",
+      "type": "card",
+      "displayName": "PaddleOCR-VL",
+      "description": "Upload an image and run PaddleOCR-VL text recognition",
+      "icon": "scan-text",
+      "defaultSize": { "width": 420, "height": 560 },
+      "minSize": { "width": 320, "height": 400 },
+      "maxSize": { "width": 900, "height": 1000 },
+      "refreshable": false,
+      "hasDataSource": false
+    }
+  ],
+  "dependencies": {
+    "react": ">=18.0.0"
+  }
+}

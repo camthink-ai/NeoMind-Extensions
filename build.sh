@@ -168,6 +168,7 @@ V2_EXTENSIONS=(
     "sensevoice-asr"
     "voice-edge-tts"
     "voice-assistant"
+    "paddle-ocr-vl"
 )
 
 # Filter to single extension if specified

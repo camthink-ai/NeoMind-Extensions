@@ -128,6 +128,8 @@ tests/simulators/requirements.txt
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.venv*/
+extensions/*/server/.venv*/
 
 # Voice-assistant runtime secrets (NeoMind API keys, encryption material)
 extensions/voice-assistant/service/data/
