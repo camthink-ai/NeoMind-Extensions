@@ -1,6 +1,7 @@
 //! DeepStream extension — see docs/superpowers/specs/2026-07-06-deepstream-extension-design.md
 
-mod protocol;
+pub mod protocol;
+pub mod sidecar;
 
 use async_trait::async_trait;
 use neomind_extension_sdk::{
