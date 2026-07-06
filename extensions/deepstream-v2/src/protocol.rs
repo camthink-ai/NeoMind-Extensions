@@ -45,6 +45,107 @@ pub fn deserialize_line(line: &str) -> Result<ControlMessage, ProtocolError> {
     Ok(serde_json::from_str(line)?)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SidecarEvent {
+    Ready {
+        ds_ver: String,
+        pyds_ver: String,
+        protocol_ver: u32,
+        gpu_info: GpuInfo,
+    },
+    HelloAck {
+        max_streams: u32,
+        rtsp_url_prefix: String,
+        models_loaded: Vec<String>,
+    },
+    StreamAdded {
+        id: String,
+        stream_id: String,
+        rtsp_url: String,
+    },
+    StreamRemoved {
+        id: String,
+        stream_id: String,
+    },
+    StreamError {
+        stream_id: String,
+        code: String,
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+    Detection {
+        stream_id: String,
+        ts: i64,
+        frame_id: u64,
+        objects: Vec<DetectionObject>,
+    },
+    LineCross {
+        stream_id: String,
+        ts: i64,
+        line_id: String,
+        track_id: u32,
+        class: u32,
+        direction: String,
+    },
+    ROIIntrusion {
+        stream_id: String,
+        ts: i64,
+        roi_id: String,
+        track_id: u32,
+        class: u32,
+        mode: String,
+    },
+    AnalyticsSnapshot {
+        stream_id: String,
+        ts: i64,
+        snapshot: serde_json::Value,
+    },
+    Stats {
+        ts: i64,
+        global_fps: f32,
+        gpu_utilization_percent: f32,
+        gpu_memory_used_mb: f32,
+        per_stream: Vec<StreamStat>,
+    },
+    Pong { ts: i64 },
+    ErrorResponse {
+        id: String,
+        code: String,
+        message: String,
+    },
+    Bye {
+        reason: String,
+        exit_code: i32,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpuInfo {
+    pub name: String,
+    pub mem_mb: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetectionObject {
+    pub class: u32,
+    pub conf: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<u32>,
+    pub bbox: [f32; 4], // left, top, right, bottom — Python decides normalization
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamStat {
+    pub stream_id: String,
+    pub fps: f32,
+    pub latency_ms: f32,
+    pub frame_count: u64,
+    pub object_count: u32,
+    pub status: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,5 +167,18 @@ mod tests {
         let huge = "x".repeat(4 * 1024 * 1024 + 1);
         let err = deserialize_line(&huge).unwrap_err();
         assert!(matches!(err, ProtocolError::LineTooLong));
+    }
+
+    #[test]
+    fn parse_ready_event() {
+        let line = r#"{"type":"ready","ds_ver":"7.1.0","pyds_ver":"1.1.1","protocol_ver":1,"gpu_info":{"name":"Orin NX","mem_mb":8192}}"#;
+        let ev: SidecarEvent = serde_json::from_str(line).unwrap();
+        match ev {
+            SidecarEvent::Ready { ds_ver, protocol_ver, .. } => {
+                assert_eq!(ds_ver, "7.1.0");
+                assert_eq!(protocol_ver, 1);
+            }
+            _ => panic!(),
+        }
     }
 }
