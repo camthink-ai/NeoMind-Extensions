@@ -24,6 +24,7 @@ members = [
     "extensions/voice-edge-tts",
     "extensions/voice-assistant",
     "extensions/paddle-ocr-v6",
+    "extensions/paddle-ocr-vl",
     # "extensions/final-test",
     # "extensions/cli-test-ext",
 ]
