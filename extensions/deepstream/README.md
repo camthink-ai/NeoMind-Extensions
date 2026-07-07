@@ -27,6 +27,8 @@ Multi-stream RTSP video inference on NVIDIA Jetson via the NVIDIA DeepStream SDK
 
 Non-Jetson hosts (macOS, x86 Linux dev boxes) can build the Rust crate but cannot run the Python sidecar — DeepStream is Jetson-only.
 
+> 📺 **从零部署 DeepStream 7.1 + sidecar？** 看 **[INSTALL.md](./INSTALL.md)** —— 总结了 CamThink NG4500 设备上踩过的 16 个坑（Docker vfs / NGC auth / pyds wheel / INT8 内存 / IPv6 RTSP / TRT 10.x 张量名 等）。
+
 ## Architecture
 
 ```
