@@ -45,7 +45,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .protocol import (
+from protocol import (
     PROTOCOL_VERSION,
     AddStream,
     AnalyticsSnapshot,
@@ -68,7 +68,7 @@ from .protocol import (
     parse_control_message,
     serialize,
 )
-from .config import parse_stream_config
+from config import parse_stream_config
 
 log = logging.getLogger("deepstream.runner")
 
@@ -159,8 +159,8 @@ class DeepStreamRunner:
         # handler methods (which run after Gst.init) — ruff's static
         # analysis can't see those uses so they need explicit noqa.
         try:
-            from . import glib_bridge, snapshot_server  # noqa: F401
-            from . import pipeline_builder, analytics  # noqa: F401
+            import glib_bridge, snapshot_server  # noqa: F401
+            import pipeline_builder, analytics  # noqa: F401
             # Gst init must happen on the main thread before any element creation.
             try:
                 import gi
@@ -271,25 +271,35 @@ class DeepStreamRunner:
                         break
         except OSError:
             pass
-        from .protocol import GpuInfo
+        from protocol import GpuInfo
         return GpuInfo(name=name, mem_mb=mem_mb)
 
     async def _read_hello(self) -> Optional[Hello]:
-        """Read lines until we get a hello (or stdin closes)."""
-        reader = asyncio.StreamReader()
-        protocol_reader = asyncio.StreamReaderProtocol(reader)
-        await self._loop.connect_read_pipe(lambda: protocol_reader, sys.stdin)
+        """Read lines until we get a hello (or stdin closes).
 
+        NOTE: We deliberately avoid ``loop.connect_read_pipe(sys.stdin)``
+        because asyncio's pipe transport only supports true pipes/FIFOs,
+        not regular files. When the host spawns the sidecar via
+        ``subprocess.PIPE`` it works, but when stdin is redirected from a
+        file (smoke-test: ``python3 runner.py < input.jsonl``) or in some
+        TTY-less container configurations, ``connect_read_pipe`` either
+        raises ``OSError: [Errno 22]`` or silently hangs forever. Using
+        ``run_in_executor`` for blocking ``readline()`` works in all three
+        cases (pipe, file, pty).
+        """
         while not self._shutdown_requested.is_set():
             try:
-                line_bytes = await asyncio.wait_for(reader.readline(), timeout=300)
+                line_bytes = await asyncio.wait_for(
+                    self._loop.run_in_executor(None, sys.stdin.readline),
+                    timeout=300,
+                )
             except asyncio.TimeoutError:
                 log.warning("hello timeout (300s) — exiting")
                 return None
             if not line_bytes:
                 log.info("stdin closed before hello")
                 return None
-            line = line_bytes.decode("utf-8", errors="replace").rstrip("\n")
+            line = (line_bytes.decode("utf-8", errors="replace") if isinstance(line_bytes, bytes) else line_bytes).rstrip("\n")
             if not line:
                 continue
             try:
@@ -307,19 +317,17 @@ class DeepStreamRunner:
     # --- Phase 2: control loop -------------------------------------------
 
     async def _control_loop(self) -> None:
-        reader = asyncio.StreamReader()
-        protocol_reader = asyncio.StreamReaderProtocol(reader)
-        await self._loop.connect_read_pipe(lambda: protocol_reader, sys.stdin)
-
+        # NOTE: See _read_hello for why we use run_in_executor here instead
+        # of connect_read_pipe.
         while not self._shutdown_requested.is_set():
             try:
-                line_bytes = await reader.readline()
+                line_bytes = await self._loop.run_in_executor(None, sys.stdin.readline)
             except asyncio.CancelledError:
                 break
             if not line_bytes:
                 log.info("stdin closed — shutting down")
                 break
-            line = line_bytes.decode("utf-8", errors="replace").rstrip("\n")
+            line = (line_bytes.decode("utf-8", errors="replace") if isinstance(line_bytes, bytes) else line_bytes).rstrip("\n")
             if not line:
                 continue
             try:
@@ -365,7 +373,7 @@ class DeepStreamRunner:
     # --- Message handlers -----------------------------------------------
 
     async def _handle_add_stream(self, msg: AddStream) -> None:
-        from . import pipeline_builder, analytics
+        import pipeline_builder, analytics
 
         try:
             cfg = parse_stream_config(msg.config)
@@ -482,7 +490,7 @@ class DeepStreamRunner:
         ))
 
     async def _handle_remove_stream(self, msg: RemoveStream) -> None:
-        from . import analytics as analytics_mod
+        import analytics as analytics_mod
         with self.streams_lock:
             entry = self.streams.pop(msg.stream_id, None)
         if entry is None:
@@ -516,7 +524,7 @@ class DeepStreamRunner:
         self.emit(StreamRemoved(id=msg.id, stream_id=msg.stream_id))
 
     async def _handle_update_analytics(self, msg: UpdateAnalytics) -> None:
-        from . import analytics
+        import analytics
         with self.streams_lock:
             entry = self.streams.get(msg.stream_id)
         if entry is None:
@@ -720,14 +728,14 @@ def _wire_snapshot_callback(appsink: Any, stream_id: str, store: Any) -> None:
 
 def _build_line_rules(raw: Any) -> List[Any]:
     """Coerce an update_analytics.line_crossing dict into LineCrossingRule list."""
-    from .config import LineCrossingRule
+    from config import LineCrossingRule
     if isinstance(raw, list):
         return [LineCrossingRule.from_dict(r) if isinstance(r, dict) else r for r in raw]
     return []
 
 
 def _build_roi_rules(raw: Any) -> List[Any]:
-    from .config import RoiRule
+    from config import RoiRule
     if isinstance(raw, list):
         return [RoiRule.from_dict(r) if isinstance(r, dict) else r for r in raw]
     return []

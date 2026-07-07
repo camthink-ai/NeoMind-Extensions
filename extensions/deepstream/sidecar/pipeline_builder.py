@@ -77,10 +77,9 @@ from typing import Any, Dict, List, Optional
 try:
     import gi
     gi.require_version("Gst", "1.0")
-    gi.require_version("GstRtspServer", "1.0")  # noqa: F401  (future use)
     from gi.repository import Gst, GLib  # noqa: F401
     _GST_OK = True
-except Exception as _exc:  # pragma: no cover - macOS dev path
+except Exception as _exc:  # pragma: cover - macOS dev path OR missing GstRtspServer gir
     Gst = None  # type: ignore[assignment]
     GLib = None  # type: ignore[assignment]
     _GST_OK = False
@@ -158,26 +157,69 @@ class ModelPaths:
 
 
 def resolve_model_preset(model: str, models_dir: str) -> ModelPaths:
-    """Resolve a model preset name like ``yolov8n-coco`` to filesystem paths.
+    """Resolve a model preset name like ``Primary_Detector`` to filesystem paths.
 
-    Looks for ``<models_dir>/<model>/config_infer_primary_<model>.txt``.
-    The .txt file is the source of truth for engine + labels paths.
+    Supports two on-disk layouts:
+
+    1. **User-laid-out (recommended):** everything under one dir
+       ``<models_dir>/<model>/`` containing
+       ``config_infer_primary_<model>.txt``, ``labels.txt``, optional
+       ``<model>.engine``. This is what user-registered models look like.
+    2. **NVIDIA samples (split layout):** engine + labels live under
+       ``<models_dir>/<model>/`` (e.g. ``models/Primary_Detector/``) but
+       the nvinfer ``.txt`` config lives separately under
+       ``<ds_root>/samples/configs/deepstream-app/``. We probe a small
+       set of well-known config filenames for this case
+       (``config_infer_primary.txt``, ``config_infer_primary_<model>.txt``,
+       ``config_infer_secondary_<model>.txt``).
+
+    The .txt file is the source of truth for engine + labels paths (nvinfer
+    reads ``model-engine-file`` / ``labelfile-path`` from it at init).
     """
     model_dir = os.path.join(models_dir, model)
     if not os.path.isdir(model_dir):
         raise FileNotFoundError(
             f"model preset {model!r} not found under {models_dir!r}"
         )
-    cfg = os.path.join(model_dir, f"config_infer_primary_{model}.txt")
-    if not os.path.isfile(cfg):
-        raise FileNotFoundError(f"missing nvinfer config: {cfg}")
+
+    # Candidate config .txt locations (probed in order).
+    # models_dir = <ds_root>/samples/models  =>  ds_root = dirname(dirname(models_dir))
+    ds_root = os.path.dirname(os.path.dirname(models_dir))
+    sample_cfg_dir = os.path.join(ds_root, "samples", "configs", "deepstream-app")
+    cfg_candidates = [
+        os.path.join(model_dir, f"config_infer_primary_{model}.txt"),
+        os.path.join(sample_cfg_dir, "config_infer_primary.txt"),
+        os.path.join(sample_cfg_dir, f"config_infer_primary_{model}.txt"),
+        os.path.join(sample_cfg_dir, f"config_infer_secondary_{model}.txt"),
+        os.path.join(sample_cfg_dir, "config_infer_secondary.txt"),
+    ]
+    cfg = next((p for p in cfg_candidates if os.path.isfile(p)), None)
+    if cfg is None:
+        raise FileNotFoundError(
+            f"missing nvinfer config for preset {model!r}; tried: "
+            + ", ".join(cfg_candidates)
+        )
+
     labels = os.path.join(model_dir, "labels.txt")
+    if not os.path.isfile(labels):
+        # NVIDIA samples put labels next to the .txt or in model dir as
+        # labels_<name>.txt. We don't try to be exhaustive — nvinfer also
+        # reads labelfile-path from the .txt config, so leave labels=None
+        # and let nvinfer resolve it.
+        labels = ""  # type: ignore[assignment]
     engine = None
-    for candidate in (f"{model}.engine", "model.engine"):
-        p = os.path.join(model_dir, candidate)
-        if os.path.isfile(p):
-            engine = p
-            break
+    for candidate in (f"{model}.engine", "model.engine", "*.engine"):
+        if "*" in candidate:
+            import glob
+            hits = glob.glob(os.path.join(model_dir, candidate))
+            if hits:
+                engine = hits[0]
+                break
+        else:
+            p = os.path.join(model_dir, candidate)
+            if os.path.isfile(p):
+                engine = p
+                break
     return ModelPaths(
         model_name=model,
         config_txt_path=cfg,
@@ -583,5 +625,5 @@ def _make_snapshot_branch(
 
 def _default_output() -> Any:
     """Lazy import to avoid circular at module load."""
-    from .config import OutputConfig
+    from config import OutputConfig
     return OutputConfig()

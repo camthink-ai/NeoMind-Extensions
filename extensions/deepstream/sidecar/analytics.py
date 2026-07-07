@@ -48,7 +48,7 @@ except Exception as _exc:  # pragma: no cover - macOS dev path
     _PYDS_OK = False
     _IMPORT_ERROR = _exc
 
-from .protocol import (
+from protocol import (
     Detection,
     DetectionObject,
     LineCross,
@@ -357,7 +357,7 @@ def set_line_crossing(
     pipeline is PLAYING.
     """
     require_pyds()
-    from .pipeline_builder import analytics_line_config
+    from pipeline_builder import analytics_line_config
     config = analytics_line_config(rules)
     try:
         # nvdsanalytics expects config as a dict-of-dicts on the Python side.
@@ -370,7 +370,7 @@ def set_line_crossing(
 def set_roi(analytics_elem: Any, rules: List[Any]) -> None:
     """Hot-update nvdsanalytics with new ROI polygons."""
     require_pyds()
-    from .pipeline_builder import analytics_roi_config
+    from pipeline_builder import analytics_roi_config
     config = analytics_roi_config(rules)
     try:
         analytics_elem.set_property("config", config)
