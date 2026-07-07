@@ -501,6 +501,12 @@ impl Extension for PaddleOcrV6Extension {
                     MetricDataType::String,
                 ))
                 .param(param_optional(
+                    "image",
+                    "Image (base64 alias)",
+                    "Alias for image_base64 (NE101 / ocr-device-inference contract)",
+                    MetricDataType::String,
+                ))
+                .param(param_optional(
                     "image_url",
                     "Image URL",
                     "HTTP URL to fetch image from",
@@ -553,11 +559,13 @@ impl Extension for PaddleOcrV6Extension {
 impl PaddleOcrV6Extension {
     async fn cmd_recognize(&self, args: &Value) -> Result<Value> {
         // Resolve image bytes from one of three input shapes.
-        // Priority: explicit base64 > explicit URL > (none).
+        // Priority: image_base64 > image (NE101 / ocr-device-inference alias)
+        // > image_url.
         let image_base64 = args.get("image_base64").and_then(|v| v.as_str());
+        let image_alias = args.get("image").and_then(|v| v.as_str());
         let image_url = args.get("image_url").and_then(|v| v.as_str());
 
-        let image_bytes: Vec<u8> = if let Some(b64) = image_base64 {
+        let image_bytes: Vec<u8> = if let Some(b64) = image_base64.or(image_alias) {
             // Accept data-URL prefix (`data:image/png;base64,...`) or raw base64.
             let raw = b64
                 .strip_prefix("data:")
@@ -572,7 +580,7 @@ impl PaddleOcrV6Extension {
             Self::fetch_url(url)?
         } else {
             return Err(ExtensionError::InvalidArguments(
-                "missing 'image_base64' or 'image_url' parameter".to_string(),
+                "missing 'image_base64', 'image', or 'image_url' parameter".to_string(),
             ));
         };
 
