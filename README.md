@@ -29,6 +29,11 @@ This repository contains officially maintained extensions for the **NeoMind exte
 | OCR Device Inference | `ocr-device-inference` | AI/ML | OcrDeviceCard | PP-OCRv4 text recognition on device images |
 | PaddleOCR V6 | `paddle-ocr-v6` | AI/ML | PaddleOcrV6Card | PP-OCRv6 native ONNX OCR (multi-tier: tiny/small/medium) with lazy HuggingFace model download |
 | PaddleOCR-VL | `paddle-ocr-vl` | AI/ML | PaddleOcrCard | Bridge to remote PaddleOCR-VL service — high-accuracy multilingual OCR, table recognition, and key information extraction |
+| SenseVoice ASR | `sensevoice-asr` | Voice | — | SenseVoice-Small ASR (Mandarin/English/Japanese/Korean/Cantonese) via sherpa-onnx ONNX CPU |
+| CosyVoice 3 | `cosyvoice-3` | Voice | — | CosyVoice 3 (Fun-CosyVoice3-0.5B) streaming TTS — speak on host audio + synthesize wav |
+| MOSS-TTS-Nano | `moss-tts-nano` | Voice | — | MOSS-TTS-Nano voice cloning TTS — speak on host audio + synthesize wav |
+| Voice Edge TTS | `voice-edge-tts` | Voice | — | Edge TTS (sherpa-onnx ZipVoice) — cross-platform CPU streaming TTS |
+| Voice Assistant | `voice-assistant` | Voice | VoiceAssistantCard | Real-time voice assistant: mic → VAD → ASR → LLM → TTS → speaker |
 | Locate Anything V2 | `locate-anything-v2` | AI/ML | LocateCard | Visual grounding — object detection, phrase grounding, OCR via LocateAnything-3B |
 | Stream Player | `stream-player` | Media | StreamPlayerCard | RTSP/RTMP/HLS video player via FFmpeg |
 | Uink-RMS Bridge | `uink-rms-bridge` | Device | DisplayEditorCard | E-paper display content push & management |
@@ -145,6 +150,11 @@ NeoMind-Extensions/
 │   ├── ocr-device-inference/
 │   ├── paddle-ocr-v6/             # PP-OCRv6 native ONNX OCR (multi-tier)
 │   ├── paddle-ocr-vl/             # PaddleOCR-VL bridge (remote service)
+│   ├── sensevoice-asr/            # SenseVoice ASR (sherpa-onnx)
+│   ├── cosyvoice-3/               # CosyVoice 3 streaming TTS
+│   ├── moss-tts-nano/             # MOSS-TTS-Nano voice cloning TTS
+│   ├── voice-edge-tts/            # Edge TTS (ZipVoice)
+│   ├── voice-assistant/           # Voice assistant orchestrator (ASR + LLM + TTS)
 │   ├── locate-anything-v2/
 │   ├── stream-player/
 │   ├── uink-rms-bridge/

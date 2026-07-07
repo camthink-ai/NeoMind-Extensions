@@ -34,6 +34,11 @@ NeoMind 边缘 AI 平台的官方扩展仓库。
 | OCR 设备推理 | `ocr-device-inference` | AI/ML | OcrDeviceCard | PP-OCRv4 文字识别，绑定设备图像流 |
 | PaddleOCR V6 | `paddle-ocr-v6` | AI/ML | PaddleOcrV6Card | PP-OCRv6 原生 ONNX OCR（多档位：tiny/small/medium），HuggingFace 模型懒加载 |
 | PaddleOCR-VL | `paddle-ocr-vl` | AI/ML | PaddleOcrCard | 远程 PaddleOCR-VL 服务桥接 — 高精度多语言 OCR、表格识别、关键信息抽取 |
+| SenseVoice 语音识别 | `sensevoice-asr` | 语音 | — | SenseVoice-Small ASR（中/英/日/韩/粤），基于 sherpa-onnx ONNX CPU |
+| CosyVoice 3 | `cosyvoice-3` | 语音 | — | CosyVoice 3 (Fun-CosyVoice3-0.5B) 流式 TTS — 主机音频播放 + wav 合成 |
+| MOSS-TTS-Nano | `moss-tts-nano` | 语音 | — | MOSS-TTS-Nano 语音克隆 TTS — 主机音频播放 + wav 合成 |
+| Edge TTS | `voice-edge-tts` | 语音 | — | Edge TTS（sherpa-onnx ZipVoice）— 跨平台 CPU 流式 TTS |
+| 语音助手 | `voice-assistant` | 语音 | VoiceAssistantCard | 实时语音助手：麦克风 → VAD → ASR → LLM → TTS → 扬声器 |
 | 万物定位 V2 | `locate-anything-v2` | AI/ML | LocateCard | 视觉定位 — 目标检测、短语定位、OCR，基于 LocateAnything-3B |
 | 流媒体播放器 | `stream-player` | 媒体 | StreamPlayerCard | RTSP/RTMP/HLS 视频播放，基于 FFmpeg |
 | Uink-RMS 桥接 | `uink-rms-bridge` | 设备 | DisplayEditorCard | 墨水屏内容推送与管理 |
@@ -323,6 +328,11 @@ NeoMind-Extension/
 │   ├── ocr-device-inference/   # OCR 文字识别扩展
 │   ├── paddle-ocr-v6/          # PP-OCRv6 原生 ONNX OCR（多档位）
 │   ├── paddle-ocr-vl/          # PaddleOCR-VL 远程服务桥接
+│   ├── sensevoice-asr/         # SenseVoice 语音识别（sherpa-onnx）
+│   ├── cosyvoice-3/            # CosyVoice 3 流式 TTS
+│   ├── moss-tts-nano/          # MOSS-TTS-Nano 语音克隆 TTS
+│   ├── voice-edge-tts/         # Edge TTS（ZipVoice）
+│   ├── voice-assistant/        # 语音助手（ASR + LLM + TTS）
 │   ├── locate-anything-v2/     # 视觉定位扩展
 │   ├── stream-player/          # 流媒体播放扩展
 │   ├── uink-rms-bridge/        # 墨水屏桥接扩展
