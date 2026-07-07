@@ -32,6 +32,8 @@ NeoMind 边缘 AI 平台的官方扩展仓库。
 | YOLO 设备推理 | `yolo-device-inference` | AI/ML | DeviceBindingCard | 绑定设备摄像头的自动 YOLO 检测 |
 | 人脸识别 | `face-recognition` | AI/ML | FaceRecognitionCard | ArcFace 人脸识别，支持人脸库管理 |
 | OCR 设备推理 | `ocr-device-inference` | AI/ML | OcrDeviceCard | PP-OCRv4 文字识别，绑定设备图像流 |
+| PaddleOCR V6 | `paddle-ocr-v6` | AI/ML | PaddleOcrV6Card | PP-OCRv6 原生 ONNX OCR（多档位：tiny/small/medium），HuggingFace 模型懒加载 |
+| PaddleOCR-VL | `paddle-ocr-vl` | AI/ML | PaddleOcrCard | 远程 PaddleOCR-VL 服务桥接 — 高精度多语言 OCR、表格识别、关键信息抽取 |
 | 万物定位 V2 | `locate-anything-v2` | AI/ML | LocateCard | 视觉定位 — 目标检测、短语定位、OCR，基于 LocateAnything-3B |
 | 流媒体播放器 | `stream-player` | 媒体 | StreamPlayerCard | RTSP/RTMP/HLS 视频播放，基于 FFmpeg |
 | Uink-RMS 桥接 | `uink-rms-bridge` | 设备 | DisplayEditorCard | 墨水屏内容推送与管理 |
@@ -319,6 +321,8 @@ NeoMind-Extension/
 │   ├── yolo-device-inference/  # 设备推理扩展
 │   ├── face-recognition/       # 人脸识别扩展
 │   ├── ocr-device-inference/   # OCR 文字识别扩展
+│   ├── paddle-ocr-v6/          # PP-OCRv6 原生 ONNX OCR（多档位）
+│   ├── paddle-ocr-vl/          # PaddleOCR-VL 远程服务桥接
 │   ├── locate-anything-v2/     # 视觉定位扩展
 │   ├── stream-player/          # 流媒体播放扩展
 │   ├── uink-rms-bridge/        # 墨水屏桥接扩展

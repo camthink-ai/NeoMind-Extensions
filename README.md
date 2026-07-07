@@ -27,6 +27,8 @@ This repository contains officially maintained extensions for the **NeoMind exte
 | YOLO Device Inference | `yolo-device-inference` | AI/ML | DeviceBindingCard | Auto YOLO detection on device camera feeds |
 | Face Recognition | `face-recognition` | AI/ML | FaceRecognitionCard | ArcFace face recognition with gallery management |
 | OCR Device Inference | `ocr-device-inference` | AI/ML | OcrDeviceCard | PP-OCRv4 text recognition on device images |
+| PaddleOCR V6 | `paddle-ocr-v6` | AI/ML | PaddleOcrV6Card | PP-OCRv6 native ONNX OCR (multi-tier: tiny/small/medium) with lazy HuggingFace model download |
+| PaddleOCR-VL | `paddle-ocr-vl` | AI/ML | PaddleOcrCard | Bridge to remote PaddleOCR-VL service — high-accuracy multilingual OCR, table recognition, and key information extraction |
 | Locate Anything V2 | `locate-anything-v2` | AI/ML | LocateCard | Visual grounding — object detection, phrase grounding, OCR via LocateAnything-3B |
 | Stream Player | `stream-player` | Media | StreamPlayerCard | RTSP/RTMP/HLS video player via FFmpeg |
 | Uink-RMS Bridge | `uink-rms-bridge` | Device | DisplayEditorCard | E-paper display content push & management |
@@ -141,6 +143,8 @@ NeoMind-Extensions/
 │   ├── yolo-device-inference/
 │   ├── face-recognition/
 │   ├── ocr-device-inference/
+│   ├── paddle-ocr-v6/             # PP-OCRv6 native ONNX OCR (multi-tier)
+│   ├── paddle-ocr-vl/             # PaddleOCR-VL bridge (remote service)
 │   ├── locate-anything-v2/
 │   ├── stream-player/
 │   ├── uink-rms-bridge/
