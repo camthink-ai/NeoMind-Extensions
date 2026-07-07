@@ -111,11 +111,93 @@ All four pass on macOS with Python 3.12. The pyds-dependent modules
 fail to import on macOS — that's expected, they only run inside the
 ds:7.1-pyds container.
 
+## Jetson smoke test status (Phase 8.7)
+
+### Control-plane handshake — verified end-to-end on Jetson (commit 72e3209)
+
+The full handshake + control message dispatch loop was validated on
+the Jetson Orin NX 8G inside the `ds:7.1-pyds-gi` container (samples
+image + pyds 1.2.0 + python3-gi + python3-gst-1.0 + libpython3.10):
+
+```
+host → sidecar: hello    {rtsp_port:8554, snapshot_port:8555, ...}
+sidecar → host: ready    {ds_ver:7.1.0, pyds_ver:1.2.0, protocol_ver:1, gpu_info:{name,model}}
+sidecar → host: hello_ack {max_streams, rtsp_url_prefix, models_loaded:[...]}
+host → sidecar: add_stream {stream_id:stream1, source:{type:rtsp,url:...}, model:Primary_Detector}
+sidecar → host: stream_added {id, stream_id, rtsp_url}
+host → sidecar: shutdown
+sidecar → host: bye {reason, exit_code:0}
+```
+
+Three runtime bugs were caught by the smoke test and fixed in 72e3209:
+
+1. `from .X import` → `from X import` (13 occurrences across 3 files).
+   The sidecar is invoked as `python3 deepstream_runner.py` (top-level
+   script), not as a package — relative imports broke at runtime even
+   though ruff accepted them.
+2. `loop.connect_read_pipe(sys.stdin)` replaced with
+   `loop.run_in_executor(None, sys.stdin.readline)` in both `_read_hello`
+   and `_control_loop`. asyncio's pipe transport doesn't support regular
+   files; when stdin is redirected from a file or in some TTY-less
+   container configs, `connect_read_pipe` either raises
+   `OSError: [Errno 22]` or hangs forever. The executor pattern works
+   across pipe/file/pty.
+3. `GstRtspServer` namespace import removed. The samples image doesn't
+   ship `gir1.2-gst-rtsp-server-1.0`; option B (rtspclientsink + external
+   mediamtx) doesn't need it anyway.
+4. `resolve_model_preset()` rewritten to probe 5 candidate .txt locations
+   (both user-laid-out `<models_dir>/<model>/config_infer_primary_<model>.txt`
+   AND the NVIDIA samples split layout under
+   `<ds_root>/samples/configs/deepstream-app/`).
+
+### Data-plane inference — NOT YET verified (blocked on Jetson disk state)
+
+The next milestone is a 90s multi-stream inference test using
+`/home box/ds-deps/sample.mp4` published via mediamtx as 4 RTSP streams
+(`rtsp://localhost:8554/in/stream{1..4}`) and consumed by the sidecar.
+Expected output: ongoing `Detection` events on stdout.
+
+**Current blocker (operational, not code):** The Jetson dev box uses
+the Docker `vfs` storage driver (overlayfs is broken on this board's
+kernel). vfs duplicates layer data aggressively — every container start
+eats ~500MB of irrecoverable layer metadata. Disk fills to 100% within
+a few hours of iterative testing. A `docker system prune -a --volumes`
+is required to recover, which wipes the 5.36GB ds:7.1-pyds-gi image.
+
+**To unblock:** Re-pull `nvcr.io/nvidia/deepstream:7.1-samples-multiarch`
+(~5 min on this network) and rebuild `ds:7.1-pyds-gi`:
+
+```bash
+# On Jetson:
+docker pull nvcr.io/nvidia/deepstream:7.1-samples-multiarch
+docker run -d --name ds-tmp --network=host --runtime=nvidia \
+  nvcr.io/nvidia/deepstream:7.1-samples-multiarch sleep 600
+docker exec ds-tmp bash -c 'apt-get update && apt-get install -y \
+  python3-gi python3-gst-1.0 libpython3.10 && \
+  pip3 install /root/pyds-1.2.0-cp310-linux_aarch64.whl'
+docker cp ~/ds-deps/pyds-1.2.0-cp310-linux_aarch64.whl ds-tmp:/root/
+docker commit ds-tmp ds:7.1-pyds-gi
+docker rm -f ds-tmp
+
+# Then re-run the smoke test:
+(cat ~/ds-deps/test-long.jsonl; timeout 90 tail -f /dev/null) | \
+  docker run --rm -i --network=host --runtime=nvidia \
+  -v ~/ds-deps/sidecar:/sidecar -w /sidecar -e PYTHONPATH=/sidecar \
+  ds:7.1-pyds-gi python3 -u deepstream_runner.py
+```
+
+If the test produces 0 `Detection` events despite a successful
+`stream_added`, suspect (in order): (a) pipeline state change to PLAYING
+never invoked — check `set_state` log on stderr; (b) buffer probe
+attached to wrong element — verify `analytics_elem` in
+`build_pipeline()` return; (c) GLib MainLoop not running — Bridge.start
+must be called before any `set_state(PLAYING)`.
+
 ## Not yet implemented (Phase 8.7+)
 
 - Stats periodic emission (1 Hz)
 - Snapshot tee wiring (see design decision #2)
 - Live threshold filter propagation (see #4)
-- Jetson end-to-end integration tests
+- Jetson data-plane end-to-end test (blocked — see above)
 - `mediamtx` deployment artifacts (systemd unit)
 - Frontend UI integration (NeoMind main repo)

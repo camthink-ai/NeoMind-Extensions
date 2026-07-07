@@ -169,6 +169,7 @@ V2_EXTENSIONS=(
     "voice-edge-tts"
     "voice-assistant"
     "paddle-ocr-vl"
+    "deepstream"
 )
 
 # Filter to single extension if specified
@@ -814,6 +815,19 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
         # Copy frontend.json
         if [ -f "$EXT_DIR/frontend/frontend.json" ]; then
             cp "$EXT_DIR/frontend/frontend.json" "$PACKAGE_DIR/"
+        fi
+
+        # Copy sidecar/ (Python process extensions, e.g. DeepStream sidecar)
+        # Bundled recursively as a separate top-level directory in the package.
+        if [ -d "$EXT_DIR/sidecar" ]; then
+            mkdir -p "$PACKAGE_DIR/sidecar"
+            # Copy all .py files, __init__.py, requirements-*.txt, README.md
+            cp "$EXT_DIR/sidecar"/*.py "$PACKAGE_DIR/sidecar/" 2>/dev/null || true
+            cp "$EXT_DIR/sidecar"/__init__.py "$PACKAGE_DIR/sidecar/" 2>/dev/null || true
+            cp "$EXT_DIR/sidecar"/requirements-*.txt "$PACKAGE_DIR/sidecar/" 2>/dev/null || true
+            cp "$EXT_DIR/sidecar"/README.md "$PACKAGE_DIR/sidecar/" 2>/dev/null || true
+            SIDECAR_COUNT=$(ls "$PACKAGE_DIR/sidecar"/*.py 2>/dev/null | wc -l | tr -d ' ')
+            echo -e "    ${GREEN}→${NC} Bundled sidecar: $SIDECAR_COUNT .py files"
         fi
 
         # Check if models are included
