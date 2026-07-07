@@ -274,24 +274,106 @@ def write_model_config(
     # in the probe (filter at metadata level). We don't write conf here
     # because it would force an engine rebuild.
 
+    # JETSON-DATAPLANE-CONSOLIDATED-PATCH (drop output-blob-names + path rewrite)
+    # TRT 10.x no longer recognises the ONNX output tensor names that the
+    # DS 7.1 sample configs hardcode (conv2d_bbox / conv2d_cov). Stripping
+    # output-blob-names lets nvinfer discover outputs from the ONNX directly.
+    # Path rewrite: nvinfer resolves relatives from CWD; the temp config lives
+    # in /tmp so we rewrite model file keys to absolute container paths.
+    _DS_ROOT = "/opt/nvidia/deepstream/deepstream"
+    # DS sample configs live here and use paths like `../../models/...`
+    # relative to this dir. nvinfer resolves relatives from CWD, not the
+    # config file location, so we have to rewrite them to absolute paths.
+    _DS_CFG_DIR = _DS_ROOT + "/samples/configs/deepstream-app"
+    _path_keys = {
+        "onnx-file", "onnx-file-path", "model-engine-file", "proto-file",
+        "caffemodel", "uff-file", "labelfile", "labelfile-path",
+        "int8-calib-file", "custom-lib-path", "model-cache-file", "tensorfile",
+    }
+    def _resolve(key: str, val: str) -> str:
+        if os.path.isabs(val):
+            return val  # already absolute; trust it
+        # 1) Resolve relative to the original config file's directory.
+        cand = os.path.normpath(os.path.join(_DS_CFG_DIR, val))
+        if os.path.isfile(cand):
+            return cand
+        # 2) Resolve against the DS samples tree (covers bare `models/...` etc).
+        for prefix in (_DS_ROOT + "/samples/models", _DS_ROOT + "/samples"):
+            cand = os.path.normpath(os.path.join(prefix, val.lstrip("/")))
+            if os.path.isfile(cand):
+                return cand
+        cand = os.path.normpath(os.path.join(_DS_ROOT, val.lstrip("/")))
+        if os.path.isfile(cand):
+            return cand
+        return val  # give up; let nvinfer log the error
+
     out_dir = work_dir or tempfile.mkdtemp(prefix="ds_model_")
     out_path = os.path.join(out_dir, f"config_infer_{model_paths.model_name}.txt")
     with open(out_path, "w", encoding="utf-8") as f:
         for line in base_lines:
             stripped = line.strip().lower()
+            if stripped.startswith("output-blob-names"):
+                continue
             written = False
             for k, v in overrides.items():
                 if stripped.startswith(k + "=") or stripped.startswith(k + " ="):
                     f.write(f"{k}={v}\n")
                     written = True
                     break
-            if not written:
-                f.write(line)
+            if written:
+                continue
+            # Rewrite model file paths to absolute container paths.
+            key, sep, val = line.partition("=")
+            _lkey = key.strip().lower() if sep else ""
+
+            # Pre-built FP16 engine injection (DS 7.1 default config is INT8).
+            # Inline replacement keeps keys inside their original [property]
+            # section so the nvinfer parser accepts them. Appending to EOF
+            # landed them under [class-attrs-*] and parser rejected them.
+            _PREBUILT_ENGINE = "/engines/trafficcam_fp16.engine"
+            if _lkey == "model-engine-file":
+                if os.path.isfile(_PREBUILT_ENGINE):
+                    f.write(f"model-engine-file={_PREBUILT_ENGINE}\n")
+                    log.info("pre-built engine: model-engine-file -> %s",
+                             _PREBUILT_ENGINE)
+                else:
+                    log.warning("pre-built engine missing: %s; leaving "
+                                "original %r", _PREBUILT_ENGINE, val)
+                    f.write(line)
+                continue
+            if _lkey == "network-mode":
+                if os.path.isfile(_PREBUILT_ENGINE):
+                    f.write("network-mode=2\n")  # FP16 matches pre-built
+                    continue
+                # fall through: keep original
+            if _lkey == "batch-size":
+                if os.path.isfile(_PREBUILT_ENGINE):
+                    # trtexec default builds max_batch=1 engine. Base config
+                    # says batch-size=30 which makes nvinfer reject the engine
+                    # as "failed to match config params" and rebuild. We run
+                    # single-stream so batch-size=1 is correct.
+                    f.write("batch-size=1\n")
+                    continue
+                # fall through: keep original
+            if _lkey == "int8-calib-file":
+                if os.path.isfile(_PREBUILT_ENGINE):
+                    # FP16 engine doesn't need INT8 calib; drop the line.
+                    continue
+                # fall through: keep original
+
+            if sep and _lkey in _path_keys:
+                val = val.strip()
+                resolved = _resolve(key, val)
+                if resolved != val:
+                    f.write(f"{key}={resolved}\n")
+                    continue
+            f.write(line)
         if filter_classes is not None:
             # nvinfer "detection-id" filtering is done at the probe level;
             # we just record it for documentation.
             f.write(f"# filter-classes={filter_classes}\n")
     return out_path
+
 
 
 # --- Analytics config translation -----------------------------------------
@@ -400,26 +482,69 @@ def build_pipeline(
     p = Gst.Pipeline.new(f"pipeline-{stream_id}")
 
     # --- Source -----------------------------------------------------------
-    src = make_element("uridecodebin", f"src-{stream_id}", uri=src_cfg.url)
-    if src_cfg.rtsp_transport:
-        try:
-            src.set_property("source-filter",
-                             f"rtspsrc protocols={src_cfg.rtsp_transport}")
-        except Exception:
-            log.warning("could not set rtsp_transport=%s", src_cfg.rtsp_transport)
-    if src_cfg.latency_ms is not None:
-        try:
-            src.set_property("latency", src_cfg.latency_ms)
-        except Exception:
-            log.warning("could not set latency=%s", src_cfg.latency_ms)
+    # JETSON-DATAPLANE-CONSOLIDATED-PATCH
+    # For RTSP sources we bypass uridecodebin and build the chain manually.
+    # Chain: rtspsrc -> rtph264depay -> nvv4l2decoder (NO h264parse).
+    # Reason: h264parse fails to convert AVCC -> byte-stream (caps claim
+    # byte-stream but buffers stay length-prefixed), breaking nvv4l2decoder.
+    # mediamtx/RTSP SDP carries SPS/PPS via sprop-parameter-sets; rtph264depay
+    # feeds them inline, nvv4l2decoder handles AVCC input directly.
+    is_rtsp = src_cfg.source_type == "rtsp" or src_cfg.url.startswith("rtsp://")
+    _rtsp_explicit = False
+    _rtsp_decoder = None
+    if is_rtsp:
+        latency = src_cfg.latency_ms if src_cfg.latency_ms is not None else 200
+        rtsp_src = make_element("rtspsrc", f"rtspsrc-{stream_id}",
+                                location=src_cfg.url,
+                                latency=latency,
+                                protocols=4)  # GST_RTSP_LOWER_TRANS_TCP
+        _rtsp_depay = make_element("rtph264depay", f"depay-{stream_id}")
+        _rtsp_decoder = make_element("nvv4l2decoder", f"dec-{stream_id}")
+        log.info("rtsp source: explicit chain rtspsrc+depay+nvv4l2decoder (no h264parse — AVCC->byte-stream conv was broken, depay feeds AVCC inline w/ sprop-parameter-sets)")
+
+        # rtspsrc emits pad-added on SDP parse; link depay dynamically.
+        def _link_rtsp_pad(rtspsrc_el, pad, _depay=_rtsp_depay):
+            name = pad.get_name() or ""
+            if "recv_rtp_src" not in name:
+                return
+            sinkpad = _depay.get_static_pad("sink")
+            if sinkpad is None or sinkpad.is_linked():
+                return
+            if pad.link(sinkpad) != Gst.PadLinkReturn.OK:
+                log.error("failed to link rtspsrc.%s -> rtph264depay", name)
+            else:
+                log.info("rtsp: linked rtspsrc.%s -> rtph264depay", name)
+
+        rtsp_src.connect("pad-added", _link_rtsp_pad)
+        src = rtsp_src
+        _rtsp_explicit = True
+    else:
+        src = make_element("uridecodebin", f"src-{stream_id}", uri=src_cfg.url)
+        if src_cfg.rtsp_transport:
+            try:
+                src.set_property("source-filter",
+                                 f"rtspsrc protocols={src_cfg.rtsp_transport}")
+            except Exception:
+                log.warning("could not set rtsp_transport=%s", src_cfg.rtsp_transport)
+        if src_cfg.latency_ms is not None:
+            try:
+                src.set_property("latency", src_cfg.latency_ms)
+            except Exception:
+                log.warning("could not set latency=%s", src_cfg.latency_ms)
 
     # nvstreammux is the standard DeepStream mux point.
+    # live-source=1 for RTSP: decoder emits framerate=0/1 (mediamtx SPS lacks
+    # VUI framerate); non-live mux mode rejects those caps. live-source=1 tells
+    # mux to accept 0/1 framerate. (Previously thought live-source=1 dropped
+    # frames with mediamtx — that was when its writeQueueSize was default 512;
+    # now bumped to 8192.)
+    _is_live_src = src_cfg.source_type == "rtsp" or src_cfg.url.startswith("rtsp://")
     mux = make_element(
         "nvstreammux", f"mux-{stream_id}",
         batch_size=1,
         width=width,
         height=height,
-        live_source=1 if src_cfg.source_type == "rtsp" else 0,
+        live_source=1 if _is_live_src else 0,
     )
 
     # --- Infer + tracker + analytics -------------------------------------
@@ -428,19 +553,40 @@ def build_pipeline(
         config_file_path=nvinfer_cfg,
         unique_id=1,
     )
-    if model_paths.engine_path:
-        try:
-            nvinfer.set_property("model-engine-file", model_paths.engine_path)
-        except Exception as e:
-            log.warning("could not set engine file: %s", e)
+    # Engine cache override DISABLED — set_property(network-mode) fails
+    # (not a GstNvInfer element property; only in the config file), and
+    # model-engine-file to a non-existent path causes GST_STATE_CHANGE_FAILURE.
+    # Use config file defaults (FP16 from cfg_infer_fp16.txt).
 
     tracker = make_element("nvtracker", f"tracker-{stream_id}")
     _apply_tracker_props(tracker, config.tracker)
 
-    analytics_elem = make_element(
-        "nvdsanalytics", f"analytics-{stream_id}",
-        enable=1,
-    )
+    # nvdsanalytics requires a `config-file` property pointing to a real file
+    # when enable=1. Without it, the pipeline fails state transition
+    # (GST_STATE_CHANGE_FAILURE during ready->paused). When no analytics
+    # rules are configured, write an empty config file so nvdsanalytics is
+    # happy in pass-through mode.
+    try:
+        analytics_cfg_path = os.path.join(work_dir or tempfile.mkdtemp(prefix="ds_analytics_"),
+                                          f"analytics_{stream_id}.txt")
+        os.makedirs(os.path.dirname(analytics_cfg_path), exist_ok=True)
+        # nvdsanalytics requires config-width + config-height even when
+        # enable=0 — the parser fails state change without them.
+        with open(analytics_cfg_path, "w") as f:
+            f.write("[property]\n")
+            f.write("enable=0\n")
+            f.write("config-width=1920\n")
+            f.write("config-height=1080\n")
+            f.write("gpu-id=0\n")
+        analytics_elem = make_element(
+            "nvdsanalytics", f"analytics-{stream_id}",
+            enable=0,
+            config_file=analytics_cfg_path,
+        )
+        log.info("nvdsanalytics: config-file=%s (enable=0)", analytics_cfg_path)
+    except Exception as e:
+        log.warning("nvdsanalytics init failed, falling back to queue: %s", e)
+        analytics_elem = make_element("queue", f"analytics-{stream_id}")
     _apply_analytics_props(analytics_elem, config.analytics, stream_id)
 
     # --- Convert + OSD + Encode ------------------------------------------
@@ -459,11 +605,8 @@ def build_pipeline(
     )
 
     rtsp_url = f"{rtsp_url_prefix}{stream_id}"
-    rtsp_sink = make_element(
-        "rtspclientsink", f"rtsp-{stream_id}",
-        location=rtsp_url,
-        protocols="tcp",
-    )
+    # DIAG: use fakesink instead of rtspclientsink
+    rtsp_sink = make_element("fakesink", f"rtsp-{stream_id}", sync=False)
 
     # Snapshot branch (always create; the appsink callback is a no-op if
     # the snapshot store is not attached).
@@ -474,6 +617,13 @@ def build_pipeline(
         )
 
     # --- Add + link ------------------------------------------------------
+    if _rtsp_explicit:
+        for e in (_rtsp_depay, _rtsp_decoder):
+            p.add(e)
+        try:
+            _rtsp_depay.link(_rtsp_decoder)
+        except Exception as e:
+            log.error("rtsp explicit chain link failed: %s", e)
     for e in (src, mux, nvinfer, tracker, analytics_elem, converter):
         p.add(e)
     chain: List[Any] = [mux, nvinfer, tracker, analytics_elem, converter]
@@ -490,15 +640,50 @@ def build_pipeline(
     p.add(encoder)
     p.add(parser)
     p.add(rtsp_sink)
-    # Build the linear chain from converter onward.
-    conv_chain = [converter]
-    if osd is not None:
-        conv_chain.append(osd)
-    conv_chain.extend([encoder, parser, rtsp_sink])
-    link_chain(*conv_chain)
+    # Link the FULL chain: mux -> nvinfer -> tracker -> analytics -> converter
+    # -> [osd?] -> encoder -> parser -> rtsp_sink. Prior code only linked
+    # converter onward, leaving mux.src dangling — pipeline reached PLAYING
+    # but no buffer ever reached nvinfer, so zero Detection events.
+    #
+    # DIAG: insert queue between each element to prevent back-pressure stall
+    # (5 buffers then freeze was observed without queues).
+    _queue_seq = [0]
+    def _q():
+        _queue_seq[0] += 1
+        q = make_element("queue", f"q-{stream_id}-{_queue_seq[0]}", silent=True) \
+            if False else make_element("queue", f"q-{stream_id}-{_queue_seq[0]}")
+        try:
+            q.set_property("max-size-buffers", 0)
+            q.set_property("max-size-time", 0)
+            q.set_property("max-size-bytes", 0)
+        except Exception:
+            pass
+        return q
+    interleaved = []
+    for i, el in enumerate(chain):
+        interleaved.append(el)
+        if i < len(chain) - 1:
+            _q_e = _q()
+            p.add(_q_e)
+            interleaved.append(_q_e)
+    log.info("DIAG: inserting %d queues between chain elements", len(interleaved) // 2)
+    link_chain(*interleaved)
 
     # uridecodebin pads appear dynamically — connect on pad-added.
-    src.connect("pad-added", _on_src_pad_added, mux)
+    if _rtsp_explicit:
+        # RTSP path: nvv4l2decoder -> mux.sink_0 (DIRECT, no capsfilter)
+        # Verified via gst-launch that capsfilter blocks buffer flow even
+        # though caps negotiation succeeds. Direct link works because
+        # nvstreammux sink_0 accepts the decoder's native NVMM NV12 caps.
+        mux_sink = mux.get_request_pad("sink_0")
+        if mux_sink is None:
+            log.error("nvstreammux refused to allocate sink pad for rtsp decoder")
+        elif _rtsp_decoder.get_static_pad("src").link(mux_sink) != Gst.PadLinkReturn.OK:
+            log.error("failed to link nvv4l2decoder -> nvstreammux (rtsp explicit)")
+        else:
+            log.info("rtsp: linked nvv4l2decoder -> nvstreammux (direct, no capsfilter)")
+    else:
+        src.connect("pad-added", _on_src_pad_added, mux)
 
     log.info("pipeline built for stream %s -> %s", stream_id, rtsp_url)
     return BuiltPipeline(
@@ -525,19 +710,24 @@ def _on_src_pad_added(src: Any, pad: Any, mux: Any) -> None:
 
 def _apply_tracker_props(tracker: Any, tracker_cfg: Optional[Any]) -> None:
     """Apply standard nvtracker properties. Best-effort — many are optional."""
+    # Always set the ll-lib-file even when tracker is "disabled" — without it
+    # gstnvtracker logs "Loading low-level lib at (null)" and refuses to init,
+    # which blocks pad activation and stalls downstream buffer flow.
+    default_ttype = "NvDCF"
     if tracker_cfg is None or not getattr(tracker_cfg, "enabled", True):
-        # Even when "disabled", nvtracker is left in the chain as a pass-through.
         try:
+            tracker.set_property("ll-lib-file", _ll_lib_for(default_ttype))
+            tracker.set_property("tracker-width", 640)
+            tracker.set_property("tracker-height", 384)
             tracker.set_property("user-meta-pool-size", 0)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("failed to set default tracker props: %s", e)
         return
     ttype = (getattr(tracker_cfg, "tracker_type", None) or "NvDCF").lower()
     props = {
         "tracker-width": 640,
         "tracker-height": 384,
         "ll-lib-file": _ll_lib_for(ttype),
-        "enable-batch-process": 1,
         "enable-past-frame": 0,
     }
     min_conf = getattr(tracker_cfg, "min_confidence", None)
@@ -551,11 +741,22 @@ def _apply_tracker_props(tracker: Any, tracker_cfg: Optional[Any]) -> None:
 
 
 def _ll_lib_for(ttype: str) -> str:
-    """Best-effort path to the tracker low-level lib on JetPack 6 / DS 7.1."""
+    """Best-effort path to the tracker low-level lib on JetPack 6 / DS 7.1.
+
+    DS 7.1 ships only the combined `libnvds_nvmultiobjecttracker.so`. The
+    legacy per-tracker libs (libnvds_nvdcdcf_tracker.so etc.) are absent,
+    so we prefer the combined lib regardless of ttype.
+    """
     base = "/opt/nvidia/deepstream/deepstream/lib"
-    if ttype == "nvsort":
-        return f"{base}/libnvds_nvmultiobjecttracker.so"
-    return f"{base}/libnvds_nvdcdcf_tracker.so"  # NvDCF default
+    combined = f"{base}/libnvds_nvmultiobjecttracker.so"
+    if os.path.isfile(combined):
+        return combined
+    legacy = {
+        "nvdcf": f"{base}/libnvds_nvdcdcf_tracker.so",
+        "nvsort": f"{base}/libnvds_nvmultiobjecttracker.so",
+        "deepsort": f"{base}/libnvds_deepsort_tracker.so",
+    }
+    return legacy.get(ttype, combined)
 
 
 def _apply_analytics_props(

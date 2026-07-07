@@ -150,54 +150,70 @@ Three runtime bugs were caught by the smoke test and fixed in 72e3209:
    AND the NVIDIA samples split layout under
    `<ds_root>/samples/configs/deepstream-app/`).
 
-### Data-plane inference — NOT YET verified (blocked on Jetson disk state)
+### Data-plane inference — VERIFIED end-to-end on Jetson (RTSP source)
 
-The next milestone is a 90s multi-stream inference test using
-`/home box/ds-deps/sample.mp4` published via mediamtx as 4 RTSP streams
-(`rtsp://localhost:8554/in/stream{1..4}`) and consumed by the sidecar.
-Expected output: ongoing `Detection` events on stdout.
+The full data plane is now working: a single RTSP source
+(`rtsp://localhost:8554/in/stream1` fed by `mediamtx` + `ffmpeg -re
+-stream_loop -1 -i sample.mp4 -c copy -f rtsp`) flowing through the
+sidecar produces ~4400 `Detection` events over a 180s run on Jetson
+Orin NX 8G.
 
-**Current blocker (operational, not code):** The Jetson dev box uses
-the Docker `vfs` storage driver (overlayfs is broken on this board's
-kernel). vfs duplicates layer data aggressively — every container start
-eats ~500MB of irrecoverable layer metadata. Disk fills to 100% within
-a few hours of iterative testing. A `docker system prune -a --volumes`
-is required to recover, which wipes the 5.36GB ds:7.1-pyds-gi image.
-
-**To unblock:** Re-pull `nvcr.io/nvidia/deepstream:7.1-samples-multiarch`
-(~5 min on this network) and rebuild `ds:7.1-pyds-gi`:
-
-```bash
-# On Jetson:
-docker pull nvcr.io/nvidia/deepstream:7.1-samples-multiarch
-docker run -d --name ds-tmp --network=host --runtime=nvidia \
-  nvcr.io/nvidia/deepstream:7.1-samples-multiarch sleep 600
-docker exec ds-tmp bash -c 'apt-get update && apt-get install -y \
-  python3-gi python3-gst-1.0 libpython3.10 && \
-  pip3 install /root/pyds-1.2.0-cp310-linux_aarch64.whl'
-docker cp ~/ds-deps/pyds-1.2.0-cp310-linux_aarch64.whl ds-tmp:/root/
-docker commit ds-tmp ds:7.1-pyds-gi
-docker rm -f ds-tmp
-
-# Then re-run the smoke test:
-(cat ~/ds-deps/test-long.jsonl; timeout 90 tail -f /dev/null) | \
-  docker run --rm -i --network=host --runtime=nvidia \
-  -v ~/ds-deps/sidecar:/sidecar -w /sidecar -e PYTHONPATH=/sidecar \
-  ds:7.1-pyds-gi python3 -u deepstream_runner.py
+```
+rtspsrc ! rtph264depay ! nvv4l2decoder ! mux.sink_0
+mux ! nvinfer ! nvtracker ! nvdsanalytics ! nvvideoconvert ! nvv4l2h264enc ! h264parse ! fakesink
 ```
 
-If the test produces 0 `Detection` events despite a successful
-`stream_added`, suspect (in order): (a) pipeline state change to PLAYING
-never invoked — check `set_state` log on stderr; (b) buffer probe
-attached to wrong element — verify `analytics_elem` in
-`build_pipeline()` return; (c) GLib MainLoop not running — Bridge.start
-must be called before any `set_state(PLAYING)`.
+Six root causes were caught and fixed end-to-end (see commit history):
+
+1. **`link_chain(*conv_chain)` only linked converter onward**, leaving
+   `mux.src` dangling. Pipeline reached PLAYING but no buffer ever
+   reached nvinfer, so zero Detection events. Fixed: link the full
+   `mux → nvinfer → tracker → analytics → converter → [osd?] → encoder
+   → parser → rtsp_sink` chain.
+2. **h264parse between rtph264depay and nvv4l2decoder fails AVCC→byte-stream
+   conversion** despite advertising byte-stream caps — buffers stay
+   length-prefixed, decoder opens but never produces output. Fixed:
+   drop h264parse entirely; mediamtx SDP carries SPS/PPS via
+   sprop-parameter-sets so depay+decoder handle AVCC natively.
+3. **nvstreammux on Jetson requires explicit `mux.sink_N` pad naming** —
+   auto-link via `pad.link()` against a static sink pad fails. Fixed:
+   `mux.get_request_pad("sink_0")` + `decoder.src.link(mux_sink)`.
+4. **capsfilter between decoder and mux blocks buffer flow** even though
+   caps negotiation succeeds. Fixed: direct `decoder.src → mux.sink_0`
+   link, no capsfilter.
+5. **Back-pressure stall**: without queues between transform elements,
+   the pipeline froze after exactly 5 buffers (encoder pool exhausted).
+   Fixed: insert a `queue` with unlimited size between every pair of
+   elements in the chain.
+6. **TRT 10.x (in DS 7.1) drops legacy `output-blob-names` tensor names**
+   that the sample configs hardcode. Fixed: strip `output-blob-names`
+   so nvinfer discovers outputs from the ONNX directly.
+
+**Pre-built engine:** `trafficcam_fp16.engine` (3.1MB, FP16,
+batch-size=1) is mounted at `/engines/trafficcam_fp16.engine` inside
+the container. `write_model_config` injects it via `model-engine-file`
+override and forces `network-mode=2` (FP16) + `batch-size=1` to match
+the trtexec-built engine. Without this, nvinfer tries to rebuild the
+engine at startup and OOMs on Jetson Orin NX 8G.
+
+**Reproducing:** see `~/ds-deps/run_test.sh` on the Jetson box. The
+script pipes `data-plane-long.jsonl` (hello + add_stream) into the
+sidecar container, waits 180s, then sends shutdown and greps stdout
+for `"type":"detection"` events.
+
+**Known limitations of current state:**
+- `rtspclientsink` was replaced with `fakesink sync=false` during
+  diagnosis (DIAG marker in `pipeline_builder.py`). RTSP output of
+  annotated frames is NOT currently wired — re-enabling rtspclientsink
+  is a follow-up once we verify it doesn't reintroduce the back-pressure
+  stall.
+- Snapshot branch tee wiring still incomplete (design decision #2).
 
 ## Not yet implemented (Phase 8.7+)
 
 - Stats periodic emission (1 Hz)
 - Snapshot tee wiring (see design decision #2)
 - Live threshold filter propagation (see #4)
-- Jetson data-plane end-to-end test (blocked — see above)
+- RTSP output of annotated frames (fakesink currently substituted; see above)
 - `mediamtx` deployment artifacts (systemd unit)
 - Frontend UI integration (NeoMind main repo)
