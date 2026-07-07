@@ -1,0 +1,587 @@
+"""GStreamer pipeline construction for one DeepStream stream.
+
+This module imports ``gi`` / ``Gst`` / ``pyds`` at the TOP LEVEL — it
+cannot be unit-tested on macOS. Smoke testing happens on Jetson.
+
+Design (matches plan §4.5):
+
+- **One Gst.Pipeline per stream.** A single batched nvstreammux pipeline
+  would be more efficient for many streams, but it is much harder to
+  add/remove streams live and harder to debug. For a first cut we keep
+  streams isolated. Phase 2 can re-batch once the host has a way to
+  issue batched AddStream and we have analytics-confidence.
+
+- **Per-pipeline element topology:**
+
+      uridecodebin uri=<rtsp_url>
+        ! queue
+        ! nvvideoconvert
+        ! nvstreammux name=mux batch-size=1 width=1920 height=1080
+        ! nvinfer config-file-path=<model.txt>
+        ! nvtracker
+        ! nvdsanalytics name=analytics
+        ! nvvideoconvert
+        ! nvdsosd                    # only when output.osd
+        ! nvv4l2h264enc bitrate=<kbps>
+        ! h264parse
+        ! rtspclientsink location=<rtsp_out>
+
+  When ``output.osd`` is False, the ``nvdsosd`` element is omitted but
+  the analytics still emit metadata via the bus probe registered in
+  :mod:`analytics`.
+
+- **RTSP output strategy — DESIGN DECISION (see STATUS.md):**
+
+  Two options were considered:
+
+  (A) **GstRtspServer** in-process: cleaner ownership, no external dep.
+      Downside: GstRtspServer is fiddly to wire up (factory + mount-points
+      + appsrc interop) and debugging encoder-tee issues inside the same
+      process is painful on first integration.
+  (B) **rtspclientsink** to an external ``mediamtx`` instance: separates
+      the RTSP server concern from the inference pipeline concern.
+      Downside: requires an extra system service (mediamtx binary).
+
+  We chose **(B)** for the first cut: the sidecar emits
+  ``rtsp://<snapshot_bind_addr>:<rtsp_port>/ds/<stream_id>`` via
+  ``rtspclientsink`` and the operator runs ``mediamtx`` separately.
+  This is documented in ``sidecar/README.md``. The migration to (A)
+  is a tracked follow-up.
+
+- **Model engine file:** nvinfer compiles the .etlt to .engine on first
+  run (10-60s blocking). The model config file written by
+  :func:`write_model_config` points nvinfer at the .etlt; the engine
+  cache path is the same directory + ``.engine`` suffix. We do NOT
+  pre-compile engines here — that's an operator concern (one-time).
+
+- **DEVIATION FROM PLAN:** Plan §4.5 mentions a "snapshot appsink
+  branch" that tees off the encoder. We implement the branch but the
+  actual JPEG ring buffer is owned by :class:`SnapshotStore` in
+  :mod:`snapshot_server` (which the appsink callback feeds).
+
+- All pyds / Gst calls are guarded with try/except — pyds has poor
+  error messages and we want the traceback to point at the failing
+  property set, not at deep C internals.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import tempfile
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
+# These imports will fail on macOS — that's expected. The module is
+# only importable inside the ds:7.1-pyds container.
+try:
+    import gi
+    gi.require_version("Gst", "1.0")
+    gi.require_version("GstRtspServer", "1.0")  # noqa: F401  (future use)
+    from gi.repository import Gst, GLib  # noqa: F401
+    _GST_OK = True
+except Exception as _exc:  # pragma: no cover - macOS dev path
+    Gst = None  # type: ignore[assignment]
+    GLib = None  # type: ignore[assignment]
+    _GST_OK = False
+    _IMPORT_ERROR = _exc
+
+try:
+    import pyds  # type: ignore[import-not-found]
+    _PYDS_OK = True
+except Exception as _exc:  # pragma: no cover - macOS dev path
+    pyds = None  # type: ignore[assignment]
+    _PYDS_OK = False
+
+log = logging.getLogger("deepstream.pipeline_builder")
+
+DEFAULT_RTSP_URL_PREFIX = "rtsp://127.0.0.1:8554/ds/"
+DEFAULT_FRAME_WIDTH = 1920
+DEFAULT_FRAME_HEIGHT = 1080
+DEFAULT_BITRATE_KBPS = 2000
+
+
+def require_gst() -> None:
+    """Raise a clear error if Gst/pyds are unavailable (e.g. on dev laptop)."""
+    if not _GST_OK:
+        raise RuntimeError(
+            "GStreamer / GI not available — pipeline_builder can only run "
+            f"inside the ds:7.1-pyds container. Original error: {_IMPORT_ERROR!r}"
+        )
+    if not _PYDS_OK:
+        raise RuntimeError("pyds not available")
+
+
+def make_element(factory_name: str, name: Optional[str] = None, **properties: Any) -> Any:
+    """Create a Gst element and set its properties.
+
+    Raises ``RuntimeError`` if the factory doesn't exist or property-set
+    fails. All pyds errors are caught and re-raised with the element name
+    + offending property so the operator can see exactly what failed.
+    """
+    require_gst()
+    elem = Gst.ElementFactory.make(factory_name, name)
+    if elem is None:
+        raise RuntimeError(f"cannot create element factory={factory_name!r} name={name!r}")
+    for k, v in properties.items():
+        try:
+            elem.set_property(k, v)
+        except Exception as e:
+            raise RuntimeError(
+                f"set_property failed on {factory_name}({name!r}): "
+                f"{k}={v!r}: {e}"
+            ) from e
+    return elem
+
+
+def link_chain(*elements: Any) -> None:
+    """Link a chain of Gst elements; raise on the first failed link."""
+    require_gst()
+    for a, b in zip(elements, elements[1:]):
+        if not a.link(b):
+            raise RuntimeError(
+                f"failed to link {a.get_name()!r} -> {b.get_name()!r}"
+            )
+
+
+# --- Model config file emitter --------------------------------------------
+
+
+@dataclass
+class ModelPaths:
+    """Resolved filesystem paths for one model preset."""
+    model_name: str
+    config_txt_path: str        # nvinfer config .txt
+    engine_path: Optional[str] = None  # pre-compiled .engine (None = let nvinfer build)
+    labels_path: Optional[str] = None
+    num_classes: int = 80
+
+
+def resolve_model_preset(model: str, models_dir: str) -> ModelPaths:
+    """Resolve a model preset name like ``yolov8n-coco`` to filesystem paths.
+
+    Looks for ``<models_dir>/<model>/config_infer_primary_<model>.txt``.
+    The .txt file is the source of truth for engine + labels paths.
+    """
+    model_dir = os.path.join(models_dir, model)
+    if not os.path.isdir(model_dir):
+        raise FileNotFoundError(
+            f"model preset {model!r} not found under {models_dir!r}"
+        )
+    cfg = os.path.join(model_dir, f"config_infer_primary_{model}.txt")
+    if not os.path.isfile(cfg):
+        raise FileNotFoundError(f"missing nvinfer config: {cfg}")
+    labels = os.path.join(model_dir, "labels.txt")
+    engine = None
+    for candidate in (f"{model}.engine", "model.engine"):
+        p = os.path.join(model_dir, candidate)
+        if os.path.isfile(p):
+            engine = p
+            break
+    return ModelPaths(
+        model_name=model,
+        config_txt_path=cfg,
+        engine_path=engine,
+        labels_path=labels if os.path.isfile(labels) else None,
+        num_classes=_read_num_classes(cfg),
+    )
+
+
+def _read_num_classes(config_txt: str) -> int:
+    """Pull ``num-detected-classes=`` out of a nvinfer config file."""
+    try:
+        with open(config_txt, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.lower().startswith("num-detected-classes"):
+                    _, _, val = line.partition("=")
+                    return int(val.strip())
+    except OSError:
+        pass
+    return 80  # COCO default
+
+
+def write_model_config(
+    model_paths: ModelPaths,
+    *,
+    conf: Optional[float] = None,
+    iou: Optional[float] = None,
+    filter_classes: Optional[List[int]] = None,
+    work_dir: Optional[str] = None,
+) -> str:
+    """Materialize a nvinfer config .txt for this stream.
+
+    nvinfer reads a flat ``key=value`` .txt; per-stream overrides (conf,
+    iou, filter_classes) are written on top of the preset's base file.
+    Returns the path to the written config.
+    """
+    base_lines: List[str] = []
+    try:
+        with open(model_paths.config_txt_path, "r", encoding="utf-8") as f:
+            base_lines = f.readlines()
+    except OSError as e:
+        raise RuntimeError(f"cannot read base config {model_paths.config_txt_path!r}: {e}")
+
+    overrides: Dict[str, str] = {}
+    if conf is not None:
+        overrides["cluster-mode"] = "2"   # NMS
+        overrides["nms-iou-threshold"] = f"{iou if iou is not None else 0.45:.4f}"
+    if iou is not None and "nms-iou-threshold" not in overrides:
+        overrides["nms-iou-threshold"] = f"{iou:.4f}"
+    # nvinfer threshold comes from the model; per-stream conf is enforced
+    # in the probe (filter at metadata level). We don't write conf here
+    # because it would force an engine rebuild.
+
+    out_dir = work_dir or tempfile.mkdtemp(prefix="ds_model_")
+    out_path = os.path.join(out_dir, f"config_infer_{model_paths.model_name}.txt")
+    with open(out_path, "w", encoding="utf-8") as f:
+        for line in base_lines:
+            stripped = line.strip().lower()
+            written = False
+            for k, v in overrides.items():
+                if stripped.startswith(k + "=") or stripped.startswith(k + " ="):
+                    f.write(f"{k}={v}\n")
+                    written = True
+                    break
+            if not written:
+                f.write(line)
+        if filter_classes is not None:
+            # nvinfer "detection-id" filtering is done at the probe level;
+            # we just record it for documentation.
+            f.write(f"# filter-classes={filter_classes}\n")
+    return out_path
+
+
+# --- Analytics config translation -----------------------------------------
+
+
+def analytics_roi_config(rules: List[Any]) -> Dict[str, Any]:
+    """Translate RoiRule list to nvdsanalytics ROI config dict.
+
+    The NVDS_ANALYTICS ROI format is::
+
+        [ROI-<stream-id>]
+        enable=1
+        ROI-<id>=<x1>;<y1>;<x2>;<y2>;<...>;<xN>;<yN>
+
+    Returned dict is fed to ``nvdsanalytics.set_property("config", ...)``.
+    """
+    require_gst()
+    config: Dict[str, Dict[str, str]] = {}
+    for i, rule in enumerate(rules):
+        section = f"ROI-{i}"
+        coords = ";".join(f"{x};{y}" for x, y in rule.polygon)
+        config[section] = {
+            "enable": "1",
+            f"ROI-{rule.id}": coords,
+            # 'mode' is enforced in the probe; nvdsanalytics only does geometry.
+        }
+    return config
+
+
+def analytics_line_config(rules: List[Any]) -> Dict[str, Any]:
+    """Translate LineCrossingRule list to nvdsanalytics LineCrossing config.
+
+    Format::
+
+        [LINE-CROSSING-<i>]
+        enable=1
+        line-crossing-Exit-<line_id>=<x1>;<y1>;<x2>;<y2>
+        class-id=0
+        # extended=0 for balanced, =1 for bidirectional
+        extended=<0|1>
+    """
+    require_gst()
+    config: Dict[str, Dict[str, str]] = {}
+    for i, rule in enumerate(rules):
+        section = f"LINE-CROSSING-{i}"
+        coords = ";".join(f"{x};{y}" for x, y in rule.points)
+        extended = "1" if rule.mode == "bidirectional" else "0"
+        config[section] = {
+            "enable": "1",
+            f"line-crossing-{rule.id}": coords,
+            "class-id": ",".join(str(c) for c in rule.classes) if rule.classes else "0",
+            "extended": extended,
+            "mode": "balanced",
+        }
+    return config
+
+
+# --- Per-stream pipeline --------------------------------------------------
+
+
+@dataclass
+class BuiltPipeline:
+    """Wraps a constructed pipeline plus access handles for probes/snapshots."""
+    pipeline: Any
+    mux: Any
+    analytics_elem: Any
+    snapshot_sink: Optional[Any]    # appsink that feeds the snapshot store
+    rtsp_url: str
+    model_paths: ModelPaths
+    nvinfer_config_path: str
+
+    def get_bus(self) -> Any:
+        return self.pipeline.get_bus()
+
+
+def build_pipeline(
+    stream_id: str,
+    config: Any,                       # StreamConfig
+    *,
+    rtsp_url_prefix: str = DEFAULT_RTSP_URL_PREFIX,
+    models_dir: str = "/opt/nvidia/deepstream/deepstream/samples/models",
+    work_dir: Optional[str] = None,
+    snapshot_enabled: bool = True,
+) -> BuiltPipeline:
+    """Construct a single-stream Gst.Pipeline (not yet set to PLAYING).
+
+    Caller is responsible for adding a bus watch and setting state.
+    """
+    require_gst()
+    src_cfg = config.source
+    out_cfg = config.output or _default_output()
+    width = DEFAULT_FRAME_WIDTH
+    height = DEFAULT_FRAME_HEIGHT
+
+    # Resolve model + write per-stream config.
+    model_paths = resolve_model_preset(config.model, models_dir)
+    mc = config.model_config
+    nvinfer_cfg = write_model_config(
+        model_paths,
+        conf=getattr(mc, "conf", None) if mc else None,
+        iou=getattr(mc, "iou", None) if mc else None,
+        filter_classes=getattr(mc, "filter_classes", None) if mc else None,
+        work_dir=work_dir,
+    )
+
+    p = Gst.Pipeline.new(f"pipeline-{stream_id}")
+
+    # --- Source -----------------------------------------------------------
+    src = make_element("uridecodebin", f"src-{stream_id}", uri=src_cfg.url)
+    if src_cfg.rtsp_transport:
+        try:
+            src.set_property("source-filter",
+                             f"rtspsrc protocols={src_cfg.rtsp_transport}")
+        except Exception:
+            log.warning("could not set rtsp_transport=%s", src_cfg.rtsp_transport)
+    if src_cfg.latency_ms is not None:
+        try:
+            src.set_property("latency", src_cfg.latency_ms)
+        except Exception:
+            log.warning("could not set latency=%s", src_cfg.latency_ms)
+
+    # nvstreammux is the standard DeepStream mux point.
+    mux = make_element(
+        "nvstreammux", f"mux-{stream_id}",
+        batch_size=1,
+        width=width,
+        height=height,
+        live_source=1 if src_cfg.source_type == "rtsp" else 0,
+    )
+
+    # --- Infer + tracker + analytics -------------------------------------
+    nvinfer = make_element(
+        "nvinfer", f"infer-{stream_id}",
+        config_file_path=nvinfer_cfg,
+        unique_id=1,
+    )
+    if model_paths.engine_path:
+        try:
+            nvinfer.set_property("model-engine-file", model_paths.engine_path)
+        except Exception as e:
+            log.warning("could not set engine file: %s", e)
+
+    tracker = make_element("nvtracker", f"tracker-{stream_id}")
+    _apply_tracker_props(tracker, config.tracker)
+
+    analytics_elem = make_element(
+        "nvdsanalytics", f"analytics-{stream_id}",
+        enable=1,
+    )
+    _apply_analytics_props(analytics_elem, config.analytics, stream_id)
+
+    # --- Convert + OSD + Encode ------------------------------------------
+    converter = make_element("nvvideoconvert", f"conv-{stream_id}")
+    osd = None
+    if out_cfg.osd if out_cfg.osd is not None else False:
+        osd = make_element("nvdsosd", f"osd-{stream_id}")
+
+    encoder_kind = (out_cfg.encoder or "h264").lower()
+    enc_factory = "nvv4l2h264enc" if encoder_kind == "h264" else "nvv4l2h265enc"
+    bitrate = out_cfg.bitrate_kbps or DEFAULT_BITRATE_KBPS
+    encoder = make_element(enc_factory, f"enc-{stream_id}", bitrate=bitrate)
+    parser = make_element(
+        "h264parse" if encoder_kind == "h264" else "h265parse",
+        f"parse-{stream_id}",
+    )
+
+    rtsp_url = f"{rtsp_url_prefix}{stream_id}"
+    rtsp_sink = make_element(
+        "rtspclientsink", f"rtsp-{stream_id}",
+        location=rtsp_url,
+        protocols="tcp",
+    )
+
+    # Snapshot branch (always create; the appsink callback is a no-op if
+    # the snapshot store is not attached).
+    snapshot_sink = None
+    if snapshot_enabled:
+        snapshot_sink = _make_snapshot_branch(
+            p, converter, stream_id, work_dir=work_dir
+        )
+
+    # --- Add + link ------------------------------------------------------
+    for e in (src, mux, nvinfer, tracker, analytics_elem, converter):
+        p.add(e)
+    chain: List[Any] = [mux, nvinfer, tracker, analytics_elem, converter]
+    if osd is not None:
+        p.add(osd)
+        chain.append(osd)
+    chain.extend([encoder, parser, rtsp_sink])
+    for e in (encoder, parser, rtsp_sink, osd):
+        if e is not None and e not in (encoder, parser, rtsp_sink) and e not in chain:
+            p.add(e)
+    for e in (encoder, parser, rtsp_sink):
+        if e not in (encoder, parser, rtsp_sink):
+            p.add(e)
+    p.add(encoder)
+    p.add(parser)
+    p.add(rtsp_sink)
+    # Build the linear chain from converter onward.
+    conv_chain = [converter]
+    if osd is not None:
+        conv_chain.append(osd)
+    conv_chain.extend([encoder, parser, rtsp_sink])
+    link_chain(*conv_chain)
+
+    # uridecodebin pads appear dynamically — connect on pad-added.
+    src.connect("pad-added", _on_src_pad_added, mux)
+
+    log.info("pipeline built for stream %s -> %s", stream_id, rtsp_url)
+    return BuiltPipeline(
+        pipeline=p,
+        mux=mux,
+        analytics_elem=analytics_elem,
+        snapshot_sink=snapshot_sink,
+        rtsp_url=rtsp_url,
+        model_paths=model_paths,
+        nvinfer_config_path=nvinfer_cfg,
+    )
+
+
+def _on_src_pad_added(src: Any, pad: Any, mux: Any) -> None:
+    """Dynamic pad-added handler: link uridecodebin src -> nvstreammux sink."""
+    require_gst()
+    sinkpad = mux.get_request_pad("sink_0")
+    if sinkpad is None:
+        log.error("nvstreammux refused to allocate sink pad")
+        return
+    if pad.link(sinkpad) != Gst.PadLinkReturn.OK:
+        log.error("failed to link uridecodebin -> nvstreammux")
+
+
+def _apply_tracker_props(tracker: Any, tracker_cfg: Optional[Any]) -> None:
+    """Apply standard nvtracker properties. Best-effort — many are optional."""
+    if tracker_cfg is None or not getattr(tracker_cfg, "enabled", True):
+        # Even when "disabled", nvtracker is left in the chain as a pass-through.
+        try:
+            tracker.set_property("user-meta-pool-size", 0)
+        except Exception:
+            pass
+        return
+    ttype = (getattr(tracker_cfg, "tracker_type", None) or "NvDCF").lower()
+    props = {
+        "tracker-width": 640,
+        "tracker-height": 384,
+        "ll-lib-file": _ll_lib_for(ttype),
+        "enable-batch-process": 1,
+        "enable-past-frame": 0,
+    }
+    min_conf = getattr(tracker_cfg, "min_confidence", None)
+    if min_conf is not None:
+        props["tracking-surface-temp-warning"] = 0  # placeholder
+    for k, v in props.items():
+        try:
+            tracker.set_property(k, v)
+        except Exception as e:
+            log.debug("nvtracker prop %s=%s skipped (%s)", k, v, e)
+
+
+def _ll_lib_for(ttype: str) -> str:
+    """Best-effort path to the tracker low-level lib on JetPack 6 / DS 7.1."""
+    base = "/opt/nvidia/deepstream/deepstream/lib"
+    if ttype == "nvsort":
+        return f"{base}/libnvds_nvmultiobjecttracker.so"
+    return f"{base}/libnvds_nvdcdcf_tracker.so"  # NvDCF default
+
+
+def _apply_analytics_props(
+    analytics_elem: Any,
+    analytics_cfg: Optional[Any],
+    stream_id: str,
+) -> None:
+    if analytics_cfg is None:
+        return
+    config: Dict[str, Any] = {}
+    try:
+        if analytics_cfg.line_crossing:
+            config.update(analytics_line_config(analytics_cfg.line_crossing))
+        if analytics_cfg.roi:
+            config.update(analytics_roi_config(analytics_cfg.roi))
+    except Exception as e:
+        log.warning("analytics config translation failed: %s", e)
+        return
+    if not config:
+        return
+    try:
+        analytics_elem.set_property("config", config)
+    except Exception as e:
+        log.error("failed to apply nvdsanalytics config: %s", e)
+
+
+def _make_snapshot_branch(
+    pipeline: Any,
+    src_element: Any,
+    stream_id: str,
+    *,
+    work_dir: Optional[str] = None,
+) -> Any:
+    """Create the snapshot appsink branch.
+
+    Branch tees off src_element's src pad:
+
+        <tee> -> queue -> nvvideoconvert -> nvjpegenc -> appsink
+
+    For simplicity in the first cut, we add an appsink attached to the
+    encoder's sink via a tee pad probe — the actual wiring requires a
+    ``tee`` element. Phase 8.3e will refine this.
+
+    Returns the appsink element (callback wired by snapshot_server).
+    """
+    require_gst()
+    tee = make_element("tee", f"snap-tee-{stream_id}")
+    queue = make_element("queue", f"snap-queue-{stream_id}")
+    converter = make_element("nvvideoconvert", f"snap-conv-{stream_id}")
+    jpegenc = make_element("nvjpegenc", f"snap-jpeg-{stream_id}")
+    appsink = make_element(
+        "appsink", f"snap-sink-{stream_id}",
+        emit_signals=True,
+        sync=False,
+        max_buffers=2,
+        drop=True,
+    )
+    for e in (tee, queue, converter, jpegenc, appsink):
+        pipeline.add(e)
+    # NOTE: full wiring (tee insertion into encoder input) is incomplete.
+    # Phase 8.3e will complete the tee pad request + link. For now we
+    # return the appsink so snapshot_server can wire its callback.
+    log.debug("snapshot branch scaffolding created for %s (tee wiring pending)",
+              stream_id)
+    return appsink
+
+
+def _default_output() -> Any:
+    """Lazy import to avoid circular at module load."""
+    from .config import OutputConfig
+    return OutputConfig()
