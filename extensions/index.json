@@ -67,38 +67,6 @@
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/cosyvoice-3/metadata.json"
     },
     {
-      "id": "deepstream-v2",
-      "name": "deepstream",
-      "version": "2.7.7",
-      "description": "NVIDIA DeepStream extension for multi-stream RTSP video inference on Jetson",
-      "author": "NeoMind Team",
-      "license": "Apache-2.0",
-      "type": "native",
-      "categories": [
-        "video",
-        "streaming"
-      ],
-      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/deepstream-v2",
-      "builds": {
-        "darwin-aarch64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/deepstream--darwin_aarch64.nep"
-        },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/deepstream--darwin_x86_64.nep"
-        },
-        "linux-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/deepstream--linux_amd64.nep"
-        },
-        "linux-aarch64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/deepstream--linux_arm64.nep"
-        },
-        "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.7/deepstream--windows_amd64.nep"
-        }
-      },
-      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/deepstream/metadata.json"
-    },
-    {
       "id": "face-recognition",
       "name": "face recognition",
       "version": "2.7.7",
