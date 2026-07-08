@@ -1,17 +1,16 @@
 # Example: Simple Counter Extension
 
-A minimal NeoMind extension that demonstrates basic functionality.
+A minimal NeoMind extension demonstrating the canonical patterns: builder API,
+`OnceLock`-cached metadata, atomic counter, proper error handling.
 
 ## Features
 
-- Single command: `increment`
-- Single metric: `counter`
+- One command: `increment` (with optional `amount` 1–100)
+- One metric: `counter`
 - No external dependencies
 - Process-isolated execution
 
-## Implementation
-
-### Cargo.toml
+## Cargo.toml
 
 ```toml
 [package]
@@ -24,23 +23,26 @@ name = "neomind_extension_simple_counter_v2"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-neomind-extension-sdk = { path = "../../../NeoMind/crates/neomind-extension-sdk" }
+neomind-extension-sdk = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true }     # preserve_order feature is REQUIRED (ABI compat)
 async-trait = "0.1"
+parking_lot = "0.12"                  # for sync locks (not strictly needed here)
 tokio = { version = "1", features = ["rt", "sync"] }
-semver = "1"
 chrono = "0.4"
 ```
 
-If this extension is part of a Cargo workspace, keep `[profile.release]` in the workspace root `Cargo.toml`.
+> `[profile.release]` with `panic = "unwind"` lives in the **workspace root**
+> `NeoMind-Extensions/Cargo.toml`, not the member crate.
 
-### src/lib.rs
+## src/lib.rs
 
 ```rust
 use async_trait::async_trait;
 use neomind_extension_sdk::prelude::*;
+use neomind_extension_sdk::{CommandBuilder, MetricBuilder, ParamBuilder, metric_int};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,10 +58,12 @@ pub struct SimpleCounterExtension {
 
 impl SimpleCounterExtension {
     pub fn new() -> Self {
-        Self {
-            counter: AtomicI64::new(0),
-        }
+        Self { counter: AtomicI64::new(0) }
     }
+}
+
+impl Default for SimpleCounterExtension {
+    fn default() -> Self { Self::new() }
 }
 
 #[async_trait]
@@ -67,69 +71,45 @@ impl Extension for SimpleCounterExtension {
     fn metadata(&self) -> &ExtensionMetadata {
         static META: std::sync::OnceLock<ExtensionMetadata> = std::sync::OnceLock::new();
         META.get_or_init(|| {
-            ExtensionMetadata {
-                id: "simple-counter-v2".to_string(),
-                name: "Simple Counter".to_string(),
-                version: Version::parse("2.0.0").unwrap(),
-                description: Some("A simple counter extension for demonstration".to_string()),
-                author: Some("NeoMind Team".to_string()),
-                homepage: None,
-                license: Some("MIT".to_string()),
-                file_path: None,
-                config_parameters: None,
-            }
+            ExtensionMetadata::new("simple-counter-v2", "Simple Counter", "2.0.0")
+                .with_description("A simple counter extension for demonstration")
+                .with_author("NeoMind Team")
+                .with_license("MIT")
         })
     }
 
-    fn metrics(&self) -> &[MetricDescriptor] {
-        static METRICS: std::sync::OnceLock<Vec<MetricDescriptor>> = std::sync::OnceLock::new();
-        METRICS.get_or_init(|| {
-            vec![
-                MetricDescriptor {
-                    name: "counter".to_string(),
-                    display_name: "Counter Value".to_string(),
-                    data_type: MetricDataType::Integer,
-                    unit: String::new(),
-                    min: None,
-                    max: None,
-                    required: true,
-                },
-            ]
-        })
+    // Owned Vec — NOT &[MetricDescriptor]
+    fn metrics(&self) -> Vec<MetricDescriptor> {
+        vec![
+            MetricBuilder::new("counter", "Counter Value")
+                .integer()
+                .min(0.0)
+                .required()
+                .build(),
+        ]
     }
 
-    fn commands(&self) -> &[ExtensionCommand] {
-        static COMMANDS: std::sync::OnceLock<Vec<ExtensionCommand>> = std::sync::OnceLock::new();
-        COMMANDS.get_or_init(|| {
-            vec![
-                ExtensionCommand {
-                    name: "increment".to_string(),
-                    display_name: "Increment Counter".to_string(),
-                    payload_template: String::new(),
-                    parameters: vec![
-                        ParameterDefinition {
-                            name: "amount".to_string(),
-                            display_name: "Amount".to_string(),
-                            description: "Amount to increment by".to_string(),
-                            param_type: MetricDataType::Integer,
-                            required: false,
-                            default_value: Some(ParamMetricValue::Integer(1)),
-                            min: Some(1.0),
-                            max: Some(100.0),
-                            options: Vec::new(),
-                        },
-                    ],
-                    fixed_values: std::collections::HashMap::new(),
-                    samples: vec![
-                        json!({ "amount": 1 }),
-                        json!({ "amount": 5 }),
-                        json!({ "amount": 10 }),
-                    ],
-                    llm_hints: "Increment the counter by the specified amount (default: 1)".to_string(),
-                    parameter_groups: Vec::new(),
-                },
-            ]
-        })
+    // Owned Vec — NOT &[ExtensionCommand]
+    fn commands(&self) -> Vec<ExtensionCommand> {
+        vec![
+            CommandBuilder::new("increment")
+                .display_name("Increment Counter")
+                .description("Increment the counter by the specified amount (default: 1)")
+                .param(
+                    ParamBuilder::new("amount", MetricDataType::Integer)
+                        .display_name("Amount")
+                        .description("Amount to increment by (1–100)")
+                        .optional()
+                        .default(ParamMetricValue::Integer(1))
+                        .min(1.0)
+                        .max(100.0)
+                        .build(),
+                )
+                .sample(json!({ "amount": 1 }))
+                .sample(json!({ "amount": 5 }))
+                .sample(json!({ "amount": 10 }))
+                .build(),
+        ]
     }
 
     async fn execute_command(
@@ -139,117 +119,129 @@ impl Extension for SimpleCounterExtension {
     ) -> Result<serde_json::Value> {
         match command {
             "increment" => {
-                // Extract amount from arguments (default to 1)
-                let amount = args
-                    .get("amount")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(1);
+                let amount = args.get("amount").and_then(|v| v.as_i64()).unwrap_or(1);
 
-                // Validate amount
-                if amount < 1 || amount > 100 {
+                if !(1..=100).contains(&amount) {
                     return Err(ExtensionError::InvalidArguments(
-                        "Amount must be between 1 and 100".to_string(),
+                        "Amount must be between 1 and 100".into(),
                     ));
                 }
 
-                // Increment counter atomically
                 let old_value = self.counter.fetch_add(amount, Ordering::SeqCst);
                 let new_value = old_value + amount;
 
-                // Return result
-                let result = IncrementResult {
+                Ok(serde_json::to_value(IncrementResult {
                     old_value,
                     new_value,
                     increment_amount: amount,
-                };
-
-                Ok(serde_json::to_value(result)
-                    .map_err(|e| ExtensionError::Other(e.to_string()))?)
+                })
+                .map_err(|e| ExtensionError::Json(e.to_string()))?)
             }
             _ => Err(ExtensionError::CommandNotFound(command.to_string())),
         }
     }
 
     fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
-        let now = chrono::Utc::now().timestamp_millis();
-        let counter_value = self.counter.load(Ordering::SeqCst);
-
-        Ok(vec![ExtensionMetricValue {
-            name: "counter".to_string(),
-            value: ParamMetricValue::Integer(counter_value),
-            timestamp: now,
-        }])
+        // metric_int! auto-fills the timestamp
+        Ok(vec![
+            metric_int!("counter", self.counter.load(Ordering::SeqCst)),
+        ])
     }
 }
 
-// Export FFI
+// One line — generates all ABI v3 FFI exports.
 neomind_extension_sdk::neomind_export!(SimpleCounterExtension);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_increment() {
+        let ext = SimpleCounterExtension::new();
+        let r = futures::executor::block_on(
+            ext.execute_command("increment", &json!({ "amount": 5 })),
+        ).unwrap();
+        assert_eq!(r["new_value"], 5);
+        assert_eq!(r["increment_amount"], 5);
+    }
+
+    #[test]
+    fn test_default_amount() {
+        let ext = SimpleCounterExtension::new();
+        let r = futures::executor::block_on(
+            ext.execute_command("increment", &json!({})),
+        ).unwrap();
+        assert_eq!(r["new_value"], 1);
+    }
+
+    #[test]
+    fn test_invalid_amount() {
+        let ext = SimpleCounterExtension::new();
+        let r = futures::executor::block_on(
+            ext.execute_command("increment", &json!({ "amount": 999 })),
+        );
+        assert!(matches!(r, Err(ExtensionError::InvalidArguments(_))));
+    }
+
+    #[test]
+    fn test_produce_metrics() {
+        let ext = SimpleCounterExtension::new();
+        let _ = futures::executor::block_on(
+            ext.execute_command("increment", &json!({ "amount": 7 })),
+        );
+        let m = ext.produce_metrics().unwrap();
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].name, "counter");
+    }
+}
 ```
 
-## Building
+## Build & install
 
 ```bash
-# From NeoMind-Extension root
+# Dev build + auto-install (preferred):
+./build.sh --dev --single simple-counter-v2
+
+# Or manual:
 cargo build --release -p simple-counter-v2
-
-# Output
-ls -lh target/release/libneomind_extension_simple_counter_v2.dylib
+cp target/release/libneomind_extension_simple_counter_v2.dylib \
+   ~/.neomind/extensions/
 ```
 
-## Installing
+## Test
 
 ```bash
-mkdir -p ~/.neomind/extensions
-cp target/release/libneomind_extension_simple_counter_v2.dylib ~/.neomind/extensions/
-```
-
-## Testing
-
-```bash
-# Using curl
 curl -X POST http://localhost:9375/api/extensions/simple-counter-v2/command \
   -H "Content-Type: application/json" \
   -d '{"command": "increment", "args": {"amount": 5}}'
 
-# Expected response
-{
-  "success": true,
-  "data": {
-    "old_value": 0,
-    "new_value": 5,
-    "increment_amount": 5
-  }
-}
+# → { "success": true, "data": { "old_value": 0, "new_value": 5, "increment_amount": 5 } }
 
-# Get metrics
 curl http://localhost:9375/api/extensions/simple-counter-v2/metrics
-
-# Expected response
-{
-  "metrics": [
-    {
-      "name": "counter",
-      "value": 5,
-      "timestamp": 1709481600000
-    }
-  ]
-}
+# → { "metrics": [{ "name": "counter", "value": 5, "timestamp": 1709481600000 }] }
 ```
 
-## Key Concepts Demonstrated
+## Unit tests
 
-1. **Atomic Operations**: Using `AtomicI64` for thread-safe counter
-2. **Parameter Validation**: Checking argument bounds
-3. **Error Handling**: Proper error types and messages
-4. **Static Metadata**: Using `OnceLock` for efficient initialization
-5. **Typed Results**: Custom result struct with serialization
+```bash
+cargo test -p simple-counter-v2
+```
 
-## Extension Points
+## Concepts demonstrated
 
-To extend this example:
+1. **Builders** — `MetricBuilder` / `CommandBuilder` / `ParamBuilder` (preferred over raw struct literals)
+2. **`OnceLock`-cached metadata** — return `&ExtensionMetadata` from a static
+3. **Owned Vec returns** — `metrics()` and `commands()` return `Vec<...>`, not slices
+4. **Atomic counter** — `AtomicI64` for thread-safe state
+5. **`metric_int!` macro** — auto-fills timestamp
+6. **Proper error types** — `ExtensionError::InvalidArguments` / `CommandNotFound` / `Json`
+7. **`neomind_export!`** — one line generates all ABI v3 FFI symbols
 
-1. **Add Reset Command**: Reset counter to zero
-2. **Add Decrement Command**: Decrease counter value
-3. **Add History Metric**: Track increment history
-4. **Add Frontend**: Display counter with buttons
-5. **Add Persistence**: Save counter to disk
+## Extension points
+
+1. Add `reset` / `decrement` commands
+2. Add a `history` metric (last N increments)
+3. Add a frontend card (see `reference/frontend.md`)
+4. Add persistence (save counter to disk on `stop()`)
+5. Subscribe to events (see `reference/event-subscription.md`)

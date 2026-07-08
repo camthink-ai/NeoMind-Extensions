@@ -34,7 +34,7 @@ This skill provides AI-assisted guidance for creating NeoMind extensions for the
 From the NeoMind-Extension repository root:
 
 ```bash
-./install-skill.sh
+./skill/install.sh
 ```
 
 The script will:
@@ -284,7 +284,7 @@ git commit -m "Update neomind-extension skill"
 git push
 
 # Other developers can update their installation
-./install-skill.sh  # Overwrites existing installation
+./skill/install.sh  # Overwrites existing installation
 ```
 
 Changes take effect immediately in Claude Code (no restart needed).
@@ -306,7 +306,7 @@ Changes take effect immediately in Claude Code (no restart needed).
 **Problem**: `/neomind-extension` command not recognized.
 
 **Solutions**:
-1. Reinstall: `./install-skill.sh`
+1. Reinstall: `./skill/install.sh`
 2. Check file permissions: `chmod -R 644 ~/.claude/skills/neomind-extension/`
 3. Verify skill name in SKILL.md frontmatter matches directory name
 
@@ -316,7 +316,7 @@ Changes take effect immediately in Claude Code (no restart needed).
 
 **Solutions**:
 1. Pull latest changes: `git pull`
-2. Reinstall: `./install-skill.sh`
+2. Reinstall: `./skill/install.sh`
 3. Check skill version in README.md
 
 ## Contributing
@@ -324,7 +324,7 @@ Changes take effect immediately in Claude Code (no restart needed).
 To improve this skill:
 
 1. **Edit skill files** in `.claude/skills/neomind-extension/`
-2. **Test changes** by reinstalling: `./install-skill.sh`
+2. **Test changes** by reinstalling: `./skill/install.sh`
 3. **Verify** with Claude Code
 4. **Submit PR** with clear description of changes
 
