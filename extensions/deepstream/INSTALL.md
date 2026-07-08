@@ -1,37 +1,37 @@
-# DeepStream 7.1 on CamThink Jetson — 安装指南
+# DeepStream 7.1 on CamThink Jetson — Installation Guide
 
-> 目标读者：在 CamThink NG4500 / Orin NX 8GB 设备上从零部署 DeepStream 7.1 + 本扩展 sidecar 的工程师。
+> **Target audience:** Engineers deploying DeepStream 7.1 + this extension's sidecar from scratch on a CamThink NG4500 / Orin NX 8GB device.
 >
-> 本文档总结了在客户设备上踩过的所有坑，按步骤复刻即可成功跑通。**全程不需要 sudo 进 root，普通 `box` 用户即可（除 docker daemon 配置外）。**
+> This document captures every pitfall hit on customer hardware. Follow the steps in order to get a working pipeline. **No sudo-to-root required — the ordinary `box` user suffices (except for the Docker daemon config).**
 
 ---
 
-## 0. 环境前置
+## 0. Prerequisites
 
-| 项 | 要求 |
-|----|------|
-| 设备 | CamThink NG4500-CB01（Jetson Orin NX 8GB） |
+| Item | Requirement |
+|------|-------------|
+| Device | CamThink NG4500-CB01 (Jetson Orin NX 8GB) |
 | JetPack | R36.4.3 / JetPack 6.1 GA |
 | L4T | 36.4.3 |
-| 磁盘可用空间 | **≥ 20 GB**（镜像 5.5 GB + engine + 缓存） |
-| 网络 | 能访问 `nvcr.io`（NGC） 和 PyPI |
-| NGC 账号 | 注册 https://ngc.nvidia.com  拿一把 API key |
+| Free disk | **≥ 20 GB** (image 5.5 GB + engine + cache) |
+| Network | Access to `nvcr.io` (NGC) and PyPI |
+| NGC account | Register at https://ngc.nvidia.com and generate an API key |
 
-校验：
+Verify:
 
 ```bash
-cat /etc/nv_tegra_release         # 应该显示 R36.4.3
-df -h /var/lib                    # 剩余 ≥ 20 GB
+cat /etc/nv_tegra_release         # should show R36.4.3
+df -h /var/lib                    # free ≥ 20 GB
 uname -r                          # 5.15.x-tegra
 ```
 
 ---
 
-## 1. Docker 配置（一次性）
+## 1. Docker Configuration (one-time)
 
-### 1.1 换 vfs 存储驱动（**关键，否则空间爆掉**）
+### 1.1 Switch to `vfs` storage driver (**critical, otherwise disk explodes**)
 
-Orin NX 内核的 overlayfs 在容器内创建白屏文件时反复失败，Docker daemon 会无限重试并膨胀日志。必须改用 `vfs`：
+The Orin NX kernel's overlayfs repeatedly fails when creating whiteout files inside the container, causing Docker daemon to retry indefinitely and bloat logs. You must use `vfs`:
 
 ```bash
 sudo tee /etc/docker/daemon.json <<'EOF'
@@ -49,55 +49,55 @@ EOF
 sudo systemctl restart docker
 ```
 
-> **代价**：vfs 不做块级去重，每个 layer 完整复制。`docker image prune -f` 要勤跑。
+> **Cost:** vfs does no block-level deduplication; every layer is copied in full. Run `docker image prune -f` frequently.
 
-### 1.2 关闭 iptables（内核无 iptables_raw 模块）
+### 1.2 Disable iptables (kernel has no `iptables_raw` module)
 
-JetPack 6 的 tegra 内核没编 `iptable_raw`，Docker 默认创建 bridge 网络时会失败：
+JetPack 6's tegra kernel doesn't compile `iptable_raw`, so Docker fails when creating the default bridge network:
 
 ```
 iptables v1.8.7 (legacy): can't initialize iptables table `raw': Table does not exist
 ```
 
-解决：**所有 `docker run` 加 `--network=host`**。本扩展的 sidecar、test、engine build 脚本都用 host 网络。
+Fix: **add `--network=host` to every `docker run`**. This extension's sidecar, tests, and engine-build scripts all use host networking.
 
-### 1.3 登录 NGC
+### 1.3 Log in to NGC
 
-去 https://org.ngc.nvidia.com/setup/api-key  生成一把 API key（base64 串）。
+Generate an API key (base64 string) at https://org.ngc.nvidia.com/setup/api-key.
 
 ```bash
 echo "$YOUR_NGC_KEY" | docker login nvcr.io -u '$oauthtoken' --password-stdin
 ```
 
-> ⚠️ 用户名必须字面写 `$oauthtoken`（含 `$`）。在 shell 里用单引号包住防止变量展开。
+> ⚠️ The username must literally be `$oauthtoken` (including the `$`). Use single quotes in the shell to prevent variable expansion.
 
 ---
 
-## 2. 拉取 DeepStream 镜像
+## 2. Pull the DeepStream Image
 
 ```bash
 docker pull nvcr.io/nvidia/deepstream:7.1-samples-multiarch
 docker tag nvcr.io/nvidia/deepstream:7.1-samples-multiarch ds:7.1-base
 ```
 
-> 镜像 ~5.5 GB。vfs 存储驱动下，解压后实际占用接近 11 GB。
+> Image is ~5.5 GB. Under the vfs storage driver, the extracted size approaches 11 GB.
 >
-> 不要用 `:7.1`（数据中心版），它不带 Jetson 相关库。**必须 multiarch / samples 标签。**
+> Do NOT use `:7.1` (data-center variant) — it lacks Jetson libraries. **You must use the `multiarch` / `samples` tag.**
 
 ---
 
-## 3. 构建 sidecar 镜像（在 base 上叠 pyds + GI）
+## 3. Build the Sidecar Image (layer pyds + GI on top of base)
 
-### 3.1 准备 pyds wheel
+### 3.1 Prepare the pyds Wheel
 
-DeepStream 7.1 对应 `pyds-1.2.0`。从 NGC 或 NVIDIA GitHub release 下载：
+DeepStream 7.1 corresponds to `pyds-1.2.0`. Download from NGC or the NVIDIA GitHub release:
 
 ```bash
-# 从 host 端
+# From the host
 wget https://github.com/NVIDIA-AI-IOT/deepstream_python_apps/releases/download/v1.2.0/pyds-1.2.0-cp310-cp310-linux_aarch64.whl
 ```
 
-> ⚠️ **坑**：NGC 直链下载 `.whl` 文件名是 `pyds-1.2.0-cp310-linux_aarch64.whl`（缺 ABI tag），pip 会拒绝安装（PEP 427）。**手动补一个 cp310**：
+> ⚠️ **Gotcha:** the NGC direct-download `.whl` filename is `pyds-1.2.0-cp310-linux_aarch64.whl` (missing the ABI tag), and pip will refuse to install it (PEP 427). **Manually add the cp310 ABI tag:**
 > ```bash
 > cp pyds-1.2.0-cp310-linux_aarch64.whl pyds-1.2.0-cp310-cp310-linux_aarch64.whl
 > ```
@@ -118,13 +118,13 @@ RUN pip3 install --no-cache-dir /tmp/pyds-1.2.0-cp310-cp310-linux_aarch64.whl \
 WORKDIR /srv/sidecar
 ```
 
-构建：
+Build:
 
 ```bash
 docker build --network=host -t ds:7.1-pyds-gi -f Dockerfile.sidecar .
 ```
 
-校验：
+Verify:
 
 ```bash
 docker run --rm --runtime=nvidia --network=host ds:7.1-pyds-gi \
@@ -133,22 +133,22 @@ docker run --rm --runtime=nvidia --network=host ds:7.1-pyds-gi \
 
 ---
 
-## 4. 预构建 TensorRT 引擎（避免运行时爆炸）
+## 4. Pre-build the TensorRT Engine (avoid runtime OOM)
 
-Jetson Orin NX 8GB 内存吃紧，让 nvinfer 在 pipeline 启动时**直接用 INT8** 构建 engine 会因 tactic 选择阶段显存不够失败：
+Jetson Orin NX 8GB memory is tight. Letting `nvinfer` build an INT8 engine at pipeline startup fails during tactic selection due to insufficient VRAM:
 
 ```
 Tactic Device request: 538MB Available: 196MB
 build engine file failed
 ```
 
-> 教训：**永远用 `trtexec` 提前把 FP16 engine 构建好**，运行时 nvinfer 直接 deserialize。
+> Lesson: **always pre-build the FP16 engine with `trtexec`**; at runtime `nvinfer` just deserializes it.
 
 ### 4.1 build-engine.sh
 
 ```bash
 #!/bin/bash
-# build-engine.sh — 预构建 TrafficCam FP16 engine
+# build-engine.sh — pre-build the TrafficCam FP16 engine
 set -e
 
 mkdir -p ~/ds-engines
@@ -163,62 +163,64 @@ docker run --rm --runtime=nvidia --network=host \
         --memPoolSize=workspace:1024
 ```
 
-> ⚠️ TensorRT 10.3+：`--workspace` 已废弃，必须用 `--memPoolSize=workspace:1024`。
+> ⚠️ TensorRT 10.3+: `--workspace` is deprecated; use `--memPoolSize=workspace:1024`.
 
-跑一次：3 秒，输出 4 MB 的 `.engine` 文件。
+Run once: ~3 seconds, produces a 4 MB `.engine` file.
 
-### 4.2 重要：engine batch-size 必须 == pipeline batch-size
+### 4.2 Important: engine batch-size MUST match pipeline batch-size
 
-```bash
+```
 gstnvtracker: Loading low-level lib at (null)
 NvDsInferContext[UID 1]: deserialize engine ... maxBatchSize 1 whereas 30 has been requested
 ```
 
-意思是 nvinfer 看到的 engine 是 `batch=1`（trtexec 默认），但 nvstreammux 给的是 30。会触发**自动重建**，又掉进 INT8 失败的坑。
+This means `nvinfer` sees an engine with `batch=1` (trtexec default), but `nvstreammux` provides 30. This triggers an **automatic rebuild**, which falls back into the INT8-OOM trap.
 
-**修复**：sidecar 在生成 nvinfer 配置时强制 `batch-size=1`。本扩展的 `pipeline_builder.py` 已经这样做，自己改其它配置要记得同步。
+**Fix:** the sidecar forces `batch-size=1` when generating the nvinfer config. This extension's `pipeline_builder.py` already does this — if you customize other configs, remember to keep them in sync.
 
 ---
 
-## 5. 启动 RTSP 测试源
+## 5. Start an RTSP Test Source
 
-sidecar 需要 RTSP 输入。最方便用 mediamtx + ffmpeg 循环推一路：
+The sidecar needs RTSP input. The easiest path is mediamtx + ffmpeg looping a single stream:
 
 ```bash
 # mediamtx (https://github.com/bluenviron/mediamtx/releases)
 tar xf mediamtx_v*.linux_arm64v8.tar.gz
 ./mediamtx &
 
-# 4 路循环样本
+# 4 looped sample streams
 for i in 1 2 3 4; do
     ffmpeg -re -stream_loop -1 -i sample.mp4 -c copy \
         -f rtsp rtsp://localhost:8554/in/stream$i &
 done
 ```
 
-校验：
+Verify:
 
 ```bash
 docker run --rm --network=host ds:7.1-pyds-gi \
     gst-launch-1.0 rtspsrc location=rtsp://localhost:8554/in/stream1 \
         latency=200 protocols=tcp ! fakesink sync=false
-# 看到 "Pipeline is PREROLLED" 就 OK
+# "Pipeline is PREROLLED" means OK
 ```
 
-> ⚠️ **必须用 TCP（`protocols=tcp`）**：JetPack 内核的 `multiudpsink` 在 IPv6 解析 `localhost` 时报 `Invalid address family (got 10)`，UDP RTSP 完全跑不通。
+> ⚠️ **You must use TCP (`protocols=tcp`):** the JetPack kernel's `multiudpsink` fails to resolve `localhost` over IPv6 with `Invalid address family (got 10)`, so UDP RTSP does not work at all.
 
 ---
 
-## 6. 启动 sidecar
+## 6. Start the Sidecar
 
-### 6.1 拷贝 sidecar 源码
+### 6.1 Copy the Sidecar Source
 
 ```bash
-# 从 NeoMind-Extensions 仓库的 extensions/deepstream/sidecar/ 整目录拷到 Jetson
+# From the NeoMind-Extensions repo, copy extensions/deepstream/sidecar/ to the Jetson
 scp -r extensions/deepstream/sidecar box@<jetson>:~/ds-deps/
 ```
 
-### 6.2 Hello + add_stream 测试输入
+> In production, the `.nep` package installs the sidecar automatically under `~/.neomind/extensions/deepstream/sidecar/` and the extension finds it via `NEOMIND_EXTENSION_DIR`. The manual `scp` here is only for standalone sidecar debugging.
+
+### 6.2 Hello + add_stream Test Input
 
 ```bash
 cat > data-plane.jsonl <<'EOF'
@@ -227,9 +229,9 @@ cat > data-plane.jsonl <<'EOF'
 EOF
 ```
 
-> ⚠️ `models_dir` **末尾不能有 `/`**！sidecar 用 `os.path.dirname()` 反推 base 路径，带斜杠只会 strip 掉那个斜杠而不是上跳一级，导致相对路径解析错误。
+> ⚠️ `models_dir` **must not end with `/`**! The sidecar uses `os.path.dirname()` to derive the base path; a trailing slash only strips that slash instead of going up one level, breaking relative-path resolution.
 
-### 6.3 跑
+### 6.3 Run
 
 ```bash
 docker run --rm -i --runtime=nvidia --network=host \
@@ -240,7 +242,7 @@ docker run --rm -i --runtime=nvidia --network=host \
     bash -c "(cat /srv/data-plane.jsonl; sleep 60; echo '{\"id\":\"2\",\"type\":\"shutdown\",\"graceful_secs\":3}') | timeout 90 python3 /srv/sidecar/deepstream_runner.py"
 ```
 
-期望看到：
+Expected output:
 
 ```jsonl
 {"type":"hello_ack","max_streams":4,"rtsp_url_prefix":"rtsp://0.0.0.0:8554/ds/",...}
@@ -251,70 +253,70 @@ docker run --rm -i --runtime=nvidia --network=host \
 
 ---
 
-## 7. 已知坑汇总（按踩坑顺序）
+## 7. Known Pitfalls Summary (in order encountered)
 
-| # | 现象 | 根因 | 解决 |
-|---|------|------|------|
-| 1 | `docker pull` 401 | NGC 用户名要写 `$oauthtoken`（字面），不是 `$NGC_API_KEY` | 用单引号包用户名 |
-| 2 | `iptables table 'raw' does not exist` | JetPack 内核没编 `iptable_raw` 模块 | 所有 docker run 加 `--network=host` |
-| 3 | `/var/lib/docker` 暴涨到 100% | overlayfs 在白屏文件上无限重试 | `daemon.json` 改 `"storage-driver": "vfs"` |
-| 4 | `pyds wheel ... is not a valid wheel filename` | NGC 提供的 wheel 文件名缺 ABI tag | 复制时补一个 `cp310`：`pyds-1.2.0-cp310-cp310-...` |
-| 5 | `gir1.0-gst-rtsp-server-1.0` apt 找不到 | ubuntu ports 仓库无此包 | 删掉，sidecar 用外部 mediamtx |
-| 6 | `cannot build Hello: missing 6 arguments` | hello 协议升级加了字段 | 补齐 `rtsp_port`/`snapshot_port`/`log_level`/`models_dir`/`max_streams`/`snapshot_bind_addr` |
-| 7 | nvinfer INT8 build 失败 `Tactic ... Available: 196MB` | Orin NX 8GB 内存不够 tactic 选择 | 用 `trtexec --fp16` 预构建 |
-| 8 | `--workspace` 不识别 | TRT 10.3+ 已废弃 | 换 `--memPoolSize=workspace:1024` |
-| 9 | `Backend maxBatchSize 1 whereas 30 has been requested` | trtexec 默认 batch=1，streammux batch=30 | sidecar override `batch-size=1` |
-| 10 | `gstnvtracker: Loading low-level lib at (null)` | `_apply_tracker_props` 在 tracker_cfg=None 时早退，没设 `ll-lib-file` | 即使 tracker 禁用也强制设 NvDCF 默认 lib |
-| 11 | `libnvds_nvdcdcf_tracker.so: cannot open shared object file` | DS 7.1 只剩 `libnvds_nvmultiobjecttracker.so` 一个组合 lib | `_ll_lib_for` 优先返回组合 lib |
-| 12 | `Could not open labels file:/tmp/ds_model_X/../../models/...` | 生成 config 拷贝到 /tmp 后相对路径失效 | 写 config 时把所有路径 key（含 `-path` 后缀变体如 `labelfile-path`）转绝对 |
-| 13 | `gstnvdsanalytics: Configuration file not provided` | `_apply_analytics_props` 在 cfg=None 时早退 | 写最小 `[property]\nenable=1\n...` 到 /tmp 再 `set_property("config-file", path)` |
-| 14 | `Invalid address family (got 10)` UDP RTSP 起不来 | multiudpsink IPv6 解析 localhost 失败 | uridecodebin 接 `source-setup` 信号，对内部 rtspsrc 强制 `protocols=tcp(4)` |
-| 15 | `Could not find output layer 'conv2d_bbox' in engine` | TRT 10.x 不再用 ONNX 的输出 tensor 名 | 配置文件**不要写 `output-blob-names`**，让 nvinfer 自己推断 |
-| 16 | `object of type GstNvTracker does not have property enable-batch-process` | DS 7.1 GstNvTracker 移除了该属性 | sidecar patch 中删掉这一行 |
+| # | Symptom | Root Cause | Fix |
+|---|---------|------------|-----|
+| 1 | `docker pull` 401 | NGC username must be `$oauthtoken` (literal), not `$NGC_API_KEY` | Use single quotes around the username |
+| 2 | `iptables table 'raw' does not exist` | JetPack kernel doesn't compile `iptable_raw` | Add `--network=host` to every docker run |
+| 3 | `/var/lib/docker` balloons to 100% | overlayfs retries infinitely on whiteout files | Change `daemon.json` to `"storage-driver": "vfs"` |
+| 4 | `pyds wheel ... is not a valid wheel filename` | NGC-provided wheel filename missing ABI tag | Add `cp310` when copying: `pyds-1.2.0-cp310-cp310-...` |
+| 5 | `gir1.0-gst-rtsp-server-1.0` apt not found | Ubuntu ports repo has no such package | Remove it; the sidecar uses an external mediamtx |
+| 6 | `cannot build Hello: missing 6 arguments` | Hello protocol upgraded with new fields | Fill in `rtsp_port`/`snapshot_port`/`log_level`/`models_dir`/`max_streams`/`snapshot_bind_addr` |
+| 7 | nvinfer INT8 build fails `Tactic ... Available: 196MB` | Orin NX 8GB insufficient for tactic selection | Pre-build with `trtexec --fp16` |
+| 8 | `--workspace` not recognized | TRT 10.3+ deprecated it | Use `--memPoolSize=workspace:1024` |
+| 9 | `Backend maxBatchSize 1 whereas 30 has been requested` | trtexec default batch=1, streammux batch=30 | Sidecar overrides `batch-size=1` |
+| 10 | `gstnvtracker: Loading low-level lib at (null)` | `_apply_tracker_props` early-returns when tracker_cfg=None, never sets `ll-lib-file` | Force-set the NvDCF default lib even when tracker is disabled |
+| 11 | `libnvds_nvdcdcf_tracker.so: cannot open shared object file` | DS 7.1 ships only the combined `libnvds_nvmultiobjecttracker.so` | `_ll_lib_for` prefers the combined lib |
+| 12 | `Could not open labels file:/tmp/ds_model_X/../../models/...` | Generated config copied to /tmp breaks relative paths | Convert every path key (including `-path` suffix variants like `labelfile-path`) to absolute when writing config |
+| 13 | `gstnvdsanalytics: Configuration file not provided` | `_apply_analytics_props` early-returns when cfg=None | Write a minimal `[property]\nenable=1\n...` to /tmp then `set_property("config-file", path)` |
+| 14 | `Invalid address family (got 10)` — UDP RTSP won't start | multiudpsink IPv6 fails to resolve localhost | uridecodebin hooks into `source-setup` signal and forces `protocols=tcp(4)` on the inner rtspsrc |
+| 15 | `Could not find output layer 'conv2d_bbox' in engine` | TRT 10.x no longer uses ONNX output tensor names | Do **not** set `output-blob-names` in the config; let nvinfer infer |
+| 16 | `object of type GstNvTracker does not have property enable-batch-process` | DS 7.1 GstNvTracker removed this property | Sidecar patch drops this line |
 
 ---
 
-## 8. 清理空间
+## 8. Disk Cleanup
 
-vfs 驱动每次构建都会产生冗余 layer，定期清：
+The vfs driver produces redundant layers on every build. Clean periodically:
 
 ```bash
 docker container prune -f
 docker image prune -f
 docker builder prune -f
-# 紧急情况下：
+# Emergency:
 # sudo rm -rf /var/lib/docker && sudo systemctl restart docker
-#  ↑ 会删所有镜像/容器/卷，慎用
+#  ↑ deletes all images/containers/volumes — use with caution
 ```
 
 ---
 
-## 9. 下一步：跑通 YOLOv8n
+## 9. Next Step: Run YOLOv8n
 
-默认 TrafficCam 模型是入门验证。生产用 YOLOv8n 需要：
+The default TrafficCam model is for entry-level validation. For production with YOLOv8n:
 
-1. **导出 ONNX**（在 PC 上）：
+1. **Export ONNX** (on a PC):
    ```bash
    yolo export model=yolov8n.pt format=onnx opset=12 simplify
    ```
-2. **拷到 Jetson**：`/srv/models/yolov8n.onnx`
-3. **预构建 FP16 engine**：
+2. **Copy to Jetson:** `/srv/models/yolov8n.onnx`
+3. **Pre-build FP16 engine:**
    ```bash
    trtexec --onnx=/srv/models/yolov8n.onnx --saveEngine=/engines/yolov8n_fp16.engine \
            --fp16 --memPoolSize=workspace:1024
    ```
-4. **写 nvinfer 配置**：参考 NVIDIA `deepstream-python-apps` 仓库的 `yolov8` 示例 `config.txt`，配合自定义 parser `libnvds_infercustomparser_yolov8.so`。
-5. **sidecar 端 `register_model`**：把 `model-engine-file`、`labelfile-path`、`parse-bbox-func-name`、`custom-lib-path` 都填好。
+4. **Write the nvinfer config:** refer to the `yolov8` sample `config.txt` in NVIDIA's `deepstream-python-apps` repo, paired with the custom parser `libnvds_infercustomparser_yolov8.so`.
+5. **`register_model` on the sidecar:** fill in `model-engine-file`, `labelfile-path`, `parse-bbox-func-name`, `custom-lib-path`.
 
 ---
 
-## 10. 参考
+## 10. References
 
 - NVIDIA DeepStream 7.1 Release Notes: https://docs.nvidia.com/metropolis/deepstream/dev-guide/
 - pyds Python bindings: https://github.com/NVIDIA-AI-IOT/deepstream_python_apps
-- CamThink 设备软件指南: https://wiki.camthink.ai/docs/neoedge-ng4500-series/ng4500-cb01-development-board/software-guide/software-frameworks-and-tools/deepstream
-- NeoMind 扩展开发：本仓库 `CLAUDE.md` 与 `EXTENSION_GUIDE.md`
+- CamThink device software guide: https://wiki.camthink.ai/docs/neoedge-ng4500-series/ng4500-cb01-development-board/software-guide/software-frameworks-and-tools/deepstream
+- NeoMind extension development: see `CLAUDE.md` and `EXTENSION_GUIDE.md` in this repo
 
 ---
 
-**最后更新**：2026-07-07
+**Last updated:** 2026-07-08

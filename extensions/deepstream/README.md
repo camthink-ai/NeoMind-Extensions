@@ -27,8 +27,6 @@ Multi-stream RTSP video inference on NVIDIA Jetson via the NVIDIA DeepStream SDK
 
 Non-Jetson hosts (macOS, x86 Linux dev boxes) can build the Rust crate but cannot run the Python sidecar — DeepStream is Jetson-only.
 
-> 📺 **从零部署 DeepStream 7.1 + sidecar？** 看 **[INSTALL.md](./INSTALL.md)** —— 总结了 CamThink NG4500 设备上踩过的 16 个坑（Docker vfs / NGC auth / pyds wheel / INT8 内存 / IPv6 RTSP / TRT 10.x 张量名 等）。
-
 ## Architecture
 
 ```
@@ -58,18 +56,39 @@ Non-Jetson hosts (macOS, x86 Linux dev boxes) can build the Rust crate but canno
 
 The Rust side is the **authoritative state holder** — stream configs, ordering, and supervisor state live in Rust memory. The Python sidecar is ephemeral: if it crashes, Rust respawns it and replays all stored configs. This design choice avoids NVIDIA's `pyds`/GStreamer FFI surface in unsafe Rust and aligns with NVIDIA's official Python sample path.
 
+## Deployment Topology
+
+```
+┌──────────────────────────────┐        ┌──────────────────────────────────┐
+│ User's machine (browser)     │        │ Jetson Orin NX                   │
+│  └─ NeoMind dashboard        │ ──HTTP─│  ├─ NeoMind server + API         │
+│     - commands via /api      │  POST  │  │   └─ extension-runner          │
+│     - snapshots via :8555    │        │  │       └─ deepstream.{so,dylib}│
+│     - RTSP via rtsp://:8554  │ ──HTTP─│  │           └─ deepstream_runner│
+│                              │  GET   │  │               .py (sidecar)    │
+└──────────────────────────────┘        │  ├─ snapshot HTTP :8555          │
+                                        │  └─ RTSP        :8554            │
+                                        └──────────────────────────────────┘
+```
+
+**The extension MUST be installed on the Jetson itself** — the Rust crate spawns the Python sidecar as a **local child process** communicating over stdin/stdout JSONL (not a network socket). There is no way to run the extension on a separate host and point it at a remote sidecar.
+
+The dashboard, however, can run anywhere: commands (`add_stream`, `list_streams`, …) travel over the NeoMind REST API, while media (snapshots, annotated RTSP output) is fetched directly from the Jetson's `:8555` / `:8554` ports. Set the `serverHost` field in the frontend card config to the Jetson's IP when the dashboard is not on the Jetson itself.
+
 ## Installation
 
 ```bash
-# Build from repository root (Jetson host required to actually run)
+# Build from repository root. Builds on any host; RUNTIME requires Jetson.
 ./build.sh --single deepstream
 
 # Or build with Cargo directly
 cargo build --release -p deepstream
 
-# Dev build + auto-install to ~/.neomind/extensions/
+# Dev build + auto-install to ~/.neomind/extensions/ (on the Jetson)
 ./build.sh --dev --single deepstream
 ```
+
+> 📺 **Deploying DeepStream 7.1 + sidecar from scratch?** See **[INSTALL.md](./INSTALL.md)** — 16 gotchas encountered on CamThink NG4500 hardware (Docker vfs / NGC auth / pyds wheel / INT8 memory / IPv6 RTSP / TRT 10.x tensor names, etc.).
 
 ## Commands
 
@@ -174,23 +193,19 @@ Defaults work for most deployments. Override via `~/.neomind/extensions/deepstre
 
 ## Development Status
 
-Phase 1 — in active development on branch `feat/deepstream`.
+**Production-ready.** Verified end-to-end on Jetson Orin NX 8G (2026-07-08):
 
-Implemented:
-- Project scaffold + workspace integration
-- JSONL protocol (control + event variants, 4 MiB cap, async reader/writer)
-- `SidecarHandle` — spawn, handshake, send/recv, heartbeat, graceful shutdown
-- `SidecarSupervisor` — crash recovery with exponential backoff + sliding-window rate limit
-- Pre-flight check infrastructure is in progress
+- **RTSP source pipeline** — NVDEC → TensorRT (FP16) → NvDCF tracker → nvdsanalytics → OSD → NVENC → `rtspclientsink` to mediamtx
+- **Detection events** — ~1000 events/60s with rich object data (class, track_id, confidence, bbox)
+- **Stats events** — per-stream FPS / frame_count / object_count every 5s
+- **Snapshot endpoint** — on-demand GStreamer one-shot pipeline, ~8s latency, 1920×1080 JPEG
+- **Annotated RTSP output** — `rtsp://<jetson>:8554/ds/<stream_id>`
+- **Frontend** — 3 card components: system stats, stream overview grid, single-stream detail
+- **SidecarSupervisor** — crash recovery with backoff `[1, 2, 5, 10, 30]`s + sliding-window rate limit (5 restarts/60s)
+- **restart_sidecar** — full manual recovery: shutdown → respawn → replay all active stream configs
+- **Crash-recovery replay** — `StreamManager::replay_to()` re-sends AddStream for all non-Stopped streams after a respawn
 
-Pending (see `docs/superpowers/plans/2026-07-06-deepstream-extension.md`):
-- Pre-flight system checks (DeepStream / pyds / GStreamer detection)
-- `StreamManager` + `add_stream` / `remove_stream` commands
-- Crash-recovery config replay
-- Python sidecar (`deepstream_runner.py`) with real DeepStream pipeline
-- Frontend components (overview / stream / stats cards)
-- Diagnose + restart_sidecar commands
-- End-to-end integration tests on Jetson hardware
+See `docs/superpowers/specs/2026-07-06-deepstream-extension-design.md` for the design spec and `sidecar/STATUS.md` for the sidecar implementation log.
 
 ## Testing
 
