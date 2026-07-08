@@ -181,24 +181,57 @@ impl OcrEngine {
 
         let device = auto_device(device_hint);
 
-        match try_load_detector(resolved, &self.models_dir, device) {
-            Ok(d) => self.detector = Some(d),
+        // CUDA-to-CPU fallback: even with has_cuda() probing /dev/nvidia0,
+        // the bundled ONNX Runtime .so may be CPU-only (CUDA EP not compiled
+        // in). Retry the load on CPU instead of hard-failing. Common on
+        // machines that have NVIDIA drivers installed but our CI shipped a
+        // CPU-only ORT runtime.
+        let (detector, recognizer, used_device) = match Self::try_load_pair(resolved, &self.models_dir, device) {
+            Ok(pair) => pair,
             Err(e) => {
-                self.loaded = false;
-                self.load_error = Some(format!("detector load failed: {}", e));
-                return;
+                if matches!(device, usls::Device::Cuda(_)) {
+                    tracing::warn!(
+                        "CUDA load failed ({}), falling back to CPU. Common cause: \
+                         bundled ORT .so is CPU-only even though GPU is present.",
+                        e
+                    );
+                    match Self::try_load_pair(resolved, &self.models_dir, usls::Device::Cpu(0)) {
+                        Ok(pair) => pair,
+                        Err(e2) => {
+                            self.loaded = false;
+                            self.load_error = Some(format!(
+                                "load failed on CUDA ({}) and CPU fallback ({})",
+                                e, e2
+                            ));
+                            return;
+                        }
+                    }
+                } else {
+                    self.loaded = false;
+                    self.load_error = Some(format!("load failed: {}", e));
+                    return;
+                }
             }
-        }
-        match try_load_recognizer(resolved, &self.models_dir, device) {
-            Ok(r) => self.recognizer = Some(r),
-            Err(e) => {
-                self.loaded = false;
-                self.load_error = Some(format!("recognizer load failed: {}", e));
-                return;
-            }
-        }
+        };
+        let _ = used_device; // suppress unused warning if tracing is disabled
+        self.detector = Some(detector);
+        self.recognizer = Some(recognizer);
         self.loaded = true;
         self.load_error = None;
+    }
+
+    /// Load detector + recognizer as a pair on the given device.
+    /// Returns (detector, recognizer, device_actually_used).
+    fn try_load_pair(
+        tier: Tier,
+        models_dir: &std::path::Path,
+        device: usls::Device,
+    ) -> std::result::Result<(usls::models::DB, usls::models::SVTR, usls::Device), String> {
+        let det = try_load_detector(tier, models_dir, device)
+            .map_err(|e| e.to_string())?;
+        let rec = try_load_recognizer(tier, models_dir, device)
+            .map_err(|e| e.to_string())?;
+        Ok((det, rec, device))
     }
 
     /// Run detect → crop → recognize on a raw decoded image.
@@ -389,9 +422,19 @@ fn has_cuda(hint: Option<&str>) -> bool {
     if let Some(h) = hint {
         return h.eq_ignore_ascii_case("cuda");
     }
-    // Best-effort: env var presence is a reasonable proxy. v1 additionally
-    // probes GPU free memory; we keep this dependency-free.
-    cfg!(target_os = "linux") && std::env::var("CUDA_VISIBLE_DEVICES").is_ok()
+    if !cfg!(target_os = "linux") {
+        return false;
+    }
+    // Real GPU presence, not just env var. CUDA_VISIBLE_DEVICES is often set
+    // as a default on CUDA-capable machines even when no GPU is present, OR
+    // the bundled ONNX Runtime .so is CPU-only (no CUDA EP compiled in).
+    // Probe /dev/nvidia0 — the first GPU device file created by the NVIDIA
+    // driver — as concrete evidence of a usable GPU.
+    if !std::path::Path::new("/dev/nvidia0").exists() {
+        return false;
+    }
+    // Respect explicit opt-out via empty CUDA_VISIBLE_DEVICES.
+    !matches!(std::env::var("CUDA_VISIBLE_DEVICES").as_deref(), Ok(""))
 }
 
 fn has_coreml(hint: Option<&str>) -> bool {
