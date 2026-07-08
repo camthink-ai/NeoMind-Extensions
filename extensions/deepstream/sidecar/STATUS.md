@@ -202,18 +202,34 @@ sidecar container, waits 180s, then sends shutdown and greps stdout
 for `"type":"detection"` events.
 
 **Known limitations of current state:**
-- `rtspclientsink` was replaced with `fakesink sync=false` during
-  diagnosis (DIAG marker in `pipeline_builder.py`). RTSP output of
-  annotated frames is NOT currently wired — re-enabling rtspclientsink
-  is a follow-up once we verify it doesn't reintroduce the back-pressure
-  stall.
-- Snapshot branch tee wiring still incomplete (design decision #2).
+- `rtspclientsink` restored — RTSP output publishing to mediamtx works
+  (verified: mediamtx logs "is publishing to path 'ds/test-1'").
+- Snapshot branch disabled (`snapshot_enabled=False` default) — tee
+  insertion stalls the pipeline (see design decision #2). Deferred to
+  follow-up; will use probe-based snapshot instead of tee.
+- Stats periodic emission **implemented and verified** (5s interval,
+  per-stream FPS from frame_count deltas, pipeline status, frame_count,
+  object_count). See `deepstream_runner._stats_loop`.
 
-## Not yet implemented (Phase 8.7+)
+## Verified — Stats emission (2026-07-08)
 
-- Stats periodic emission (1 Hz)
-- Snapshot tee wiring (see design decision #2)
+60s run on Jetson Orin NX 8G → **11 Stats events** (5s interval) +
+**1340 Detection events**. Sample Stats:
+
+```json
+{"type":"stats","ts":1783476707269,"global_fps":25.17,
+ "per_stream":[{"stream_id":"test-1","fps":25.17,
+ "frame_count":174,"object_count":3140,"status":"playing"}]}
+```
+
+FPS=25.17 matches the 25fps source video exactly. `gpu_utilization_percent`
+and `gpu_memory_used_mb` report 0.0 (nvml/pynvml not wired; see design
+decision #5 — informational only).
+
+## Not yet implemented (follow-ups)
+
+- Snapshot (tee approach abandoned — will use probe-based extraction)
 - Live threshold filter propagation (see #4)
-- RTSP output of annotated frames (fakesink currently substituted; see above)
+- GPU utilization/memory via pynvml (currently 0.0 — informational only)
 - `mediamtx` deployment artifacts (systemd unit)
 - Frontend UI integration (NeoMind main repo)

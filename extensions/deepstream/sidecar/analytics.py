@@ -108,6 +108,11 @@ class ProbeHandle:
     pad: Any
     probe_id: int
     stream_id: str
+    # Mutable counters read by the runner's periodic Stats task. Incremented
+    # in the GLib probe thread; read from the asyncio stats task via GLib
+    # bridge (single-threaded access, no lock needed).
+    frame_count: int = 0
+    object_count: int = 0
 
 
 # --- Probe attachment -----------------------------------------------------
@@ -130,9 +135,11 @@ def attach_probe(
     if src_pad is None:
         raise RuntimeError(f"nvdsanalytics for {stream_id} has no src pad")
 
+    handle = ProbeHandle(pad=src_pad, probe_id=0, stream_id=stream_id)
+
     def _probe_cb(pad: Any, info: Any) -> Any:
         try:
-            _process_buffer(info, stream_id, filt, on_event)
+            _process_buffer(info, stream_id, filt, on_event, handle)
         except Exception as e:
             log.exception("probe error on %s: %s", stream_id, e)
         return __import__("gi").repository.Gst.PadProbeReturn.OK
@@ -141,7 +148,8 @@ def attach_probe(
         __import__("gi").repository.Gst.PadProbeType.BUFFER,
         _probe_cb,
     )
-    return ProbeHandle(pad=src_pad, probe_id=probe_id, stream_id=stream_id)
+    handle.probe_id = probe_id
+    return handle
 
 
 def detach_probe(handle: ProbeHandle) -> None:
@@ -159,6 +167,7 @@ def _process_buffer(
     stream_id: str,
     filt: StreamFilter,
     on_event: EventCallback,
+    handle: "ProbeHandle",
 ) -> None:
     """Walk one GstBuffer's batch metadata and emit events."""
     require_pyds()
@@ -177,17 +186,20 @@ def _process_buffer(
             log.debug("frame_meta cast failed: %s", e)
             break
 
+        handle.frame_count += 1
         now = time.time()
         ts_ms = int(time.time() * 1000)
         frame_id = int(getattr(frame_meta, "frame_num", 0))
         objects = _collect_objects(frame_meta, filt)
-        if objects and filt.should_emit_detection(now):
-            on_event(Detection(
-                stream_id=stream_id,
-                ts=ts_ms,
-                frame_id=frame_id,
-                objects=objects,
-            ))
+        if objects:
+            handle.object_count += len(objects)
+            if filt.should_emit_detection(now):
+                on_event(Detection(
+                    stream_id=stream_id,
+                    ts=ts_ms,
+                    frame_id=frame_id,
+                    objects=objects,
+                ))
 
         _collect_analytics(frame_meta, stream_id, ts_ms, on_event)
 

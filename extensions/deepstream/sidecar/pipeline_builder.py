@@ -456,7 +456,7 @@ def build_pipeline(
     rtsp_url_prefix: str = DEFAULT_RTSP_URL_PREFIX,
     models_dir: str = "/opt/nvidia/deepstream/deepstream/samples/models",
     work_dir: Optional[str] = None,
-    snapshot_enabled: bool = True,
+    snapshot_enabled: bool = False,  # tee branch stalls; see STATUS.md §2
 ) -> BuiltPipeline:
     """Construct a single-stream Gst.Pipeline (not yet set to PLAYING).
 
@@ -599,21 +599,37 @@ def build_pipeline(
     enc_factory = "nvv4l2h264enc" if encoder_kind == "h264" else "nvv4l2h265enc"
     bitrate = out_cfg.bitrate_kbps or DEFAULT_BITRATE_KBPS
     encoder = make_element(enc_factory, f"enc-{stream_id}", bitrate=bitrate)
+    # insert-sps-pps=1: inject SPS/PPS before each IDR so mediamtx readers
+    # can pick up the stream mid-publish without waiting for the next keyframe.
+    # maxperf-enable=1: disable power-saving clock gating that caused the
+    # encoder to stall after a few buffers under load.
+    try:
+        encoder.set_property("insert-sps-pps", 1)
+        encoder.set_property("maxperf-enable", 1)
+    except Exception as e:
+        log.warning("could not set encoder insert-sps-pps/maxperf: %s", e)
     parser = make_element(
         "h264parse" if encoder_kind == "h264" else "h265parse",
         f"parse-{stream_id}",
+        config_interval=1,  # re-inject SPS/PPS every second (belt+braces)
     )
 
     rtsp_url = f"{rtsp_url_prefix}{stream_id}"
-    # DIAG: use fakesink instead of rtspclientsink
-    rtsp_sink = make_element("fakesink", f"rtsp-{stream_id}", sync=False)
+    rtsp_sink = make_element(
+        "rtspclientsink", f"rtsp-{stream_id}",
+        location=rtsp_url,
+        protocols="tcp",
+        latency=200,
+        do_rtsp_keep_alive=True,
+    )
 
-    # Snapshot branch (always create; the appsink callback is a no-op if
-    # the snapshot store is not attached).
+    # Snapshot branch (only when enabled; we need a tee to fan out buffers
+    # to both the encoder and the nvjpegenc->appsink path).
     snapshot_sink = None
+    snap_tee = None
     if snapshot_enabled:
-        snapshot_sink = _make_snapshot_branch(
-            p, converter, stream_id, work_dir=work_dir
+        snap_tee, snapshot_sink = _make_snapshot_branch(
+            p, stream_id, work_dir=work_dir
         )
 
     # --- Add + link ------------------------------------------------------
@@ -630,28 +646,21 @@ def build_pipeline(
     if osd is not None:
         p.add(osd)
         chain.append(osd)
+    # Insert snap_tee between converter (or osd) and encoder so the snapshot
+    # branch can fan off it. Only added when snapshot_enabled.
+    if snap_tee is not None:
+        chain.append(snap_tee)
     chain.extend([encoder, parser, rtsp_sink])
-    for e in (encoder, parser, rtsp_sink, osd):
-        if e is not None and e not in (encoder, parser, rtsp_sink) and e not in chain:
-            p.add(e)
     for e in (encoder, parser, rtsp_sink):
-        if e not in (encoder, parser, rtsp_sink):
-            p.add(e)
-    p.add(encoder)
-    p.add(parser)
-    p.add(rtsp_sink)
+        p.add(e)
     # Link the FULL chain: mux -> nvinfer -> tracker -> analytics -> converter
-    # -> [osd?] -> encoder -> parser -> rtsp_sink. Prior code only linked
-    # converter onward, leaving mux.src dangling — pipeline reached PLAYING
-    # but no buffer ever reached nvinfer, so zero Detection events.
-    #
-    # DIAG: insert queue between each element to prevent back-pressure stall
-    # (5 buffers then freeze was observed without queues).
+    # -> [osd?] -> [snap_tee?] -> encoder -> parser -> rtsp_sink.
+    # Insert a queue between every pair of elements to prevent back-pressure
+    # stall (5 buffers then freeze was observed without queues).
     _queue_seq = [0]
     def _q():
         _queue_seq[0] += 1
-        q = make_element("queue", f"q-{stream_id}-{_queue_seq[0]}", silent=True) \
-            if False else make_element("queue", f"q-{stream_id}-{_queue_seq[0]}")
+        q = make_element("queue", f"q-{stream_id}-{_queue_seq[0]}")
         try:
             q.set_property("max-size-buffers", 0)
             q.set_property("max-size-time", 0)
@@ -666,8 +675,13 @@ def build_pipeline(
             _q_e = _q()
             p.add(_q_e)
             interleaved.append(_q_e)
-    log.info("DIAG: inserting %d queues between chain elements", len(interleaved) // 2)
+    log.info("pipeline: inserted %d queues between chain elements",
+             len(interleaved) // 2)
     link_chain(*interleaved)
+
+    # Link snapshot branch off the snap_tee.
+    if snap_tee is not None:
+        _wire_snapshot_branch(snap_tee, stream_id)
 
     # uridecodebin pads appear dynamically — connect on pad-added.
     if _rtsp_explicit:
@@ -785,25 +799,29 @@ def _apply_analytics_props(
 
 def _make_snapshot_branch(
     pipeline: Any,
-    src_element: Any,
     stream_id: str,
     *,
     work_dir: Optional[str] = None,
-) -> Any:
-    """Create the snapshot appsink branch.
+) -> tuple:
+    """Create the snapshot branch elements + tee.
 
-    Branch tees off src_element's src pad:
+    The returned tee must be inserted between converter (or osd) and the
+    encoder in the main chain. After main link_chain, the caller invokes
+    `_wire_snapshot_branch(tee, stream_id)` to attach the snapshot branch:
 
-        <tee> -> queue -> nvvideoconvert -> nvjpegenc -> appsink
+        tee.src_%u -> snap_queue -> snap_conv -> snap_jpegenc -> appsink
 
-    For simplicity in the first cut, we add an appsink attached to the
-    encoder's sink via a tee pad probe — the actual wiring requires a
-    ``tee`` element. Phase 8.3e will refine this.
-
-    Returns the appsink element (callback wired by snapshot_server).
+    Returns (tee, appsink).
     """
     require_gst()
     tee = make_element("tee", f"snap-tee-{stream_id}")
+    # allow-not-linked: keep pushing to encoder branch even if snapshot
+    # branch is slow / has no consumer yet. Without this, the tee blocks
+    # the entire pipeline when appsink fills its tiny queue.
+    try:
+        tee.set_property("allow-not-linked", True)
+    except Exception:
+        pass
     queue = make_element("queue", f"snap-queue-{stream_id}")
     converter = make_element("nvvideoconvert", f"snap-conv-{stream_id}")
     jpegenc = make_element("nvjpegenc", f"snap-jpeg-{stream_id}")
@@ -814,14 +832,75 @@ def _make_snapshot_branch(
         max_buffers=2,
         drop=True,
     )
+    try:
+        queue.set_property("max-size-buffers", 0)
+        queue.set_property("max-size-time", 0)
+        queue.set_property("max-size-bytes", 0)
+    except Exception:
+        pass
+    # Stash branch elements as Python attributes on the tee so
+    # _wire_snapshot_branch can find them later.
+    tee._snap_queue = queue
+    tee._snap_conv = converter
+    tee._snap_jpegenc = jpegenc
+    tee._snap_appsink = appsink
     for e in (tee, queue, converter, jpegenc, appsink):
         pipeline.add(e)
-    # NOTE: full wiring (tee insertion into encoder input) is incomplete.
-    # Phase 8.3e will complete the tee pad request + link. For now we
-    # return the appsink so snapshot_server can wire its callback.
-    log.debug("snapshot branch scaffolding created for %s (tee wiring pending)",
-              stream_id)
-    return appsink
+    log.info("snapshot branch created for %s", stream_id)
+    return tee, appsink
+
+
+def _wire_snapshot_branch(tee: Any, stream_id: str) -> None:
+    """Link the snapshot branch off the tee.
+
+    gst_element_link(tee, queue) auto-requests a "src_%u" pad on the tee.
+    Also sets `alloc-pad` on the tee to the encoder-side queue so the tee
+    uses the encoder branch's buffer pool — required for NVMM interoperability.
+    """
+    require_gst()
+    queue = getattr(tee, "_snap_queue", None)
+    conv = getattr(tee, "_snap_conv", None)
+    jpegenc = getattr(tee, "_snap_jpegenc", None)
+    appsink = getattr(tee, "_snap_appsink", None)
+    if not all([queue, conv, jpegenc, appsink]):
+        log.warning("snapshot branch elements missing on tee for %s", stream_id)
+        return
+    try:
+        if not tee.link(queue):
+            log.error("tee -> snap-queue link failed for %s", stream_id)
+            return
+        if not queue.link(conv):
+            log.error("snap-queue -> snap-conv link failed for %s", stream_id)
+            return
+        if not conv.link(jpegenc):
+            log.error("snap-conv -> snap-jpegenc link failed for %s", stream_id)
+            return
+        if not jpegenc.link(appsink):
+            log.error("snap-jpegenc -> snap-appsink link failed for %s", stream_id)
+            return
+    except Exception as e:
+        log.error("snapshot branch link failed for %s: %s", stream_id, e)
+        return
+
+    # Find the encoder-side queue (the OTHER tee src pad) and set it as
+    # alloc-pad. This tells the tee to use that branch's allocator.
+    try:
+        from gi.repository import Gst  # type: ignore[import-not-found]
+        enc_pad = None
+        for pad in tee.iterate_src_pads():
+            # Skip the snapshot branch pad (linked to snap_queue).
+            peer = pad.get_peer()
+            if peer is not None and peer.get_parent() is not queue:
+                enc_pad = pad
+                break
+        if enc_pad is not None:
+            tee.set_property("alloc-pad", enc_pad)
+            log.info("snapshot: tee alloc-pad set to encoder branch for %s", stream_id)
+    except Exception as e:
+        log.warning("could not set tee alloc-pad for %s: %s", stream_id, e)
+
+    log.info("snapshot branch wired: tee -> queue -> conv -> jpegenc -> appsink (%s)",
+             stream_id)
 
 
 def _default_output() -> Any:

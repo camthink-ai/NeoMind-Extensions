@@ -60,9 +60,11 @@ from protocol import (
     RemoveStream,
     SetThreshold,
     Shutdown,
+    Stats,
     StreamAdded,
     StreamError,
     StreamRemoved,
+    StreamStat,
     UpdateAnalytics,
     deserialize_line,
     parse_control_message,
@@ -107,6 +109,9 @@ class DeepStreamRunner:
         self._snapshot_server: Any = None
         self._shutdown_requested = threading.Event()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        # Per-stream previous-stats snapshot for FPS delta computation.
+        # Keyed by stream_id; value = (ts_monotonic, frame_count).
+        self._stats_prev: Dict[str, tuple] = {}
 
     # --- Emit helpers ----------------------------------------------------
 
@@ -210,20 +215,32 @@ class DeepStreamRunner:
             self._snapshot_server = None
 
         # 5. Emit hello_ack.
+        # rtsp_url_prefix uses 127.0.0.1 (connect address) — mediamtx runs
+        # alongside the sidecar on the same host. snapshot_bind_addr (default
+        # 0.0.0.0) is the BIND address for the snapshot HTTP server and is
+        # unrelated to the RTSP connect address.
         self.emit(HelloAck(
             max_streams=self.config.max_streams,
-            rtsp_url_prefix=f"rtsp://{self.config.snapshot_bind_addr}:{self.config.rtsp_port}/ds/",
+            rtsp_url_prefix=f"rtsp://127.0.0.1:{self.config.rtsp_port}/ds/",
             models_loaded=self._scan_models(),
         ))
 
         # 6. Install signal handlers + enter control loop.
         self._install_signal_handlers()
 
+        # Start periodic Stats emission (1 Hz).
+        stats_task = asyncio.ensure_future(self._stats_loop())
+
         try:
             await self._control_loop()
         except asyncio.CancelledError:
             pass
         finally:
+            stats_task.cancel()
+            try:
+                await stats_task
+            except (asyncio.CancelledError, Exception):
+                pass
             await self._graceful_shutdown(reason="control loop ended", exit_code=0)
             if self._bridge is not None:
                 self._bridge.stop()
@@ -314,6 +331,90 @@ class DeepStreamRunner:
 
         return None
 
+    # --- Stats emission --------------------------------------------------
+
+    async def _stats_loop(self) -> None:
+        """Emit a ``Stats`` SidecarEvent every 5 seconds.
+
+        Per-stream FPS is computed by sampling frame_count deltas across
+        intervals. Latency is not measured (no reliable per-buffer latency
+        probe without a jitterbuffer); reported as 0.0.
+        """
+        while not self._shutdown_requested.is_set():
+            try:
+                await asyncio.sleep(5.0)
+            except asyncio.CancelledError:
+                return
+            if self._shutdown_requested.is_set():
+                return
+            try:
+                self._emit_one_stats()
+            except Exception as e:
+                log.warning("stats emission failed: %s", e)
+
+    def _emit_one_stats(self) -> None:
+        with self.streams_lock:
+            entries = list(self.streams.values())
+        if not entries:
+            return
+
+        now_mono = time.monotonic()
+        per_stream: List[StreamStat] = []
+        total_fps = 0.0
+        for entry in entries:
+            fc = 0
+            oc = 0
+            if entry.probe_handle is not None:
+                fc = entry.probe_handle.frame_count
+                oc = entry.probe_handle.object_count
+            # FPS delta.
+            prev = self._stats_prev.get(entry.stream_id)
+            fps = 0.0
+            if prev is not None:
+                dt = now_mono - prev[0]
+                df = fc - prev[1]
+                if dt > 0 and df >= 0:
+                    fps = df / dt
+            self._stats_prev[entry.stream_id] = (now_mono, fc)
+            total_fps += fps
+
+            status = "unknown"
+            try:
+                from gi.repository import Gst  # type: ignore[import-not-found]
+                if entry.pipeline_handle is not None:
+                    _, state, _ = entry.pipeline_handle.pipeline.get_state(0)
+                    status = {
+                        Gst.State.NULL: "null",
+                        Gst.State.READY: "ready",
+                        Gst.State.PAUSED: "paused",
+                        Gst.State.PLAYING: "playing",
+                    }.get(state, str(state))
+            except Exception:
+                pass
+
+            per_stream.append(StreamStat(
+                stream_id=entry.stream_id,
+                fps=round(fps, 2),
+                latency_ms=0.0,
+                frame_count=fc,
+                object_count=oc,
+                status=status,
+            ))
+
+        # Prune stale entries from _stats_prev.
+        live_ids = {e.stream_id for e in entries}
+        for sid in list(self._stats_prev.keys()):
+            if sid not in live_ids:
+                del self._stats_prev[sid]
+
+        self.emit(Stats(
+            ts=int(time.time() * 1000),
+            global_fps=round(total_fps, 2),
+            gpu_utilization_percent=0.0,
+            gpu_memory_used_mb=0.0,
+            per_stream=per_stream,
+        ))
+
     # --- Phase 2: control loop -------------------------------------------
 
     async def _control_loop(self) -> None:
@@ -402,7 +503,7 @@ class DeepStreamRunner:
                 return
 
         rtsp_prefix = (
-            f"rtsp://{self.config.snapshot_bind_addr}:{self.config.rtsp_port}/ds/"
+            f"rtsp://127.0.0.1:{self.config.rtsp_port}/ds/"
             if self.config else pipeline_builder.DEFAULT_RTSP_URL_PREFIX
         )
 
