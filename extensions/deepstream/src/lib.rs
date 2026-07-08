@@ -239,9 +239,9 @@ impl DeepStreamExtension {
 
         match matched {
             SidecarEvent::StreamAdded {
-                rtsp_url, ..
+                rtsp_url, snapshot_token, ..
             } => {
-                let _ = self.streams.set_rtsp_url(&stream_id, rtsp_url.clone());
+                let _ = self.streams.set_rtsp_url(&stream_id, rtsp_url.clone(), snapshot_token.clone());
                 let _ = self.streams.transition(
                     &stream_id,
                     crate::stream_manager::StreamStatus::Running,
@@ -249,6 +249,7 @@ impl DeepStreamExtension {
                 Ok(serde_json::json!({
                     "stream_id": stream_id,
                     "rtsp_url": rtsp_url,
+                    "snapshot_token": snapshot_token,
                 }))
             }
             SidecarEvent::ErrorResponse { code, message, .. } => {

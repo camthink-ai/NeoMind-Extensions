@@ -528,14 +528,12 @@ class DeepStreamRunner:
             ))
             return
 
-        # Register snapshot token + wire appsink callback.
+        # Register snapshot token + RTSP URL for on-demand capture.
         token = ""
         if self._snapshot_store is not None:
-            token = self._snapshot_store.register_stream(cfg.stream_id)
-            if built.snapshot_sink is not None:
-                _wire_snapshot_callback(
-                    built.snapshot_sink, cfg.stream_id, self._snapshot_store
-                )
+            token = self._snapshot_store.register_stream(
+                cfg.stream_id, rtsp_url=built.rtsp_url
+            )
 
         # Build event filter + attach analytics probe.
         events_cfg = cfg.events
@@ -588,6 +586,7 @@ class DeepStreamRunner:
             id=msg.id,
             stream_id=cfg.stream_id,
             rtsp_url=built.rtsp_url,
+            snapshot_token=token,
         ))
 
     async def _handle_remove_stream(self, msg: RemoveStream) -> None:

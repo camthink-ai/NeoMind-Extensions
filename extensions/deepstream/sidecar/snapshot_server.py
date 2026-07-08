@@ -4,8 +4,10 @@ Exposes one endpoint:
 
     GET /snapshot/<stream_id>.jpg?token=<token>
 
-Returns the latest JPEG from the stream's snapshot ring buffer
-(populated by the appsink callback wired by :mod:`pipeline_builder`).
+Grabs one frame **on demand** from the stream's RTSP output via ffmpeg
+and returns it as JPEG. This approach avoids any tee/appsink branch in
+the main pipeline (which was found to stall the pipeline — see
+STATUS.md design decision #2).
 
 Design:
 
@@ -16,18 +18,12 @@ Design:
 - **Bind address** comes from the ``hello.snapshot_bind_addr`` field
   (e.g. ``127.0.0.1`` or ``0.0.0.0``). Default port 8555.
 - **Token validation:** per-stream token stored in
-  :class:`SnapshotStore.register_stream`. Missing/unknown token -> 401.
-- **Missing stream / no JPEG yet:** 404.
+  :class:`SnapshotStore.register_stream`. Missing/unknown token -> 404.
+- **ffmpeg subprocess** captures one frame from the RTSP URL (1-2s
+  latency per snapshot, acceptable for on-demand operator use).
 - **Content-Type:** ``image/jpeg`` on success.
 - Runs in its own daemon thread; shutdown is graceful (the server's
   ``shutdown()`` is called from the runner on exit).
-
-JPEG buffer ownership:
-
-- :class:`SnapshotStore` is a process-wide singleton owned by the runner.
-- The appsink ``new-sample`` callback (registered by pipeline_builder)
-  pushes the latest JPEG bytes into the store.
-- HTTP handlers pull the latest bytes (one-shot read, no copy).
 """
 
 from __future__ import annotations
@@ -43,49 +39,41 @@ log = logging.getLogger("deepstream.snapshot_server")
 
 
 class SnapshotStore:
-    """Thread-safe per-stream latest-JPEG registry with token gating.
+    """Per-stream snapshot registry with token gating + on-demand capture.
 
-    The store has one slot per stream_id. Latest write wins; readers
-    always get the most recent bytes. Locking is per-stream so a slow
-    HTTP read on one stream doesn't block writes on another.
+    Stores stream_id → (token, rtsp_url). When a snapshot is requested,
+    runs ffmpeg to grab one frame from the RTSP output URL.
     """
 
     def __init__(self) -> None:
         self._streams: Dict[str, _StreamSlot] = {}
         self._global_lock = threading.Lock()
 
-    def register_stream(self, stream_id: str, token: Optional[str] = None) -> str:
+    def register_stream(
+        self, stream_id: str, rtsp_url: str = "", token: Optional[str] = None
+    ) -> str:
         """Add ``stream_id`` to the store; returns the snapshot token.
 
-        If ``token`` is None, a new token is generated (cryptographic
-        random, 32 hex chars). Re-registering an existing stream_id
-        overwrites the token (used by re-add after remove).
+        ``rtsp_url`` is the output RTSP URL used for on-demand frame
+        capture. If ``token`` is None, a new token is generated
+        (cryptographic random, 32 hex chars).
         """
         tok = token or secrets.token_hex(16)
         with self._global_lock:
-            self._streams[stream_id] = _StreamSlot(token=tok)
-        log.info("snapshot store registered stream %s", stream_id)
+            self._streams[stream_id] = _StreamSlot(token=tok, rtsp_url=rtsp_url)
+        log.info("snapshot store registered stream %s (rtsp=%s)", stream_id, rtsp_url)
         return tok
 
     def unregister_stream(self, stream_id: str) -> None:
         with self._global_lock:
             self._streams.pop(stream_id, None)
 
-    def push_jpeg(self, stream_id: str, jpeg_bytes: bytes) -> None:
-        """Called from the appsink callback (GLib thread)."""
-        with self._global_lock:
-            slot = self._streams.get(stream_id)
-        if slot is None:
-            return
-        with slot.lock:
-            slot.bytes = jpeg_bytes
-            slot.size = len(jpeg_bytes)
-
     def get(self, stream_id: str, token: str) -> Optional[bytes]:
-        """Return JPEG bytes for ``stream_id`` if token matches.
+        """Capture one JPEG frame from the stream's RTSP output.
 
-        Returns None if stream not registered, token mismatch, or no
-        JPEG captured yet.
+        Runs ffmpeg as a subprocess to grab a single frame. Returns
+        JPEG bytes, or None if stream not registered / token mismatch /
+        capture failed.
         """
         with self._global_lock:
             slot = self._streams.get(stream_id)
@@ -93,18 +81,91 @@ class SnapshotStore:
             return None
         if not _consttime_eq(slot.token, token):
             return None
-        with slot.lock:
-            return slot.bytes
+        if not slot.rtsp_url:
+            return None
+        return _capture_frame(slot.rtsp_url)
 
 
 class _StreamSlot:
-    __slots__ = ("token", "bytes", "size", "lock")
+    __slots__ = ("token", "rtsp_url")
 
-    def __init__(self, token: str) -> None:
+    def __init__(self, token: str, rtsp_url: str = "") -> None:
         self.token = token
-        self.bytes: Optional[bytes] = None
-        self.size: int = 0
-        self.lock = threading.Lock()
+        self.rtsp_url = rtsp_url
+
+
+def _capture_frame(rtsp_url: str, timeout: int = 10) -> Optional[bytes]:
+    """Grab one JPEG frame from ``rtsp_url`` via a one-shot GStreamer pipeline.
+
+    Uses nvv4l2decoder + nvjpegenc for hardware-accelerated decode/encode
+    on Jetson. The pipeline is created, played until one buffer arrives on
+    the appsink, then set to NULL. Safe to call from the HTTP thread —
+    GStreamer element creation is thread-safe after Gst.init().
+    """
+    import time as _time
+
+    try:
+        from gi.repository import Gst  # type: ignore[import-not-found]
+    except Exception as e:
+        log.warning("GStreamer not available for snapshot: %s", e)
+        return None
+
+    desc = (
+        f"rtspsrc location={rtsp_url} protocols=tcp latency=200 "
+        f"! rtph264depay ! queue max-size-buffers=0 max-size-time=0 max-size-bytes=0 "
+        f"! nvv4l2decoder ! queue max-size-buffers=0 max-size-time=0 max-size-bytes=0 "
+        f"! nvvideoconvert ! queue max-size-buffers=0 max-size-time=0 max-size-bytes=0 "
+        f"! nvjpegenc ! queue max-size-buffers=0 max-size-time=0 max-size-bytes=0 "
+        f"! appsink name=sink emit-signals=true sync=false max-buffers=1 drop=true"
+    )
+
+    try:
+        pl = Gst.parse_launch(desc)
+    except Exception as e:
+        log.warning("snapshot pipeline parse failed: %s", e)
+        return None
+
+    sink = pl.get_by_name("sink")
+    if sink is None:
+        log.warning("snapshot pipeline has no appsink")
+        return None
+
+    jpeg_data: list = []  # mutable container for closure
+
+    def _on_sample(sink: Any) -> Any:
+        try:
+            sample = sink.emit("pull-sample")
+            if sample is None:
+                return Gst.FlowReturn.OK
+            buf = sample.get_buffer()
+            if buf is None:
+                return Gst.FlowReturn.OK
+            ok, info = buf.map(Gst.MapFlags.READ)
+            if ok:
+                jpeg_data.append(bytes(info.data))
+                buf.unmap(info)
+        except Exception as e:
+            log.warning("snapshot appsink error: %s", e)
+        return Gst.FlowReturn.OK
+
+    sink.connect("new-sample", _on_sample)
+
+    ret = pl.set_state(Gst.State.PLAYING)
+    if ret == Gst.StateChangeReturn.FAILURE:
+        log.warning("snapshot pipeline failed to start")
+        pl.set_state(Gst.State.NULL)
+        return None
+
+    deadline = _time.monotonic() + timeout
+    while not jpeg_data and _time.monotonic() < deadline:
+        _time.sleep(0.1)
+
+    pl.set_state(Gst.State.NULL)
+
+    if jpeg_data:
+        return jpeg_data[0]
+    log.warning("snapshot timed out (%ds) for %s", timeout, rtsp_url)
+    return None
 
 
 def _consttime_eq(a: str, b: str) -> bool:

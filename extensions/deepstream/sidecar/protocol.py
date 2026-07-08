@@ -417,6 +417,7 @@ class StreamAdded:
     id: str
     stream_id: str
     rtsp_url: str
+    snapshot_token: str = ""
 
     TYPE_TAG: str = field(init=False, default="stream_added", repr=False)
     OPTIONAL_OMIT_NONE: frozenset = field(init=False, default=frozenset(), repr=False)

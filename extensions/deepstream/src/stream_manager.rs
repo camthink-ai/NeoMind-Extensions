@@ -310,18 +310,22 @@ impl StreamManager {
         Ok(())
     }
 
-    /// Record the sidecar-assigned RTSP URL (and optional snapshot token)
+    /// Record the sidecar-assigned RTSP URL and snapshot token
     /// once the StreamAdded event arrives.
     pub fn set_rtsp_url(
         &self,
         stream_id: &str,
         url: String,
+        snapshot_token: String,
     ) -> Result<(), StreamManagerError> {
         let mut streams = self.streams.write();
         let state = streams
             .get_mut(stream_id)
             .ok_or_else(|| StreamManagerError::NotFound(stream_id.to_string()))?;
         state.rtsp_url = Some(url);
+        if !snapshot_token.is_empty() {
+            state.snapshot_token = Some(snapshot_token);
+        }
         Ok(())
     }
 
@@ -425,6 +429,7 @@ impl StreamManager {
                             id: resp_id,
                             stream_id,
                             rtsp_url,
+                            snapshot_token: _,
                         }) if resp_id == id =>
                         {
                             return Ok((stream_id, rtsp_url));
@@ -447,7 +452,7 @@ impl StreamManager {
             match outcome {
                 Ok(Ok((stream_id, rtsp_url))) => {
                     // Best-effort: update rtsp_url + transition to Running.
-                    let _ = self.set_rtsp_url(&id, rtsp_url);
+                    let _ = self.set_rtsp_url(&id, rtsp_url, String::new());
                     let _ = self.transition(&id, StreamStatus::Running);
                     succeeded.push(id.clone());
                     info!(

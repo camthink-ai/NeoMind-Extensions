@@ -114,6 +114,7 @@ pub enum SidecarEvent {
         id: String,
         stream_id: String,
         rtsp_url: String,
+        snapshot_token: String,
     },
     StreamRemoved {
         id: String,
