@@ -38,9 +38,10 @@ skill/
 └── neomind-extension/              # Skill package
     ├── SKILL.md                    # Main skill instructions
     ├── reference/                  # Detailed references
-    │   ├── architecture.md         # Process isolation & IPC
-    │   ├── sdk-api.md              # Complete SDK API
-    │   └── frontend.md             # React components
+    │   ├── architecture.md         # Process isolation, IPC, ABI v3 FFI symbols
+    │   ├── sdk-api.md              # Complete SDK API (Extension trait, capabilities, errors)
+    │   ├── event-subscription.md   # Event subscription + handle_event (sync!)
+    │   └── frontend.md             # React components + CSS variables + config schema
     └── examples/                   # Working examples
         └── simple-counter.md       # Complete counter extension
 ```
@@ -227,17 +228,20 @@ With this skill, you can create:
 
 ### Main Skill (neomind-extension/)
 
-**SKILL.md** (12KB)
-- Quick commands
-- Step-by-step workflow
-- Code templates
-- Common patterns
-- Safety requirements
+**SKILL.md** (~42KB)
+- Quick start workflow (build scripts, version model)
+- Step-by-step: Cargo.toml → Extension trait → ML → streaming → frontend
+- Bridge extension pattern (Modbus / LoRaWAN / HA / OPC UA / ONVIF / BACnet)
+- Python sidecar pattern (voice / TTS / ASR — HTTP or WebSocket)
+- ChatStream / ChatSession capability integration
+- Marketplace release checklist
+- Real extension examples (23 production extensions categorized)
 
-**reference/** (20KB)
-- `architecture.md` - Process isolation, IPC protocol
-- `sdk-api.md` - Complete SDK reference
-- `frontend.md` - React component guide
+**reference/** (~40KB)
+- `architecture.md` — Process isolation, IPC protocol, ABI v3 FFI symbol table
+- `sdk-api.md` — Complete SDK API verified against source (Extension trait, all 23 ExtensionError variants, all 20 ExtensionCapability variants, CapabilityContext, builders, macros)
+- `event-subscription.md` — Event subscription + sync `handle_event` (and the three classic pitfalls)
+- `frontend.md` — React components, NeoMind CSS variables, flat `configSchema`, `uiHints`, `dataSource`
 
 **examples/** (7KB)
 - `simple-counter.md` - Complete working extension
@@ -358,6 +362,7 @@ MIT License - Same as NeoMind-Extension repository
 
 ---
 
-**Version**: 1.0.0
+**Version**: 3.0.0 (SDK v0.6 / ABI v3)
 **Created**: March 3, 2026
+**Last updated**: July 8, 2026 — full rewrite against current SDK + 23 production extensions
 **Maintained by**: NeoMind Team

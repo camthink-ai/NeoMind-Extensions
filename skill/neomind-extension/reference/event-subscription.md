@@ -1,83 +1,100 @@
-# 事件订阅指南
+# 事件订阅指南 (Event Subscription Guide)
 
-## 概述
+> 双语版 — 中英文混排，便于检索。
 
-NeoMind 扩展可以订阅系统事件并对其做出反应。所有事件类型都自动支持，无需手动维护。
+## Overview / 概述
 
-## 事件订阅
+NeoMind 扩展可以订阅平台事件并做出反应。事件通过 `EventBus` 广播，由
+`EventDispatcher` 按 `event_subscriptions()` 过滤后，**异步推送给每个扩展进程**
+（通过 `EventPush` IPC 通道）。
 
-扩展通过实现 `event_subscriptions()` 方法声明要订阅的事件类型：
+> **重要**：事件由 `EventDispatcher` 按 `event_subscriptions()` **过滤**。
+> 不重写该方法（默认 `&[]`），所有事件都会被静默丢弃。这是已知的头号踩坑点。
+
+## 1. 订阅声明
+
+扩展通过重写 `event_subscriptions()` 方法声明要订阅的事件类型：
 
 ```rust
 use neomind_extension_sdk::prelude::*;
 
 pub struct MyExtension;
 
+#[async_trait::async_trait]
 impl Extension for MyExtension {
     fn event_subscriptions(&self) -> &[&str] {
-        // 订阅特定事件
-        &["DeviceMetric", "AgentExecutionStarted"]
+        // 精确匹配 — 只接收列出的 event type
+        &["AgentStreamChunk", "AgentStreamEnd"]
     }
 }
 ```
 
-### 订阅方式
+### 订阅语义
 
-1. **精确匹配**：订阅特定事件类型
-   ```rust
-   &["DeviceMetric"]  // 只接收 DeviceMetric 事件
-   ```
+| 写法 | 行为 |
+|---|---|
+| `&["AgentStreamChunk"]` | 精确匹配 — 只接收该类型 |
+| `&["Agent"]` | **前缀匹配** — 接收所有以 `Agent` 开头的事件（`AgentStreamChunk`, `AgentExecutionStarted`, ...） |
+| `&["*"]` 或 `&["all"]` | 通配 — 接收所有事件（**慎用**，吞吐压力大） |
+| `&[]` （默认） | 不订阅任何事件 |
 
-2. **前缀匹配**：订阅一类事件
-   ```rust
-   &["Device"]  // 接收所有 Device* 事件（DeviceMetric, DeviceOnline 等）
-   ```
+### 默认陷阱
 
-3. **通配符**：订阅所有事件
-   ```rust
-   &["all"]  // 接收所有事件
-   ```
+SDK trait 默认实现是 `&[]`，**如果你不重写，事件分发器会静默过滤掉所有事件**。
+这是 ChatStream 集成中最常见的 bug — 扩展写得没问题，但 `handle_event` 从来不被
+调用，因为没有订阅。永远记得在用事件时显式重写 `event_subscriptions()`。
 
-4. **不订阅**：不接收任何事件
-   ```rust
-   &[]  // 默认值，不接收事件
-   ```
+## 2. 事件处理
 
-## 事件处理
-
-扩展通过实现 `handle_event()` 方法处理接收到的事件：
+`handle_event` 是 **同步方法**（**不能用 `.await`**）。所有跨 await point 的
+共享状态必须用 `parking_lot::Mutex` / `parking_lot::RwLock`，**不能**用
+`tokio::Mutex`（会死锁）。
 
 ```rust
-impl Extension for MyExtension {
+use neomind_extension_sdk::prelude::*;
+use serde_json::json;
+use std::sync::atomic::{AtomicI64, Ordering};
+use parking_lot::RwLock;
+use std::collections::HashMap;
+
+pub struct EventMonitor {
+    alert_count: AtomicI64,
+    // 跨 handle_event + execute_command 共享：用 parking_lot
+    per_device_state: RwLock<HashMap<String, DeviceState>>,
+}
+
+#[async_trait::async_trait]
+impl Extension for EventMonitor {
     fn handle_event(&self, event_type: &str, payload: &serde_json::Value) -> Result<()> {
+        // EventDispatcher 把事件包成 envelope:
+        //   { "event_type": "...", "payload": { ... 真实事件 ... }, "timestamp": ... }
+        // 永远先 unwrap 一层
+        let inner = payload.get("payload").unwrap_or(payload);
+
         match event_type {
             "DeviceMetric" => {
-                // 处理设备指标事件
-                let device_id = payload["payload"]["device_id"].as_str().unwrap_or("");
-                let metric = payload["payload"]["metric"].as_str().unwrap_or("");
-                let value = &payload["payload"]["value"];
+                let device_id = inner.get("device_id").and_then(|v| v.as_str()).unwrap_or("");
+                let metric = inner.get("metric").and_then(|v| v.as_str()).unwrap_or("");
+                let value = inner.get("value");
 
-                tracing::info!(
-                    device_id = %device_id,
-                    metric = %metric,
-                    value = ?value,
-                    "Received device metric event"
-                );
-
-                // 根据事件执行相应操作
-                if metric == "temperature" && value.as_f64().unwrap_or(0.0) > 30.0 {
-                    // 温度过高，触发告警
+                // 温度告警示例
+                if metric == "temperature"
+                    && value.and_then(|v| v.as_f64()).map(|t| t > 30.0).unwrap_or(false)
+                {
                     self.trigger_alert(device_id, "Temperature too high");
                 }
             }
-            "AgentExecutionStarted" => {
-                // 处理 Agent 执行开始事件
-                let agent_id = payload["payload"]["agent_id"].as_str().unwrap_or("");
-                tracing::info!(agent_id = %agent_id, "Agent execution started");
+            "AgentStreamChunk" => {
+                // ChatStream 的 LLM token 流
+                if let Some(sid) = inner.get("session_id").and_then(|v| v.as_str()) {
+                    // 路由到 per-session mpsc::Sender ...
+                }
+            }
+            "AgentStreamEnd" => {
+                // 权威的流终止信号 — 清理 session 状态
             }
             _ => {
-                // 处理其他事件
-                tracing::debug!(event_type = %event_type, "Received event");
+                ext_debug!(event_type = %event_type, "unhandled event");
             }
         }
         Ok(())
@@ -85,9 +102,18 @@ impl Extension for MyExtension {
 }
 ```
 
-## 事件格式
+### handle_event 三大陷阱（每个都引发过真实 bug）
 
-所有事件都使用统一的 JSON 格式：
+1. **没有重写 `event_subscriptions()`** → 默认 `&[]` → 所有事件被静默过滤。
+2. **用了 `tokio::Mutex`** → `handle_event` 是 sync，无法 `.await` lock，会死锁
+   或必须用 `try_lock`。**永远用 `parking_lot::RwLock` / `parking_lot::Mutex`**。
+3. **直接读 `payload.get("session_id")`** → 读不到。实际送达的 shape 是
+   `{event_type, payload: {session_id, ...}, timestamp}`。必须先
+   `payload.get("payload").unwrap_or(payload)` 取内层。
+
+## 3. 事件格式
+
+所有事件使用统一的 envelope：
 
 ```json
 {
@@ -96,231 +122,223 @@ impl Extension for MyExtension {
     "device_id": "sensor-1",
     "metric": "temperature",
     "value": 25.5,
-    "timestamp": 1234567890,
+    "timestamp": 1709481600000,
     "quality": 0.95
   },
-  "timestamp": 1234567890
+  "timestamp": 1709481600000
 }
 ```
 
-### 字段说明
+- `event_type` — 类型名（用于 `event_subscriptions()` 匹配）
+- `payload` — 真实事件数据（在 `handle_event` 里需要再 unwrap 一层）
+- `timestamp` — unix 毫秒
 
-- `event_type`: 事件类型名称（如 "DeviceMetric", "AgentExecutionStarted"）
-- `payload`: 事件数据，包含事件的具体信息
-- `timestamp`: 事件时间戳（毫秒）
+## 4. 常用事件类型速查
 
-## 支持的事件类型
+完整列表见 `NeoMind/crates/neomind-core/src/event.rs` 的 `NeoMindEvent` 枚举。
+常用分类：
 
-所有 `NeoMindEvent` 类型都自动支持，包括：
+### Agent / LLM 流（最重要 — ChatStream 集成必用）
+
+| 事件 | 触发时机 | payload 关键字段 |
+|---|---|---|
+| `AgentStreamChunk` | LLM 产生一个 token / chunk | `session_id`, `chunk: {type, content}`, `timestamp` |
+| `AgentStreamEnd` | 流终止（**权威终止信号**） | `session_id`, `reason`, `error`, `timestamp` |
+
+> `chunk.type` 取值：`"Content"` / `"reasoning"` / `"end"`（**小写！**）。
+> 推理模型会发中间 `"end"`，所以 chunk 里的 end **不是**权威终止信号 — 必须等
+> `AgentStreamEnd` 才能清理 session 状态。
 
 ### 设备事件
-- `DeviceMetric` - 设备指标更新
-- `DeviceOnline` - 设备上线
-- `DeviceOffline` - 设备离线
-- `DeviceCommandResult` - 设备命令执行结果
 
-### 规则事件
-- `RuleEvaluated` - 规则条件评估
-- `RuleTriggered` - 规则触发
-- `RuleExecuted` - 规则执行完成
+| 事件 | 触发时机 |
+|---|---|
+| `DeviceMetric` | 设备指标更新 |
+| `DeviceOnline` / `DeviceOffline` | 设备上线 / 离线 |
+| `DeviceCommandResult` | 设备命令执行结果 |
+| `DeviceDataUpdated` | 设备数据更新（如摄像头出新帧） |
 
-### 工作流事件
-- `WorkflowTriggered` - 工作流触发
-- `WorkflowStepCompleted` - 工作流步骤完成
-- `WorkflowCompleted` - 工作流完成
+### 规则 / Agent 执行
 
-### 告警/消息事件
-- `AlertCreated` - 告警创建
-- `AlertAcknowledged` - 告警确认
-- `MessageCreated` - 消息创建
-- `MessageAcknowledged` - 消息确认
-- `MessageResolved` - 消息解决
+| 事件 | 触发时机 |
+|---|---|
+| `RuleEvaluated` / `RuleTriggered` / `RuleExecuted` | 规则引擎 |
+| `AgentExecutionStarted` / `AgentExecutionCompleted` | Agent 执行生命周期 |
+| `AgentThinking` / `AgentDecision` / `AgentProgress` | Agent 中间状态 |
 
-### Agent 事件
-- `AgentExecutionStarted` - Agent 执行开始
-- `AgentThinking` - Agent 思考过程
-- `AgentDecision` - Agent 决策
-- `AgentProgress` - Agent 执行进度
-- `AgentExecutionCompleted` - Agent 执行完成
-- `AgentMemoryUpdated` - Agent 记忆更新
+### 告警 / 消息
 
-### LLM 事件
-- `LlmDecisionProposed` - LLM 决策提议
-- `LlmDecisionExecuted` - LLM 决策执行
+| 事件 | 触发时机 |
+|---|---|
+| `AlertCreated` / `AlertAcknowledged` | 告警 |
+| `MessageCreated` / `MessageAcknowledged` / `MessageResolved` | 消息中心 |
 
-### 工具执行事件
-- `ToolExecutionStart` - 工具执行开始
-- `ToolExecutionSuccess` - 工具执行成功
-- `ToolExecutionFailure` - 工具执行失败
+### 工具执行
 
-### 扩展事件
-- `ExtensionOutput` - 扩展输出更新
-- `ExtensionLifecycle` - 扩展生命周期状态变化
-- `ExtensionCommandStarted` - 扩展命令开始执行
-- `ExtensionCommandCompleted` - 扩展命令执行完成
-- `ExtensionCommandFailed` - 扩展命令执行失败
+| 事件 | 触发时机 |
+|---|---|
+| `ToolExecutionStart` / `ToolExecutionSuccess` / `ToolExecutionFailure` | MCP / 工具调用 |
 
-### 用户事件
-- `UserMessage` - 用户消息
-- `LlmResponse` - LLM 响应
+### 扩展自身事件
+
+| 事件 | 触发时机 |
+|---|---|
+| `ExtensionOutput` | 扩展输出更新 |
+| `ExtensionLifecycle` | 扩展加载 / 卸载 / 崩溃 |
+| `ExtensionCommandStarted` / `ExtensionCommandCompleted` / `ExtensionCommandFailed` | 命令执行 |
 
 ### 自定义事件
-- 任何自定义事件类型（通过 `Custom` 事件）
 
-## 完整示例
+通过 `EventPublish` capability 发布的任意事件类型（`Custom(...)` 变体）。
+
+### ❌ 已移除的事件
+
+`WorkflowTriggered` / `WorkflowStepCompleted` / `WorkflowCompleted` 等
+**Workflow 事件已废弃**（NeoMind 不再内置 workflow 引擎）。`EventFilter.workflow_id`
+字段保留但已 deprecated。新代码不要订阅这些事件。
+
+## 5. 完整示例：温度告警 + ChatStream 路由
 
 ```rust
+use async_trait::async_trait;
 use neomind_extension_sdk::prelude::*;
+use neomind_extension_sdk::{CommandBuilder, MetricBuilder, metric_int};
+use parking_lot::RwLock;
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Arc;
+use tokio::sync::mpsc;
 
-pub struct EventMonitoringExtension {
+pub struct EventMonitorExt {
     alert_count: AtomicI64,
+    // 每个 chat session 一个 mpsc sender，handle_event 用 try_send 投递 chunk
+    chat_streams: Arc<RwLock<HashMap<String, mpsc::Sender<String>>>>,
 }
 
-impl EventMonitoringExtension {
+impl EventMonitorExt {
     pub fn new() -> Self {
         Self {
             alert_count: AtomicI64::new(0),
+            chat_streams: Arc::new(RwLock::new(HashMap::new())),
         }
-    }
-
-    fn trigger_alert(&self, device_id: &str, message: &str) {
-        let count = self.alert_count.fetch_add(1, Ordering::SeqCst) + 1;
-        tracing::warn!(
-            device_id = %device_id,
-            message = %message,
-            alert_count = count,
-            "Alert triggered"
-        );
     }
 }
 
-impl Extension for EventMonitoringExtension {
+impl Default for EventMonitorExt {
+    fn default() -> Self { Self::new() }
+}
+
+#[async_trait]
+impl Extension for EventMonitorExt {
     fn metadata(&self) -> &ExtensionMetadata {
-        static_metadata!("event-monitor", "Event Monitor", "1.0.0")
+        static META: std::sync::OnceLock<ExtensionMetadata> = std::sync::OnceLock::new();
+        META.get_or_init(|| {
+            ExtensionMetadata::new("event-monitor", "Event Monitor", "1.0.0")
+                .with_description("Demonstrates event subscription + ChatStream routing")
+        })
     }
 
-    fn metrics(&self) -> &[MetricDescriptor] {
-        static_metrics!(
-            MetricDescriptor::new("alert_count", "Alert Count", MetricDataType::Integer)
-        )
+    fn metrics(&self) -> Vec<MetricDescriptor> {
+        vec![
+            MetricBuilder::new("alert_count", "Alert Count")
+                .integer()
+                .unit("count")
+                .min(0.0)
+                .build(),
+        ]
     }
 
-    fn commands(&self) -> &[ExtensionCommand] {
-        static_commands!(
+    fn commands(&self) -> Vec<ExtensionCommand> {
+        vec![
             CommandBuilder::new("get_alert_count")
                 .display_name("Get Alert Count")
-                .llm_hints("Get the total number of alerts triggered")
-                .build()
-        )
+                .description("Returns the total number of alerts triggered by events")
+                .build(),
+        ]
     }
 
     fn event_subscriptions(&self) -> &[&str] {
-        // 订阅所有设备事件和 Agent 事件
-        &["Device", "Agent"]
+        // 订阅设备事件前缀 + ChatStream 关键事件
+        &["Device", "AgentStreamChunk", "AgentStreamEnd"]
     }
 
     fn handle_event(&self, event_type: &str, payload: &serde_json::Value) -> Result<()> {
+        // 永远先 unwrap envelope
+        let inner = payload.get("payload").unwrap_or(payload);
+
         match event_type {
-            // 处理所有设备事件
-            evt if evt.starts_with("Device") => {
-                let device_id = payload["payload"]["device_id"]
-                    .as_str()
-                    .unwrap_or("unknown");
+            "DeviceMetric" => {
+                let device_id = inner.get("device_id").and_then(|v| v.as_str()).unwrap_or("");
+                let metric = inner.get("metric").and_then(|v| v.as_str()).unwrap_or("");
+                let value = inner.get("value");
 
-                match event_type {
-                    "DeviceMetric" => {
-                        let metric = payload["payload"]["metric"]
-                            .as_str()
-                            .unwrap_or("");
-                        let value = payload["payload"]["value"];
-
-                        // 检查温度
-                        if metric == "temperature" {
-                            if let Some(temp) = value.as_f64() {
-                                if temp > 30.0 {
-                                    self.trigger_alert(device_id, "Temperature too high");
-                                }
-                            }
-                        }
-                    }
-                    "DeviceOffline" => {
-                        let reason = payload["payload"]["reason"]
-                            .as_str()
-                            .unwrap_or("unknown");
-                        self.trigger_alert(device_id, &format!("Device offline: {}", reason));
-                    }
-                    _ => {
-                        tracing::debug!(
-                            device_id = %device_id,
-                            event_type = %event_type,
-                            "Received device event"
-                        );
-                    }
+                if metric == "temperature"
+                    && value.and_then(|v| v.as_f64()).map(|t| t > 30.0).unwrap_or(false)
+                {
+                    self.alert_count.fetch_add(1, Ordering::SeqCst);
+                    ext_warn!(device = %device_id, "temperature alert");
                 }
             }
-            // 处理所有 Agent 事件
-            evt if evt.starts_with("Agent") => {
-                let agent_id = payload["payload"]["agent_id"]
-                    .as_str()
-                    .unwrap_or("unknown");
-
-                match event_type {
-                    "AgentExecutionFailed" => {
-                        let error = payload["payload"]["error"]
-                            .as_str()
-                            .unwrap_or("unknown");
-                        self.trigger_alert(agent_id, &format!("Agent failed: {}", error));
-                    }
-                    _ => {
-                        tracing::debug!(
-                            agent_id = %agent_id,
-                            event_type = %event_type,
-                            "Received agent event"
-                        );
-                    }
+            "AgentStreamChunk" => {
+                let Some(sid) = inner.get("session_id").and_then(|v| v.as_str()) else {
+                    return Ok(());   // 没有 session_id 直接丢
+                };
+                // try_send 而不是 send — handle_event 是 sync，不能 await
+                if let Some(tx) = self.chat_streams.read().get(sid) {
+                    let _ = tx.try_send(inner.to_string());
                 }
             }
-            _ => {
-                tracing::debug!(event_type = %event_type, "Received event");
+            "AgentStreamEnd" => {
+                let sid = inner.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+                // 注意：Phase 2 持久 session 不在这里 remove chat_streams
+                // （只有 WS teardown 才清理，避免每轮都重新 open_session）
+                ext_info!(session = %sid, "chat stream ended");
             }
+            _ => {}
         }
         Ok(())
     }
 
-    async fn execute_command(&self, command: &str, _args: &serde_json::Value) -> Result<serde_json::Value> {
+    async fn execute_command(
+        &self,
+        command: &str,
+        _args: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
         match command {
             "get_alert_count" => {
-                let count = self.alert_count.load(Ordering::SeqCst);
-                Ok(json!({ "alert_count": count }))
+                Ok(json!({ "alert_count": self.alert_count.load(Ordering::SeqCst) }))
             }
             _ => Err(ExtensionError::CommandNotFound(command.to_string())),
         }
     }
 
     fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
-        let count = self.alert_count.load(Ordering::SeqCst);
         Ok(vec![
-            ExtensionMetricValue::new("alert_count", count.into())
+            metric_int!("alert_count", self.alert_count.load(Ordering::SeqCst)),
         ])
     }
 }
 
-neomind_export!(EventMonitoringExtension);
+neomind_extension_sdk::neomind_export!(EventMonitorExt);
 ```
 
-## 最佳实践
+## 6. 最佳实践
 
-1. **选择性订阅**：只订阅需要的事件，避免不必要的处理
-2. **错误处理**：在 `handle_event` 中妥善处理错误，避免影响其他扩展
-3. **性能考虑**：事件处理应该快速完成，避免阻塞
-4. **日志记录**：使用适当的日志级别记录事件处理情况
-5. **状态管理**：使用线程安全的数据结构管理扩展状态
+1. **选择性订阅** — 只订阅真正需要的事件类型，避免 `["*"]` 滥用。
+2. **handle_event 必须快** — sync 调用，长任务用 channel 转交后台 task。
+3. **parking_lot 而非 tokio::Mutex** — 跨 `handle_event` 和 `execute_command` 共享
+   的状态必须用 sync 锁。
+4. **try_send 而不是 send** — 在 `handle_event` 里向 mpsc 投递用 `try_send`，
+   队列满时优雅丢而不是死锁。
+5. **envelope unwrap** — 永远 `payload.get("payload").unwrap_or(payload)` 再读字段。
+6. **`"end"` 不是终止信号** — 等 `AgentStreamEnd` 才是权威。
 
-## 注意事项
+## 7. 调试技巧
 
-1. 事件处理是同步的，不应使用 `.await`
-2. 事件处理失败不会影响其他扩展
-3. 事件按订阅顺序分发，但处理是并行的
-4. 新增事件类型自动支持，无需修改代码
+如果 `handle_event` 不被调用：
+
+1. 检查 `event_subscriptions()` 是否被重写且包含目标事件名。
+2. 检查 runner 的 `ALLOWED_CAPABILITIES` 是否包含 `event_subscribe`。
+3. 加一行 `ext_info!("got event: {}", event_type);` 看日志是否有任何事件到达。
+4. 用 runner 的日志看 EventDispatcher 是否在过滤 — 默认 `&[]` 完全过滤。

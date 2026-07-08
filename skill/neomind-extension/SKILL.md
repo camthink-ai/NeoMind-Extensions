@@ -1,63 +1,65 @@
 ---
 name: neomind-extension
 description: |
-  Comprehensive guide for creating NeoMind Edge AI Platform extensions for the isolated NeoMind runtime.
+  Comprehensive guide for creating NeoMind Edge AI Platform extensions.
 
   Use this skill when:
-  - Creating new NeoMind extensions from scratch
-  - Implementing extension commands and metrics
+  - Creating new NeoMind extensions from scratch (Rust cdylib)
+  - Implementing extension commands, metrics, and event handlers
+  - Building bridge extensions that import external systems (Modbus / LoRaWAN / HA / OPC UA / ONVIF / BACnet)
+  - Building voice / TTS / ASR extensions with a Python sidecar
+  - Using ChatStream / ChatSession capabilities for streaming LLM access
   - Adding React frontend components
-  - Building cross-platform extension packages
-  - Implementing ML/AI extensions with YOLO models
-  - Setting up video streaming extensions
-  - Creating device inference extensions
+  - Building cross-platform .nep packages
+  - Implementing ML / YOLO / OCR extensions
 
   This skill teaches:
-  - Current runtime patterns based on real extension implementations
-  - ExtensionMetadata::new() builder pattern
-  - FFI exports using neomind_export!() macro
-  - ML model lifecycle management (lazy loading, keep loaded across sessions)
-  - Process isolation architecture
-  - Cross-platform building for 6 platforms
-  - React frontend development with Vite
+  - SDK v0.6 (ABI v3) Extension trait + builders
+  - neomind_export! FFI entry point (never hand-write symbols)
+  - CapabilityContext — invoking host capabilities (device_register, chat_stream, ...)
+  - Event subscription + sync handle_event
+  - Bridge pattern: auto device discovery + background polling + reconnect
+  - Python sidecar pattern: Rust WS/HTTP client + external Python service
+  - Cross-platform building for 6 platforms + hardware acceleration caveats
 
-  Based on actual extensions: weather-forecast-v2, image-analyzer-v2, yolo-video-v2, yolo-device-inference
+  Based on 23 production extensions: weather-forecast-v2, image-analyzer-v2,
+  yolo-video-v2, yolo-device-inference, face-recognition, ocr-device-inference,
+  paddle-ocr-vl, stream-player, deepstream, modbus/lorawan/homeassistant/opcua/onvif/bacnet-bridge,
+  uink-rms-bridge, locate-anything-v2, voice-assistant, cosyvoice-3, moss-tts-nano,
+  sensevoice-asr, voice-edge-tts, wasm-demo.
 
-version: 2.0.0
+version: 3.0.0
 argument-hint: "[extension-name]"
 allowed-tools: [Read, Write, Edit, Bash, Glob, Grep, mcp__serena_serena__find_symbol, mcp__serena_serena__get_symbols_overview]
 ---
 
 # NeoMind Extension Development Guide
 
-Learn to create production-ready extensions for the NeoMind Edge AI Platform using the isolated NeoMind extension runtime.
+Learn to create production-ready extensions for the NeoMind Edge AI Platform (SDK v0.6, ABI v3).
+
+> **Companion docs in the repo root** — read before going deep:
+> - `CLAUDE.md` — repo conventions, build scripts, version model
+> - `EXTENSION_FRONTEND_DESIGN_GUIDE.md` — frontend CSS variables, dark mode, fallback
+> - `HARDWARE_ACCELERATION.zh.md` — CoreML / CUDA / Jetson cross-platform ML deployment
 
 ## Quick Start
 
-**Create a new extension:**
 ```bash
 cd NeoMind-Extensions
-cp -r extensions/weather-forecast-v2 extensions/my-extension-v2
-cd extensions/my-extension-v2
-# Update Cargo.toml with your extension name
-```
 
-**Build and test:**
-```bash
-# Dev build + auto-install
+# 1) Scaffold by copying the simplest reference impl that matches your goal
+cp -r extensions/weather-forecast-v2 extensions/my-extension-v2
+# (bridge? cp -r extensions/modbus-bridge)
+# (voice? cp -r extensions/voice-edge-tts)
+cd extensions/my-extension-v2
+# Update Cargo.toml + src/lib.rs
+
+# 2) Dev build + auto-install to ~/.neomind/extensions/
 ./build.sh --dev --single my-extension-v2
 
-# Or manual build
-cargo build --release
-mkdir -p ~/.neomind/extensions
-cp target/release/libneomind_extension_my_extension_v2.dylib ~/.neomind/extensions/
-```
-
-**Build all & package:**
-```bash
-./build.sh                           # Build all, create packages
-./build.sh --release 2.4.0           # Release with version
-./release.sh 2.4.0                   # Same as above
+# 3) Release build with version in filenames
+./build.sh --release 2.4.0      # or: ./release.sh 2.4.0
+ls -lh dist/*.nep
 ```
 
 ---
@@ -66,22 +68,22 @@ cp target/release/libneomind_extension_my_extension_v2.dylib ~/.neomind/extensio
 
 ```
 extensions/your-extension-v2/
-├── Cargo.toml              # Project configuration
+├── Cargo.toml              # Project config (version = source of truth)
 ├── src/
-│   └── lib.rs              # Extension implementation
+│   └── lib.rs              # Extension trait impl + neomind_export!
 ├── frontend/               # Optional React components
+│   ├── frontend.json       # Component definitions + configSchema
 │   ├── src/index.tsx
 │   ├── package.json
 │   ├── vite.config.ts
-│   └── frontend.json
+│   └── dist/               # Built UMD bundle
+├── models/                 # Optional ONNX / weights
 └── README.md
 ```
 
 ---
 
 ## Step 1: Configure Cargo.toml
-
-**Required setup:**
 
 ```toml
 [package]
@@ -94,132 +96,101 @@ name = "neomind_extension_your_extension_v2"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-neomind-extension-sdk = { path = "../../path/to/NeoMind/crates/neomind-extension-sdk" }
+neomind-extension-sdk = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true }     # preserve_order feature is REQUIRED (ABI compat)
 async-trait = "0.1"
+parking_lot = "0.12"                  # for sync locks in handle_event
 tokio = { version = "1", features = ["rt", "sync"] }
-semver = "1"
-parking_lot = "0.12"  # For efficient locks
+chrono = "0.4"
+
+# For HTTP — pick ONE, prefer ureq:
+ureq = { version = "2" }              # sync HTTP client (safe in cdylib)
+# ❌ Do NOT add reqwest — async clients can panic in cdylib runtime
 ```
 
-**CRITICAL SAFETY REQUIREMENT:**
-- `panic = "unwind"` is **mandatory** - using `panic = "abort"` will crash the entire NeoMind server on any panic
-- If the extension lives in a Cargo workspace, put `[profile.release]` in the workspace root `Cargo.toml`, not the member crate
+**CRITICAL SAFETY:** Put this in the **workspace root** Cargo.toml (NeoMind-Extensions/Cargo.toml), not the member crate:
+
+```toml
+[profile.release]
+panic = "unwind"      # REQUIRED — panic=abort crashes the whole runner
+opt-level = 3
+lto = "thin"
+```
 
 ---
 
 ## Step 2: Basic Extension Template
 
-**File: `src/lib.rs`**
-
 ```rust
+// src/lib.rs
 use async_trait::async_trait;
-use neomind_extension_sdk::{
-    Extension, ExtensionMetadata, ExtensionError, ExtensionMetricValue,
-    MetricDescriptor, ExtensionCommand, MetricDataType, ParameterDefinition,
-    ParamMetricValue, Result,
-};
-use serde::{Deserialize, Serialize};
+use neomind_extension_sdk::prelude::*;
+use neomind_extension_sdk::{MetricBuilder, CommandBuilder, ParamBuilder, metric_int};
 use serde_json::json;
 use std::sync::atomic::{AtomicI64, Ordering};
-use semver::Version;
-
-// ============================================================================
-// Extension Struct
-// ============================================================================
 
 pub struct YourExtension {
     counter: AtomicI64,
 }
 
 impl YourExtension {
-    pub fn new() -> Self {
-        Self {
-            counter: AtomicI64::new(0),
-        }
-    }
+    pub fn new() -> Self { Self { counter: AtomicI64::new(0) } }
 }
-
 impl Default for YourExtension {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
-
-// ============================================================================
-// Extension Trait Implementation
-// ============================================================================
 
 #[async_trait]
 impl Extension for YourExtension {
     fn metadata(&self) -> &ExtensionMetadata {
         static META: std::sync::OnceLock<ExtensionMetadata> = std::sync::OnceLock::new();
         META.get_or_init(|| {
-            ExtensionMetadata::new(
-                "your-extension-v2",
-                "Your Extension",
-                Version::parse("2.0.0").unwrap()
-            )
-            .with_description("Description of what your extension does")
-            .with_author("Your Name")
+            ExtensionMetadata::new("your-extension-v2", "Your Extension", "2.0.0")
+                .with_description("What it does")
+                .with_author("Your Name")
         })
     }
 
     fn metrics(&self) -> Vec<MetricDescriptor> {
         vec![
-            MetricDescriptor {
-                name: "counter".to_string(),
-                display_name: "Counter".to_string(),
-                data_type: MetricDataType::Integer,
-                unit: "count".to_string(),
-                min: Some(0.0),
-                max: None,
-                required: false,
-            },
+            MetricBuilder::new("counter", "Counter")
+                .integer()
+                .unit("count")
+                .min(0.0)
+                .build(),
         ]
     }
 
     fn commands(&self) -> Vec<ExtensionCommand> {
         vec![
-            ExtensionCommand {
-                name: "your_command".to_string(),
-                display_name: "Your Command".to_string(),
-                description: "What this command does".to_string(),
-                payload_template: String::new(),
-                parameters: vec![
-                    ParameterDefinition {
-                        name: "param1".to_string(),
-                        display_name: "Parameter 1".to_string(),
-                        description: "Description of parameter".to_string(),
-                        param_type: MetricDataType::String,
-                        required: true,
-                        default_value: None,
-                        min: None,
-                        max: None,
-                        options: vec![],
-                    },
-                ],
-                fixed_values: Default::default(),
-                samples: vec![json!({"param1": "example"})],
-                parameter_groups: vec![],
-            },
+            CommandBuilder::new("your_command")
+                .display_name("Your Command")
+                .description("What this command does")
+                .param(
+                    ParamBuilder::new("param1", MetricDataType::String)
+                        .display_name("Parameter 1")
+                        .required()
+                        .build(),
+                )
+                .sample(json!({"param1": "example"}))
+                .build(),
         ]
     }
 
-    async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
+    async fn execute_command(
+        &self,
+        command: &str,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
         match command {
             "your_command" => {
-                let param1 = args.get("param1")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing param1".to_string()))?;
-
-                // Your logic here
+                let p1 = args.get("param1").and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing param1".into()))?;
                 self.counter.fetch_add(1, Ordering::SeqCst);
-
                 Ok(json!({
                     "result": "success",
-                    "param1": param1,
+                    "param1": p1,
                     "count": self.counter.load(Ordering::SeqCst),
                 }))
             }
@@ -228,443 +199,252 @@ impl Extension for YourExtension {
     }
 
     fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
-        // NOTE: This is SYNCHRONOUS - NO .await allowed!
-        let now = chrono::Utc::now().timestamp_millis();
-
+        // SYNC — no .await allowed!
         Ok(vec![
-            ExtensionMetricValue {
-                name: "counter".to_string(),
-                value: ParamMetricValue::Integer(self.counter.load(Ordering::SeqCst)),
-                timestamp: now,
-            },
+            metric_int!("counter", self.counter.load(Ordering::SeqCst)),
         ])
     }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
 }
 
-// ============================================================================
-// FFI Export
-// ============================================================================
-
-// This single macro generates all required FFI exports
+// One line — generates all ABI v3 FFI exports.
 neomind_extension_sdk::neomind_export!(YourExtension);
-
-// ============================================================================
-// Tests
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extension_metadata() {
-        let ext = YourExtension::new();
-        let meta = ext.metadata();
-        assert_eq!(meta.id, "your-extension-v2");
-        assert_eq!(meta.name, "Your Extension");
-    }
-
-    #[test]
-    fn test_extension_commands() {
-        let ext = YourExtension::new();
-        let commands = ext.commands();
-        assert!(!commands.is_empty());
-        assert_eq!(commands[0].name, "your_command");
-    }
-}
 ```
 
-**Key Points:**
-- ExtensionMetadata uses builder pattern: `ExtensionMetadata::new().with_description().with_author()`
-- `metrics()` and `commands()` return `Vec<>`, not slices
-- `produce_metrics()` is **synchronous** - no `.await` allowed
-- `execute_command()` is `async` - can use `.await`
-- FFI export is just one line: `neomind_export!(YourExtension)`
+### Key points
+- `metrics()` / `commands()` return owned `Vec<...>` (not slices)
+- `produce_metrics()` and `handle_event()` are **sync** — no `.await`
+- `execute_command()` and `configure()` are **async** — free to `.await`
+- Use `MetricBuilder` / `CommandBuilder` / `ParamBuilder` for fluent definitions
+- Use `metric_int!` / `metric_float!` / `metric_bool!` / `metric_string!` macros
+- Static-cache metadata in `OnceLock` so you can return `&ExtensionMetadata`
+- Logging: `ext_info!`, `ext_warn!`, `ext_error!`, `ext_debug!`
+- **Never hand-write `#[no_mangle]` FFI symbols** — `neomind_export!` does it correctly
+
+Full API surface (every trait method, every enum variant) is in
+[`reference/sdk-api.md`](reference/sdk-api.md).
 
 ---
 
 ## Step 3: Extension ID Convention
 
-Follow this pattern:
 ```
 {category}-{feature}-v{major}
-
-Examples:
-✅ weather-forecast-v2
-✅ image-analyzer-v2
-✅ yolo-video-v2
-✅ yolo-device-inference
-
+✅ weather-forecast-v2  ✅ modbus-bridge  ✅ voice-edge-tts  ✅ deepstream
 ❌ weather_forecast (use hyphens, not underscores)
-❌ weather-forecast (missing version suffix)
 ```
 
-**Why `-v2` suffix?**
-- Indicates the current generation of the isolated runtime protocol
-- Distinguishes from legacy extensions
-- Prevents conflicts with old extensions
+`-v2` suffix indicates the current generation of the isolated runtime protocol.
 
 ---
 
-## Step 4: Implementing Commands
+## Step 4: Commands, Errors, and Metrics
 
-### Simple Command (No Parameters)
-
-```rust
-ExtensionCommand {
-    name: "refresh".to_string(),
-    display_name: "Refresh Data".to_string(),
-    description: "Refresh cached data".to_string(),
-    payload_template: String::new(),
-    parameters: vec![],
-    fixed_values: Default::default(),
-    samples: vec![json!({})],
-    parameter_groups: vec![],
-}
-```
-
-### Command with Required Parameters
+### Command with required + optional params
 
 ```rust
-ExtensionCommand {
-    name: "get_weather".to_string(),
-    display_name: "Get Weather".to_string(),
-    description: "Get current weather for a city".to_string(),
-    payload_template: String::new(),
-    parameters: vec![
-        ParameterDefinition {
-            name: "city".to_string(),
-            display_name: "City".to_string(),
-            description: "City name".to_string(),
-            param_type: MetricDataType::String,
-            required: true,
-            default_value: None,
-            min: None,
-            max: None,
-            options: vec![
-                "Beijing".to_string(),
-                "Shanghai".to_string(),
-                "New York".to_string(),
-            ],
-        },
-    ],
-    fixed_values: Default::default(),
-    samples: vec![json!({"city": "Beijing"})],
-    parameter_groups: vec![],
-}
+CommandBuilder::new("read_registers")
+    .display_name("Read Registers")
+    .description("Read holding registers")
+    .param(
+        ParamBuilder::new("address", MetricDataType::Integer)
+            .display_name("Start Address")
+            .required()
+            .min(0.0).max(65535.0)
+            .build(),
+    )
+    .param(
+        ParamBuilder::new("count", MetricDataType::Integer)
+            .display_name("Count")
+            .required()
+            .min(1.0).max(125.0)
+            .build(),
+    )
+    .sample(json!({"address": 40001, "count": 10}))
+    .build()
 ```
 
-### Command with Optional Parameters
+### Error variants you'll use most
 
-```rust
-ParameterDefinition {
-    name: "threshold".to_string(),
-    display_name: "Confidence Threshold".to_string(),
-    description: "Minimum confidence for detections".to_string(),
-    param_type: MetricDataType::Float,
-    required: false,
-    default_value: Some(ParamMetricValue::Float(0.5)),
-    min: Some(0.0),
-    max: Some(1.0),
-    options: vec![],
-},
-```
+`CommandNotFound(name)` · `InvalidArguments(msg)` · `ExecutionFailed(msg)` ·
+`NotSupported(msg)` · `Timeout(msg)` · `NotFound(name)` · `InvalidFormat(msg)` ·
+`LoadFailed(msg)` · `SessionNotFound(id)` · `ConfigurationError(msg)` ·
+`Io(msg)` · `Json(msg)` · `InferenceFailed(msg)`
 
----
+(Full list of 23 variants in `reference/sdk-api.md`.)
 
-## Step 5: Error Handling
+### Pattern: cache async results for sync `produce_metrics()`
 
-**Use the `?` operator for clean error propagation:**
-
-```rust
-async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
-    match command {
-        "process_data" => {
-            let data = self.fetch_data()
-                .await
-                .map_err(|e| ExtensionError::ExecutionFailed(format!("Fetch failed: {}", e)))?;
-
-            let result = self.parse_data(&data)
-                .map_err(|e| ExtensionError::ExecutionFailed(format!("Parse failed: {}", e)))?;
-
-            Ok(json!({"result": result}))
-        }
-        _ => Err(ExtensionError::CommandNotFound(command.to_string())),
-    }
-}
-```
-
-**Error types:**
-- `ExtensionError::CommandNotFound(name)` - Command doesn't exist
-- `ExtensionError::InvalidArguments(msg)` - Bad parameters
-- `ExtensionError::ExecutionFailed(msg)` - Command execution failed
-- `ExtensionError::NotSupported(msg)` - Feature not supported
-
----
-
-## Step 6: Metrics Production
-
-**Synchronous metrics (cached data):**
-
-```rust
-fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
-    // NO .await allowed - must be synchronous
-    let now = chrono::Utc::now().timestamp_millis();
-
-    Ok(vec![
-        ExtensionMetricValue {
-            name: "temperature_c".to_string(),
-            value: ParamMetricValue::Float(self.last_temp_c.load(Ordering::SeqCst) as f64 / 100.0),
-            timestamp: now,
-        },
-        ExtensionMetricValue {
-            name: "humidity_percent".to_string(),
-            value: ParamMetricValue::Integer(self.last_humidity.load(Ordering::SeqCst)),
-            timestamp: now,
-        },
-    ])
-}
-```
-
-**Pattern: Cache async results in atomic types for synchronous access**
-
-From weather-forecast-v2:
 ```rust
 pub struct WeatherExtension {
-    last_temperature_c: AtomicI64,  // Store temperature * 100
-    last_humidity_percent: AtomicI64,
-    last_update_ts: AtomicI64,
+    last_temp_c: AtomicI64,   // store as temp * 100
+    last_humidity: AtomicI64,
+    last_update: AtomicI64,
 }
 
-// In async command, update the cache
-async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
-    match command {
-        "get_weather" => {
-            let weather = self.fetch_weather_sync(city)?;
-
-            // Update cache
-            self.last_temperature_c.store((weather.temperature_c * 100.0) as i64, Ordering::SeqCst);
-            self.last_humidity_percent.store(weather.humidity_percent as i64, Ordering::SeqCst);
-
-            Ok(json!(weather))
-        }
-        // ...
-    }
+// async command updates the cache
+async fn execute_command(&self, cmd: &str, args: &Value) -> Result<Value> {
+    let w = self.fetch_weather_sync(city)?;   // sync ureq call
+    self.last_temp_c.store((w.temp_c * 100.0) as i64, Ordering::SeqCst);
+    self.last_humidity.store(w.humidity as i64, Ordering::SeqCst);
+    self.last_update.store(chrono::Utc::now().timestamp_millis(), Ordering::SeqCst);
+    Ok(json!(w))
 }
 
-// In produce_metrics, read from cache
+// sync produce_metrics reads from cache
 fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
-    let now = chrono::Utc::now().timestamp_millis();
     Ok(vec![
-        ExtensionMetricValue {
-            name: "temperature_c".to_string(),
-            value: ParamMetricValue::Float(self.last_temperature_c.load(Ordering::SeqCst) as f64 / 100.0),
-            timestamp: now,
-        },
+        metric_float!("temperature_c", self.last_temp_c.load(Ordering::SeqCst) as f64 / 100.0),
+        metric_int!("humidity_percent", self.last_humidity.load(Ordering::SeqCst)),
     ])
 }
 ```
 
 ---
 
-## Step 7: ML Model Extensions (YOLO)
+## Step 5: ML Model Extensions (YOLO / OCR / Face)
 
-### Model Lifecycle Management
+### Lazy load + keep loaded across sessions
 
-**CRITICAL: Keep models loaded across sessions**
-
-From yolo-video-v2 (fixed version):
+Models are 100s of MB. Load on first use, **never** unload on session close — the runner
+reclaims memory when the extension process exits.
 
 ```rust
 pub struct YoloVideoExtension {
-    detector: Arc<Mutex<Option<YoloDetector>>>,  // Lazy loading
-    sessions: Arc<Mutex<HashMap<String, SessionData>>>,
+    detector: Arc<tokio::sync::Mutex<Option<YoloDetector>>>,  // lazy
+    sessions: Arc<parking_lot::Mutex<HashMap<String, SessionData>>>,
 }
 
 impl YoloVideoExtension {
-    pub fn new() -> Self {
-        Self {
-            detector: Arc::new(Mutex::new(None)),  // Don't load yet
-            sessions: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    // Load on first use
     async fn ensure_detector_loaded(&self) -> Result<()> {
-        let mut detector = self.detector.lock().await;
-        if detector.is_none() {
-            *detector = Some(YoloDetector::new()?);
-            eprintln!("[YOLO] Model loaded successfully");
+        let mut d = self.detector.lock().await;
+        if d.is_none() {
+            *d = Some(YoloDetector::try_load(conf, iou, version, scale)
+                .map_err(|e| ExtensionError::LoadFailed(e))?);
+            ext_info!("[YOLO] model loaded");
         }
         Ok(())
     }
 }
 
-// ✅ CORRECT: Keep detector when closing session
-async fn close_session(&self, session_id: &str) -> Result<()> {
-    self.sessions.remove(session_id);
-    // DO NOT remove detector - keep it loaded!
-    eprintln!("[YOLO] Detector remains loaded for reuse");
+// ✅ Correct — close session but keep detector
+async fn close_session(&self, sid: &str) -> Result<()> {
+    self.sessions.lock().remove(sid);
+    // detector stays loaded
     Ok(())
 }
 
-// ❌ WRONG: Don't do this!
-async fn close_session(&self, session_id: &str) -> Result<()> {
-    self.detector.lock().take();  // This removes the model!
-    Ok(())
-}
+// ❌ WRONG — unloads the model
+// async fn close_session(&self, sid: &str) -> Result<()> {
+//     self.detector.lock().await.take();
+//     Ok(())
+// }
 ```
 
-**Why keep models loaded?**
-- Models are 200MB+ and take time to load
-- Loading once and reusing is much more efficient
-- Extension runner handles cleanup on process termination
-- OS reclaims all resources when extension process exits
-
-### Model Loading Pattern
-
-From image-analyzer-v2:
+### Try-load pattern (degrades gracefully if model missing)
 
 ```rust
-struct YOLODetector {
+struct YoloDetector {
     model: Option<Runtime<YOLO>>,
     load_error: Option<String>,
 }
 
-impl YOLODetector {
-    fn new(conf: f32, iou: f32, version: &str, scale: &str) -> Self {
-        match Self::try_load_model(conf, iou, version, scale) {
-            Ok(model) => {
-                tracing::info!("[YOLO] Model loaded");
-                Self {
-                    model: Some(model),
-                    load_error: None,
-                }
-            }
+impl YoloDetector {
+    fn new(conf: f32, iou: f32) -> Self {
+        match Self::try_load(conf, iou) {
+            Ok(m)  => Self { model: Some(m), load_error: None },
             Err(e) => {
-                tracing::error!("[YOLO] Failed to load: {}", e);
-                Self {
-                    model: None,
-                    load_error: Some(e),
-                }
+                ext_error!("[YOLO] load failed: {}", e);
+                Self { model: None, load_error: Some(e) }
             }
         }
     }
-
-    fn try_load_model(conf: f32, iou: f32, version: &str, scale: &str) -> std::result::Result<Runtime<YOLO>, String> {
-        // Load model from disk
-        let model_path = std::path::PathBuf::from("models").join("yolov8n.onnx");
-
-        let model_data = std::fs::read(&model_path)
-            .map_err(|e| format!("Failed to read model: {}", e))?;
-
-        // Create YOLO model
-        let config = Config::yolo_detect()
-            .with_class_confs(&[conf])
-            .with_iou(iou);
-
-        let model = YOLO::new(config)
-            .map_err(|e| format!("Failed to create YOLO: {:?}", e))?;
-
-        Ok(model)
-    }
 }
 ```
 
+### Hardware acceleration — read this before deploying
+
+Cross-platform ML deployment has sharp edges:
+- **macOS**: CoreML EP (auto-selected by `ort`)
+- **Linux**: CUDA EP requires matching ONNX Runtime + driver version
+- **Jetson (aarch64 Linux)**: **mainstream prebuilt `ort` crates do NOT work — you MUST
+  recompile ONNX Runtime from source on the Jetson.** See `HARDWARE_ACCELERATION.zh.md`.
+- **Windows**: CPU EP works out of the box; CUDA needs manual setup
+- Current SDK uses `ort = "2.0.0-rc.10"` which requires **ONNX Runtime 1.22.x**
+
+Read [`HARDWARE_ACCELERATION.zh.md`](../../../../CamThink%20Project/NeoMind-Extensions/HARDWARE_ACCELERATION.zh.md)
+before building .nep packages for any platform you can't test locally.
+
 ---
 
-## Step 8: Video Streaming Extensions
+## Step 6: Video Streaming Extensions
 
-### Stream Capability Implementation
-
-From yolo-video-v2:
+Implement `stream_capability()` + `process_session_chunk` / `init_session` / `close_session`:
 
 ```rust
-use neomind_extension_sdk::prelude::{
-    StreamCapability, StreamMode, StreamDirection, StreamDataType,
-    StreamSession, SessionStats, PushOutputMessage,
-};
+fn stream_capability(&self) -> Option<StreamCapability> {
+    Some(StreamCapability::push())   // for output-push video
+}
 
-impl StreamCapability for YoloVideoExtension {
-    fn supported_modes(&self) -> Vec<StreamMode> {
-        vec![
-            StreamMode::Push(StreamDirection::Output),  // Push frames to client
-        ]
-    }
+async fn init_session(&self, session: &StreamSession) -> Result<()> {
+    self.ensure_detector_loaded().await?;
+    let s = VideoSession::new(session.id.clone(), self.detector.clone(), &session.config)?;
+    self.sessions.lock().insert(session.id.clone(), s);
+    Ok(())
+}
 
-    fn supported_data_types(&self) -> Vec<StreamDataType> {
-        vec![
-            StreamDataType::MJPEG,  // Motion JPEG video
-        ]
-    }
+async fn process_session_chunk(
+    &self, session_id: &str, chunk: DataChunk,
+) -> Result<StreamResult> {
+    let sessions = self.sessions.lock();
+    let s = sessions.get(session_id)
+        .ok_or_else(|| ExtensionError::SessionNotFound(session_id.into()))?;
+    s.process_frame(&chunk.data)
+}
 
-    async fn create_session(&self, session_id: String, config: &serde_json::Value) -> Result<Box<dyn StreamSession>> {
-        // Ensure detector is loaded
-        self.ensure_detector_loaded().await?;
-
-        // Create session
-        let session = VideoSession::new(
-            session_id.clone(),
-            self.detector.clone(),
-            config,
-        )?;
-
-        // Store session
-        self.sessions.lock().insert(session_id.clone(), session.get_stats());
-
-        Ok(Box::new(session))
-    }
-
-    async fn close_session(&self, session_id: &str) -> Result<()> {
-        // Remove session but keep detector!
-        self.sessions.remove(session_id);
-        eprintln!("[YOLO] Session {} closed, detector remains loaded", session_id);
-        Ok(())
-    }
-
-    fn get_session_stats(&self) -> Result<Vec<SessionStats>> {
-        let sessions = self.sessions.lock();
-        Ok(sessions.values().cloned().collect())
-    }
+async fn close_session(&self, session_id: &str) -> Result<SessionStats> {
+    self.sessions.lock().remove(session_id);
+    // keep detector loaded!
+    Ok(SessionStats::default())
 }
 ```
 
+### GStreamer / DeepStream pipelines
+
+For real-time RTSP → detection → RTSP output, see the `deepstream` extension. Hard-won
+lessons (all documented in the extension's own commit history):
+- **Insert queues between every element** — without queues, encoders back-pressure the
+  pipeline and it freezes after exactly 5 buffers.
+- **Don't tee for snapshots** — teeing to a snapshot branch stalls the live pipeline.
+  Use a separate on-demand GStreamer pipeline for snapshots.
+- Pass a `snapshot_token` through `list_streams` / `get_stream_info` so the frontend can
+  correlate snapshot HTTP responses with the stream.
+
 ---
 
-## Step 9: Device Integration Extensions
+## Step 7: Device Integration Extensions (event-driven)
 
-### Event Handling Pattern
-
-From yolo-device-inference:
+For extensions that react to device updates (e.g. running inference on a camera image
+whenever it changes):
 
 ```rust
-use neomind_extension_sdk::capabilities::device;
-
 #[async_trait]
 impl Extension for YoloDeviceInference {
-    // ... standard methods ...
-
-    fn event_subscriptions(&self) -> Vec<device::EventSubscription> {
-        vec![
-            device::EventSubscription {
-                device_id: None,  // All devices
-                event_type: device::EventType::DataUpdated,
-            },
-        ]
+    fn event_subscriptions(&self) -> &[&str] {
+        // Declare which event type names you want to receive.
+        // Empty (the default) means the dispatcher silently drops everything.
+        &["DeviceDataUpdated"]
     }
 
-    async fn handle_event(&self, event: &device::DeviceEvent) -> Result<()> {
-        match &event.event_type {
-            device::EventType::DataUpdated => {
-                // Run inference on device image data
-                if let Some(image_data) = event.data.get("image") {
-                    let detections = self.run_inference(image_data).await?;
-                    self.store_detection_results(event.device_id.clone(), detections).await?;
-                }
+    // SYNC! Use parking_lot::RwLock, not tokio::Mutex.
+    fn handle_event(&self, event_type: &str, payload: &serde_json::Value) -> Result<()> {
+        // The dispatcher wraps events in {event_type, payload: {...}, timestamp}.
+        let inner = payload.get("payload").unwrap_or(payload);
+
+        match event_type {
+            "DeviceDataUpdated" => {
+                let device_id = inner.get("device_id").and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("missing device_id".into()))?;
+                // ... kick off inference on a tokio task; sync handoff to internal channel
             }
             _ => {}
         }
@@ -673,148 +453,173 @@ impl Extension for YoloDeviceInference {
 }
 ```
 
+### Gotchas (all caused real bugs)
+
+1. **Forgot to override `event_subscriptions()`** → default `&[]` → dispatcher filters out
+   every event silently. Always override when you expect events.
+2. **Used `tokio::Mutex` for shared state** → deadlock because `handle_event` is sync.
+   Use `parking_lot::RwLock` / `parking_lot::Mutex` instead.
+3. **Read `payload.get("session_id")` directly** → wrong level; the actual delivered shape
+   is `{event_type, payload: {session_id, ...}, timestamp}`. Always unwrap with
+   `payload.get("payload").unwrap_or(payload)` first.
+4. **String casing on event types** — agent stream terminators emit `"type": "end"`
+   (lowercase). Match both `"end"` and `"End"`.
+
 ---
 
-## Step 10: Frontend Components (Optional)
+## Step 8: Frontend Components (Optional)
 
-### Component Structure
+> **Read [`EXTENSION_FRONTEND_DESIGN_GUIDE.md`](../../../../CamThink%20Project/NeoMind-Extensions/EXTENSION_FRONTEND_DESIGN_GUIDE.md)
+> before writing frontend.** The rules below are the short version.
 
-**File: `frontend/src/index.tsx`**
+### Hard rules
+
+1. **Never use Tailwind** — extension bundles don't ship Tailwind. Use NeoMind CSS
+   variables for all colors: `var(--foreground)`, `var(--card)`, `var(--border)`, etc.
+2. **Never hardcode colors** (`#fff`, `rgb(...)`) — they break dark mode.
+3. **Primary button text must use `var(--{prefix}-on-primary)`**, not
+   `var(--primary-foreground)` or `#fff`. See design guide §5.1.
+4. **UMD format**, React/ReactDOM external (provided by host).
+5. **Component `type` in `frontend.json` must be unique** — duplicate types collide in the
+   UI. The build script auto-generates types as `{extension-name-without-v2}-card`.
+6. Every component: `forwardRef`, handle loading/error/empty states, scoped CSS with
+   extension-prefixed class names (`.weather-`, `.yolo-`, `.deep-stream-`).
+
+### Minimal component
 
 ```tsx
+// frontend/src/index.tsx
 import { forwardRef, useState, useEffect } from 'react'
 
 export interface ExtensionComponentProps {
   title?: string
   dataSource?: {
     type: string
+    deviceId?: string
+    device_id?: string
     extensionId?: string
+    command?: string
     config?: Record<string, any>
+    [key: string]: any
   }
   className?: string
+  config?: Record<string, any>
 }
 
-const getApiBase = (): string => {
-  if (typeof window !== 'undefined' && (window as any).__TAURI__) {
-    return 'http://localhost:9375/api'
-  }
-  return '/api'
-}
+const getApiBase = (): string =>
+  (typeof window !== 'undefined' && (window as any).__TAURI__)
+    ? 'http://localhost:9375/api'
+    : '/api'
 
 async function executeExtensionCommand<T>(
   extensionId: string,
   command: string,
-  args: Record<string, any>
+  args: Record<string, any>,
 ): Promise<{ success: boolean; data?: T; error?: string }> {
-  const response = await fetch(`${getApiBase()}/extensions/${extensionId}/command`, {
+  const r = await fetch(`${getApiBase()}/extensions/${extensionId}/command`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ command, args })
+    body: JSON.stringify({ command, args }),
   })
-  return response.json()
+  return r.json()
 }
 
 export const YourExtensionCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
   function YourExtensionCard(props, ref) {
-    const { title = 'Your Extension', dataSource, className = '' } = props
+    const { dataSource, className = '' } = props
     const [data, setData] = useState<any>(null)
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const extensionId = dataSource?.extensionId || 'your-extension-v2'
 
-    const fetchData = async () => {
-      setLoading(true)
-      setError(null)
-      const result = await executeExtensionCommand(
-        extensionId,
-        'your_command',
-        { param1: 'value' }
-      )
-      if (result.success) {
-        setData(result.data)
-      } else {
-        setError(result.error || 'Unknown error')
-      }
-      setLoading(false)
-    }
-
     useEffect(() => {
-      fetchData()
+      (async () => {
+        setLoading(true); setError(null)
+        const r = await executeExtensionCommand<any>(extensionId, 'your_command', {})
+        r.success ? setData(r.data) : setError(r.error || 'Unknown error')
+        setLoading(false)
+      })()
     }, [extensionId])
 
     return (
-      <div ref={ref} className={`extension-card ${className}`}>
+      <div ref={ref} className={`your-ext-card ${className}`}>
         <style>{`
-          .extension-card {
-            --ext-bg: rgba(255, 255, 255, 0.25);
-            --ext-fg: hsl(240 10% 10%);
-            --ext-muted: hsl(240 5% 40%);
-            --ext-border: rgba(255, 255, 255, 0.5);
-            --ext-accent: hsl(221 83% 53%);
+          .your-ext-card {
+            --ext-bg: var(--card);
+            --ext-fg: var(--foreground);
+            --ext-muted: var(--muted-foreground);
+            --ext-border: var(--border);
+            --ext-accent: var(--primary);
+            --ext-on-accent: var(--your-ext-on-primary);   /* design guide §5.1 */
             padding: 16px;
             border-radius: 8px;
             background: var(--ext-bg);
             color: var(--ext-fg);
+            border: 1px solid var(--ext-border);
           }
-          .dark .extension-card {
-            --ext-bg: rgba(30, 30, 30, 0.4);
-            --ext-fg: hsl(0 0% 95%);
-            --ext-muted: hsl(0 0% 65%);
+          .your-ext-card button.primary {
+            background: var(--ext-accent);
+            color: var(--ext-on-accent);   /* not #fff */
           }
         `}</style>
-        <h3>{title}</h3>
-        {loading && <div>Loading...</div>}
+        {loading && <div>Loading…</div>}
         {error && <div>Error: {error}</div>}
-        {data && <div>{JSON.stringify(data, null, 2)}</div>}
+        {data && <pre>{JSON.stringify(data, null, 2)}</pre>}
       </div>
     )
-  }
+  },
 )
 
 export default { YourExtensionCard }
 ```
 
-### Frontend Manifest
+### frontend.json
 
-**File: `frontend/frontend.json`**
-
-```json
+```jsonc
 {
   "id": "your-extension-v2",
   "version": "2.0.0",
-  "entrypoint": "your-extension-v2-components.umd.js",
+  "entrypoint": "your-extension-v2-components.umd.cjs",
   "components": [
     {
       "name": "YourExtensionCard",
-      "type": "card",
+      "type": "your-extension-card",       // MUST be unique across all extensions
       "displayName": "Your Extension Card",
       "description": "Displays data from your extension",
-      "defaultSize": { "width": 300, "height": 200 },
-      "minSize": { "width": 200, "height": 150 },
-      "maxSize": { "width": 800, "height": 600 },
+      "defaultSize": { "width": 340, "height": 320 },
+      "minSize": { "width": 240, "height": 260 },
+      "maxSize": { "width": 480, "height": 400 },
       "refreshable": true,
-      "refreshInterval": 5000,
+      "refreshInterval": 30000,
       "icon": "cpu",
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": ["device"],
       "configSchema": {
-        "updateInterval": {
-          "type": "number",
-          "description": "Update interval in milliseconds",
-          "default": 5000
-        }
+        "contentType": {
+          "type": "string", "title": "Content Type",
+          "enum": ["none", "text", "markdown"],
+          "enumTitles": ["None", "Plain Text", "Markdown"],
+          "default": "none"
+        },
+        "textContent": { "type": "string", "title": "Text Content" }
+      },
+      "uiHints": {
+        "fieldOrder": ["contentType", "textContent"],
+        "visibilityRules": [
+          { "field": "contentType", "condition": "equals", "value": "text",
+            "thenShow": ["textContent"] }
+        ]
       }
     }
   ],
-  "dependencies": {
-    "react": ">=18.0.0"
-  }
+  "dependencies": { "react": ">=18.0.0" }
 }
 ```
 
-### Vite Build Config
+### Vite config (UMD, React external)
 
-**File: `frontend/vite.config.ts`**
-
-```typescript
+```ts
+// frontend/vite.config.ts
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -825,543 +630,717 @@ export default defineConfig({
       entry: 'src/index.tsx',
       name: 'YourExtensionV2Components',
       formats: ['umd', 'cjs'],
-      fileName: (format) => `your-extension-v2-components.${format === 'umd' ? 'umd.js' : 'umd.cjs'}`
+      fileName: (format) =>
+        `your-extension-v2-components.${format === 'umd' ? 'umd.js' : 'umd.cjs'}`,
     },
     rollupOptions: {
-      external: ['react', 'react-dom'],
-      output: {
-        globals: {
-          react: 'React',
-          'react-dom': 'ReactDOM'
-        }
-      }
-    }
-  }
+      external: ['react', 'react-dom', 'react/jsx-runtime'],
+      output: { globals: { react: 'React', 'react-dom': 'ReactDOM' } },
+    },
+  },
 })
 ```
 
 ---
 
+## Step 9: Bridge Extensions
+
+Bridge extensions import external systems (Modbus / LoRaWAN / Home Assistant / OPC UA /
+ONVIF / BACnet / custom REST) into NeoMind's device model. Reference impls in
+`extensions/{modbus,lorawan,homeassistant,opcua,onvif,bacnet}-bridge/`.
+
+### Pattern summary
+
+1. **Connect command** (`connect`, `add_device`) — user provides address + credentials,
+   extension establishes a client and starts a background polling / listening task.
+2. **Auto-discovery** — fetch device list from the external system; for each discovered
+   device, register a NeoMind device via `device_register`.
+3. **Background worker** — dedicated thread reads data continuously and updates an
+   in-memory cache (`Arc<parking_lot::Mutex<DeviceState>>` or `Arc<RwLock<...>>`).
+4. **`produce_metrics()` fan-out** — periodically writes per-device metrics via
+   `device_metrics_write` capability.
+5. **Resilience** — exponential backoff (typically 1s → 60s), separate counters for
+   transient vs auth failures (HA bridge gives up after 5 auth failures).
+
+### Capabilities used
+
+Bridges invoke these dynamically via `CapabilityContext::default()`:
+
+| Capability | When |
+|---|---|
+| `device_template_register` | Once on first device — registers the metric/command schema |
+| `device_register` | For each discovered device |
+| `device_metrics_write` | On every poll cycle, for each device metric |
+| `device_unregister` | On `remove_device` / `disconnect` |
+
+### Choosing your thread model
+
+| Client type | Use | Spawn pattern | Example |
+|---|---|---|---|
+| Sync (modbus, ureq) | `std::thread::spawn` | `Builder::new().name(...).spawn(move || loop {...})` | modbus-bridge |
+| Async (MQTT, WS) | `tokio::spawn` on the **host runtime** | `Handle::try_current()?.spawn(async move {...})` | lorawan-bridge, HA bridge WS loop |
+| Mixed (REST + WS) | Sync REST from anywhere + async WS on host runtime | HA bridge |
+
+> **Never call `tokio::runtime::Runtime::new()` inside an extension** — it collides with the
+> runner's runtime. To run async work, grab the host's `Handle::try_current()` and spawn there.
+
+### Skeleton (modbus-style sync polling)
+
+```rust
+use neomind_extension_sdk::host::CapabilityContext;
+use serde_json::{json, Value};
+
+pub struct ModbusBridge {
+    devices: Arc<parking_lot::RwLock<HashMap<String, DeviceState>>>,
+    template_registered: AtomicBool,
+}
+
+impl ModbusBridge {
+    fn register_template(&self) {
+        // Guard with atomic flag — idempotent
+        if self.template_registered.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let ctx = CapabilityContext::default();
+        let tpl = json!({
+            "device_type": "modbus_device",
+            "name": "Modbus Device",
+            "metrics": [
+                { "name": "connected", "display_name": "Connected", "data_type": "String" },
+                { "name": "poll_errors", "display_name": "Poll Errors", "data_type": "Integer" },
+            ],
+            "commands": [],
+        });
+        let r = ctx.invoke_capability("device_template_register", &tpl);
+        if !r.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+            self.template_registered.store(false, Ordering::SeqCst); // retry later
+        }
+    }
+
+    fn register_device(&self, device_id: &str, name: &str) {
+        let ctx = CapabilityContext::default();
+        let _ = ctx.invoke_capability("device_register", &json!({
+            "device_id": device_id,
+            "name": name,
+            "device_type": "modbus_device",
+        }));
+    }
+}
+
+// Background poller — std::thread, persistent connection, poll-level reconnect
+fn polling_loop(
+    config: DeviceConfig,
+    state: Arc<parking_lot::Mutex<DeviceState>>,
+    running: Arc<AtomicBool>,
+) {
+    let mut ctx: Option<sync::Context> = None;   // persistent connection
+    while running.load(Ordering::SeqCst) {
+        let interval = state.lock().config.poll_interval_ms;
+        let start = std::time::Instant::now();
+
+        if ctx.is_none() {
+            ctx = connect_sync(&config).ok();
+        }
+        if let Some(ref mut c) = ctx {
+            match c.read_holding_registers(addr, count) {
+                Ok(data) => {
+                    let mut s = state.lock();
+                    s.register_values = parse(data);
+                    s.poll_errors = 0;
+                    s.connected = true;
+                }
+                Err(_) => {
+                    ctx = None;   // force reconnect next cycle
+                    state.lock().poll_errors += 1;
+                }
+            }
+        }
+        let elapsed = start.elapsed().as_millis() as u64;
+        let sleep_ms = interval.saturating_sub(elapsed);
+        std::thread::sleep(Duration::from_millis(sleep_ms));
+    }
+}
+
+// Sync produce_metrics fans out per-device writes via capability
+fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
+    let ctx = CapabilityContext::default();
+    let now = chrono::Utc::now().timestamp_millis();
+    let devices = self.devices.read();
+    for (id, st) in devices.iter() {
+        let _ = ctx.invoke_capability("device_metrics_write", &json!({
+            "device_id": id, "metric": "connected",
+            "value": if st.connected { "true" } else { "false" },
+            "timestamp": now,
+        }));
+        for rv in &st.register_values {
+            let _ = ctx.invoke_capability("device_metrics_write", &json!({
+                "device_id": id, "metric": rv.name,
+                "value": rv.value, "timestamp": now,
+            }));
+        }
+    }
+    Ok(vec![])  // extension-level metrics optional
+}
+```
+
+### Reconnect strategies
+
+- **HA bridge** — exponential backoff 1s → 60s, separate counter for `AuthFailed` (stops
+  after 5), REST resync on every WS reconnect to catch missed `state_changed` events.
+- **LoRaWAN bridge** — `rumqttc` auto-reconnects at MQTT level; extension-level 500ms → 30s
+  backoff for stream errors; re-subscribes on ConnAck.
+- **Modbus bridge** — poll-level retry; persistent TCP connection; full reconnect on
+  read error.
+
+---
+
+## Step 10: Python Sidecar Extensions (Voice / TTS / ASR)
+
+When you need Python libraries (CosyVoice, edge-tts, sherpa-onnx ASR, PaddleOCR, etc.),
+keep Rust thin and put the AI logic in a separate Python service. Reference impls:
+`voice-assistant`, `voice-edge-tts`, `cosyvoice-3`, `moss-tts-nano`, `sensevoice-asr`.
+
+### Architecture
+
+```
+┌─────────────────┐   HTTP (ureq) or WS    ┌─────────────────┐
+│  Rust Extension │ ◄────────────────────► │ Python Service  │
+│   (cdylib)      │                        │ (FastAPI / WS)  │
+│ • command handler│                       │ • ML models     │
+│ • spawn_blocking│                        │ • TTS / ASR     │
+└─────────────────┘                        └─────────────────┘
+        ▲
+        │ Platform APIs (CapabilityContext, metrics, ...)
+        ▼
+   NeoMind runtime
+```
+
+**The Python service is external** — not spawned by Rust. Operators start it separately
+(`python server.py --port 9386`) and configure the URL via env var:
+```bash
+export VOICE_EDGE_TTS_SERVICE_URL=http://127.0.0.1:9386
+```
+
+This keeps Python crashes isolated and lets you iterate on Python without recompiling Rust.
+
+### Pattern A: HTTP sidecar (simplest — voice-edge-tts)
+
+```rust
+pub struct VoiceEdgeTts {
+    inner: Arc<Inner>,
+}
+
+struct Inner {
+    service_url: parking_lot::RwLock<String>,
+    http_agent: ureq::Agent,
+    service_ok: AtomicBool,
+    total_requests: AtomicI64,
+}
+
+impl VoiceEdgeTts {
+    pub fn new() -> Self {
+        let url = std::env::var("VOICE_EDGE_TTS_SERVICE_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:9386".into());
+        let http_agent = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(120)))
+            .build()
+            .into();
+        Self {
+            inner: Arc::new(Inner {
+                service_url: parking_lot::RwLock::new(url),
+                http_agent,
+                service_ok: AtomicBool::new(false),
+                total_requests: AtomicI64::new(0),
+            }),
+        }
+    }
+}
+
+#[async_trait]
+impl Extension for VoiceEdgeTts {
+    // ... metadata / commands ...
+
+    async fn execute_command(&self, cmd: &str, args: &Value) -> Result<Value> {
+        match cmd {
+            "synthesize" => {
+                let inner = self.inner.clone();
+                let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let voice = args.get("voice").and_then(|v| v.as_str()).unwrap_or("中文女").to_string();
+                // SYNC HTTP inside spawn_blocking — never use async client in cdylib
+                tokio::task::spawn_blocking(move || {
+                    let url = format!("{}/tts", *inner.service_url.read());
+                    let body = json!({ "text": text, "voice": voice });
+                    let resp = inner.http_agent.post(&url)
+                        .header("Content-Type", "application/json")
+                        .send_json(&body)
+                        .map_err(|e| ExtensionError::Io(e.to_string()))?;
+                    let wav = resp.into_body().read_to_vec()
+                        .map_err(|e| ExtensionError::Io(e.to_string()))?;
+                    inner.total_requests.fetch_add(1, Ordering::SeqCst);
+                    Ok(json!({
+                        "audio_base64": base64::encode(&wav),
+                        "format": "wav",
+                        "sample_rate": 24000,
+                    }))
+                }).await?
+            }
+            "health" => {
+                let inner = self.inner.clone();
+                let ok = tokio::task::spawn_blocking(move || inner.check_health()).await?;
+                Ok(json!({ "ok": ok, "service_url": *self.inner.service_url.read() }))
+            }
+            _ => Err(ExtensionError::CommandNotFound(cmd.to_string())),
+        }
+    }
+
+    fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
+        Ok(vec![
+            metric_int!("service_ok", self.inner.service_ok.load(Ordering::SeqCst) as i64),
+            metric_int!("total_requests", self.inner.total_requests.load(Ordering::SeqCst)),
+        ])
+    }
+}
+```
+
+### Pattern B: WebSocket sidecar (real-time bidirectional — voice-assistant)
+
+Use when you need continuous streaming (PCM audio in/out, ASR → LLM → TTS pipeline).
+See `extensions/voice-assistant/src/lib.rs` — `run_session_pump` is the canonical WS
+loop with `tokio::select!` over browser PCM input and Python event output.
+
+Frame types in voice-assistant (Rust ↔ Python):
+- **Rust → Python**: `start {session_id, sample_rate, channels, format}`,
+  binary PCM frames, `chat_stream_request {message, session_id?}`,
+  `chat_stream_cancel {session_id}`
+- **Python → Rust**: `transcript {text, language, elapsed_ms}`,
+  `tts_start` / `tts_end`, binary PCM frames, `barge_in`, `stop {reason}`,
+  `error {phase, message}`, `chat_chunk` / `chat_stream_end` (forwarded from ChatStream)
+
+### When HTTP vs WS
+
+| Aspect | HTTP sidecar | WebSocket sidecar |
+|---|---|---|
+| Use case | One-shot TTS / ASR / OCR | Real-time bidirectional streaming |
+| Client | `ureq` (sync, in `spawn_blocking`) | `tokio-tungstenite` (async) |
+| Latency | Per-request overhead | Persistent connection |
+| State | Stateless | Per-session |
+| Reference | `voice-edge-tts`, `cosyvoice-3` | `voice-assistant` |
+
+---
+
+## Step 11: Platform Capabilities (ChatStream / Storage / Telemetry)
+
+Beyond plain commands, extensions can invoke host capabilities via
+`CapabilityContext::default().invoke_capability(name, &json)`. The SDK also provides
+typed helpers in `neomind_extension_sdk::capabilities::{device, chat}`.
+
+### ChatStream — streaming LLM without managing API tokens
+
+The biggest capability addition. Two usage patterns:
+
+#### Phase 1: one-shot (simplest)
+
+```rust
+use neomind_extension_sdk::capabilities::chat;
+use neomind_extension_sdk::host::CapabilityContext;
+
+let ctx = CapabilityContext::default();
+let result = chat::invoke(&ctx, "Hello, what's the weather?", None).await?;
+let sid = result["session_id"].as_str().unwrap();
+// LLM tokens arrive as AgentStreamChunk events (see Step 7 / Step 12)
+```
+
+#### Phase 2: persistent session (multi-turn)
+
+```rust
+let ctx = CapabilityContext::default();
+
+// 1. Open (or reuse) a session
+let open = chat::open_session(&ctx, None).await?;     // {session_id, created}
+let sid = open["session_id"].as_str().unwrap().to_string();
+
+// 2. Send a turn — returns immediately with turn_id
+let turn = chat::send_message(&ctx, &sid, "What about tomorrow?").await?;
+let turn_id = turn["turn_id"].as_str().unwrap().to_string();
+// Tokens stream in via AgentStreamChunk events tagged with this turn_id
+
+// 3. (optional) Cancel an in-flight turn without closing the session
+chat::cancel_turn(&ctx, &sid, Some(&turn_id)).await?;
+
+// 4. Close when truly done
+chat::close_session(&ctx, &sid).await?;
+```
+
+**Events you must subscribe to** (override `event_subscriptions()`):
+
+```rust
+fn event_subscriptions(&self) -> &[&str] {
+    &["AgentStreamChunk", "AgentStreamEnd"]
+}
+```
+
+- `AgentStreamChunk` — one token / chunk. Payload: `{session_id, chunk: {type, content}, timestamp}`.
+  `chunk.type` can be `"Content"`, `"reasoning"`, or `"end"` (lowercase!) — `"end"` is **not**
+  authoritative on its own because reasoning models emit intermediate ends.
+- `AgentStreamEnd` — authoritative terminator. Payload: `{session_id, reason, error, timestamp}`.
+  Use this to clean up session state.
+
+### Other useful capabilities
+
+| Capability | Helper | Purpose |
+|---|---|---|
+| `device_metrics_read` | `device::get_metrics` | Read another device's current metrics |
+| `device_metrics_write` | `device::write_virtual_metric` | Write virtual metrics for your own devices |
+| `device_control` | `device::send_command` | Send control commands to devices |
+| `telemetry_history` | `device::query_telemetry_last_24h` | Historical metric data |
+| `metrics_aggregate` | `device::aggregate_avg_24h` | Aggregated metrics (avg / min / max) |
+| `storage_query` | — | Query platform storage |
+| `extension_call` | — | Call commands on other extensions |
+| `event_publish` | — | Publish events to other extensions |
+| `agent_trigger` | — | Trigger NeoMind AI agents |
+| `rule_trigger` | — | Trigger automation rules |
+
+See `reference/sdk-api.md` → "CapabilityContext" for the full list and exact return shapes.
+
+---
+
+## Step 12: Python↔Rust ChatStream Bridge (voice-assistant full loop)
+
+Real-world pattern from `voice-assistant`: Python side wants streaming LLM access without
+holding tokens. The Rust side brokers between Python WS frames and the platform
+ChatStream capability.
+
+```
+Python ──chat_stream_request──► Rust ──chat_session_open──► Platform
+                              Rust ◄──{session_id}── Platform
+                              Rust ──chat_session_send──► Platform
+                              Rust ◄──{turn_id}── Platform
+Rust ←──chat_session_turn_started {sid, turn_id}── (Rust → Python)
+                              Rust ←──AgentStreamChunk── Platform   (event)
+Rust →──chat_chunk {sid, chunk[turn_id]}──► Python   (per chunk)
+                              Rust ←──AgentStreamEnd── Platform     (event)
+Rust →──chat_stream_end {sid, reason}──► Python
+```
+
+Key implementation rules:
+- Store per-session state in `Arc<parking_lot::RwLock<HashMap<String, mpsc::Sender<...>>>>`
+  keyed by `session_id`. Do **not** remove the entry on every turn — only on WS teardown.
+  Otherwise you force a redundant `chat_session_open` round-trip per turn.
+- Barge-in (user interrupts TTS): send `chat_stream_cancel_turn` (keeps session alive).
+- On WS close: send `chat_session_close` then remove the chat_streams entry.
+- `handle_event` is sync — use `parking_lot::RwLock` and `try_send` (not `.await`).
+
+---
+
 ## Building & Packaging
 
-### Unified Build Script
-
-**Main build script:**
-```bash
-./build.sh                           # Build all, create packages
-./build.sh --dev                     # Dev build + auto-install
-./build.sh --release 2.4.0           # Release with version in filenames
-./build.sh --single your-extension-v2 # Build single extension
-./build.sh --skip-frontend           # Skip frontend builds
-./build.sh --debug                   # Debug build
-./build.sh --help                    # Show all options
-```
-
-**Release helper:**
-```bash
-./release.sh 2.4.0                   # Build + package for release
-```
-
-### Development Workflow
+### Unified build script
 
 ```bash
-# Create new extension
-cp -r extensions/weather-forecast-v2 extensions/my-extension-v2
-cd extensions/my-extension-v2
-# Update Cargo.toml
-
-# Dev build + auto-install
-./build.sh --dev --single my-extension-v2
-
-# Test in NeoMind
-# Extensions are installed to ~/.neomind/extensions/
+./build.sh                              # Build all + create packages
+./build.sh --dev                        # Dev build + auto-install to ~/.neomind/extensions/
+./build.sh --dev --single my-ext-v2     # Single extension dev build
+./build.sh --release 2.4.0              # Release with version in filenames
+./build.sh --single my-ext-v2           # Single extension release
+./build.sh --skip-frontend              # Skip frontend builds
+./build.sh --debug                      # Debug build
+./build.sh --help                       # All options
 ```
 
-### Creating .nep Package
+### Release process (version model)
+
+The repo has **three version layers** that must all match on release:
+
+| File | Meaning |
+|---|---|
+| `VERSION` | Market release version (e.g. `2.7.0`) |
+| `extensions/index.json` → `version` | Market release version |
+| `extensions/*/Cargo.toml` → `version` | Per-extension version (drives .nep filename) |
+| `extensions/*/metadata.json` → `version` | Auto-generated from Cargo.toml |
 
 ```bash
-# Package all extensions
-./build.sh
+VERSION=2.7.0
 
-# Package with version
-./release.sh 2.4.0
+# Step 1: Sync Cargo.toml + VERSION + regenerate JSON files
+./scripts/update-versions.sh $VERSION --bump-extensions
 
-# Packages created in dist/
-ls -lh dist/*.nep
+# Step 2: Verify consistency (MUST pass!)
+./scripts/update-versions.sh $VERSION --check
+
+# Step 3: Commit
+git add . && git commit -m "chore: bump to v$VERSION"
+
+# Step 4: Build + package
+./build.sh --release $VERSION
+
+# Step 5: Verify filenames
+ls dist/*.nep
+# e.g. weather-forecast-v2-2.7.0-darwin_aarch64.nep
+
+# Step 6: Tag + publish
+git tag v$VERSION
+git push origin main --tags
+gh release create v$VERSION ./dist/*.nep --title "v$VERSION"
 ```
 
-**Package structure:**
+### .nep package structure
+
 ```
-your-extension-v2-2.0.0.nep  (ZIP archive)
-├── manifest.json           # Extension metadata
+your-extension-v2-2.0.0-darwin_aarch64.nep   (ZIP)
+├── manifest.json
 ├── binaries/
-│   ├── darwin_aarch64/    # macOS ARM64
-│   │   └── libneomind_extension_your_extension_v2.dylib
-│   ├── darwin_x86_64/     # macOS Intel
-│   ├── linux_amd64/       # Linux x86_64
-│   ├── linux_arm64/       # Linux ARM64
-│   ├── windows_amd64/     # Windows 64-bit
-│   └── windows_x86/       # Windows 32-bit
-└── frontend/              # Optional
+│   └── darwin_aarch64/libneomind_extension_your_extension_v2.dylib
+└── frontend/
     └── your-extension-v2-components.umd.cjs
 ```
 
-### Cross-Platform Building
+### Platform matrix
 
-**Supported platforms:**
-- `darwin_aarch64` - macOS ARM64 (Apple Silicon)
-- `darwin_x86_64` - macOS Intel
-- `linux_amd64` - Linux x86_64
-- `linux_arm64` - Linux ARM64
-- `windows_amd64` - Windows 64-bit
-- `windows_x86` - Windows 32-bit
+| Platform | Binary | Target |
+|---|---|---|
+| macOS ARM64 | `*.dylib` | `aarch64-apple-darwin` |
+| macOS x86_64 | `*.dylib` | `x86_64-apple-darwin` |
+| Linux x86_64 | `*.so` | `x86_64-unknown-linux-gnu` |
+| Linux ARM64 | `*.so` | `aarch64-unknown-linux-gnu` |
+| Windows x86_64 | `*.dll` | `x86_64-pc-windows-msvc` |
+| Windows x86 | `*.dll` | `i686-pc-windows-msvc` |
 
-**Using GitHub Actions:**
-
-The workflow `.github/workflows/build-nep-packages.yml` builds all 6 platforms automatically.
-
-```yaml
-strategy:
-  matrix:
-    include:
-      - os: macos-latest
-        platform: darwin_aarch64
-        target: aarch64-apple-darwin
-      - os: macos-latest
-        platform: darwin_x86_64
-        target: x86_64-apple-darwin
-      - os: ubuntu-latest
-        platform: linux_amd64
-        target: x86_64-unknown-linux-gnu
-      - os: ubuntu-22.04-arm
-        platform: linux_arm64
-        target: aarch64-unknown-linux-gnu
-      - os: windows-latest
-        platform: windows_amd64
-        target: x86_64-pc-windows-msvc
-      - os: windows-latest
-        platform: windows_x86
-        target: i686-pc-windows-msvc
-```
-
----
-
-## Key Concepts
-
-### Runtime Protocol v3
-
-Current extensions use runtime protocol v3:
-- **Improved safety**: Better panic handling with `panic = "unwind"`
-- **Frontend support**: Built-in React component integration
-- **Standardized metrics**: Unified metric types across extensions
-- **Better error handling**: Structured error responses
-
-### Process Isolation Architecture
-
-All V2 extensions run in isolated processes:
-- **Crash Safety**: Extension crashes don't affect the main process
-- **Memory Isolation**: Each extension has its own memory space
-- **Resource Limits**: CPU and memory can be limited per extension
-- **Automatic Restart**: Extensions can be restarted on failure
-
-### Sync vs Async Methods
-
-**Synchronous (NO `.await`):**
-- `metadata()` - Returns extension metadata
-- `metrics()` - Returns metric descriptors
-- `produce_metrics()` - Produces metric values
-- `commands()` - Returns command descriptors
-
-**Asynchronous (CAN use `.await`):**
-- `execute_command()` - Executes extension commands
-- `configure()` - Applies configuration changes
-- Event handlers - Process device events
-
-**Pattern:** Cache async results in atomic types for synchronous `produce_metrics()` access.
-
----
-
-## Common Patterns
-
-### Command with File Processing
-
-```rust
-async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
-    match command {
-        "process_file" => {
-            let file_data = args.get("data")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| ExtensionError::InvalidArguments("Missing data".to_string()))?;
-
-            let decoded = base64::engine::general_purpose::STANDARD.decode(file_data)
-                .map_err(|e| ExtensionError::InvalidArguments(format!("Invalid base64: {}", e)))?;
-
-            let result = self.process_bytes(&decoded)?;
-            Ok(json!({"result": result}))
-        }
-        _ => Err(ExtensionError::CommandNotFound(command.to_string())),
-    }
-}
-```
-
-### Metrics with Conditional Values
-
-```rust
-fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
-    let now = chrono::Utc::now().timestamp_millis();
-    let mut metrics = Vec::new();
-
-    // Always include count
-    metrics.push(ExtensionMetricValue {
-        name: "request_count".to_string(),
-        value: ParamMetricValue::Integer(self.count.load(Ordering::SeqCst)),
-        timestamp: now,
-    });
-
-    // Include data only if available
-    if self.has_data.load(Ordering::SeqCst) {
-        metrics.push(ExtensionMetricValue {
-            name: "temperature".to_string(),
-            value: ParamMetricValue::Float(self.last_temp.load(Ordering::SeqCst) as f64 / 100.0),
-            timestamp: now,
-        });
-    }
-
-    Ok(metrics)
-}
-```
+GitHub Actions (`.github/workflows/build-nep-packages.yml`) builds all 6 automatically.
 
 ---
 
 ## Safety Requirements
 
-### CRITICAL: Panic Configuration
+### `panic = "unwind"` is mandatory
 
-**Always set `panic = "unwind"` in the workspace root Cargo.toml (or the crate root if it is standalone):**
+Without it, any panic aborts the entire NeoMind server. Set in the **workspace root**
+`Cargo.toml` (or crate root if standalone):
 
 ```toml
 [profile.release]
-panic = "unwind"  # REQUIRED!
+panic = "unwind"
 opt-level = 3
 lto = "thin"
 ```
 
-Using `panic = "abort"` will cause extension panics to crash the entire NeoMind server.
+### Don't block in async commands
 
-### Avoid Blocking Operations
-
-**Don't block in async functions:**
 ```rust
-// ❌ Bad: Blocks executor
-async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
-    std::thread::sleep(std::time::Duration::from_secs(5));  // Don't do this!
+// ❌ Bad — blocks the executor
+async fn execute_command(&self, ...) -> Result<Value> {
+    std::thread::sleep(Duration::from_secs(5));
     Ok(json!({}))
 }
 
-// ✅ Good: Uses async sleep
-async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
-    tokio::time::sleep(Duration::from_secs(5)).await;  // OK
+// ✅ Good
+async fn execute_command(&self, ...) -> Result<Value> {
+    tokio::time::sleep(Duration::from_secs(5)).await;
     Ok(json!({}))
 }
-```
 
-### Thread Safety
-
-Use `Arc` for shared state across async tasks:
-
-```rust
-pub struct MyExtension {
-    shared_state: Arc<Mutex<SharedState>>,
-}
-
-async fn process_concurrent(&self) -> Result<()> {
-    let state = self.shared_state.clone();
-
-    // Spawn multiple tasks sharing state
-    let handles: Vec<_> = (0..10)
-        .map(|_| {
-            let state = state.clone();
-            tokio::spawn(async move {
-                let mut data = state.lock().await;
-                // Process data
-            })
-        })
-        .collect();
-
-    // Wait for all tasks
-    for handle in handles {
-        handle.await?;
-    }
-
-    Ok(())
+// ✅ Also good — sync work wrapped in spawn_blocking
+async fn execute_command(&self, ...) -> Result<Value> {
+    tokio::task::spawn_blocking(|| { /* sync work */ }).await?
 }
 ```
+
+### HTTP clients — always `ureq`
+
+Async HTTP clients (`reqwest`, `hyper`) create their own Tokio runtime, which panics
+inside a cdylib. Use `ureq` (sync). If you must call it from an async command, wrap in
+`tokio::task::spawn_blocking`. See `reference/sdk-api.md` for the canonical pattern.
+
+### Thread safety
+
+- `Arc<parking_lot::Mutex<T>>` for state shared between sync (`handle_event`) and async
+  (`execute_command`) code paths.
+- `Arc<tokio::sync::Mutex<T>>` only when the lock is held across `.await` points AND never
+  touched from `handle_event`.
+- `Arc<AtomicI64>` / `AtomicBool` for simple counters / flags.
 
 ---
 
 ## Marketplace Release Checklist (CRITICAL)
 
-Before releasing extensions to the marketplace, verify ALL of the following:
-
-### 1. Component Type MUST Be Unique
-
-**Problem:** If two extensions have the same `type` in their dashboard component, only one will appear in the UI.
+### 1. Component `type` MUST be unique across all extensions
 
 ```bash
-# ❌ WRONG: Both use "yolo-card" - conflict!
-yolo-device-inference -> type: "yolo-card"
-yolo-video-v2          -> type: "yolo-card"
-
-# ✅ CORRECT: Each has unique type
-yolo-device-inference -> type: "yolo-device-inference-card"
-yolo-video-v2          -> type: "yolo-video-card"
+# Verify in every .nep you're about to ship:
+unzip -p dist/your-extension-2.3.1-darwin_aarch64.nep manifest.json \
+  | jq '.frontend.components[].type'
 ```
 
-**The component type is auto-generated by build.sh:**
-```bash
-# Format: {extension-name-without-v2}-card
-COMPONENT_TYPE=$(echo "$ext" | sed 's/-v2$//' | sed 's/-v1//')"-card"
+Duplicate types cause only one of the conflicting extensions to appear in the UI. The
+build script auto-generates the type as `{extension-name-without-v2}-card`.
+
+### 2. `frontend.components` in metadata.json MUST be a string array
+
+```jsonc
+// ❌ WRONG — full objects (causes "Failed to load details")
+{ "frontend": { "components": [{ "name": "MyCard", "type": "card" }] } }
+
+// ✅ CORRECT — names only
+{ "frontend": { "components": ["MyCard"], "entrypoint": "..." } }
 ```
 
-**Verification:**
-```bash
-# Check manifest.json in the .nep package
-unzip -p dist/your-extension-2.3.1-darwin_aarch64.nep manifest.json | jq '.frontend.components[].type'
+`FrontendInfo` in NeoMind parses `Vec<String>`.
 
-# Should output unique type like: "your-extension-card"
+### 3. Build URLs MUST use the market version, not the extension version
+
+```jsonc
+// ❌ Wrong (release v2.7.0 but URL has extension's 2.0.0)
+"builds": { "darwin-aarch64": {
+  "url": ".../v2.7.0/my-extension-2.0.0-darwin_aarch64.nep" } }
+
+// ✅ Correct
+"builds": { "darwin-aarch64": {
+  "url": ".../v2.7.0/my-extension-2.7.0-darwin_aarch64.nep" } }
 ```
 
-### 2. Frontend Field Format in metadata.json
-
-**Problem:** `metadata.json` on GitHub marketplace must use correct format for `frontend.components`.
-
-```json
-// ❌ WRONG: Full component objects (causes "Failed to load details")
-{
-  "frontend": {
-    "components": [
-      { "name": "MyCard", "type": "card", ... }
-    ]
-  }
-}
-
-// ✅ CORRECT: Array of component names only
-{
-  "frontend": {
-    "components": ["MyCard"],
-    "entrypoint": "my-extension-components.umd.cjs"
-  }
-}
-```
-
-**Why:** The `FrontendInfo` struct in NeoMind expects `Vec<String>`, not `Vec<Object>`.
-
-### 3. Version Consistency in Builds URLs
-
-**Problem:** The builds URLs must use the **market version** (release version), NOT the extension's internal version.
-
-```json
-// ❌ WRONG: Uses extension version 2.0.0 in URL
-{
-  "builds": {
-    "darwin-aarch64": {
-      "url": "https://github.com/.../v2.3.0/my-extension-2.0.0-darwin_aarch64.nep"
-    }
-  }
-}
-
-// ✅ CORRECT: Uses market version 2.3.0 in URL
-{
-  "builds": {
-    "darwin-aarch64": {
-      "url": "https://github.com/.../v2.3.0/my-extension-2.3.0-darwin_aarch64.nep"
-    }
-  }
-}
-```
-
-**Why:** GitHub release files are named with the market version, not individual extension versions.
-
-### Pre-Release Verification Script
+### 4. Pre-release script
 
 ```bash
 #!/bin/bash
-# Run this before creating a GitHub release
+VERSION="2.7.0"
 
-VERSION="2.3.1"
-
-echo "=== Checking metadata.json files ==="
-for ext_dir in extensions/*/; do
-    ext_id=$(basename "$ext_dir")
-    if [ -f "$ext_dir/metadata.json" ]; then
-        echo "Checking $ext_id..."
-
-        # Check frontend format
-        components=$(jq '.frontend.components[0]' "$ext_dir/metadata.json" 2>/dev/null)
-        if [ "$components" != "null" ] && echo "$components" | jq -e 'type == "object"' >/dev/null 2>&1; then
-            echo "  ❌ ERROR: frontend.components should be string array, not objects"
-        fi
-
-        # Check version in URL
-        url=$(jq -r '.builds["darwin-aarch64"].url' "$ext_dir/metadata.json" 2>/dev/null)
-        if [[ "$url" == *"-2.0.0-"* ]] && [ "$VERSION" != "2.0.0" ]; then
-            echo "  ❌ ERROR: URL contains wrong version (2.0.0 instead of $VERSION)"
-        fi
+echo "=== metadata.json checks ==="
+for d in extensions/*/; do
+    [ -f "$d/metadata.json" ] || continue
+    ext=$(basename "$d")
+    # 1. components is string array?
+    if jq -e '.frontend.components[0] | type == "object"' "$d/metadata.json" >/dev/null 2>&1; then
+        echo "  ❌ $ext: frontend.components has objects, should be strings"
+    fi
+    # 2. URL version matches?
+    url=$(jq -r '.builds["darwin-aarch64"].url' "$d/metadata.json")
+    if [[ "$url" == *"-2.0.0-"* ]] && [ "$VERSION" != "2.0.0" ]; then
+        echo "  ❌ $ext: URL has wrong version (2.0.0 vs $VERSION)"
     fi
 done
 
-echo ""
-echo "=== Checking .nep package manifests ==="
+echo "=== .nep manifest type uniqueness ==="
 for nep in dist/*.nep; do
-    if [ -f "$nep" ]; then
-        ext_id=$(basename "$nep" | sed 's/-[0-9].*//')
-        component_type=$(unzip -p "$nep" manifest.json | jq -r '.frontend.components[0].type' 2>/dev/null)
-        echo "$ext_id: type=$component_type"
-    fi
-done
+    [ -f "$nep" ] || continue
+    t=$(unzip -p "$nep" manifest.json | jq -r '.frontend.components[0].type')
+    echo "$(basename "$nep"): type=$t"
+done | sort | uniq -c -f1   # flag duplicates
 ```
 
 ---
 
 ## Troubleshooting
 
-### Extension Not Loading
+### Extension not loading
+1. Verify ABI version 3 — `neomind_export!` does this; don't hand-write the symbol.
+2. Verify binary format matches platform (`.dylib` macOS, `.so` Linux, `.dll` Windows).
+3. Check runner logs: `neomind logs --extension your-extension-v2`.
+4. Old extensions exporting `_neomind_extension_create` / `_destroy` will crash — delete &
+   reinstall from the marketplace.
 
-1. Check ABI version returns 3:
-   ```rust
-   #[no_mangle]
-   pub extern "C" fn neomind_extension_abi_version() -> u32 {
-       3
-   }
-   ```
+### Process crashes
+1. Check for `unwrap()` / `expect()` that could panic on bad input.
+2. Ensure `panic = "unwind"` in workspace root Cargo.toml.
+3. Monitor memory — leaks in long-running background threads are the usual suspect.
 
-2. Verify binary format matches platform
-3. Check extension runner logs: `neomind logs --extension your-extension`
+### Events silently dropped
+1. Did you override `event_subscriptions()`? Default is `&[]` → all events filtered.
+2. In `handle_event`, did you unwrap the envelope? `payload.get("payload").unwrap_or(payload)`.
+3. Are you using `parking_lot::RwLock`? `tokio::Mutex` deadlocks from sync `handle_event`.
 
-### Process Crashes
+### Frontend not displaying
+1. `frontend.json` exists and is valid JSON.
+2. Component `name` matches what your UMD exports.
+3. UMD bundle exists in `frontend/dist/`.
+4. Component `type` is unique (see checklist above).
+5. `metadata.json` has `frontend.components` as `["Name"]` not `[{...}]`.
+6. Build URLs use the market version.
+7. Run `./scripts/update-versions.sh <version>` to regenerate correct metadata.json.
 
-1. Check for `unwrap()` or `expect()` calls that could panic
-2. Review error handling in commands
-3. Monitor memory usage
-4. Ensure `panic = "unwind"` is set
+### "Failed to load details" in marketplace
+Usually caused by bad metadata.json format. Regenerate with
+`./scripts/update-versions.sh <version>` and wait 5–10 minutes for GitHub CDN.
 
-### Frontend Not Displaying
-
-1. Verify `frontend.json` exists and is valid
-2. Check component name matches manifest
-3. Verify UMD build output exists in `frontend/dist/`
-4. Check browser console for errors
-5. **Check component type is unique** - duplicate types cause conflicts
-6. **Verify metadata.json format** - `frontend.components` must be `["ComponentName"]` not objects
-7. **Check builds URLs** - must use market version, not extension version
-
-### "Failed to load details" in Marketplace
-
-Common causes:
-1. `metadata.json` has wrong format for `frontend` field
-2. JSON parsing error due to invalid structure
-3. GitHub CDN serving cached old version (wait 5-10 minutes)
-
-**Fix:** Run `./scripts/update-versions.sh 2.3.1` to regenerate correct metadata.json
-
-### Model Loading Issues
-
-1. Check model files exist in `models/` directory
-2. Verify model path is correct
-3. Check NEOMIND_EXTENSION_DIR environment variable
-4. Review error logs for model loading failures
+### Model loading issues
+1. Check `models/` directory exists in the .nep.
+2. For Jetson: see `HARDWARE_ACCELERATION.zh.md` — prebuilt `ort` doesn't work, must
+   recompile ONNX Runtime.
+3. `NEOMIND_EXTENSION_DIR` env var points to the extension's install dir at runtime —
+   use it to locate model files: `std::env::var("NEOMIND_EXTENSION_DIR")`.
 
 ---
 
-## Real Extension Examples
+## Real Extension Examples (by category)
 
-### Weather Extension (Simple API Client)
-- **Path:** `extensions/weather-forecast-v2/src/lib.rs`
-- **Features:** Sync HTTP client, metric caching, configuration
-- **Key Patterns:**
-  - `ExtensionMetadata::new().with_config_parameters()`
-  - Atomic metrics for cached data
-  - Sync HTTP with ureq
+### Simple API client
+- **weather-forecast-v2** — sync HTTP (ureq), metric caching, config parameters.
+  Best template for new API-polling extensions.
 
-### Image Analyzer (ML Inference)
-- **Path:** `extensions/image-analyzer-v2/src/lib.rs`
-- **Features:** YOLOv8 object detection, base64 image handling
-- **Key Patterns:**
-  - Lazy model loading with `Arc<Mutex<Option<Detector>>>`
-  - Fallback analysis when model unavailable
-  - Model status diagnostics
+### ML inference (image)
+- **image-analyzer-v2** — YOLOv8 base64 image input, lazy model load with graceful fallback.
+- **yolo-device-inference** — event-driven; runs inference when bound device updates.
+- **face-recognition** — face embedding + matching across device events.
+- **ocr-device-inference** — OCR on device-supplied images.
+- **paddle-ocr-vl** — PaddleOCR-VL multimodal (Python sidecar + Rust wrapper).
 
-### YOLO Video (Streaming)
-- **Path:** `extensions/yolo-video-v2/src/lib.rs`
-- **Features:** Real-time video streaming, session management
-- **Key Patterns:**
-  - `StreamCapability` trait implementation
-  - Keep model loaded across sessions (CRITICAL)
-  - MJPEG push streaming
+### Video / streaming
+- **yolo-video-v2** — `StreamCapability` + MJPEG push, keep detector across sessions.
+- **stream-player** — generic stream player.
+- **deepstream** — GStreamer pipeline (RTSP → detection → RTSP output), on-demand
+  snapshot via one-shot pipeline. Read its commit history before touching GStreamer.
 
-### YOLO Device Inference (Event-Driven)
-- **Path:** `extensions/yolo-device-inference/src/lib.rs`
-- **Features:** Device event handling, virtual metrics
-- **Key Patterns:**
-  - `event_subscriptions()` and `handle_event()`
-  - Device binding/unbinding
-  - Automatic inference on data updates
+### Bridge extensions
+- **modbus-bridge** — sync `tokio-modbus`, `std::thread` polling, persistent TCP. **Best
+  template for new bridges.**
+- **lorawan-bridge** — async `rumqttc` MQTT, Cayenne LPP decoder, ChirpStack v3/v4 + TTN.
+- **homeassistant-bridge** — REST (ureq) + WebSocket (tokio-tungstenite) dual-channel.
+- **opcua-bridge** / **onvif-bridge** / **bacnet-bridge** — same pattern, different protocol.
+- **uink-rms-bridge** — REST bridge to a custom backend.
+
+### Voice / TTS / ASR (Python sidecar)
+- **voice-edge-tts** — HTTP sidecar (ureq + spawn_blocking). **Best template for new
+  voice extensions.**
+- **cosyvoice-3** / **moss-tts-nano** — same HTTP pattern, different Python backend.
+- **sensevoice-asr** — HTTP sidecar for ASR.
+- **voice-assistant** — WebSocket sidecar; full VAD → ASR → ChatStream → TTS pipeline.
+  Read `lib.rs` `run_session_pump` before writing anything similar.
+
+### Other
+- **locate-anything-v2** — location/geo extension.
+- **wasm-demo** — WASM extension experiment.
 
 ---
 
 ## Quick Reference
 
-### File Locations
-
+### File locations
 - **Extensions**: `NeoMind-Extensions/extensions/`
-- **SDK**: `NeoMind/crates/neomind-extension-sdk`
+- **SDK**: `NeoMind/crates/neomind-extension-sdk/`
 - **Install location**: `~/.neomind/extensions/`
+- **Design guide**: `NeoMind-Extensions/EXTENSION_FRONTEND_DESIGN_GUIDE.md`
+- **HW accel guide**: `NeoMind-Extensions/HARDWARE_ACCELERATION.zh.md`
 
-### Essential Commands
-
+### Essential commands
 ```bash
-# Dev build + auto-install
-./build.sh --dev --single your-extension-v2
-
-# Or manual build
-cargo build --release -p your-extension-v2
-cp target/release/libneomind_extension_*.dylib ~/.neomind/extensions/
-
-# Build all & package
-./build.sh                    # Build all, create packages
-./release.sh 2.4.0            # Release with version
-
-# View logs
-neomind logs --extension your-extension-v2
-
-# List extensions
-neomind extension list
-
-# Generate JSON files
-./scripts/update-versions.sh 2.4.0
+./build.sh --dev --single your-extension-v2   # Dev build + auto-install
+cargo build --release -p your-extension-v2    # Manual build
+./build.sh --release 2.4.0                    # Release build
+./scripts/update-versions.sh 2.4.0 --check    # Version consistency check
+neomind logs --extension your-extension-v2    # View logs
 ```
 
-### Build Script Options
+### Extension trait method sync/async map
+| Category | Methods |
+|---|---|
+| Sync | `metadata` · `metrics` · `commands` · `produce_metrics` · `get_stats` · `status` · `init` · `start` · `stop` · `event_subscriptions` · `handle_event` |
+| Async | `execute_command` · `configure` · `health_check` · `on_unload` · `process_chunk` · `init_session` · `process_session_chunk` · `close_session` · `start_push` · `stop_push` |
 
-```bash
-./build.sh                           # Build all, create packages
-./build.sh --dev                     # Dev build + auto-install
-./build.sh --release 2.4.0           # Release with version
-./build.sh --single weather-forecast-v2  # Single extension
-./build.sh --skip-frontend           # Skip frontend builds
-./build.sh --debug                   # Debug build
-```
-
-### Platform Matrix
-
-| Platform | Architecture | Binary | Target |
-|----------|--------------|--------|--------|
-| macOS | ARM64 | `*.dylib` | `aarch64-apple-darwin` |
-| macOS | x86_64 | `*.dylib` | `x86_64-apple-darwin` |
-| Linux | x86_64 | `*.so` | `x86_64-unknown-linux-gnu` |
-| Linux | ARM64 | `*.so` | `aarch64-unknown-linux-gnu` |
-| Windows | x86_64 | `*.dll` | `x86_64-pc-windows-msvc` |
-| Windows | x86 | `*.dll` | `i686-pc-windows-msvc` |
+### Capability name → SDK constant
+`device_metrics_read` / `device_metrics_write` / `device_control` / `storage_query` /
+`event_publish` / `event_subscribe` / `telemetry_history` / `metrics_aggregate` /
+`extension_call` / `agent_trigger` / `chat_stream` / `chat_stream_cancel` /
+`chat_session_open` / `chat_session_send` / `chat_session_close` /
+`chat_stream_cancel_turn` / `rule_trigger` / `device_template_register` /
+`device_register` / `device_unregister` / `custom:*`
 
 ---
 

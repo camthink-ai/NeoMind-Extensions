@@ -5,8 +5,8 @@ This guide shows you how to use the NeoMind Extension Development skill in Claud
 ## Installation
 
 ```bash
-cd NeoMind-Extension
-./install-skill.sh
+cd NeoMind-Extensions
+./skill/install.sh
 ```
 
 ## Example 1: Create a New Extension
@@ -36,14 +36,14 @@ name = "neomind_extension_temperature_monitor_v2"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-neomind-extension-sdk = { path = "../../../NeoMind/crates/neomind-extension-sdk" }
+neomind-extension-sdk = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true }   # preserve_order feature is REQUIRED (ABI compat)
 async-trait = "0.1"
+parking_lot = "0.12"                # for sync locks in handle_event
 tokio = { version = "1", features = ["rt", "sync"] }
-semver = "1"
 chrono = "0.4"
-sysinfo = "0.30"  # For reading CPU temperature
+sysinfo = "0.30"                    # For reading CPU temperature
 ```
 
 If this extension lives inside a Cargo workspace, define `[profile.release]` only in the workspace root `Cargo.toml`.
@@ -115,7 +115,7 @@ export const TemperatureGauge = forwardRef<HTMLDivElement, ExtensionComponentPro
   "id": "temperature-monitor-v2",
   "components": [{
     "name": "TemperatureGauge",
-    "type": "card",
+    "type": "temperature-monitor-card",
     "displayName": "CPU Temperature Gauge"
   }]
 }
@@ -209,8 +209,8 @@ pub struct MinimalExtension;
 #[async_trait]
 impl Extension for MinimalExtension {
     fn metadata(&self) -> &ExtensionMetadata { /* ... */ }
-    fn metrics(&self) -> &[MetricDescriptor] { /* ... */ }
-    fn commands(&self) -> &[ExtensionCommand] { /* ... */ }
+    fn metrics(&self) -> Vec<MetricDescriptor> { /* ... */ }
+    fn commands(&self) -> Vec<ExtensionCommand> { /* ... */ }
     async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> { /* ... */ }
     fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> { /* ... */ }
 }
@@ -297,7 +297,7 @@ neomind_extension_sdk::neomind_export!(MinimalExtension);
 
 1. **Install the skill** (if not already done)
    ```bash
-   ./install-skill.sh
+   ./skill/install.sh
    ```
 
 2. **Start Claude Code** in your project

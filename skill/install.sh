@@ -76,6 +76,7 @@ if [ -f "${TARGET_DIR}/SKILL.md" ]; then
     echo "  • Main guide:     ${TARGET_DIR}/SKILL.md"
     echo "  • Architecture:   ${TARGET_DIR}/reference/architecture.md"
     echo "  • SDK API:        ${TARGET_DIR}/reference/sdk-api.md"
+    echo "  • Events:         ${TARGET_DIR}/reference/event-subscription.md"
     echo "  • Frontend:       ${TARGET_DIR}/reference/frontend.md"
     echo "  • Example:        ${TARGET_DIR}/examples/simple-counter.md"
     echo

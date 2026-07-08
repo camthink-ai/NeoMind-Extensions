@@ -39,9 +39,10 @@ skill/
 └── neomind-extension/              # 技能包
     ├── SKILL.md                    # 主技能指令
     ├── reference/                  # 详细参考文档
-    │   ├── architecture.md         # 进程隔离和 IPC
-    │   ├── sdk-api.md              # 完整 SDK API
-    │   └── frontend.md             # React 组件
+    │   ├── architecture.md         # 进程隔离、IPC、ABI v3 FFI 符号表
+    │   ├── sdk-api.md              # 完整 SDK API（Extension trait / 23 个错误变体 / 20 个 capability）
+    │   ├── event-subscription.md   # 事件订阅 + 同步 handle_event
+    │   └── frontend.md             # React 组件 + CSS 变量 + configSchema
     └── examples/                   # 工作示例
         └── simple-counter.md       # 完整计数器扩展
 ```
@@ -228,17 +229,20 @@ Claude 使用的实际技能文件：
 
 ### 主技能 (neomind-extension/)
 
-**SKILL.md** (12KB)
-- 快速命令
-- 分步工作流
-- 代码模板
-- 常见模式
-- 安全要求
+**SKILL.md** (~42KB)
+- 快速命令 + 分步工作流
+- 模板：Cargo.toml → Extension trait → ML → 流式 → 前端
+- Bridge 扩展模式（Modbus / LoRaWAN / HA / OPC UA / ONVIF / BACnet）
+- Python sidecar 模式（voice / TTS / ASR — HTTP 或 WebSocket）
+- ChatStream / ChatSession capability 集成
+- 市场发布检查清单
+- 23 个生产扩展按类别速查
 
-**reference/** (20KB)
-- `architecture.md` - 进程隔离、IPC 协议
-- `sdk-api.md` - 完整 SDK 参考
-- `frontend.md` - React 组件指南
+**reference/** (~40KB)
+- `architecture.md` — 进程隔离、IPC 协议、ABI v3 FFI 符号表
+- `sdk-api.md` — 完整 SDK API（对照源码核对：Extension trait、23 个 ExtensionError 变体、20 个 ExtensionCapability、CapabilityContext、builders、macros）
+- `event-subscription.md` — 事件订阅 + 同步 `handle_event`（含三大经典陷阱）
+- `frontend.md` — React 组件、NeoMind CSS 变量、扁平 `configSchema`、`uiHints`、`dataSource`
 
 **examples/** (7KB)
 - `simple-counter.md` - 完整工作扩展
