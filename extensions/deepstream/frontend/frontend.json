@@ -6,31 +6,51 @@
     {
       "name": "DeepStreamStatsCard",
       "type": "card",
-      "displayName": "DeepStream System Stats",
-      "description": "Sidecar status, GPU utilization, memory, active stream count, total throughput, and restart count for the NVIDIA DeepStream extension.",
+      "displayName": "DeepStream 系统状态",
+      "description": "Sidecar 运行状态、GPU 利用率/显存、活跃流数量、总吞吐 FPS 和重启控制。",
       "icon": "cpu",
-      "defaultSize": { "width": 320, "height": 220 },
-      "minSize": { "width": 240, "height": 180 },
-      "maxSize": { "width": 480, "height": 360 },
+      "defaultSize": { "width": 340, "height": 240 },
+      "minSize": { "width": 260, "height": 200 },
+      "maxSize": { "width": 500, "height": 400 },
       "refreshable": true,
       "refreshInterval": 5000,
       "hasDataSource": false,
       "configSchema": {
         "title": {
           "type": "string",
-          "title": "Card title",
-          "description": "Override the card header text",
+          "title": "卡片标题",
+          "description": "覆盖默认的标题文本",
           "default": "DeepStream"
+        },
+        "serverHost": {
+          "type": "string",
+          "title": "DeepStream 服务器地址",
+          "description": "DeepStream sidecar 运行的 IP 或主机名（如 Jetson 设备 IP 192.168.93.20）。留空则使用当前页面主机名。"
+        },
+        "snapshotPort": {
+          "type": "number",
+          "title": "快照端口",
+          "description": "Sidecar 快照 HTTP 端口，默认 8555",
+          "default": 8555
+        },
+        "rtspPort": {
+          "type": "number",
+          "title": "RTSP 端口",
+          "description": "RTSP 输出端口，默认 8554",
+          "default": 8554
         }
+      },
+      "uiHints": {
+        "fieldOrder": ["title", "serverHost", "snapshotPort", "rtspPort"]
       }
     },
     {
       "name": "DeepStreamOverviewCard",
       "type": "card",
-      "displayName": "DeepStream Stream Overview",
-      "description": "Grid of stream thumbnails with live snapshot polling and status dots. Click a tile to drill into a single stream.",
+      "displayName": "DeepStream 流总览",
+      "description": "所有视频流的缩略图网格，实时快照轮询 + 状态指示。点击缩略图查看单流详情。",
       "icon": "video",
-      "defaultSize": { "width": 640, "height": 480 },
+      "defaultSize": { "width": 680, "height": 480 },
       "minSize": { "width": 400, "height": 300 },
       "maxSize": { "width": 1200, "height": 800 },
       "refreshable": true,
@@ -39,23 +59,41 @@
       "configSchema": {
         "title": {
           "type": "string",
-          "title": "Card title",
-          "default": "DeepStream Streams"
+          "title": "卡片标题",
+          "default": "DeepStream 流总览"
+        },
+        "serverHost": {
+          "type": "string",
+          "title": "DeepStream 服务器地址",
+          "description": "DeepStream sidecar 运行的 IP 或主机名。留空则使用当前页面主机名。"
+        },
+        "snapshotPort": {
+          "type": "number",
+          "title": "快照端口",
+          "default": 8555
+        },
+        "rtspPort": {
+          "type": "number",
+          "title": "RTSP 端口",
+          "default": 8554
         },
         "snapshotToken": {
           "type": "string",
-          "title": "Snapshot auth token",
-          "description": "Required for live thumbnail polling. Leave empty to show placeholders only."
+          "title": "快照认证 Token",
+          "description": "实时缩略图轮询所需。留空则仅显示占位图。"
         }
+      },
+      "uiHints": {
+        "fieldOrder": ["title", "serverHost", "snapshotPort", "rtspPort", "snapshotToken"]
       }
     },
     {
       "name": "DeepStreamStreamCard",
       "type": "card",
-      "displayName": "DeepStream Single Stream",
-      "description": "Large snapshot, RTSP URL with copy button, live counts (persons / vehicles / line crosses / ROI alerts), and an event feed filtered to one stream.",
+      "displayName": "DeepStream 单流详情",
+      "description": "大尺寸快照、RTSP 地址（可复制）、实时计数（行人/车辆/越线/ROI 告警）和事件流。",
       "icon": "video",
-      "defaultSize": { "width": 480, "height": 640 },
+      "defaultSize": { "width": 500, "height": 680 },
       "minSize": { "width": 360, "height": 480 },
       "maxSize": { "width": 800, "height": 1000 },
       "refreshable": true,
@@ -65,19 +103,37 @@
       "configSchema": {
         "title": {
           "type": "string",
-          "title": "Card title",
-          "description": "Defaults to the bound stream_id"
+          "title": "卡片标题",
+          "description": "默认使用绑定的 stream_id"
         },
         "streamId": {
           "type": "string",
           "title": "Stream ID",
-          "description": "Explicit stream to display. Overrides the data source binding."
+          "description": "要显示的流 ID。覆盖数据源绑定。"
+        },
+        "serverHost": {
+          "type": "string",
+          "title": "DeepStream 服务器地址",
+          "description": "DeepStream sidecar 运行的 IP 或主机名。留空则使用当前页面主机名。"
+        },
+        "snapshotPort": {
+          "type": "number",
+          "title": "快照端口",
+          "default": 8555
+        },
+        "rtspPort": {
+          "type": "number",
+          "title": "RTSP 端口",
+          "default": 8554
         },
         "snapshotToken": {
           "type": "string",
-          "title": "Snapshot auth token",
-          "description": "Required for live snapshot polling."
+          "title": "快照认证 Token",
+          "description": "实时快照轮询所需。"
         }
+      },
+      "uiHints": {
+        "fieldOrder": ["title", "streamId", "serverHost", "snapshotPort", "rtspPort", "snapshotToken"]
       }
     }
   ],

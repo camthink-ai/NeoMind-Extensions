@@ -91,38 +91,56 @@ export async function executeCommand<T = unknown>(
 }
 
 // ---------------------------------------------------------------------------
-// Snapshot / RTSP URL helpers
+// Server configuration — allows the DeepStream sidecar to run on a different
+// host than the NeoMind dashboard (e.g., Jetson at 192.168.93.20 while NeoMind
+// runs on the user's Mac). When `host` is empty/undefined, URLs are derived
+// from the dashboard's own origin (backward-compat).
 // ---------------------------------------------------------------------------
 
+export interface ServerConfig {
+  /** DeepStream server IP or hostname (e.g., "192.168.93.20"). */
+  host?: string;
+  /** Snapshot HTTP port (default 8555). */
+  snapshotPort?: number;
+  /** RTSP port (default 8554). */
+  rtspPort?: number;
+}
+
 /**
- * Snapshot URL with cache-bust tick. The snapshot HTTP server runs alongside
- * the sidecar on a configurable port (default 8555) — callers usually learn
- * the port from the HelloAck frame. We default to 8555 to match the sidecar
- * bootstrap config.
+ * Snapshot URL with cache-bust tick. When `server.host` is set, the snapshot
+ * is fetched directly from the DeepStream server. Otherwise the URL is derived
+ * from the dashboard's origin (same host, snapshot port appended).
  */
 export function getSnapshotUrl(
   streamId: string,
   token: string,
   tick: number,
-  snapshotPort = 8555,
+  server?: ServerConfig,
 ): string {
+  const port = server?.snapshotPort ?? 8555;
+  const path = `/snapshot/${encodeURIComponent(streamId)}.jpg?token=${encodeURIComponent(token)}&t=${tick}`;
+
+  if (server?.host) {
+    return `http://${server.host}:${port}${path}`;
+  }
+
+  // Fall back to deriving from API origin (same host, replace port).
   const origin = getApiOrigin();
-  // Replace the API port with the snapshot port. getApiOrigin returns
-  // `${proto}//${host}` (no port unless the host already has one), so we
-  // append `:snapshotPort` for both Tauri and browser deployments.
-  const hostWithPort = origin.replace(/^(https?:\/\/[^/:]+)(:\d+)?(.*)$/, `$1:${snapshotPort}`);
-  return `${hostWithPort}/snapshot/${encodeURIComponent(streamId)}.jpg?token=${encodeURIComponent(token)}&t=${tick}`;
+  const hostWithPort = origin.replace(/^(https?:\/\/[^/:]+)(:\d+)?(.*)$/, `$1:${port}`);
+  return `${hostWithPort}${path}`;
 }
 
 /**
- * RTSP URL for direct VLC / video-player handoff. The sidecar's RTSP server
- * defaults to port 8554 and mounts each stream at `/ds/<stream_id>`.
+ * RTSP URL for direct VLC / video-player handoff. When `server.host` is set,
+ * the RTSP URL points to the DeepStream server; otherwise it falls back to the
+ * dashboard's hostname.
  */
 export function getRtspUrl(
   streamId: string,
-  host: string = typeof window !== 'undefined' ? window.location.hostname : 'localhost',
-  port = 8554,
+  server?: ServerConfig,
 ): string {
+  const port = server?.rtspPort ?? 8554;
+  const host = server?.host ?? (typeof window !== 'undefined' ? window.location.hostname : 'localhost');
   return `rtsp://${host}:${port}/ds/${encodeURIComponent(streamId)}`;
 }
 
@@ -161,7 +179,7 @@ export interface RegisterModelArgs {
 export const dsCommands = {
   /** Add a stream — returns the sidecar-assigned rtsp_url. */
   addStream: (args: AddStreamArgs) =>
-    executeCommand<{ stream_id: string; rtsp_url: string }>(
+    executeCommand<{ stream_id: string; rtsp_url: string; snapshot_token: string }>(
       DEEPSTREAM_EXTENSION_ID,
       'add_stream',
       args as unknown as Record<string, unknown>,
