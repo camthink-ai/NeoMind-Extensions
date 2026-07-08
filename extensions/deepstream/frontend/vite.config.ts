@@ -10,17 +10,18 @@ export default defineConfig({
     lib: {
       entry: 'src/index.tsx',
       name: 'DeepStreamComponents',
-      fileName: (format) => format === 'umd' ? 'deepstream-components.umd.js' : 'deepstream-components.umd.cjs',
-      formats: ['umd', 'cjs']
+      fileName: 'deepstream-components',
+      formats: ['umd']
     },
     // Externalize React - use host app's React via window globals
     rollupOptions: {
-      external: ['react', 'react-dom'],
+      external: ['react', 'react-dom', 'react/jsx-runtime'],
       output: {
         exports: 'named',
         globals: {
           react: 'React',
           'react-dom': 'ReactDOM',
+          'react/jsx-runtime': 'jsxRuntime',
         },
       },
     },
