@@ -167,7 +167,7 @@ const STYLES = `
 export const DeepStreamOverviewCard = forwardRef<HTMLDivElement, OverviewCardProps>(
   function DeepStreamOverviewCard(props, ref) {
     const {
-      title = 'DeepStream 流总览',
+      title = 'DeepStream Streams',
       className,
       snapshotToken,
       onRequestAddStream,
@@ -207,7 +207,7 @@ export const DeepStreamOverviewCard = forwardRef<HTMLDivElement, OverviewCardPro
           {!loading && !error && streams.length === 0 && (
             <div className="ds-overview-card__empty">
               <div className="ds-overview-card__empty-icon"><CameraIcon /></div>
-              <p>暂无视频流。点击 "Add Stream" 添加。</p>
+              <p>No streams yet. Click "Add Stream" to add one.</p>
             </div>
           )}
           {!loading && !error && streams.length > 0 && (
