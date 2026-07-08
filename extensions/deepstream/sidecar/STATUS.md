@@ -47,21 +47,26 @@ docstring:
 **Migration to (A)** is a tracked follow-up after Phase 8 smoke
 testing confirms the inference pipeline is sound.
 
-### 2. Snapshot branch wiring — incomplete
+### 2. Snapshot — on-demand via GStreamer (tee approach abandoned)
 
-`pipeline_builder._make_snapshot_branch` creates the appsink +
-nvjpegenc + queue elements but does NOT yet insert the `tee` element
-into the encoder input. The encoder input currently flows
-`nvvideoconvert → encoder → parser → rtspclientsink` directly.
+The original plan used a `tee` element to fan out from the converter
+to both the encoder (RTSP) and an `nvjpegenc → appsink` branch. This
+**stalled the pipeline** (0 Detection events) even with queues between
+every element and `allow-not-linked=True` + `alloc-pad` on the tee.
+Root cause: likely caps negotiation conflict from the extra
+`nvvideoconvert` in the snapshot branch.
 
-To complete: add a `tee` between `converter` and `encoder`, request a
-src pad on the tee, and link to the snapshot queue. The appsink
-callback wiring (`_wire_snapshot_callback` in deepstream_runner) is
-already complete — once the tee exists, snapshots will flow.
+**Current approach (working):** the snapshot HTTP handler creates a
+**one-shot GStreamer pipeline** on demand that reads one frame from
+the stream's RTSP output (`rtspsrc ! rtph264depay ! nvv4l2decoder !
+nvvideoconvert ! nvjpegenc ! appsink`). The JPEG is returned inline.
+Verified on Jetson: HTTP 200, 95KB JPEG, 1920x1080, ~8s latency
+(RTSP connection + decode + encode).
 
-**Phase 8.3e will complete this.** Without it, the snapshot HTTP
-server returns 404 for every stream (token matches but bytes slot is
-empty). Detection / analytics / RTSP output are unaffected.
+This approach is robust (no effect on the main pipeline) but adds
+~8s latency per snapshot request. For lower latency, a future
+improvement could cache the last decoded frame via a pad probe on
+the main pipeline's converter.
 
 ### 3. nvdsanalytics ROI/LC config translation — needs validation
 
@@ -228,7 +233,8 @@ decision #5 — informational only).
 
 ## Not yet implemented (follow-ups)
 
-- Snapshot (tee approach abandoned — will use probe-based extraction)
+- Snapshot latency optimization (currently ~8s via one-shot RTSP grab;
+  could cache last frame via pad probe for <100ms)
 - Live threshold filter propagation (see #4)
 - GPU utilization/memory via pynvml (currently 0.0 — informational only)
 - `mediamtx` deployment artifacts (systemd unit)
