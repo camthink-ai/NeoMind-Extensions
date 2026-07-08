@@ -868,12 +868,20 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             # e.g., yolo-video-v2 -> yolo-video-card (remove -v2 suffix for cleaner names)
             COMPONENT_TYPE=$(echo "$ext" | sed 's/-v2$//' | sed 's/-v1$//')"-card"
 
+            # For multi-component extensions, each component needs a unique type
+            # (NeoMind DynamicRegistry uses type as the registry key).
+            # We slugify the component's export name (PascalCase → kebab-case).
+            # Single-component extensions keep the extension-based type for backward compat.
+            COMPONENT_COUNT=$(jq '.components | length' "$FRONTEND_JSON" 2>/dev/null || echo "0")
+
             # Convert components to dashboard_components format
             # Note: category must be one of: chart, metric, table, control, media, custom, other
             if [ -n "$GLOBAL_NAME" ]; then
-                DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" --arg global_name "$GLOBAL_NAME" '
+                DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" --arg global_name "$GLOBAL_NAME" --argjson component_count "$COMPONENT_COUNT" '
                     [.components[] | {
-                        "type": $component_type,
+                        "type": (if $component_count > 1 then
+                            (.name | gsub("(?<=[a-z0-9])(?=[A-Z])"; "-") | ascii_downcase)
+                        else $component_type end),
                         "name": .displayName,
                         "description": .description,
                         "category": (if .type == "card" then "custom"
@@ -939,9 +947,11 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                 ' "$FRONTEND_JSON" 2>/dev/null)
                 echo -e "    ${BLUE}→${NC} Global name: $GLOBAL_NAME"
             else
-                DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" '
+                DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" --argjson component_count "$COMPONENT_COUNT" '
                     [.components[] | {
-                        "type": $component_type,
+                        "type": (if $component_count > 1 then
+                            (.name | gsub("(?<=[a-z0-9])(?=[A-Z])"; "-") | ascii_downcase)
+                        else $component_type end),
                         "name": .displayName,
                         "description": .description,
                         "category": (if .type == "card" then "custom"

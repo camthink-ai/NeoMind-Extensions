@@ -323,6 +323,7 @@ impl DeepStreamExtension {
                     "stream_id": s.config.stream_id,
                     "status": s.status.as_str(),
                     "rtsp_url": s.rtsp_url,
+                    "snapshot_token": s.snapshot_token,
                     "model": s.config.model,
                     "added_at": s.added_at,
                 })
@@ -350,6 +351,7 @@ impl DeepStreamExtension {
             "stream_id": state.config.stream_id,
             "status": state.status.as_str(),
             "rtsp_url": state.rtsp_url,
+            "snapshot_token": state.snapshot_token,
             "model": state.config.model,
             "source": state.config.source,
             "added_at": state.added_at,

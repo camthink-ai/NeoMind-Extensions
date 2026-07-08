@@ -102,6 +102,7 @@ def handle_control(msg):
             "id": msg_id,
             "stream_id": stream_id,
             "rtsp_url": f"{RTSP_PREFIX}{stream_id}",
+            "snapshot_token": f"mock-token-{stream_id}",
         })
     elif t == "remove_stream":
         emit({
@@ -117,6 +118,7 @@ def handle_control(msg):
             "id": msg_id,
             "stream_id": stream_id,
             "rtsp_url": f"{RTSP_PREFIX}{stream_id}",
+            "snapshot_token": f"mock-token-{stream_id}",
         })
     elif t == "list_state":
         emit({

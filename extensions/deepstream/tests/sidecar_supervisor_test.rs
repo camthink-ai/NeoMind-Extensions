@@ -101,7 +101,7 @@ async fn add_stream_returns_stream_added() {
         .expect("stream_added timeout")
         .expect("stream closed");
     match ev {
-        SidecarEvent::StreamAdded { id, stream_id, rtsp_url } => {
+        SidecarEvent::StreamAdded { id, stream_id, rtsp_url, .. } => {
             assert_eq!(id, "r1");
             assert_eq!(stream_id, "cam_front");
             assert!(rtsp_url.contains("cam_front"), "rtsp_url={}", rtsp_url);
