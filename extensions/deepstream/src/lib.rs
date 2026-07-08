@@ -9,12 +9,13 @@ pub mod system_status;
 pub mod url_redact;
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicU64;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use parking_lot::RwLock;
+use parking_lot::{Mutex as PlMutex, RwLock};
+use tokio::task::JoinHandle;
 
 use neomind_extension_sdk::{
     CommandBuilder, Extension, ExtensionCommand, ExtensionError, ExtensionMetadata,
@@ -22,7 +23,7 @@ use neomind_extension_sdk::{
 };
 
 use crate::protocol::{ControlMessage, SidecarEvent};
-use crate::sidecar::SidecarHandle;
+use crate::sidecar::{SidecarHandle, SidecarSupervisor};
 use crate::stream_manager::{StreamConfig, StreamManager, StreamManagerError};
 use crate::system_status::SystemStatus;
 
@@ -45,28 +46,23 @@ pub struct ModelRegistration {
 
 pub struct DeepStreamExtension {
     /// Authoritative stream state. Arc so the supervisor's on_restart callback
-    /// can share it when wiring replay (future task).
+    /// can share it when wiring replay.
     streams: Arc<StreamManager>,
     /// User-registered models (preset models live in the sidecar config).
     registered_models: RwLock<HashMap<String, ModelRegistration>>,
     /// Cached system status from the last `diagnose` run.
     system_status: RwLock<Option<SystemStatus>>,
-    /// Current sidecar handle. None until start_sidecar() has run.
+    /// Current sidecar handle. None until ensure_sidecar() has run.
     /// Arc+RwLock so execute_command can grab a snapshot and the supervisor
-    /// can swap it on restart. Cloning the Arc out of the lock and dropping
-    /// the guard before `.await` is the canonical access pattern.
+    /// can swap it on restart.
     sidecar: Arc<RwLock<Option<Arc<SidecarHandle>>>>,
-    /// Supervisor restart count at last observation (for `restart_sidecar`).
-    /// Wired in a future task — kept here so the struct shape is stable.
-    #[allow(dead_code)]
-    restart_count: Arc<AtomicU64>,
-    /// Python interpreter path resolved by pre-flight (e.g., "python3.10").
-    /// Used when spawning the sidecar (wired in a future task).
-    #[allow(dead_code)]
-    python_bin: RwLock<Option<String>>,
+    /// Owns the live sidecar + watch loop. None until ensure_sidecar().
+    supervisor: Arc<RwLock<Option<Arc<SidecarSupervisor>>>>,
+    /// Watch-loop JoinHandle (from supervisor.start()). Aborted on restart.
+    watch_task: Arc<PlMutex<Option<JoinHandle<()>>>>,
+    /// Serializes concurrent sidecar startups (add_stream racing restart_sidecar, etc.).
+    startup_lock: tokio::sync::Mutex<()>,
     /// Metrics bridge: 7 global atomics + 9 per-stream dynamic templates.
-    /// Wired into `metrics()` / `produce_metrics()`; `apply_stats()` will be
-    /// called by the sidecar supervisor's Stats-event handler in Phase 8.
     metrics: Arc<metrics_bridge::MetricsBridge>,
 }
 
@@ -83,8 +79,9 @@ impl DeepStreamExtension {
             registered_models: RwLock::new(HashMap::new()),
             system_status: RwLock::new(None),
             sidecar: Arc::new(RwLock::new(None)),
-            restart_count: Arc::new(AtomicU64::new(0)),
-            python_bin: RwLock::new(None),
+            supervisor: Arc::new(RwLock::new(None)),
+            watch_task: Arc::new(PlMutex::new(None)),
+            startup_lock: tokio::sync::Mutex::new(()),
             metrics: Arc::new(metrics_bridge::MetricsBridge::new()),
         }
     }
@@ -112,26 +109,141 @@ impl DeepStreamExtension {
             registered_models: RwLock::new(HashMap::new()),
             system_status: RwLock::new(None),
             sidecar: Arc::new(RwLock::new(Some(sidecar))),
-            restart_count: Arc::new(AtomicU64::new(0)),
-            python_bin: RwLock::new(None),
+            supervisor: Arc::new(RwLock::new(None)),
+            watch_task: Arc::new(PlMutex::new(None)),
+            startup_lock: tokio::sync::Mutex::new(()),
             metrics: Arc::new(metrics_bridge::MetricsBridge::new()),
         }
     }
 
-    /// Clone the sidecar Arc out of the RwLock, dropping the guard before any
-    /// await. Holding a parking_lot guard across `.await` is a foot-gun
-    /// (parking_lot is sync; the guard would pin the lock for the duration of
-    /// the task's suspension).
+    /// Resolve the Python interpreter path + sidecar script path for spawning.
     ///
-    /// Returns `Err(NotSupported)` when no sidecar is wired yet.
-    fn sidecar_handle(&self) -> Result<Arc<SidecarHandle>> {
-        let guard = self.sidecar.read();
-        guard
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| ExtensionError::NotSupported(
-                "sidecar not started — call diagnose to check pre-flight".into(),
-            ))
+    /// python_bin: from cached SystemStatus if available, otherwise runs
+    /// `diagnose` checks. Falls back to "python3" if detection fails.
+    ///
+    /// script_path: searched in order:
+    ///   1. `DEEPSTREAM_SIDECAR_PATH` env var (absolute path to .py)
+    ///   2. `NEOMIND_EXTENSION_DIR` env var + `/sidecar/deepstream_runner.py`
+    ///   3. `CARGO_MANIFEST_DIR` + `/sidecar/deepstream_runner.py` (dev fallback)
+    ///   4. `./sidecar/deepstream_runner.py` (last resort)
+    async fn resolve_spawn_config(&self) -> Result<(String, PathBuf)> {
+        // python_bin — use cached status if fresh, otherwise run checks.
+        let python_bin = {
+            let cached = self.system_status.read().clone();
+            let py = cached
+                .as_ref()
+                .and_then(|s| s.python_bin.clone())
+                .filter(|p| !p.is_empty());
+            match py {
+                Some(p) => p,
+                None => {
+                    let status = SystemStatus::run_checks().await;
+                    let p = status.python_bin.clone().unwrap_or_else(|| "python3".to_string());
+                    *self.system_status.write() = Some(status);
+                    p
+                }
+            }
+        };
+
+        // script_path — env vars first, then filesystem fallbacks.
+        let script_path = std::env::var("DEEPSTREAM_SIDECAR_PATH")
+            .ok()
+            .map(PathBuf::from)
+            .filter(|p| p.exists())
+            .or_else(|| {
+                std::env::var("NEOMIND_EXTENSION_DIR")
+                    .ok()
+                    .map(PathBuf::from)
+                    .map(|d| d.join("sidecar").join("deepstream_runner.py"))
+                    .filter(|p| p.exists())
+            })
+            .or_else(|| {
+                // Dev fallback: relative to the compiled crate root.
+                let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("sidecar")
+                    .join("deepstream_runner.py");
+                if p.exists() { Some(p) } else { None }
+            })
+            .or_else(|| {
+                let p = PathBuf::from("sidecar").join("deepstream_runner.py");
+                if p.exists() { Some(p) } else { None }
+            })
+            .ok_or_else(|| {
+                ExtensionError::ExecutionFailed(format!(
+                    "deepstream_runner.py not found. Set DEEPSTREAM_SIDECAR_PATH or NEOMIND_EXTENSION_DIR."
+                ))
+            })?;
+
+        Ok((python_bin, script_path))
+    }
+
+    /// Lazily start the sidecar supervisor if not already running, then return
+    /// the current handle. Uses `startup_lock` to serialize concurrent
+    /// startups (e.g., two add_stream calls racing on a cold extension).
+    async fn ensure_sidecar(&self) -> Result<Arc<SidecarHandle>> {
+        // Fast path: handle already available.
+        {
+            let guard = self.sidecar.read();
+            if let Some(h) = guard.as_ref() {
+                return Ok(h.clone());
+            }
+        }
+
+        // Slow path: serialize startups.
+        let _guard = self.startup_lock.lock().await;
+
+        // Double-check after acquiring the lock (another task may have started it).
+        {
+            let sc = self.sidecar.read();
+            if let Some(h) = sc.as_ref() {
+                return Ok(h.clone());
+            }
+        }
+
+        let (python_bin, script_path) = self.resolve_spawn_config().await?;
+        eprintln!(
+            "[deepstream] starting sidecar: {} {}",
+            python_bin,
+            script_path.display()
+        );
+
+        let sup = Arc::new(SidecarSupervisor::new(&python_bin, script_path));
+
+        // on_restart callback: fires on crash-recovery respawns (not initial start).
+        // Updates self.sidecar + replays active stream configs to the fresh process.
+        let sidecar_field = self.sidecar.clone();
+        let streams = self.streams.clone();
+        let metrics = self.metrics.clone();
+        let on_restart = move |handle: Arc<SidecarHandle>| {
+            eprintln!("[deepstream] supervisor delivered fresh handle after crash recovery");
+            *sidecar_field.write() = Some(handle.clone());
+            metrics.mark_sidecar_started();
+            let streams = streams.clone();
+            tokio::spawn(async move {
+                let summary = streams.replay_to(&handle).await;
+                eprintln!(
+                    "[deepstream] post-restart replay: {} succeeded, {} failed",
+                    summary.succeeded.len(),
+                    summary.failed.len()
+                );
+                for f in &summary.failed {
+                    eprintln!("[deepstream]   FAILED {}: {}", f.stream_id, f.error);
+                }
+            });
+        };
+
+        let (handle, watch_task) = sup
+            .clone()
+            .start(on_restart)
+            .await
+            .map_err(|e| ExtensionError::ExecutionFailed(format!("sidecar spawn failed: {e}")))?;
+
+        *self.supervisor.write() = Some(sup);
+        *self.watch_task.lock() = Some(watch_task);
+        *self.sidecar.write() = Some(handle.clone());
+        self.metrics.mark_sidecar_started();
+
+        Ok(handle)
     }
 
     /// Wait up to `timeout` for an event matching `predicate`. Non-matching
@@ -216,7 +328,7 @@ impl DeepStreamExtension {
 
         // Send AddStream and wait for StreamAdded correlated by request id.
         let req_id = uuid::Uuid::new_v4().to_string();
-        let handle = self.sidecar_handle()?;
+        let handle = self.ensure_sidecar().await?;
         handle
             .send(&ControlMessage::AddStream {
                 id: req_id.clone(),
@@ -286,7 +398,7 @@ impl DeepStreamExtension {
             })?;
 
         let req_id = uuid::Uuid::new_v4().to_string();
-        let handle = self.sidecar_handle()?;
+        let handle = self.ensure_sidecar().await?;
         handle
             .send(&ControlMessage::RemoveStream {
                 id: req_id.clone(),
@@ -377,7 +489,7 @@ impl DeepStreamExtension {
         let (line_crossing, roi) = parse_analytics_config(&config);
 
         let req_id = uuid::Uuid::new_v4().to_string();
-        let handle = self.sidecar_handle()?;
+        let handle = self.ensure_sidecar().await?;
         handle
             .send(&ControlMessage::UpdateAnalytics {
                 id: req_id.clone(),
@@ -421,7 +533,7 @@ impl DeepStreamExtension {
         let iou = args.get("iou").and_then(|v| v.as_f64()).unwrap_or(0.45) as f32;
 
         let req_id = uuid::Uuid::new_v4().to_string();
-        let handle = self.sidecar_handle()?;
+        let handle = self.ensure_sidecar().await?;
         handle
             .send(&ControlMessage::SetThreshold {
                 id: req_id.clone(),
@@ -492,10 +604,94 @@ impl DeepStreamExtension {
         &self,
         _args: &serde_json::Value,
     ) -> Result<serde_json::Value> {
-        // Stub — full supervisor wiring + replay is its own task.
-        Err(ExtensionError::NotSupported(
-            "restart_sidecar not wired to supervisor yet — manual restart required".into(),
-        ))
+        // Serialize against concurrent startups / restarts.
+        let _guard = self.startup_lock.lock().await;
+
+        // 1. Tear down the existing supervisor + watch loop.
+        let prev_count = self.streams.list().len();
+        let old_sup = self.supervisor.write().take();
+        if let Some(sup) = old_sup {
+            eprintln!("[deepstream] restart_sidecar: shutting down current supervisor");
+            if let Err(e) = sup.shutdown().await {
+                eprintln!("[deepstream] restart_sidecar: shutdown error: {e:?}");
+            }
+        }
+        if let Some(task) = self.watch_task.lock().take() {
+            task.abort();
+        }
+        *self.sidecar.write() = None;
+        self.metrics.mark_sidecar_stopped();
+
+        // 2. Spawn a fresh supervisor. resolve_spawn_config + start happen
+        //    under the lock so no other command can observe a half-restarted
+        //    state.
+        let (python_bin, script_path) = self.resolve_spawn_config().await?;
+        eprintln!(
+            "[deepstream] restart_sidecar: respawning sidecar ({} {})",
+            python_bin,
+            script_path.display()
+        );
+
+        let sup = Arc::new(SidecarSupervisor::new(&python_bin, script_path));
+
+        let sidecar_field = self.sidecar.clone();
+        let streams = self.streams.clone();
+        let metrics = self.metrics.clone();
+        let on_restart = move |handle: Arc<SidecarHandle>| {
+            eprintln!("[deepstream] supervisor delivered fresh handle after crash recovery");
+            *sidecar_field.write() = Some(handle.clone());
+            metrics.mark_sidecar_started();
+            let streams = streams.clone();
+            tokio::spawn(async move {
+                let summary = streams.replay_to(&handle).await;
+                eprintln!(
+                    "[deepstream] post-restart replay: {} succeeded, {} failed",
+                    summary.succeeded.len(),
+                    summary.failed.len()
+                );
+                for f in &summary.failed {
+                    eprintln!("[deepstream]   FAILED {}: {}", f.stream_id, f.error);
+                }
+            });
+        };
+
+        let (handle, watch_task) = sup
+            .clone()
+            .start(on_restart)
+            .await
+            .map_err(|e| ExtensionError::ExecutionFailed(format!(
+                "sidecar respawn failed: {e}"
+            )))?;
+
+        *self.supervisor.write() = Some(sup);
+        *self.watch_task.lock() = Some(watch_task);
+        *self.sidecar.write() = Some(handle.clone());
+        self.metrics.mark_sidecar_started();
+
+        // 3. Replay active stream configs to the fresh sidecar.
+        let summary = if prev_count > 0 {
+            eprintln!(
+                "[deepstream] restart_sidecar: replaying {} stream(s)",
+                prev_count
+            );
+            self.streams.replay_to(&handle).await
+        } else {
+            crate::stream_manager::ReplaySummary {
+                succeeded: Vec::new(),
+                failed: Vec::new(),
+            }
+        };
+
+        Ok(serde_json::json!({
+            "restarted": true,
+            "replay": {
+                "succeeded": summary.succeeded,
+                "failed": summary.failed.iter().map(|f| serde_json::json!({
+                    "stream_id": f.stream_id,
+                    "error": f.error,
+                })).collect::<Vec<_>>(),
+            }
+        }))
     }
 
     async fn cmd_diagnose(&self, _args: &serde_json::Value) -> Result<serde_json::Value> {
