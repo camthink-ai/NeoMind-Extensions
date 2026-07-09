@@ -145,3 +145,4 @@ extensions/voice-assistant/service/latency_*.json
 
 # Local design docs / specs (kept locally, not committed)
 docs/
+.superpowers/
