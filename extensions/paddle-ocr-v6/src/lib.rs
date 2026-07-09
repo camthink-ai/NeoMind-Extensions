@@ -77,6 +77,47 @@ pub struct OcrResult {
 // Geometry helpers (copied from ocr-device-inference, simplified)
 // ---------------------------------------------------------------------------
 
+/// Rec model input height (SVTR height-normalized to 48; see preset.rs).
+const REC_HEIGHT: u32 = 48;
+/// Rec model's opt input width — the usls processor's fixed `image_width`.
+/// Pre-clamping crops to this avoids a floating-point rounding overflow in
+/// `fast_image_resize` when the processor internally calls
+/// `resize_with_info(960, 48, FitAdaptive)`: for certain source aspect
+/// ratios `(w0 * r).round()` yields 961 > 960, triggering
+/// `CroppedImageMut::new → SizeIsOutOfImageBoundaries`. By height-
+/// normalizing crops ourselves, the processor's `r` becomes exactly 1.0
+/// (IEEE-754 identity), so no rounding can push the result past 960.
+const REC_OPT_WIDTH: u32 = 960;
+
+/// Height-normalize a crop for the recognizer: resize to (w, 48) preserving
+/// aspect ratio, clamping `w` to `[1, REC_OPT_WIDTH]`. Returns the original
+/// image unchanged if it is already within bounds.
+fn normalize_for_rec(img: &usls::Image) -> usls::Image {
+    let (w0, h0) = img.dimensions();
+    if h0 == 0 {
+        return img.clone();
+    }
+    // Already at target height and within width — nothing to do.
+    if h0 == REC_HEIGHT && w0 <= REC_OPT_WIDTH {
+        return img.clone();
+    }
+    let scale = REC_HEIGHT as f32 / h0 as f32;
+    let mut new_w = (w0 as f32 * scale).round() as u32;
+    if new_w < 1 {
+        new_w = 1;
+    }
+    if new_w > REC_OPT_WIDTH {
+        new_w = REC_OPT_WIDTH;
+    }
+    // usls default resize mode is FitAdaptive; using FitExact forces an
+    // exact (new_w × 48) result with no aspect-ratio tricks, so the
+    // downstream processor resize becomes identity (r = 1.0).
+    match img.resize(new_w, REC_HEIGHT, "Bilinear", &usls::ResizeMode::FitExact, 0) {
+        Ok(r) => r,
+        Err(_) => img.clone(), // fall back; recognizer will retry resize
+    }
+}
+
 /// Crop the axis-aligned bounding rectangle of a detection polygon.
 /// Returns None for crops smaller than 8x8 (too small for SVTR).
 fn crop_polygon(img: &usls::Image, polygon: &usls::Polygon) -> Option<usls::Image> {
@@ -280,14 +321,20 @@ impl OcrEngine {
                             .map(|p| [p[0] / img_w as f32, p[1] / img_h as f32])
                             .collect(),
                     );
-                    crops.push(crop);
+                    // Height-normalize before recognition — see
+                    // `normalize_for_rec` for the FP-rounding rationale.
+                    crops.push(normalize_for_rec(&crop));
                     bboxes.push(bbox);
                     polygons.push(poly_norm);
                 }
             }
         }
 
-        // ---- Recognize crops in a single batch (SVTR) --------------------
+        // ---- Recognize crops in batches (SVTR) ---------------------------
+        // SVTR's Concat node allocates memory ∝ batch_size × crop_width.
+        // Text-dense images produce many crops → single-batch forward can
+        // OOM. We start with a large batch for throughput, then halve on
+        // ORT memory errors until it fits (32 → 16 → 8 → … → 1).
         let mut text_blocks: Vec<TextBlock> = Vec::with_capacity(bboxes.len());
         let mut total_conf = 0.0_f32;
 
@@ -296,9 +343,40 @@ impl OcrEngine {
                 let recognizer = self.recognizer.as_mut().ok_or_else(|| {
                     ExtensionError::ExecutionFailed("recognizer missing".to_string())
                 })?;
-                recognizer
-                    .forward(&crops)
-                    .map_err(|e| ExtensionError::ExecutionFailed(format!("recognize failed: {}", e)))?
+                let mut all_results = Vec::with_capacity(crops.len());
+                let mut idx: usize = 0;
+                let mut batch_size: usize = 32;
+                while idx < crops.len() {
+                    let end = (idx + batch_size).min(crops.len());
+                    match recognizer.forward(&crops[idx..end]) {
+                        Ok(r) => {
+                            all_results.extend(r);
+                            idx = end;
+                        }
+                        Err(e) => {
+                            let msg = e.to_string();
+                            if (msg.contains("BFCArena")
+                                || msg.contains("AllocateRaw")
+                                || msg.contains("available memory"))
+                                && batch_size > 1
+                            {
+                                batch_size = (batch_size / 2).max(1);
+                                tracing::warn!(
+                                    "[paddle-ocr-v6] recognizer OOM at {} crops, \
+                                     retrying with batch_size={}",
+                                    end - idx,
+                                    batch_size
+                                );
+                                continue;
+                            }
+                            return Err(ExtensionError::ExecutionFailed(format!(
+                                "recognize failed: {}",
+                                e
+                            )));
+                        }
+                    }
+                }
+                all_results
             };
 
             for (i, rec_y) in rec_results.iter().enumerate() {
