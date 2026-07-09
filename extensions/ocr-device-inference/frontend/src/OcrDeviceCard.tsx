@@ -1215,6 +1215,9 @@ const compressImage = (dataUrl: string, maxSizeKB = 500): Promise<string> => {
         return
       }
 
+      // JPEG has no alpha — fill white so transparent PNG pixels don't go black
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, width, height)
       ctx.drawImage(img, 0, 0, width, height)
 
       // Try different quality levels until size is acceptable
@@ -1266,8 +1269,24 @@ async function executeCommandApi(
       headers: getApiHeaders(),
       body: JSON.stringify({ command, args })
     })
-    if (!res.ok) return { success: false, error: `HTTP ${res.status}` }
-    return res.json()
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`
+      try {
+        const errBody = await res.json()
+        const e = errBody?.error ?? errBody?.message
+        if (typeof e === 'string') detail = e
+        else if (e && typeof e === 'object') detail = e.message || e.code || detail
+      } catch { /* ignore */ }
+      return { success: false, error: detail }
+    }
+    const body = await res.json()
+    // Normalize: server may return error as object { code, message }
+    if (body && typeof body === 'object' && body.success === false) {
+      const e = body.error
+      const errorStr = typeof e === 'string' ? e : (e && typeof e === 'object' ? e.message || e.code : undefined)
+      return { success: false, error: errorStr || 'Command failed' }
+    }
+    return body
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Network error' }
   }

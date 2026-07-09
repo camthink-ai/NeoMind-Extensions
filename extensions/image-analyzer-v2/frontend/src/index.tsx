@@ -58,8 +58,24 @@ async function analyzeImage(extensionId: string, imageBase64: string): Promise<{
       headers: getApiHeaders(),
       body: JSON.stringify({ command: 'analyze_image', args: { image: imageBase64 } })
     })
-    if (!res.ok) return { success: false, error: `HTTP ${res.status}` }
-    return res.json()
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`
+      try {
+        const errBody = await res.json()
+        const e = errBody?.error ?? errBody?.message
+        if (typeof e === 'string') detail = e
+        else if (e && typeof e === 'object') detail = e.message || e.code || detail
+      } catch { /* ignore */ }
+      return { success: false, error: detail }
+    }
+    const body = await res.json()
+    // Normalize: server may return error as object { code, message }
+    if (body && typeof body === 'object' && body.success === false) {
+      const e = body.error
+      const errorStr = typeof e === 'string' ? e : (e && typeof e === 'object' ? e.message || e.code : undefined)
+      return { success: false, error: errorStr || 'Analysis failed' }
+    }
+    return body
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Network error' }
   }
@@ -378,6 +394,47 @@ const Icon = ({ name, className = '', style }: { name: string; className?: strin
 )
 
 // ============================================================================
+// Image compression — prevents HTTP 413 (server body limit 10 MB)
+// ============================================================================
+const COMPRESS_MAX_DIM = 2048
+const COMPRESS_SAFE_CHARS = 6 * 1024 * 1024
+
+function compressImageForUpload(file: File): Promise<{ base64: string } | { error: string }> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      let tw = img.naturalWidth
+      let th = img.naturalHeight
+      const longest = Math.max(tw, th)
+      if (longest > COMPRESS_MAX_DIM) {
+        const scale = COMPRESS_MAX_DIM / longest
+        tw = Math.round(tw * scale)
+        th = Math.round(th * scale)
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = tw
+      canvas.height = th
+      const ctx = canvas.getContext('2d')
+      if (!ctx) { resolve({ error: 'Canvas unavailable' }); return }
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, tw, th)
+      ctx.drawImage(img, 0, 0, tw, th)
+      let base64 = ''
+      for (const q of [0.9, 0.75, 0.6, 0.45]) {
+        const dataUrl = canvas.toDataURL('image/jpeg', q)
+        base64 = dataUrl.split(',')[1] || ''
+        if (base64.length <= COMPRESS_SAFE_CHARS) break
+      }
+      resolve({ base64 })
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); resolve({ error: 'Failed to decode image' }) }
+    img.src = url
+  })
+}
+
+// ============================================================================
 // Component
 // ============================================================================
 
@@ -397,23 +454,22 @@ export const ImageAnalyzer = forwardRef<HTMLDivElement, ExtensionComponentProps>
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
 
-    const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0]
       if (!file) return
       if (!file.type.startsWith('image/')) {
         setError('Please select an image file')
         return
       }
-      const reader = new FileReader()
-      reader.onload = (ev) => {
-        const base64 = (ev.target?.result as string)?.split(',')[1]
-        if (base64) {
-          setImage(base64)
-          setResult(null)
-          setError(null)
-        }
+      if (file.size > 30 * 1024 * 1024) {
+        setError('Image too large (max 30 MB before compression)')
+        return
       }
-      reader.readAsDataURL(file)
+      const out = await compressImageForUpload(file)
+      if ('error' in out) { setError(out.error); return }
+      setImage(out.base64)
+      setResult(null)
+      setError(null)
     }, [])
 
     const handleAnalyze = useCallback(async () => {

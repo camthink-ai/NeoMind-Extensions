@@ -129,7 +129,14 @@ async function executeCommand(
       body: JSON.stringify({ command, args }),
     })
     if (!res.ok) return { success: false, error: `HTTP ${res.status}` }
-    return res.json()
+    const body = await res.json()
+    // Normalize: server may return error as object { code, message }
+    if (body && typeof body === 'object' && body.success === false) {
+      const e = body.error
+      const errorStr = typeof e === 'string' ? e : (e && typeof e === 'object' ? e.message || e.code : undefined)
+      return { success: false, error: errorStr || 'Command failed' }
+    }
+    return body
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Network error' }
   }

@@ -94,7 +94,14 @@ async function executeCommand(
       }
     )
     if (!res.ok) return { success: false, error: `HTTP ${res.status}` }
-    return res.json()
+    const body = await res.json()
+    // Normalize: server may return error as object { code, message }
+    if (body && typeof body === 'object' && body.success === false) {
+      const e = body.error
+      const errorStr = typeof e === 'string' ? e : (e && typeof e === 'object' ? e.message || e.code : undefined)
+      return { success: false, error: errorStr || 'Command failed' }
+    }
+    return body
   } catch (e) {
     return {
       success: false,
@@ -408,7 +415,11 @@ export const FaceRegistrationCard = forwardRef<HTMLDivElement, FaceRegistrationC
       const canvas = document.createElement('canvas')
       canvas.width = width
       canvas.height = height
-      canvas.getContext('2d')!.drawImage(img, 0, 0, width, height)
+      const ctx = canvas.getContext('2d')!
+      // JPEG has no alpha — fill white so transparent PNG pixels don't go black
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, width, height)
+      ctx.drawImage(img, 0, 0, width, height)
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
       setImageData(dataUrl)
       setError(null)

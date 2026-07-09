@@ -84,10 +84,57 @@ async function runCommand<T>(
       const txt = await r.text().catch(() => '')
       return { success: false, error: `HTTP ${r.status}: ${txt.slice(0, 120)}` }
     }
-    return r.json()
+    const body = await r.json()
+    // Normalize: server may return error as object { code, message }
+    if (body && typeof body === 'object' && body.success === false) {
+      const e = body.error
+      const errorStr = typeof e === 'string' ? e : (e && typeof e === 'object' ? e.message || e.code : undefined)
+      return { success: false, error: errorStr || 'Command failed' }
+    }
+    return body
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Network error' }
   }
+}
+
+// Image compression — prevents HTTP 413 (server body limit 10 MB).
+// Downscale to 2048px max + re-encode JPEG, stepping quality until ≤6 MB base64.
+// Fill white before drawing so transparent PNG → white (not black) background.
+const COMPRESS_MAX_DIM = 2048
+const COMPRESS_SAFE_CHARS = 6 * 1024 * 1024
+
+function compressImageForUpload(file: File): Promise<{ base64: string; dataUrl: string } | { error: string }> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      let tw = img.naturalWidth
+      let th = img.naturalHeight
+      const longest = Math.max(tw, th)
+      if (longest > COMPRESS_MAX_DIM) {
+        const scale = COMPRESS_MAX_DIM / longest
+        tw = Math.round(tw * scale)
+        th = Math.round(th * scale)
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = tw
+      canvas.height = th
+      const ctx = canvas.getContext('2d')
+      if (!ctx) { resolve({ error: 'Canvas unavailable' }); return }
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, tw, th)
+      ctx.drawImage(img, 0, 0, tw, th)
+      let dataUrl = ''
+      for (const q of [0.9, 0.75, 0.6, 0.45]) {
+        dataUrl = canvas.toDataURL('image/jpeg', q)
+        if (dataUrl.length - 23 <= COMPRESS_SAFE_CHARS) break
+      }
+      resolve({ base64: dataUrl.split(',')[1] || '', dataUrl })
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); resolve({ error: 'Failed to decode' }) }
+    img.src = url
+  })
 }
 
 const PaddleOcrCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
@@ -133,26 +180,27 @@ const PaddleOcrCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
       return () => document.removeEventListener('mousedown', onClick)
     }, [showSettings])
 
-    const onFile = useCallback((file: File) => {
+    const onFile = useCallback(async (file: File) => {
       if (!file.type.startsWith('image/')) {
         setError(`Not an image: ${file.type}`)
         return
       }
-      const reader = new FileReader()
-      reader.onload = () => {
-        const url = reader.result as string
-        setPreviewUrl(url)
-        setImageBase64(url.split(',')[1] || '')
-        setTextResult(null)
-        setTableResult(null)
-        setKieResult(null)
-        setError(null)
-        setActiveBlock(null)
-        const img = new Image()
-        img.onload = () => setDims({ w: img.naturalWidth, h: img.naturalHeight })
-        img.src = url
+      if (file.size > 30 * 1024 * 1024) {
+        setError('Image too large (max 30 MB before compression)')
+        return
       }
-      reader.readAsDataURL(file)
+      const out = await compressImageForUpload(file)
+      if ('error' in out) { setError(out.error); return }
+      setPreviewUrl(out.dataUrl)
+      setImageBase64(out.base64)
+      setTextResult(null)
+      setTableResult(null)
+      setKieResult(null)
+      setError(null)
+      setActiveBlock(null)
+      const img = new Image()
+      img.onload = () => setDims({ w: img.naturalWidth, h: img.naturalHeight })
+      img.src = out.dataUrl
     }, [])
 
     const run = useCallback(async () => {

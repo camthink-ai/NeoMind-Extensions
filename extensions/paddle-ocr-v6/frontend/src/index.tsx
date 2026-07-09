@@ -107,8 +107,9 @@ async function runCommand<T = any>(
       let detail = `HTTP ${res.status}`
       try {
         const errBody = await res.json()
-        if (errBody?.error) detail = errBody.error
-        else if (errBody?.message) detail = errBody.message
+        const e = errBody?.error ?? errBody?.message
+        if (typeof e === 'string') detail = e
+        else if (e && typeof e === 'object') detail = e.message || e.code || detail
       } catch {
         /* ignore parse error */
       }
@@ -117,7 +118,13 @@ async function runCommand<T = any>(
     const body = await res.json()
     // Host returns { success, data? } OR the raw command result.
     if (body && typeof body === 'object' && 'success' in body) {
-      return body as { success: boolean; data?: T; error?: string }
+      // Normalize error: server may return { error: { code, message } } (object)
+      // which React can't render — flatten to string.
+      let errorStr: string | undefined
+      const e = body.error
+      if (typeof e === 'string') errorStr = e
+      else if (e && typeof e === 'object') errorStr = e.message || e.code
+      return { success: body.success, data: body.data, error: errorStr }
     }
     return { success: true, data: body as T }
   } catch (e) {
@@ -714,6 +721,78 @@ const Icon = ({
 )
 
 // ============================================================================
+// Image compression — prevents HTTP 413 (server body limit 10 MB)
+// ============================================================================
+//
+// Why this exists: the host's `/api/extensions/:id/command` route enforces a
+// 10 MB request-body limit (MAX_REQUEST_BODY_SIZE). A raw 8 MB photo becomes
+// ~10.7 MB after base64 encoding (×4/3 expansion) + JSON envelope → 413.
+//
+// PP-OCRv6's detector (DB) resizes its input to ≤960 px internally, so any
+// image larger than ~2048 px on its longest side is pure bandwidth + memory
+// waste. We downscale to 2048 px max and re-encode as JPEG (stepping quality
+// down until under a safe size). OCR accuracy is unaffected — the model never
+// sees the extra pixels anyway.
+
+const MAX_UPLOAD_DIMENSION = 2048
+// Base64 char budget. Final JSON payload ≈ base64 + ~100 B envelope.
+// 6 MB base64 → ~8 MB JSON → comfortably under the 10 MB server limit.
+const SAFE_BASE64_CHARS = 6 * 1024 * 1024
+
+async function compressImageForUpload(
+  file: File,
+): Promise<{ base64: string; mime: string } | { error: string }> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      const ow = img.naturalWidth
+      const oh = img.naturalHeight
+      // Cap longest side; preserve aspect ratio
+      let tw = ow
+      let th = oh
+      const longest = Math.max(ow, oh)
+      if (longest > MAX_UPLOAD_DIMENSION) {
+        const scale = MAX_UPLOAD_DIMENSION / longest
+        tw = Math.round(ow * scale)
+        th = Math.round(oh * scale)
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = tw
+      canvas.height = th
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        resolve({ error: 'Canvas 2D context unavailable' })
+        return
+      }
+      // JPEG has no alpha channel. Transparent PNG pixels default to black
+      // on canvas → dark-on-transparent text becomes invisible. Fill white
+      // (paper background) first so transparency flattens to white.
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, tw, th)
+      ctx.drawImage(img, 0, 0, tw, th)
+      // Step JPEG quality down until the base64 fits the safe budget.
+      // 0.9 is visually lossless for OCR; lower rungs are fallbacks for
+      // pathological inputs (e.g. 8000×8000 screenshots).
+      const qualities = [0.9, 0.75, 0.6, 0.45]
+      let base64 = ''
+      for (const q of qualities) {
+        const dataUrl = canvas.toDataURL('image/jpeg', q)
+        base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+        if (base64.length <= SAFE_BASE64_CHARS) break
+      }
+      resolve({ base64, mime: 'image/jpeg' })
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      resolve({ error: 'Failed to decode image' })
+    }
+    img.src = url
+  })
+}
+
+// ============================================================================
 // Component
 // ============================================================================
 
@@ -750,6 +829,7 @@ export const PaddleOcrV6Card = forwardRef<HTMLDivElement, ExtensionComponentProp
     const [dragOver, setDragOver] = useState(false)
     const [tierMenuOpen, setTierMenuOpen] = useState(false)
     const [resultsOpen, setResultsOpen] = useState(true)
+    const [compressing, setCompressing] = useState(false)
 
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
@@ -774,30 +854,28 @@ export const PaddleOcrV6Card = forwardRef<HTMLDivElement, ExtensionComponentProp
     // Image loading (file picker + drag/drop + paste)
     // -------------------------------------------------------------
 
-    const acceptFile = useCallback((file: File) => {
+    const acceptFile = useCallback(async (file: File) => {
       if (!file.type.startsWith('image/')) {
         setError('Please select an image file (PNG / JPEG / WebP)')
         return
       }
-      // Cap at ~10 MB to stay within HTTP body limits
-      if (file.size > 10 * 1024 * 1024) {
-        setError('Image too large (max 10 MB)')
+      // Hard cap on the *source* file to bound decode cost. Compression then
+      // shrinks the upload well under the 10 MB server body limit.
+      if (file.size > 30 * 1024 * 1024) {
+        setError('Image too large (max 30 MB before compression)')
         return
       }
-      const reader = new FileReader()
-      reader.onload = (ev) => {
-        const dataUrl = ev.target?.result as string | undefined
-        if (!dataUrl) return
-        const commaIdx = dataUrl.indexOf(',')
-        const base64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl
-        // mime like "image/png"
-        const mime = file.type || 'image/jpeg'
-        setImage(base64)
-        setImageMime(mime)
-        setResult(null)
-        setError(null)
+      setError(null)
+      setCompressing(true)
+      const out = await compressImageForUpload(file)
+      setCompressing(false)
+      if ('error' in out) {
+        setError(out.error)
+        return
       }
-      reader.readAsDataURL(file)
+      setImage(out.base64)
+      setImageMime(out.mime)
+      setResult(null)
     }, [])
 
     const handleFileSelect = useCallback(
@@ -1055,17 +1133,17 @@ export const PaddleOcrV6Card = forwardRef<HTMLDivElement, ExtensionComponentProp
                   Click / drop / paste an image
                 </div>
                 <div className="pocr-upload-hint">
-                  Supports JPG, PNG, WebP (max 10 MB)
+                  Supports JPG, PNG, WebP — auto-compressed on upload
                 </div>
               </div>
             ) : (
               <>
                 <div className="pocr-preview-wrapper">
                   <canvas ref={canvasRef} className="pocr-canvas" />
-                  {loading && (
+                  {(loading || compressing) && (
                     <div className="pocr-loading-overlay">
                       <div className="pocr-spinner" />
-                      <span>Recognizing…</span>
+                      <span>{compressing ? 'Compressing…' : 'Recognizing…'}</span>
                     </div>
                   )}
 
