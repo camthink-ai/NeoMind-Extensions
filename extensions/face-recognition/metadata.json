@@ -1,7 +1,7 @@
 {
   "id": "face-recognition",
   "name": "face recognition",
-  "version": "2.7.7",
+  "version": "2.7.8",
   "description": "Real-time face recognition with ArcFace embeddings, device camera binding, face registration gallery, and identity matching for NeoMind Edge AI",
   "author": "NeoMind Team",
   "license": "Apache-2.0",

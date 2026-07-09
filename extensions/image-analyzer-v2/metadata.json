@@ -1,7 +1,7 @@
 {
   "id": "image-analyzer-v2",
   "name": "image analyzer",
-  "version": "2.7.7",
+  "version": "2.7.8",
   "description": "Standalone image object detection using YOLOv11 with ONNX Runtime, CoreML/CUDA acceleration, and annotated bounding box visualization",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
