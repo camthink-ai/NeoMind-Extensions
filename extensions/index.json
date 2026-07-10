@@ -6,7 +6,7 @@
       "id": "bacnet-bridge",
       "name": "uacnet uridge",
       "version": "2.7.7",
-      "description": "BACnet/IP bridge extension for NeoMind \u2014 discover building automation devices, read sensors, write controls",
+      "description": "BACnet/IP bridge extension for NeoMind — discover building automation devices, read sensors, write controls",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
       "type": "native",
@@ -39,7 +39,7 @@
       "id": "cosyvoice-3",
       "name": "cosyvoice 3",
       "version": "2.7.7",
-      "description": "CosyVoice 3 (Fun-CosyVoice3-0.5B) streaming TTS extension \u2014 speak on host audio + synthesize wav",
+      "description": "CosyVoice 3 (Fun-CosyVoice3-0.5B) streaming TTS extension — speak on host audio + synthesize wav",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
       "type": "native",
@@ -109,7 +109,7 @@
       "id": "homeassistant-bridge",
       "name": "homeassistant uridge",
       "version": "2.7.7",
-      "description": "Home Assistant bridge for NeoMind \u2014 import 3000+ HA entity integrations as devices",
+      "description": "Home Assistant bridge for NeoMind — import 3000+ HA entity integrations as devices",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
       "type": "native",
@@ -218,7 +218,7 @@
       "id": "lorawan-bridge",
       "name": "lorawan uridge",
       "version": "2.7.7",
-      "description": "LoRaWAN bridge extension for NeoMind \u2014 connect ChirpStack/TTN sensors with auto-discovery",
+      "description": "LoRaWAN bridge extension for NeoMind — connect ChirpStack/TTN sensors with auto-discovery",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
       "type": "native",
@@ -251,7 +251,7 @@
       "id": "modbus-bridge",
       "name": "moduus uridge",
       "version": "2.7.7",
-      "description": "Modbus TCP/RTU bridge extension for NeoMind \u2014 connect PLCs, power meters, sensors, and industrial devices",
+      "description": "Modbus TCP/RTU bridge extension for NeoMind — connect PLCs, power meters, sensors, and industrial devices",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
       "type": "native",
@@ -354,7 +354,7 @@
       "id": "onvif-bridge",
       "name": "onvif uridge",
       "version": "2.7.7",
-      "description": "ONVIF camera bridge extension for NeoMind \u2014 discover IP cameras, get RTSP streams, PTZ control",
+      "description": "ONVIF camera bridge extension for NeoMind — discover IP cameras, get RTSP streams, PTZ control",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
       "type": "native",
@@ -387,7 +387,7 @@
       "id": "opcua-bridge",
       "name": "opcua uridge",
       "version": "2.7.7",
-      "description": "OPC-UA bridge extension for NeoMind \u2014 connect industrial servers, browse nodes, subscribe to data changes",
+      "description": "OPC-UA bridge extension for NeoMind — connect industrial servers, browse nodes, subscribe to data changes",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
       "type": "native",
@@ -459,7 +459,7 @@
       "id": "paddle-ocr-vl",
       "name": "paddle ocr vl",
       "version": "2.7.8",
-      "description": "PaddleOCR-VL bridge extension \u2014 high-accuracy multilingual OCR, table recognition, and key information extraction via a remote PaddleOCR-VL inference service",
+      "description": "PaddleOCR-VL bridge extension — high-accuracy multilingual OCR, table recognition, and key information extraction via a remote PaddleOCR-VL inference service",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
       "type": "native",
@@ -606,7 +606,7 @@
       "id": "voice-assistant",
       "name": "voice assistant",
       "version": "2.7.7",
-      "description": "Real-time voice assistant orchestrator: mic \u2192 VAD \u2192 ASR \u2192 echo reply \u2192 TTS \u2192 speaker",
+      "description": "Real-time voice assistant orchestrator: mic → VAD → ASR → echo reply → TTS → speaker",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
       "type": "native",
@@ -643,7 +643,7 @@
       "id": "voice-edge-tts",
       "name": "voice edge tts",
       "version": "2.7.7",
-      "description": "Edge TTS (sherpa-onnx ZipVoice) extension \u2014 cross-platform CPU streaming TTS",
+      "description": "Edge TTS (sherpa-onnx ZipVoice) extension — cross-platform CPU streaming TTS",
       "author": "NeoMind Team",
       "license": "Apache-2.0",
       "type": "native",
@@ -815,6 +815,39 @@
         "entrypoint": "yolo-video-v2-components.umd.cjs"
       },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/yolo-video-v2/metadata.json"
+    },
+    {
+      "id": "deepstream",
+      "name": "DeepStream",
+      "version": "2.8.0",
+      "description": "NVIDIA DeepStream extension for multi-stream RTSP video inference on Jetson",
+      "author": "NeoMind Team",
+      "license": "Apache-2.0",
+      "type": "native",
+      "categories": [
+        "ai",
+        "video",
+        "device-integration"
+      ],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/deepstream",
+      "builds": {
+        "darwin-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.8.0/deepstream-2.8.0-darwin_aarch64.nep"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.8.0/deepstream-2.8.0-linux_arm64.nep"
+        },
+        "linux-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.8.0/deepstream-2.8.0-linux_amd64.nep"
+        }
+      },
+      "frontend": {
+        "components": [
+          "DeepStreamManagerCard"
+        ],
+        "entrypoint": "deepstream-components.umd.cjs"
+      },
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/deepstream/metadata.json"
     }
   ]
 }

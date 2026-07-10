@@ -1,0 +1,83 @@
+{
+  "id": "deepstream",
+  "version": "2.8.0",
+  "entrypoint": "deepstream-components.umd.cjs",
+  "components": [
+    {
+      "name": "DeepStreamManagerCard",
+      "type": "card",
+      "displayName": "DeepStream Manager",
+      "description": "Comprehensive DeepStream management: sidecar status, GPU/throughput stats, stream grid with live thumbnails, and a floating per-stream detail drawer with real-time inference playback (WebRTC/WHEP) and snapshot fallback.",
+      "icon": "video",
+      "defaultSize": { "width": 680, "height": 500 },
+      "minSize": { "width": 600, "height": 440 },
+      "maxSize": { "width": 1200, "height": 900 },
+      "refreshable": true,
+      "refreshInterval": 5000,
+      "hasDataSource": false,
+      "configSchema": {
+        "title": {
+          "type": "string",
+          "title": "Card Title",
+          "description": "Optional override of the card title.",
+          "default": "DeepStream"
+        },
+        "serverHost": {
+          "type": "string",
+          "title": "DeepStream Server Address",
+          "description": "IP or hostname where the DeepStream sidecar + mediamtx run (e.g. the Jetson). Leave empty to use the extension-level 'DeepStream Server Address' (recommended — set once in extension config), and fall back to the current page hostname if that is also empty."
+        },
+        "snapshotPort": {
+          "type": "number",
+          "title": "Snapshot Port",
+          "description": "Sidecar snapshot HTTP port, default 8555.",
+          "default": 8555
+        },
+        "rtspPort": {
+          "type": "number",
+          "title": "RTSP Port",
+          "description": "RTSP output port (mediamtx), default 8554.",
+          "default": 8554
+        },
+        "webrtcPort": {
+          "type": "number",
+          "title": "WebRTC Port",
+          "description": "mediamtx WebRTC port (unused — HLS is used for playback).",
+          "default": 8889
+        },
+        "hlsPort": {
+          "type": "number",
+          "title": "HLS Port",
+          "description": "mediamtx HLS port for detail video playback, default 8888.",
+          "default": 8888
+        },
+        "mjpegPort": {
+          "type": "number",
+          "title": "MJPEG Preview Port",
+          "description": "MJPEG streaming server port for live thumbnail previews, default 8090.",
+          "default": 8090
+        },
+        "snapshotToken": {
+          "type": "string",
+          "title": "Snapshot Auth Token",
+          "description": "Required for live thumbnail polling + snapshot fallback. Leave empty to show placeholders only."
+        },
+        "defaultStreamId": {
+          "type": "string",
+          "title": "Default Stream",
+          "description": "Optional stream id to auto-select in the detail drawer when the card opens (once that stream is present)."
+        }
+      },
+      "uiHints": {
+        "fieldOrder": ["title", "serverHost", "snapshotPort", "rtspPort", "webrtcPort", "hlsPort", "mjpegPort", "snapshotToken", "defaultStreamId"]
+      }
+    }
+  ],
+  "i18n": {
+    "defaultLanguage": "en",
+    "supportedLanguages": ["en", "zh"]
+  },
+  "dependencies": {
+    "react": ">=18.0.0"
+  }
+}

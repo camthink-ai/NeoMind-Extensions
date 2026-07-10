@@ -247,25 +247,6 @@ impl PaddleOcrVlExtension {
         }
     }
 
-    /// GET helper for read-only endpoints (e.g. /health).
-    fn get_json<T: for<'de> Deserialize<'de>>(
-        endpoint: &str,
-        path: &str,
-        timeout_ms: u64,
-    ) -> std::result::Result<T, String> {
-        let url = format!("{}{}", endpoint.trim_end_matches('/'), path);
-        let agent = Self::build_agent(timeout_ms);
-        let resp = agent.get(&url).call();
-        match resp {
-            Ok(r) => r.into_json::<T>().map_err(|e| format!("Parse error: {}", e)),
-            Err(ureq::Error::Status(code, response)) => {
-                let body = response.into_string().unwrap_or_default();
-                Err(format!("HTTP {}: {}", code, truncate(&body, 500)))
-            }
-            Err(e) => Err(format!("Request failed: {}", e)),
-        }
-    }
-
     // -----------------------------------------------------------------------
     // Command: recognize
     // -----------------------------------------------------------------------
@@ -465,7 +446,7 @@ impl PaddleOcrVlExtension {
         self.request_count.fetch_add(1, Ordering::SeqCst);
         let cfg = self.config_snapshot();
 
-        let raw: RawHealthResponse = Self::get_json(&cfg.endpoint, "/health", 5_000)
+        let raw: RawHealthResponse = Self::post_json(&cfg.endpoint, "/health", &json!({}), 5_000)
             .map_err(|e| {
                 self.failure_count.fetch_add(1, Ordering::SeqCst);
                 ExtensionError::ExecutionFailed(format!("Health check failed: {}", e))
@@ -1146,11 +1127,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_health_no_endpoint_returns_execution_error() {
-        // Use a bogus endpoint — port 1 is reserved and never listening.
-        // (Don't rely on "default endpoint unreachable": dev machines may have
-        // a real PaddleOCR-VL service running on 127.0.0.1:8000.)
-        let mut ext = PaddleOcrVlExtension::new();
-        ext.configure(&json!({"endpoint": "http://127.0.0.1:1"})).await.unwrap();
+        // Default endpoint is unreachable in test env — should return ExecutionFailed,
+        // not panic.
+        let ext = PaddleOcrVlExtension::new();
         let result = ext.execute_command("health", &json!({})).await;
         assert!(matches!(result, Err(ExtensionError::ExecutionFailed(_))));
     }

@@ -214,6 +214,8 @@ EOF
         categories='["ai", "ocr", "device-integration"]'
     elif [[ "$ext_id" == *"face"* ]]; then
         categories='["ai", "face-recognition", "device-integration"]'
+    elif [[ "$ext_id" == "deepstream" ]]; then
+        categories='["ai", "vision", "video", "streaming"]'
     elif [[ "$ext_id" == *"stream"* ]]; then
         categories='["video", "streaming"]'
     elif [[ "$ext_id" == *"wasm"* ]]; then

@@ -1,0 +1,14 @@
+# DeepStream sidecar Python requirements.
+#
+# Run inside the ds:7.1-pyds container — pyds and Gst come from the
+# base image; nothing extra to install for the sidecar itself.
+#
+# All third-party packages here are OPTIONAL — the sidecar uses only
+# stdlib + pyds + Gst. If you want to add a dev dependency (linting,
+# type stubs), list it below with a comment.
+
+# --- Runtime (NONE — stdlib + pyds + Gst only) ---------------------------
+
+# --- Dev / linting (optional) ---------------------------------------------
+# ruff==0.9.6        # linting (matches repo CI)
+# black==24.10.0     # formatting

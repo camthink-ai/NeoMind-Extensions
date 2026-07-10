@@ -25,6 +25,7 @@ members = [
     "extensions/voice-assistant",
     "extensions/paddle-ocr-v6",
     "extensions/paddle-ocr-vl",
+    "extensions/deepstream",
     # "extensions/final-test",
     # "extensions/cli-test-ext",
 ]
