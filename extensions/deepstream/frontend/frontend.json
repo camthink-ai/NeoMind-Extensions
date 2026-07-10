@@ -1,17 +1,17 @@
 {
   "id": "deepstream",
-  "version": "2.7.7",
+  "version": "2.8.0",
   "entrypoint": "deepstream-components.umd.cjs",
   "components": [
     {
-      "name": "DeepStreamStatsCard",
+      "name": "DeepStreamManagerCard",
       "type": "card",
-      "displayName": "DeepStream System Status",
-      "description": "Sidecar status, GPU utilization/memory, active stream count, total throughput FPS, and restart control.",
-      "icon": "cpu",
-      "defaultSize": { "width": 340, "height": 240 },
-      "minSize": { "width": 260, "height": 200 },
-      "maxSize": { "width": 500, "height": 400 },
+      "displayName": "DeepStream Manager",
+      "description": "Comprehensive DeepStream management: sidecar status, GPU/throughput stats, stream grid with live thumbnails, and a floating per-stream detail drawer with real-time inference playback (WebRTC/WHEP) and snapshot fallback.",
+      "icon": "video",
+      "defaultSize": { "width": 680, "height": 500 },
+      "minSize": { "width": 600, "height": 440 },
+      "maxSize": { "width": 1200, "height": 900 },
       "refreshable": true,
       "refreshInterval": 5000,
       "hasDataSource": false,
@@ -19,121 +19,57 @@
         "title": {
           "type": "string",
           "title": "Card Title",
-          "description": "Override the default title text",
+          "description": "Optional override of the card title.",
           "default": "DeepStream"
         },
         "serverHost": {
           "type": "string",
           "title": "DeepStream Server Address",
-          "description": "IP or hostname where the DeepStream sidecar runs (e.g. Jetson device IP 192.168.93.20). Leave empty to use the current page hostname."
+          "description": "IP or hostname where the DeepStream sidecar + mediamtx run (e.g. the Jetson). Leave empty to use the extension-level 'DeepStream Server Address' (recommended — set once in extension config), and fall back to the current page hostname if that is also empty."
         },
         "snapshotPort": {
           "type": "number",
           "title": "Snapshot Port",
-          "description": "Sidecar snapshot HTTP port, default 8555",
+          "description": "Sidecar snapshot HTTP port, default 8555.",
           "default": 8555
         },
         "rtspPort": {
           "type": "number",
           "title": "RTSP Port",
-          "description": "RTSP output port, default 8554",
+          "description": "RTSP output port (mediamtx), default 8554.",
           "default": 8554
-        }
-      },
-      "uiHints": {
-        "fieldOrder": ["title", "serverHost", "snapshotPort", "rtspPort"]
-      }
-    },
-    {
-      "name": "DeepStreamOverviewCard",
-      "type": "card",
-      "displayName": "DeepStream Stream Overview",
-      "description": "Thumbnail grid of all video streams with live snapshot polling and status indicators. Click a thumbnail to view single-stream details.",
-      "icon": "video",
-      "defaultSize": { "width": 680, "height": 480 },
-      "minSize": { "width": 400, "height": 300 },
-      "maxSize": { "width": 1200, "height": 800 },
-      "refreshable": true,
-      "refreshInterval": 5000,
-      "hasDataSource": false,
-      "configSchema": {
-        "title": {
-          "type": "string",
-          "title": "Card Title",
-          "default": "DeepStream Streams"
         },
-        "serverHost": {
-          "type": "string",
-          "title": "DeepStream Server Address",
-          "description": "IP or hostname where the DeepStream sidecar runs. Leave empty to use the current page hostname."
-        },
-        "snapshotPort": {
+        "webrtcPort": {
           "type": "number",
-          "title": "Snapshot Port",
-          "default": 8555
+          "title": "WebRTC Port",
+          "description": "mediamtx WebRTC port (unused — HLS is used for playback).",
+          "default": 8889
         },
-        "rtspPort": {
+        "hlsPort": {
           "type": "number",
-          "title": "RTSP Port",
-          "default": 8554
+          "title": "HLS Port",
+          "description": "mediamtx HLS port for detail video playback, default 8888.",
+          "default": 8888
+        },
+        "mjpegPort": {
+          "type": "number",
+          "title": "MJPEG Preview Port",
+          "description": "MJPEG streaming server port for live thumbnail previews, default 8090.",
+          "default": 8090
         },
         "snapshotToken": {
           "type": "string",
           "title": "Snapshot Auth Token",
-          "description": "Required for live thumbnail polling. Leave empty to show placeholders only."
+          "description": "Required for live thumbnail polling + snapshot fallback. Leave empty to show placeholders only."
+        },
+        "defaultStreamId": {
+          "type": "string",
+          "title": "Default Stream",
+          "description": "Optional stream id to auto-select in the detail drawer when the card opens (once that stream is present)."
         }
       },
       "uiHints": {
-        "fieldOrder": ["title", "serverHost", "snapshotPort", "rtspPort", "snapshotToken"]
-      }
-    },
-    {
-      "name": "DeepStreamStreamCard",
-      "type": "card",
-      "displayName": "DeepStream Stream Detail",
-      "description": "Large snapshot, copyable RTSP URL, real-time counts (persons/vehicles/line-cross/ROI alerts), and event feed.",
-      "icon": "video",
-      "defaultSize": { "width": 500, "height": 680 },
-      "minSize": { "width": 360, "height": 480 },
-      "maxSize": { "width": 800, "height": 1000 },
-      "refreshable": true,
-      "refreshInterval": 5000,
-      "hasDataSource": true,
-      "dataSourceAllowedTypes": ["extension-command"],
-      "configSchema": {
-        "title": {
-          "type": "string",
-          "title": "Card Title",
-          "description": "Defaults to the bound stream_id"
-        },
-        "streamId": {
-          "type": "string",
-          "title": "Stream ID",
-          "description": "The stream to display. Overrides data source binding."
-        },
-        "serverHost": {
-          "type": "string",
-          "title": "DeepStream Server Address",
-          "description": "IP or hostname where the DeepStream sidecar runs. Leave empty to use the current page hostname."
-        },
-        "snapshotPort": {
-          "type": "number",
-          "title": "Snapshot Port",
-          "default": 8555
-        },
-        "rtspPort": {
-          "type": "number",
-          "title": "RTSP Port",
-          "default": 8554
-        },
-        "snapshotToken": {
-          "type": "string",
-          "title": "Snapshot Auth Token",
-          "description": "Required for live snapshot polling."
-        }
-      },
-      "uiHints": {
-        "fieldOrder": ["title", "streamId", "serverHost", "snapshotPort", "rtspPort", "snapshotToken"]
+        "fieldOrder": ["title", "serverHost", "snapshotPort", "rtspPort", "webrtcPort", "hlsPort", "mjpegPort", "snapshotToken", "defaultStreamId"]
       }
     }
   ],

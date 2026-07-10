@@ -18,10 +18,11 @@ use parking_lot::{Mutex as PlMutex, RwLock};
 use tokio::task::JoinHandle;
 
 use neomind_extension_sdk::{
-    CommandBuilder, Extension, ExtensionCommand, ExtensionError, ExtensionMetadata,
-    MetricDataType, ParamBuilder, Result,
+    CapabilityContext, CommandBuilder, Extension, ExtensionCommand, ExtensionError,
+    ExtensionMetadata, MetricDataType, ParamBuilder, ParameterDefinition, ParamMetricValue, Result,
 };
 
+use crate::event_router::EventRouter;
 use crate::protocol::{ControlMessage, SidecarEvent};
 use crate::sidecar::{SidecarHandle, SidecarSupervisor};
 use crate::stream_manager::{StreamConfig, StreamManager, StreamManagerError};
@@ -29,6 +30,10 @@ use crate::system_status::SystemStatus;
 
 /// Max concurrent streams the extension will accept (spec §3.1.1).
 const DEFAULT_MAX_STREAMS: u32 = 32;
+
+/// Default TCP port the remote `sidecar_bridge.py` daemon listens on.
+/// Used when `sidecar_mode="remote"` and `sidecar_port` is not explicitly set.
+const DEFAULT_SIDECAR_BRIDGE_PORT: u16 = 9556;
 
 /// User-registered model entry. Preset models live in the sidecar config, not here.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -42,6 +47,40 @@ pub struct ModelRegistration {
     pub input_shape: Option<(u32, u32, u32)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub precision: Option<String>,
+}
+
+/// Config sent to the sidecar via the `Hello` handshake message. Populated
+/// from `with_config_parameters()` metadata defaults and overridable via
+/// the `configure()` lifecycle method. Without this reaching the sidecar,
+/// the sidecar blocks in `_read_hello()` (300s timeout) and silently drops
+/// every `AddStream` / `RemoveStream`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HandshakeConfig {
+    /// RTSP server port (annotated output) — default 8554.
+    pub rtsp_port: u16,
+    /// HTTP port for snapshot JPEGs — default 8555.
+    pub snapshot_port: u16,
+    /// Sidecar log level — default "info".
+    pub log_level: String,
+    /// Where preset + user-registered model files live.
+    pub models_dir: String,
+    /// Hard cap on concurrent streams; Python enforces with GPU memory check.
+    pub max_streams: u32,
+    /// Bind address for the snapshot HTTP server — default "0.0.0.0".
+    pub snapshot_bind_addr: String,
+}
+
+impl Default for HandshakeConfig {
+    fn default() -> Self {
+        Self {
+            rtsp_port: 8554,
+            snapshot_port: 8555,
+            log_level: "info".to_string(),
+            models_dir: "/opt/nvidia/deepstream/deepstream/samples/models".to_string(),
+            max_streams: DEFAULT_MAX_STREAMS,
+            snapshot_bind_addr: "0.0.0.0".to_string(),
+        }
+    }
 }
 
 pub struct DeepStreamExtension {
@@ -64,6 +103,39 @@ pub struct DeepStreamExtension {
     startup_lock: tokio::sync::Mutex<()>,
     /// Metrics bridge: 7 global atomics + 9 per-stream dynamic templates.
     metrics: Arc<metrics_bridge::MetricsBridge>,
+    /// Handshake config (ports, models_dir, log_level, max_streams) sent to the
+    /// sidecar via `Hello`. Overridable via `configure()`; defaults from
+    /// `with_config_parameters()`. Arc-cloned into the on_restart callback so
+    /// crash-recovery respawns handshake with the same config.
+    sidecar_config: Arc<RwLock<HandshakeConfig>>,
+    /// Frontend-facing DeepStream server address (e.g. the Jetson's IP). NOT
+    /// sent to the sidecar — the sidecar binds `snapshot_bind_addr` itself;
+    /// this is purely the address the dashboard should use to reach the
+    /// RTSP/snapshot endpoints. Empty string = derive from page hostname
+    /// (same-host deployment). Surfaced via `list_streams` / `get_stream_info`
+    /// so cards can fall back to it when their per-card `serverHost` is unset.
+    server_host: Arc<RwLock<String>>,
+    /// Sidecar transport mode: `"local"` (default) spawns a child process on
+    /// the same host; `"remote"` connects to a `sidecar_bridge.py` daemon on
+    /// a Jetson over TCP (路 C — for when NeoMind runs off-device).
+    sidecar_mode: Arc<RwLock<String>>,
+    /// Remote daemon hostname (only used when `sidecar_mode == "remote"`).
+    sidecar_host: Arc<RwLock<String>>,
+    /// Remote daemon TCP port (only used when `sidecar_mode == "remote"`).
+    /// Default [`DEFAULT_SIDECAR_BRIDGE_PORT`] (9556).
+    sidecar_port: Arc<RwLock<u16>>,
+    /// Models loaded by the sidecar, reported in HelloAck. Updated after
+    /// every handshake. Used by `cmd_list_models` so the dashboard dropdown
+    /// shows the real presets (Primary_Detector, etc.) instead of a stale
+    /// hardcoded default.
+    sidecar_models: Arc<RwLock<Vec<String>>>,
+    /// EventRouter — classifies + publishes sidecar events to the NeoMind
+    /// EventBus. Passed into every reader_loop via the supervisor so stats /
+    /// detection / analytics reach the frontend WS in real time. The internal
+    /// channel receivers are intentionally dropped (nobody consumes them); with
+    /// the unconditional maybe_publish fix, EventBus delivery does not depend
+    /// on channel capacity.
+    event_router: Arc<EventRouter>,
 }
 
 impl Default for DeepStreamExtension {
@@ -74,6 +146,7 @@ impl Default for DeepStreamExtension {
 
 impl DeepStreamExtension {
     pub fn new() -> Self {
+        let event_router = Self::build_event_router();
         Self {
             streams: Arc::new(StreamManager::new(DEFAULT_MAX_STREAMS)),
             registered_models: RwLock::new(HashMap::new()),
@@ -83,7 +156,28 @@ impl DeepStreamExtension {
             watch_task: Arc::new(PlMutex::new(None)),
             startup_lock: tokio::sync::Mutex::new(()),
             metrics: Arc::new(metrics_bridge::MetricsBridge::new()),
+            sidecar_config: Arc::new(RwLock::new(HandshakeConfig::default())),
+            server_host: Arc::new(RwLock::new(String::new())),
+            sidecar_mode: Arc::new(RwLock::new("local".to_string())),
+            sidecar_host: Arc::new(RwLock::new(String::new())),
+            sidecar_port: Arc::new(RwLock::new(DEFAULT_SIDECAR_BRIDGE_PORT)),
+            sidecar_models: Arc::new(RwLock::new(Vec::new())),
+            event_router,
         }
+    }
+
+    /// Create the EventRouter with fresh internal channels (receivers dropped —
+    /// nobody consumes them) and set the CapabilityContext so `maybe_publish`
+    /// can invoke the `event_publish` host capability.
+    fn build_event_router() -> Arc<EventRouter> {
+        use tokio::sync::mpsc;
+        let (priority_tx, _priority_rx) = mpsc::unbounded_channel();
+        let (business_tx, _business_rx) = mpsc::unbounded_channel();
+        let (detection_tx, _detection_rx) = mpsc::channel(512);
+        let (stats_tx, _stats_rx) = mpsc::channel(64);
+        let router = EventRouter::new(priority_tx, business_tx, detection_tx, stats_tx);
+        router.set_context(CapabilityContext::default());
+        Arc::new(router)
     }
 
     /// Test seam: build an extension with a pre-wired sidecar handle and
@@ -113,6 +207,13 @@ impl DeepStreamExtension {
             watch_task: Arc::new(PlMutex::new(None)),
             startup_lock: tokio::sync::Mutex::new(()),
             metrics: Arc::new(metrics_bridge::MetricsBridge::new()),
+            sidecar_config: Arc::new(RwLock::new(HandshakeConfig::default())),
+            server_host: Arc::new(RwLock::new(String::new())),
+            sidecar_mode: Arc::new(RwLock::new("local".to_string())),
+            sidecar_host: Arc::new(RwLock::new(String::new())),
+            sidecar_port: Arc::new(RwLock::new(DEFAULT_SIDECAR_BRIDGE_PORT)),
+            sidecar_models: Arc::new(RwLock::new(Vec::new())),
+            event_router: Self::build_event_router(),
         }
     }
 
@@ -177,49 +278,116 @@ impl DeepStreamExtension {
         Ok((python_bin, script_path))
     }
 
+    /// Build a fresh supervisor according to the current sidecar mode.
+    ///
+    /// - `local` (default): resolves python_bin + script_path (via
+    ///   `resolve_spawn_config`) and returns `SidecarSupervisor::new`.
+    /// - `remote`: returns `SidecarSupervisor::new_remote(host, port)` without
+    ///   touching the local filesystem — this is what makes the extension
+    ///   usable on a non-Jetson host (macOS dev box, x86 server) that has no
+    ///   pyds / GStreamer / deepstream_runner.py installed.
+    ///
+    /// The returned supervisor carries no stream state; replay is the caller's
+    /// job (see `cmd_restart_sidecar` and the on_restart callback).
+    async fn build_supervisor(&self) -> Result<Arc<SidecarSupervisor>> {
+        let mode = self.sidecar_mode.read().clone();
+        let mut sup = match mode.as_str() {
+            "remote" => {
+                let host = self.sidecar_host.read().clone();
+                if host.is_empty() {
+                    return Err(ExtensionError::InvalidArguments(format!(
+                        "sidecar_mode='remote' but sidecar_host is empty — set the Jetson's IP in the extension config"
+                    )));
+                }
+                let port = *self.sidecar_port.read();
+                eprintln!("[deepstream] starting REMOTE sidecar bridge: {}:{}", host, port);
+                SidecarSupervisor::new_remote(&host, port)
+            }
+            // Treat "local" and any unrecognized value as local (default path).
+            // Unknown values are logged so a typo doesn't silently switch modes.
+            other => {
+                if other != "local" {
+                    eprintln!(
+                        "[deepstream] unrecognized sidecar_mode='{other}' — falling back to local"
+                    );
+                }
+                let (python_bin, script_path) = self.resolve_spawn_config().await?;
+                eprintln!(
+                    "[deepstream] starting LOCAL sidecar: {} {}",
+                    python_bin,
+                    script_path.display()
+                );
+                SidecarSupervisor::new(&python_bin, script_path)
+            }
+        };
+        // Wire the EventRouter so every reader_loop publishes sidecar events
+        // to the NeoMind EventBus (stats / detection / analytics).
+        sup.set_router(self.event_router.clone());
+        Ok(Arc::new(sup))
+    }
+
     /// Lazily start the sidecar supervisor if not already running, then return
     /// the current handle. Uses `startup_lock` to serialize concurrent
     /// startups (e.g., two add_stream calls racing on a cold extension).
     async fn ensure_sidecar(&self) -> Result<Arc<SidecarHandle>> {
+        crate::sidecar::dbg_log("ensure_sidecar: enter");
         // Fast path: handle already available.
         {
             let guard = self.sidecar.read();
             if let Some(h) = guard.as_ref() {
+                crate::sidecar::dbg_log("ensure_sidecar: fast path (handle exists)");
                 return Ok(h.clone());
             }
         }
 
         // Slow path: serialize startups.
+        crate::sidecar::dbg_log("ensure_sidecar: acquiring startup_lock");
         let _guard = self.startup_lock.lock().await;
+        crate::sidecar::dbg_log("ensure_sidecar: startup_lock acquired");
 
         // Double-check after acquiring the lock (another task may have started it).
         {
             let sc = self.sidecar.read();
             if let Some(h) = sc.as_ref() {
+                crate::sidecar::dbg_log("ensure_sidecar: double-check hit");
                 return Ok(h.clone());
             }
         }
 
-        let (python_bin, script_path) = self.resolve_spawn_config().await?;
-        eprintln!(
-            "[deepstream] starting sidecar: {} {}",
-            python_bin,
-            script_path.display()
-        );
-
-        let sup = Arc::new(SidecarSupervisor::new(&python_bin, script_path));
+        let sup = self.build_supervisor().await?;
 
         // on_restart callback: fires on crash-recovery respawns (not initial start).
-        // Updates self.sidecar + replays active stream configs to the fresh process.
+        // Updates self.sidecar + handshakes the fresh process + replays active
+        // stream configs. Handshake BEFORE replay is mandatory: a fresh sidecar
+        // blocks in _read_hello() and will drop every replayed AddStream.
         let sidecar_field = self.sidecar.clone();
         let streams = self.streams.clone();
         let metrics = self.metrics.clone();
+        let config_clone = self.sidecar_config.clone();
+        let models_field = self.sidecar_models.clone();
         let on_restart = move |handle: Arc<SidecarHandle>| {
             eprintln!("[deepstream] supervisor delivered fresh handle after crash recovery");
             *sidecar_field.write() = Some(handle.clone());
             metrics.mark_sidecar_started();
+            let config_for_handshake = config_clone.read().clone();
             let streams = streams.clone();
+            let models_clone = models_field.clone();
             tokio::spawn(async move {
+                match DeepStreamExtension::perform_handshake(&handle, &config_for_handshake).await {
+                    Ok(ack) => {
+                        eprintln!(
+                            "[deepstream] post-restart handshake ok: max_streams={}, models_loaded={:?}",
+                            ack.max_streams, ack.models_loaded
+                        );
+                        *models_clone.write() = ack.models_loaded.clone();
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[deepstream] post-restart handshake failed: {e} — skipping replay"
+                        );
+                        return;
+                    }
+                }
                 let summary = streams.replay_to(&handle).await;
                 eprintln!(
                     "[deepstream] post-restart replay: {} succeeded, {} failed",
@@ -236,7 +404,34 @@ impl DeepStreamExtension {
             .clone()
             .start(on_restart)
             .await
-            .map_err(|e| ExtensionError::ExecutionFailed(format!("sidecar spawn failed: {e}")))?;
+            .map_err(|e| {
+                crate::sidecar::dbg_log(&format!("ensure_sidecar: sup.start() FAILED: {e}"));
+                ExtensionError::ExecutionFailed(format!("sidecar spawn failed: {e}"))
+            })?;
+
+        crate::sidecar::dbg_log("ensure_sidecar: sup.start() ok, starting handshake");
+
+        // Initial handshake before publishing the handle. A sidecar that hasn't
+        // been Hello'd silently drops every command; surfacing the failure here
+        // is better than the caller's first add_stream timing out in wait_event.
+        let config = self.sidecar_config.read().clone();
+        let ack = Self::perform_handshake(&handle, &config).await.map_err(|e| {
+            eprintln!("[deepstream] initial handshake failed: {e}");
+            e
+        })?;
+        eprintln!(
+            "[deepstream] handshake ok: max_streams={}, models_loaded={:?}, rtsp_prefix={}",
+            ack.max_streams, ack.models_loaded, ack.rtsp_url_prefix
+        );
+        // Sidecar may negotiate a different max_streams (e.g. GPU memory check).
+        if ack.max_streams != config.max_streams {
+            eprintln!(
+                "[deepstream] sidecar negotiated max_streams {} → {}",
+                config.max_streams, ack.max_streams
+            );
+            self.sidecar_config.write().max_streams = ack.max_streams;
+        }
+        *self.sidecar_models.write() = ack.models_loaded.clone();
 
         *self.supervisor.write() = Some(sup);
         *self.watch_task.lock() = Some(watch_task);
@@ -286,6 +481,97 @@ impl DeepStreamExtension {
         }
     }
 
+    /// Ready → Hello → HelloAck handshake. Called after every sidecar spawn
+    /// (initial `ensure_sidecar`, crash-recovery respawn, manual
+    /// `restart_sidecar`). Without this, the sidecar blocks in its
+    /// `_read_hello()` loop (300s timeout) and silently drops every command.
+    ///
+    /// 10s timeouts on both Ready and HelloAck. Non-matching events arriving
+    /// before Ready / HelloAck are drained (the sidecar emits nothing else
+    /// pre-handshake, so this is purely defensive).
+    async fn perform_handshake(
+        handle: &SidecarHandle,
+        config: &HandshakeConfig,
+    ) -> Result<crate::protocol::HelloAck> {
+        // Reconstruct the HelloAck fields without a protocol re-export.
+        use crate::protocol::{ControlMessage, SidecarEvent};
+
+        // 1. Wait for Ready (10s timeout). Drain any non-matching events.
+        match tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match handle.recv().await {
+                    Some(SidecarEvent::Ready { .. }) => return Ok(()),
+                    Some(_) => continue,
+                    None => {
+                        return Err(ExtensionError::ExecutionFailed(
+                            "sidecar stdout closed before Ready".into(),
+                        ))
+                    }
+                }
+            }
+        })
+        .await
+        {
+            Ok(inner) => inner?,
+            Err(_) => {
+                return Err(ExtensionError::ExecutionFailed(
+                    "sidecar Ready timeout (10s)".into(),
+                ))
+            }
+        }
+
+        // 2. Send Hello with the 6 handshake fields.
+        handle
+            .send(&ControlMessage::Hello {
+                rtsp_port: config.rtsp_port,
+                snapshot_port: config.snapshot_port,
+                log_level: config.log_level.clone(),
+                models_dir: config.models_dir.clone(),
+                max_streams: config.max_streams,
+                snapshot_bind_addr: config.snapshot_bind_addr.clone(),
+            })
+            .await
+            .map_err(|e| ExtensionError::ExecutionFailed(format!("send Hello: {e}")))?;
+
+        // 3. Wait for HelloAck (10s timeout). An ErrorResponse here means the
+        //    sidecar rejected the config (bad port, missing models_dir, etc.).
+        match tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match handle.recv().await {
+                    Some(SidecarEvent::HelloAck {
+                        max_streams,
+                        rtsp_url_prefix,
+                        models_loaded,
+                    }) => {
+                        return Ok(crate::protocol::HelloAck {
+                            max_streams,
+                            rtsp_url_prefix,
+                            models_loaded,
+                        })
+                    }
+                    Some(SidecarEvent::ErrorResponse { code, message, .. }) => {
+                        return Err(ExtensionError::ExecutionFailed(format!(
+                            "sidecar rejected Hello: {code} {message}"
+                        )))
+                    }
+                    Some(_) => continue,
+                    None => {
+                        return Err(ExtensionError::ExecutionFailed(
+                            "sidecar stdout closed before HelloAck".into(),
+                        ))
+                    }
+                }
+            }
+        })
+        .await
+        {
+            Ok(inner) => inner,
+            Err(_) => Err(ExtensionError::ExecutionFailed(
+                "sidecar HelloAck timeout (10s)".into(),
+            )),
+        }
+    }
+
     // --- Command handlers --------------------------------------------------
 
     async fn cmd_add_stream(&self, args: &serde_json::Value) -> Result<serde_json::Value> {
@@ -326,7 +612,7 @@ impl DeepStreamExtension {
                 other => ExtensionError::ExecutionFailed(other.to_string()),
             })?;
 
-        // Send AddStream and wait for StreamAdded correlated by request id.
+        // Send AddStream to the sidecar.
         let req_id = uuid::Uuid::new_v4().to_string();
         let handle = self.ensure_sidecar().await?;
         handle
@@ -338,46 +624,80 @@ impl DeepStreamExtension {
             .await
             .map_err(|e| ExtensionError::ExecutionFailed(format!("send add_stream: {e}")))?;
 
-        let matched = Self::wait_event(
-            &handle,
-            Duration::from_secs(10),
-            |ev| match ev {
-                SidecarEvent::StreamAdded { id, .. } => id == &req_id,
-                SidecarEvent::ErrorResponse { id, .. } => id == &req_id,
-                _ => false,
-            },
-        )
-        .await?;
+        // NON-BLOCKING: The extension runner processes IPC commands sequentially
+        // (handle_message().await in the main loop). If we wait_event here for
+        // up to 60s (DeepStream pipeline build on Jetson), every list_streams
+        // / get_stream_info poll from the frontend is blocked in the IPC queue,
+        // leaving the dashboard empty even though the add succeeded. Instead,
+        // return immediately with status "connecting" and resolve the
+        // StreamAdded / ErrorResponse asynchronously in a background task.
+        let streams = self.streams.clone();
+        let sidecar_slot = self.sidecar.clone();
+        let sid = stream_id.clone();
+        let wait_req_id = req_id.clone();
+        eprintln!("[deepstream] add_stream: spawning bg task for {sid} req_id={wait_req_id}");
+        // MUST use persistent_runtime().handle().spawn — NOT bare tokio::spawn.
+        // execute_command runs inside pollster::block_on (FFI boundary, no tokio
+        // context), so bare tokio::spawn panics ("no reactor running"). The
+        // persistent runtime is the same 2-worker runtime that owns the sidecar's
+        // reader_loop / heartbeat / I/O resources.
+        crate::sidecar::persistent_runtime().handle().spawn(async move {
+            // Brief read-lock to clone the Arc<SidecarHandle> out — we must
+            // NOT hold the parking_lot guard across the 60s wait_event await.
+            let handle = {
+                let guard = sidecar_slot.read();
+                guard.as_ref().cloned()
+            };
+            let Some(handle) = handle else {
+                eprintln!("[deepstream] add_stream bg: sidecar gone, removing {sid}");
+                let _ = streams.remove(&sid);
+                return;
+            };
+            eprintln!("[deepstream] add_stream bg: got handle, starting wait_event for {sid}");
 
-        match matched {
-            SidecarEvent::StreamAdded {
-                rtsp_url, snapshot_token, ..
-            } => {
-                let _ = self.streams.set_rtsp_url(&stream_id, rtsp_url.clone(), snapshot_token.clone());
-                let _ = self.streams.transition(
-                    &stream_id,
-                    crate::stream_manager::StreamStatus::Running,
-                );
-                Ok(serde_json::json!({
-                    "stream_id": stream_id,
-                    "rtsp_url": rtsp_url,
-                    "snapshot_token": snapshot_token,
-                }))
+            // DeepStream pipeline build on Jetson can take 30+ seconds
+            // (engine cache miss, tracker init, encoder open). 60s ceiling.
+            let matched = Self::wait_event(
+                &handle,
+                Duration::from_secs(60),
+                |ev| match ev {
+                    SidecarEvent::StreamAdded { id, .. } => id == &wait_req_id,
+                    SidecarEvent::ErrorResponse { id, .. } => id == &wait_req_id,
+                    _ => false,
+                },
+            )
+            .await;
+
+            match matched {
+                Ok(SidecarEvent::StreamAdded {
+                    rtsp_url, snapshot_token, ..
+                }) => {
+                    let _ = streams.set_rtsp_url(&sid, rtsp_url, snapshot_token);
+                    let _ = streams
+                        .transition(&sid, crate::stream_manager::StreamStatus::Running);
+                    eprintln!("[deepstream] add_stream bg: {sid} → running");
+                }
+                Ok(SidecarEvent::ErrorResponse { code, message, .. }) => {
+                    eprintln!(
+                        "[deepstream] add_stream bg: sidecar rejected {sid}: {message} ({code})"
+                    );
+                    let _ = streams.remove(&sid);
+                }
+                // wait_event synthesizes a Bye on stdout close, or times out
+                other => {
+                    eprintln!("[deepstream] add_stream bg: {sid} failed: {other:?}");
+                    let _ = streams.remove(&sid);
+                }
             }
-            SidecarEvent::ErrorResponse { code, message, .. } => {
-                let _ = self.streams.remove(&stream_id);
-                Err(ExtensionError::ExecutionFailed(format!(
-                    "sidecar rejected add_stream: {message} ({code})"
-                )))
-            }
-            // wait_event synthesizes a Bye on stdout close
-            other => {
-                let _ = self.streams.remove(&stream_id);
-                Err(ExtensionError::ExecutionFailed(format!(
-                    "unexpected event: {other:?}"
-                )))
-            }
-        }
+        });
+
+        // Return immediately — the card shows up as "connecting" right away.
+        // The frontend's 3s list_streams poll will pick up the rtsp_url once
+        // the background task transitions the stream to Running.
+        Ok(serde_json::json!({
+            "stream_id": stream_id,
+            "status": "connecting",
+        }))
     }
 
     async fn cmd_remove_stream(&self, args: &serde_json::Value) -> Result<serde_json::Value> {
@@ -426,6 +746,18 @@ impl DeepStreamExtension {
         Ok(serde_json::json!({ "removed": stream_id }))
     }
 
+    /// Returns `server_host` if set; otherwise falls back to `sidecar_host`
+    /// (in remote mode, mediamtx and the sidecar run on the same host, so
+    /// `sidecar_host` is a valid default for building browser-facing HLS /
+    /// snapshot / RTSP URLs). Empty if neither is set.
+    fn effective_server_host(&self) -> String {
+        let sh = self.server_host.read().clone();
+        if !sh.is_empty() {
+            return sh;
+        }
+        self.sidecar_host.read().clone()
+    }
+
     async fn cmd_list_streams(&self, _args: &serde_json::Value) -> Result<serde_json::Value> {
         let snapshot = self.streams.list();
         let arr: Vec<serde_json::Value> = snapshot
@@ -441,7 +773,10 @@ impl DeepStreamExtension {
                 })
             })
             .collect();
-        Ok(serde_json::json!({ "streams": arr }))
+        Ok(serde_json::json!({
+            "streams": arr,
+            "server_host": self.effective_server_host(),
+        }))
     }
 
     async fn cmd_get_stream_info(
@@ -468,6 +803,7 @@ impl DeepStreamExtension {
             "source": state.config.source,
             "added_at": state.added_at,
             "last_transition_at": state.last_transition_at,
+            "server_host": self.effective_server_host(),
         }))
     }
 
@@ -560,13 +896,16 @@ impl DeepStreamExtension {
 
     async fn cmd_list_models(&self, _args: &serde_json::Value) -> Result<serde_json::Value> {
         let mut out: Vec<serde_json::Value> = Vec::new();
-        // Preset (hardcoded) — these live in the sidecar config but the host
-        // also surfaces them so the UI can show options before startup.
-        out.push(serde_json::json!({
-            "id": "yolov8n-coco",
-            "name": "YOLOv8n COCO",
-            "preset": true,
-        }));
+        // Preset models reported by the sidecar in HelloAck. Empty before
+        // the first successful handshake (dashboard shows an empty dropdown).
+        let loaded = self.sidecar_models.read();
+        for id in loaded.iter() {
+            out.push(serde_json::json!({
+                "id": id,
+                "name": id,
+                "preset": true,
+            }));
+        }
         // User-registered.
         let registered = self.registered_models.read();
         for m in registered.values() {
@@ -622,27 +961,42 @@ impl DeepStreamExtension {
         *self.sidecar.write() = None;
         self.metrics.mark_sidecar_stopped();
 
-        // 2. Spawn a fresh supervisor. resolve_spawn_config + start happen
-        //    under the lock so no other command can observe a half-restarted
-        //    state.
-        let (python_bin, script_path) = self.resolve_spawn_config().await?;
+        // 2. Spawn a fresh supervisor. Mode dispatch happens under the lock
+        //    so no other command can observe a half-restarted state.
+        let sup = self.build_supervisor().await?;
         eprintln!(
-            "[deepstream] restart_sidecar: respawning sidecar ({} {})",
-            python_bin,
-            script_path.display()
+            "[deepstream] restart_sidecar: respawning sidecar (mode={})",
+            self.sidecar_mode.read()
         );
-
-        let sup = Arc::new(SidecarSupervisor::new(&python_bin, script_path));
 
         let sidecar_field = self.sidecar.clone();
         let streams = self.streams.clone();
         let metrics = self.metrics.clone();
+        let config_clone = self.sidecar_config.clone();
+        let models_field = self.sidecar_models.clone();
         let on_restart = move |handle: Arc<SidecarHandle>| {
             eprintln!("[deepstream] supervisor delivered fresh handle after crash recovery");
             *sidecar_field.write() = Some(handle.clone());
             metrics.mark_sidecar_started();
+            let config_for_handshake = config_clone.read().clone();
             let streams = streams.clone();
+            let models_clone = models_field.clone();
             tokio::spawn(async move {
+                match DeepStreamExtension::perform_handshake(&handle, &config_for_handshake).await {
+                    Ok(ack) => {
+                        eprintln!(
+                            "[deepstream] post-restart handshake ok: max_streams={}, models_loaded={:?}",
+                            ack.max_streams, ack.models_loaded
+                        );
+                        *models_clone.write() = ack.models_loaded.clone();
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[deepstream] post-restart handshake failed: {e} — skipping replay"
+                        );
+                        return;
+                    }
+                }
                 let summary = streams.replay_to(&handle).await;
                 eprintln!(
                     "[deepstream] post-restart replay: {} succeeded, {} failed",
@@ -667,6 +1021,23 @@ impl DeepStreamExtension {
         *self.watch_task.lock() = Some(watch_task);
         *self.sidecar.write() = Some(handle.clone());
         self.metrics.mark_sidecar_started();
+
+        // Handshake the freshly-spawned sidecar BEFORE replay. Without this,
+        // every replayed AddStream would be silently dropped.
+        let config = self.sidecar_config.read().clone();
+        let ack = Self::perform_handshake(&handle, &config).await?;
+        eprintln!(
+            "[deepstream] restart handshake ok: max_streams={}, models_loaded={:?}, rtsp_prefix={}",
+            ack.max_streams, ack.models_loaded, ack.rtsp_url_prefix
+        );
+        if ack.max_streams != config.max_streams {
+            eprintln!(
+                "[deepstream] sidecar negotiated max_streams {} → {}",
+                config.max_streams, ack.max_streams
+            );
+            self.sidecar_config.write().max_streams = ack.max_streams;
+        }
+        *self.sidecar_models.write() = ack.models_loaded.clone();
 
         // 3. Replay active stream configs to the fresh sidecar.
         let summary = if prev_count > 0 {
@@ -695,6 +1066,44 @@ impl DeepStreamExtension {
     }
 
     async fn cmd_diagnose(&self, _args: &serde_json::Value) -> Result<serde_json::Value> {
+        // In remote mode, DeepStream runs on the Jetson, not on this host.
+        // Running local probes here would always report `deepstream_installed:
+        // false`, which would force the frontend StatsBar into the
+        // 'not_installed' state even though the sidecar is healthy. Instead,
+        // synthesize a status derived from the supervisor's liveness: if the
+        // supervisor is alive, treat DeepStream as installed on the remote.
+        let mode = self.sidecar_mode.read().clone();
+        if mode == "remote" {
+            let host = self.server_host.read().clone();
+            let port = *self.sidecar_port.read();
+            let reachable = if host.is_empty() {
+                false
+            } else {
+                tokio::net::TcpStream::connect((host.as_str(), port))
+                    .await
+                    .is_ok()
+            };
+            let status = SystemStatus {
+                deepstream_installed: reachable,
+                deepstream_version: None,
+                pyds_available: reachable,
+                pyds_version: None,
+                gst_plugins_ok: reachable,
+                gst_missing: Vec::new(),
+                python_bin: Some("remote".to_string()),
+                last_check_at: chrono::Utc::now().timestamp_millis(),
+                install_hint: if reachable {
+                    format!("sidecar bridge reachable at {host}:{port}")
+                } else {
+                    format!("sidecar bridge at {host}:{port} unreachable — is sidecar_bridge.py running on the Jetson?")
+                },
+            };
+            let json = serde_json::to_value(&status)
+                .map_err(|e| ExtensionError::ExecutionFailed(format!("serialize status: {e}")))?;
+            *self.system_status.write() = Some(status);
+            return Ok(json);
+        }
+
         let status = SystemStatus::run_checks().await;
         let json = serde_json::to_value(&status)
             .map_err(|e| ExtensionError::ExecutionFailed(format!("serialize status: {e}")))?;
@@ -750,9 +1159,143 @@ impl Extension for DeepStreamExtension {
     fn metadata(&self) -> &ExtensionMetadata {
         static META: std::sync::OnceLock<ExtensionMetadata> = std::sync::OnceLock::new();
         META.get_or_init(|| {
+            let defaults = HandshakeConfig::default();
             ExtensionMetadata::new("deepstream", "NVIDIA DeepStream", env!("CARGO_PKG_VERSION"))
                 .with_description("Multi-stream RTSP video inference via NVIDIA DeepStream")
                 .with_author("NeoMind Team")
+                .with_config_parameters(vec![
+                    ParameterDefinition {
+                        name: "rtsp_port".into(),
+                        display_name: "RTSP Port".into(),
+                        description: "RTSP server port for annotated output streams".into(),
+                        param_type: MetricDataType::Integer,
+                        required: false,
+                        default_value: Some(ParamMetricValue::Integer(defaults.rtsp_port as i64)),
+                        min: Some(1.0),
+                        max: Some(65535.0),
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "snapshot_port".into(),
+                        display_name: "Snapshot Port".into(),
+                        description: "HTTP port for snapshot JPEGs".into(),
+                        param_type: MetricDataType::Integer,
+                        required: false,
+                        default_value: Some(ParamMetricValue::Integer(
+                            defaults.snapshot_port as i64,
+                        )),
+                        min: Some(1.0),
+                        max: Some(65535.0),
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "log_level".into(),
+                        display_name: "Log Level".into(),
+                        description: "Sidecar Python log level".into(),
+                        // MetricDataType::Enum (not String+options) — the host's
+                        // build_config_schema_dto() only emits the `enum` JSON field
+                        // when param_type is the Enum variant, and that's what the
+                        // frontend renderConfigInput() keys on to draw a <Select>.
+                        param_type: MetricDataType::Enum {
+                            options: vec![
+                                "debug".into(),
+                                "info".into(),
+                                "warning".into(),
+                                "error".into(),
+                            ],
+                        },
+                        required: false,
+                        default_value: Some(ParamMetricValue::String(defaults.log_level.clone())),
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "models_dir".into(),
+                        display_name: "Models Directory".into(),
+                        description: "Filesystem path where preset + user-registered model files live".into(),
+                        param_type: MetricDataType::String,
+                        required: false,
+                        default_value: Some(ParamMetricValue::String(defaults.models_dir.clone())),
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "max_streams".into(),
+                        display_name: "Max Streams".into(),
+                        description: "Hard cap on concurrent streams (GPU memory check)".into(),
+                        param_type: MetricDataType::Integer,
+                        required: false,
+                        default_value: Some(ParamMetricValue::Integer(defaults.max_streams as i64)),
+                        min: Some(1.0),
+                        max: Some(64.0),
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "snapshot_bind_addr".into(),
+                        display_name: "Snapshot Bind Address".into(),
+                        description: "Bind address for the snapshot HTTP server".into(),
+                        param_type: MetricDataType::String,
+                        required: false,
+                        default_value: Some(ParamMetricValue::String(
+                            defaults.snapshot_bind_addr.clone(),
+                        )),
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "server_host".into(),
+                        display_name: "DeepStream Server Address".into(),
+                        description: "IP/hostname where the DeepStream sidecar runs (e.g. the Jetson's IP, 192.168.93.20). Leave empty to derive from the dashboard's own hostname. Used by frontend cards to build RTSP / snapshot URLs; per-card serverHost overrides this.".into(),
+                        param_type: MetricDataType::String,
+                        required: false,
+                        default_value: Some(ParamMetricValue::String(String::new())),
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "sidecar_mode".into(),
+                        display_name: "Sidecar Mode".into(),
+                        description: "How the extension talks to the DeepStream sidecar. 'local' (default) spawns the sidecar as a child process on this host (requires Jetson + DeepStream SDK installed locally). 'remote' connects to a sidecar_bridge.py daemon on a Jetson over TCP — use this when NeoMind runs on a non-Jetson host (macOS, x86 Linux) and the sidecar runs on a LAN Jetson.".into(),
+                        // Enum variant — see log_level above for why this isn't
+                        // String + options.
+                        param_type: MetricDataType::Enum {
+                            options: vec!["local".into(), "remote".into()],
+                        },
+                        required: false,
+                        default_value: Some(ParamMetricValue::String("local".into())),
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "sidecar_host".into(),
+                        display_name: "Sidecar Bridge Host".into(),
+                        description: "When sidecar_mode='remote': IP/hostname of the Jetson running sidecar_bridge.py. Ignored in local mode.".into(),
+                        param_type: MetricDataType::String,
+                        required: false,
+                        default_value: Some(ParamMetricValue::String(String::new())),
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                    ParameterDefinition {
+                        name: "sidecar_port".into(),
+                        display_name: "Sidecar Bridge Port".into(),
+                        description: "When sidecar_mode='remote': TCP port of the sidecar_bridge.py daemon (default 9556). Ignored in local mode.".into(),
+                        param_type: MetricDataType::Integer,
+                        required: false,
+                        default_value: Some(ParamMetricValue::Integer(
+                            DEFAULT_SIDECAR_BRIDGE_PORT as i64,
+                        )),
+                        min: Some(1.0),
+                        max: Some(65535.0),
+                        options: Vec::new(),
+                    },
+                ])
         })
     }
 
@@ -917,6 +1460,132 @@ impl Extension for DeepStreamExtension {
         out
     }
 
+    /// Apply host-supplied config overrides BEFORE the sidecar is spawned.
+    /// The stored `HandshakeConfig` is what `ensure_sidecar()` / the on_restart
+    /// callback will send via the `Hello` message; mutations here take effect
+    /// on the NEXT spawn (initial or crash-recovery respawn).
+    ///
+    /// Changing ports / models_dir / max_streams on an already-running sidecar
+    /// has no immediate effect — call `restart_sidecar` to force a respawn with
+    /// the new config.
+    async fn configure(&mut self, config: &serde_json::Value) -> Result<()> {
+        {
+            let mut cfg = self.sidecar_config.write();
+            if let Some(port) = config.get("rtsp_port").and_then(|v| v.as_u64()) {
+                if !(1..=65535).contains(&port) {
+                    return Err(ExtensionError::InvalidArguments(format!(
+                        "rtsp_port out of range: {port}"
+                    )));
+                }
+                cfg.rtsp_port = port as u16;
+            }
+            if let Some(port) = config.get("snapshot_port").and_then(|v| v.as_u64()) {
+                if !(1..=65535).contains(&port) {
+                    return Err(ExtensionError::InvalidArguments(format!(
+                        "snapshot_port out of range: {port}"
+                    )));
+                }
+                cfg.snapshot_port = port as u16;
+            }
+            if let Some(level) = config.get("log_level").and_then(|v| v.as_str()) {
+                match level {
+                    "debug" | "info" | "warning" | "error" => cfg.log_level = level.to_string(),
+                    _ => {
+                        return Err(ExtensionError::InvalidArguments(format!(
+                            "invalid log_level '{level}' (expected debug|info|warning|error)"
+                        )))
+                    }
+                }
+            }
+            if let Some(dir) = config.get("models_dir").and_then(|v| v.as_str()) {
+                if dir.is_empty() {
+                    return Err(ExtensionError::InvalidArguments(
+                        "models_dir must not be empty".into(),
+                    ));
+                }
+                cfg.models_dir = dir.to_string();
+            }
+            if let Some(m) = config.get("max_streams").and_then(|v| v.as_u64()) {
+                if !(1..=64).contains(&m) {
+                    return Err(ExtensionError::InvalidArguments(format!(
+                        "max_streams out of range (1..=64): {m}"
+                    )));
+                }
+                cfg.max_streams = m as u32;
+            }
+            if let Some(addr) = config.get("snapshot_bind_addr").and_then(|v| v.as_str()) {
+                if addr.is_empty() {
+                    return Err(ExtensionError::InvalidArguments(
+                        "snapshot_bind_addr must not be empty".into(),
+                    ));
+                }
+                cfg.snapshot_bind_addr = addr.to_string();
+            }
+        }
+        // server_host is NOT in HandshakeConfig — the sidecar doesn't need it.
+        // It lives in its own RwLock and is surfaced to the frontend via
+        // list_streams / get_stream_info so cards can build RTSP/snapshot URLs.
+        if let Some(host) = config.get("server_host").and_then(|v| v.as_str()) {
+            *self.server_host.write() = host.trim().to_string();
+        }
+        // Sidecar transport mode + remote bridge location. These do NOT
+        // belong in HandshakeConfig — they shape which supervisor constructor
+        // runs, not what the sidecar process receives. A mode flip takes
+        // effect on the next `ensure_sidecar()` (or `restart_sidecar()`),
+        // never on a live sidecar. When the mode changes, tear down any
+        // existing supervisor that may be crash-looping in the old mode —
+        // otherwise it exhausts the 5-restart/60s rate-limit budget before
+        // the next ensure_sidecar() can spawn in the correct mode.
+        if let Some(mode) = config.get("sidecar_mode").and_then(|v| v.as_str()) {
+            let mode = mode.trim().to_string();
+            match mode.as_str() {
+                "local" | "remote" => {}
+                other => {
+                    return Err(ExtensionError::InvalidArguments(format!(
+                        "invalid sidecar_mode '{other}' (expected local|remote)"
+                    )))
+                }
+            }
+            let old_mode = self.sidecar_mode.read().clone();
+            if old_mode != mode {
+                eprintln!(
+                    "[deepstream] sidecar_mode changing '{old_mode}' → '{mode}': tearing down supervisor to prevent wrong-mode crash-loop"
+                );
+                let old_sup = self.supervisor.write().take();
+                if let Some(sup) = old_sup {
+                    if let Err(e) = sup.shutdown().await {
+                        eprintln!("[deepstream] configure: shutdown error: {e:?}");
+                    }
+                }
+                if let Some(task) = self.watch_task.lock().take() {
+                    task.abort();
+                }
+                *self.sidecar.write() = None;
+                self.metrics.mark_sidecar_stopped();
+            }
+            *self.sidecar_mode.write() = mode;
+        }
+        if let Some(host) = config.get("sidecar_host").and_then(|v| v.as_str()) {
+            *self.sidecar_host.write() = host.trim().to_string();
+        }
+        if let Some(port) = config.get("sidecar_port").and_then(|v| v.as_u64()) {
+            if !(1..=65535).contains(&port) {
+                return Err(ExtensionError::InvalidArguments(format!(
+                    "sidecar_port out of range: {port}"
+                )));
+            }
+            *self.sidecar_port.write() = port as u16;
+        }
+        let cfg = self.sidecar_config.read();
+        eprintln!("[deepstream] configured: rtsp_port={}, snapshot_port={}, log_level={}, max_streams={}, models_dir={}, server_host='{}', sidecar_mode={}, sidecar_host='{}', sidecar_port={}",
+            cfg.rtsp_port, cfg.snapshot_port, cfg.log_level, cfg.max_streams, cfg.models_dir,
+            self.server_host.read(),
+            self.sidecar_mode.read(),
+            self.sidecar_host.read(),
+            self.sidecar_port.read());
+        Ok(())
+    }
+
     async fn execute_command(
         &self,
         cmd: &str,
@@ -951,6 +1620,46 @@ mod tests {
     #[test]
     fn metadata_id() {
         assert_eq!(DeepStreamExtension::new().metadata().id, "deepstream");
+    }
+
+    #[test]
+    fn metadata_declares_config_parameters_with_defaults() {
+        // The README documents these; without with_config_parameters() the
+        // host has no way to surface them in the UI and no defaults to feed
+        // configure() with. Regressions that drop the call silently make the
+        // config section fiction again.
+        let ext = DeepStreamExtension::new();
+        let meta = ext.metadata();
+        let params = meta
+            .config_parameters
+            .as_ref()
+            .expect("config_parameters declared");
+        let by_name: std::collections::HashMap<&str, &ParameterDefinition> = params
+            .iter()
+            .map(|p| (p.name.as_str(), p))
+            .collect();
+        assert_eq!(params.len(), 10, "params: {:?}", params.iter().map(|p| &p.name).collect::<Vec<_>>());
+        for required in [
+            "rtsp_port",
+            "snapshot_port",
+            "log_level",
+            "models_dir",
+            "max_streams",
+            "snapshot_bind_addr",
+            "server_host",
+            "sidecar_mode",
+            "sidecar_host",
+            "sidecar_port",
+        ] {
+            assert!(by_name.contains_key(required), "missing config param {required}");
+        }
+        // Spot-check defaults match HandshakeConfig::default().
+        let defaults = HandshakeConfig::default();
+        let rtsp = &by_name["rtsp_port"];
+        match &rtsp.default_value {
+            Some(ParamMetricValue::Integer(v)) => assert_eq!(*v, defaults.rtsp_port as i64),
+            other => panic!("rtsp_port default wrong shape: {other:?}"),
+        }
     }
 
     #[test]
@@ -1010,6 +1719,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn configure_overrides_sidecar_config_fields() {
+        // configure() is the only way the host can push UI-entered values
+        // into the HandshakeConfig that will be sent on the next spawn.
+        // A regression that no-ops this method makes the README config table
+        // fiction again.
+        use neomind_extension_sdk::Extension;
+        let mut ext = DeepStreamExtension::new();
+        ext.configure(&serde_json::json!({
+            "rtsp_port": 9554,
+            "snapshot_port": 9555,
+            "log_level": "debug",
+            "models_dir": "/data/models",
+            "max_streams": 16,
+            "snapshot_bind_addr": "127.0.0.1",
+            "server_host": "192.168.93.20",
+            "sidecar_mode": "remote",
+            "sidecar_host": "192.168.93.20",
+            "sidecar_port": 9666,
+        }))
+        .await
+        .expect("configure ok");
+        let cfg = ext.sidecar_config.read();
+        assert_eq!(cfg.rtsp_port, 9554);
+        assert_eq!(cfg.snapshot_port, 9555);
+        assert_eq!(cfg.log_level, "debug");
+        assert_eq!(cfg.models_dir, "/data/models");
+        assert_eq!(cfg.max_streams, 16);
+        assert_eq!(cfg.snapshot_bind_addr, "127.0.0.1");
+        assert_eq!(ext.server_host.read().as_str(), "192.168.93.20");
+        // Sidecar transport fields — these shape which supervisor constructor
+        // runs on the next ensure_sidecar(), not anything in HandshakeConfig.
+        assert_eq!(ext.sidecar_mode.read().as_str(), "remote");
+        assert_eq!(ext.sidecar_host.read().as_str(), "192.168.93.20");
+        assert_eq!(*ext.sidecar_port.read(), 9666);
+    }
+
+    #[tokio::test]
+    async fn configure_rejects_invalid_sidecar_mode() {
+        use neomind_extension_sdk::Extension;
+        let mut ext = DeepStreamExtension::new();
+        ext.configure(&serde_json::json!({ "sidecar_mode": "telepathy" }))
+            .await
+            .expect_err("sidecar_mode='telepathy' should be rejected");
+        // Default unchanged on rejection.
+        assert_eq!(ext.sidecar_mode.read().as_str(), "local");
+    }
+
+    #[tokio::test]
+    async fn configure_rejects_out_of_range_sidecar_port() {
+        use neomind_extension_sdk::Extension;
+        let mut ext = DeepStreamExtension::new();
+        ext.configure(&serde_json::json!({ "sidecar_port": 99999 }))
+            .await
+            .expect_err("sidecar_port=99999 should be rejected");
+        // Default unchanged on rejection.
+        assert_eq!(*ext.sidecar_port.read(), DEFAULT_SIDECAR_BRIDGE_PORT);
+    }
+
+    #[tokio::test]
+    async fn configure_rejects_out_of_range_max_streams() {
+        use neomind_extension_sdk::Extension;
+        let mut ext = DeepStreamExtension::new();
+        let err = ext
+            .configure(&serde_json::json!({ "max_streams": 999 }))
+            .await
+            .expect_err("max_streams=999 should be rejected");
+        // Sanity: default unchanged on rejection.
+        assert_eq!(ext.sidecar_config.read().max_streams, DEFAULT_MAX_STREAMS);
+        let _ = err; // error type shape varies by SDK version; just assert it errored.
+    }
+
+    #[tokio::test]
     async fn list_streams_on_empty_manager_returns_empty_array() {
         // list_streams doesn't touch the sidecar — safe to call on a fresh
         // extension (no sidecar wired).
@@ -1046,16 +1827,8 @@ mod tests {
             .get("models")
             .and_then(|v| v.as_array())
             .expect("models array");
-        // preset + 1 registered = 2
-        assert_eq!(models.len(), 2, "models: {models:?}");
-        // preset present
-        assert!(
-            models
-                .iter()
-                .any(|m| m.get("id").and_then(|v| v.as_str()) == Some("yolov8n-coco")
-                    && m.get("preset").and_then(|v| v.as_bool()) == Some(true)),
-            "preset missing: {models:?}"
-        );
+        // No sidecar running → no preset models; only the registered one.
+        assert_eq!(models.len(), 1, "models: {models:?}");
         // registered present
         assert!(
             models

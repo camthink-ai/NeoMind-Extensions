@@ -96,6 +96,7 @@ async fn replay_to_records_timeout_when_no_response() {
         "python3",
         &mock_script(),
         [("MOCK_IGNORE_ADD_STREAM".into(), "true".into())],
+        None,
     )
     .await
     .expect("spawn");

@@ -38,12 +38,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
+import shutil
 import signal
+import subprocess
 import sys
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from protocol import (
     PROTOCOL_VERSION,
@@ -73,6 +76,134 @@ from protocol import (
 from config import parse_stream_config
 
 log = logging.getLogger("deepstream.runner")
+
+
+# --- GPU stats query -------------------------------------------------------
+#
+# The original Stats emission hardcoded gpu_utilization_percent and
+# gpu_memory_used_mb to 0.0 — so the dashboard's GPU tiles were always blank
+# even with active streams. Query real numbers instead.
+#
+# Backends (tried in order; first that yields data wins):
+#   1. nvidia-smi   — x86 / server dGPUs (returns [N/A] on Jetson integrated)
+#   2. Jetson sysfs — GR3D load node + /proc/meminfo for unified memory
+#   3. none         — fall back to (0.0, 0.0)
+#
+# On Jetson, GPU and CPU share one RAM pool (unified memory), so there's no
+# separate "GPU memory" — we report total system RAM in use as the memory
+# metric (it's the shared pool the GPU allocates from).
+
+_GPU_CACHE: Tuple[float, float] = (0.0, 0.0)
+_GPU_CACHE_TS: float = 0.0
+_GPU_CACHE_TTL: float = 2.0  # seconds — avoid spawning a subprocess every emit
+_GPU_MODE: Optional[str] = None  # 'nvidia-smi' | 'jetson-sysfs' | 'none'
+_JETSON_LOAD_GLOBS = (
+    "/sys/devices/platform/bus*/*.gpu/load",
+    "/sys/devices/platform/*.gpu/load",
+    "/sys/class/devfreq/*.gpu/load",
+)
+
+
+def _probe_gpu_backend() -> str:
+    """Pick a GPU query backend once and cache the decision."""
+    global _GPU_MODE
+    if _GPU_MODE is not None:
+        return _GPU_MODE
+    if shutil.which("nvidia-smi"):
+        _GPU_MODE = "nvidia-smi"
+    elif any(_glob_first(pattern) for pattern in _JETSON_LOAD_GLOBS):
+        _GPU_MODE = "jetson-sysfs"
+    else:
+        _GPU_MODE = "none"
+    log.info("gpu stats backend: %s", _GPU_MODE)
+    return _GPU_MODE
+
+
+def _glob_first(pattern: str) -> Optional[str]:
+    import glob as _glob
+    matches = _glob.glob(pattern)
+    return matches[0] if matches else None
+
+
+def _read_jetson_stats() -> Tuple[float, float]:
+    """Utilization from the GR3D load sysfs node; mem from /proc/meminfo."""
+    util = 0.0
+    load_path = None
+    for pattern in _JETSON_LOAD_GLOBS:
+        load_path = _glob_first(pattern)
+        if load_path:
+            break
+    if load_path:
+        try:
+            raw = open(load_path).read().strip()
+            # Formats seen: a bare int (0..100 percent) on JetPack 5/6, or
+            # "busy@total" cycle counts on older JetPack.
+            if "@" in raw:
+                busy_s, total_s = raw.split("@", 1)
+                busy, total = float(busy_s), float(total_s)
+                if total > 0:
+                    util = min(busy / total * 100.0, 100.0)
+            else:
+                util = min(float(raw), 100.0)
+        except Exception as e:
+            log.debug("jetson load read failed (%s): %s", load_path, e)
+
+    mem = 0.0
+    try:
+        total_kb = avail_kb = None
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    total_kb = int(line.split()[1])
+                elif line.startswith("MemAvailable:"):
+                    avail_kb = int(line.split()[1])
+                if total_kb is not None and avail_kb is not None:
+                    break
+        if total_kb is not None and avail_kb is not None:
+            mem = max((total_kb - avail_kb) / 1024.0, 0.0)
+    except Exception as e:
+        log.debug("jetson meminfo read failed: %s", e)
+
+    return util, mem
+
+
+def query_gpu_stats() -> Tuple[float, float]:
+    """Return (utilization_percent, memory_used_mb), cached for _GPU_CACHE_TTL."""
+    global _GPU_CACHE, _GPU_CACHE_TS
+    now = time.monotonic()
+    if now - _GPU_CACHE_TS < _GPU_CACHE_TTL:
+        return _GPU_CACHE
+    util, mem = 0.0, 0.0
+    backend = _probe_gpu_backend()
+    try:
+        if backend == "nvidia-smi":
+            out = subprocess.check_output(
+                ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used",
+                 "--format=csv,noheader,nounits"],
+                stderr=subprocess.DEVNULL, timeout=3,
+            ).decode().strip()
+            got = False
+            if out:
+                first = out.splitlines()[0]
+                parts = [p.strip() for p in first.split(",")]
+                if len(parts) >= 2:
+                    try:
+                        util = float(parts[0])
+                        mem = float(parts[1])
+                        got = True
+                    except ValueError:
+                        # nvidia-smi on Jetson integrated GPU returns [N/A];
+                        # fall through to the Jetson sysfs reader below.
+                        pass
+            if not got:
+                util, mem = _read_jetson_stats()
+        elif backend == "jetson-sysfs":
+            util, mem = _read_jetson_stats()
+    except Exception as e:
+        log.debug("gpu query failed (%s): %s", backend, e)
+    _GPU_CACHE = (util, mem)
+    _GPU_CACHE_TS = now
+    return _GPU_CACHE
 
 
 @dataclass
@@ -355,8 +486,9 @@ class DeepStreamRunner:
     def _emit_one_stats(self) -> None:
         with self.streams_lock:
             entries = list(self.streams.values())
-        if not entries:
-            return
+        # NOTE: we no longer early-return when there are no streams. The
+        # dashboard's GPU/memory tiles need a stats event even at idle (no
+        # streams yet) to show real resource usage. per_stream is simply empty.
 
         now_mono = time.monotonic()
         per_stream: List[StreamStat] = []
@@ -407,11 +539,12 @@ class DeepStreamRunner:
             if sid not in live_ids:
                 del self._stats_prev[sid]
 
+        gpu_util, gpu_mem = query_gpu_stats()
         self.emit(Stats(
             ts=int(time.time() * 1000),
             global_fps=round(total_fps, 2),
-            gpu_utilization_percent=0.0,
-            gpu_memory_used_mb=0.0,
+            gpu_utilization_percent=round(gpu_util, 1),
+            gpu_memory_used_mb=round(gpu_mem, 1),
             per_stream=per_stream,
         ))
 

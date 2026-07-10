@@ -86,6 +86,7 @@ async fn heartbeat_fires_on_timeout_when_pong_missing() {
         "python3",
         &mock_script(),
         [("MOCK_IGNORE_HEALTHCHECK".into(), "true".into())],
+        None,
     )
     .await
     .expect("spawn");

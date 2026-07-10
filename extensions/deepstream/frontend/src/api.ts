@@ -38,7 +38,7 @@ export function getApiBase(): string {
 }
 
 /** Read the NeoMind auth token from any of the storage keys the host uses. */
-function getAuthToken(): string | null {
+export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
   return (
     localStorage.getItem('neomind_token') ||
@@ -82,12 +82,13 @@ export async function executeCommand<T = unknown>(
     };
   }
 
-  // The host's command endpoint returns the raw command payload on success
-  // (it does NOT wrap in { success, data }), so we synthesize that shape for
-  // uniform handling. Errors from the extension runner arrive as HTTP 4xx/5xx
-  // and are caught by the !response.ok branch above.
-  const data = await response.json() as T;
-  return { success: true, data };
+  // The host wraps command results in { success: true, data: <payload>, meta }.
+  // Unwrap the host envelope so callers receive the raw extension payload.
+  const json = await response.json() as any;
+  if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
+    return { success: json.success !== false, data: json.data as T, error: json.error };
+  }
+  return { success: true, data: json as T };
 }
 
 // ---------------------------------------------------------------------------
@@ -194,9 +195,10 @@ export const dsCommands = {
     ),
 
   /** Snapshot of all streams. `config` and `last_transition_at` are absent
-   *  on this projection — use getStreamInfo for the full record. */
+   *  on this projection — use getStreamInfo for the full record.
+   *  `server_host` is the extension-level default server address (may be empty). */
   listStreams: () =>
-    executeCommand<{ streams: Stream[] }>(
+    executeCommand<{ streams: Stream[]; server_host?: string }>(
       DEEPSTREAM_EXTENSION_ID,
       'list_streams',
       {},

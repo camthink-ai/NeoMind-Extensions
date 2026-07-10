@@ -545,6 +545,10 @@ def build_pipeline(
         width=width,
         height=height,
         live_source=1 if _is_live_src else 0,
+        # attach-sys-ts=1: use wall-clock timestamps instead of upstream PTS.
+        # Fixes non-monotonic DTS in mediamtx's HLS muxer when the source
+        # loops (ffmpeg -stream_loop) or the encoder resets its PTS counter.
+        attach_sys_ts=1,
     )
 
     # --- Infer + tracker + analytics -------------------------------------
@@ -592,7 +596,8 @@ def build_pipeline(
     # --- Convert + OSD + Encode ------------------------------------------
     converter = make_element("nvvideoconvert", f"conv-{stream_id}")
     osd = None
-    if out_cfg.osd if out_cfg.osd is not None else False:
+    # OSD defaults to True — only disabled when explicitly set to False.
+    if out_cfg.osd is not False:
         osd = make_element("nvdsosd", f"osd-{stream_id}")
 
     encoder_kind = (out_cfg.encoder or "h264").lower()
@@ -606,6 +611,10 @@ def build_pipeline(
     try:
         encoder.set_property("insert-sps-pps", 1)
         encoder.set_property("maxperf-enable", 1)
+        # iframeinterval=25: force an I-frame every 25 frames (~1s at 25fps).
+        # Without this, the encoder may go for tens of seconds without a
+        # keyframe, preventing mediamtx's HLS muxer from creating segments.
+        encoder.set_property("iframeinterval", 25)
     except Exception as e:
         log.warning("could not set encoder insert-sps-pps/maxperf: %s", e)
     parser = make_element(
@@ -678,6 +687,33 @@ def build_pipeline(
     log.info("pipeline: inserted %d queues between chain elements",
              len(interleaved) // 2)
     link_chain(*interleaved)
+
+    # --- Monotonic-DTS fix for mediamtx HLS muxer ---
+    # nvv4l2h264enc occasionally emits buffers with PTS going backwards
+    # (encoder pipeline reorder / startup latency), which breaks mediamtx's
+    # HLS muxer ("DTS is not monotonically increasing").  This probe clamps
+    # PTS/DTS to be strictly monotonically increasing.
+    _mono_ts = {"last": 0}
+
+    def _mono_dts_probe(pad, info):
+        try:
+            buf = info.get_buffer()
+            if buf is None:
+                return Gst.PadProbeReturn.OK
+            pts = buf.pts
+            if pts == Gst.CLOCK_TIME_NONE or pts < _mono_ts["last"]:
+                pts = _mono_ts["last"] + 40_000_000  # +40ms (1 frame @ 25fps)
+            _mono_ts["last"] = pts
+            buf.pts = pts
+            buf.dts = pts  # no B-frames: DTS == PTS
+        except Exception as e:
+            log.warning("mono_dts_probe error: %s", e)
+        return Gst.PadProbeReturn.OK
+
+    parser.get_static_pad("src").add_probe(
+        Gst.PadProbeType.BUFFER, _mono_dts_probe
+    )
+    log.info("installed monotonic-DTS probe on parser src pad for %s", stream_id)
 
     # Link snapshot branch off the snap_tee.
     if snap_tee is not None:
@@ -906,4 +942,4 @@ def _wire_snapshot_branch(tee: Any, stream_id: str) -> None:
 def _default_output() -> Any:
     """Lazy import to avoid circular at module load."""
     from config import OutputConfig
-    return OutputConfig()
+    return OutputConfig(osd=True)

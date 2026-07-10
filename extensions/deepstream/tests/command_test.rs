@@ -66,15 +66,32 @@ async fn add_stream_command_returns_rtsp_url_from_mock() {
         .await
         .expect("add_stream ok");
 
+    // Non-blocking: response has stream_id + status "connecting".
     let stream_id = result
         .get("stream_id")
         .and_then(|v| v.as_str())
         .expect("stream_id in response");
-    let rtsp_url = result
+    assert_eq!(stream_id, "cam1");
+    assert_eq!(
+        result.get("status").and_then(|v| v.as_str()),
+        Some("connecting"),
+        "add_stream should return immediately with connecting status"
+    );
+
+    // Background task resolves StreamAdded from the mock sidecar.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let info = ext
+        .execute_command(
+            "get_stream_info",
+            &serde_json::json!({"stream_id": "cam1"}),
+        )
+        .await
+        .expect("get_stream_info ok");
+    let rtsp_url = info
         .get("rtsp_url")
         .and_then(|v| v.as_str())
-        .expect("rtsp_url in response");
-    assert_eq!(stream_id, "cam1");
+        .expect("rtsp_url set by background task");
     assert!(
         rtsp_url.contains("cam1"),
         "rtsp_url should include stream id, got {rtsp_url}"
@@ -101,6 +118,7 @@ async fn list_streams_after_add_returns_1_entry() {
     .await
     .expect("add_stream ok");
 
+    // Stream card appears immediately as "connecting" (non-blocking add).
     let list = ext
         .execute_command("list_streams", &serde_json::json!({}))
         .await
@@ -109,16 +127,28 @@ async fn list_streams_after_add_returns_1_entry() {
         .get("streams")
         .and_then(|v| v.as_array())
         .expect("streams array");
-    assert_eq!(arr.len(), 1, "expected 1 entry, got {arr:?}");
+    assert_eq!(arr.len(), 1, "expected 1 entry immediately, got {arr:?}");
     let entry = &arr[0];
     assert_eq!(
         entry.get("stream_id").and_then(|v| v.as_str()),
         Some("cam1")
     );
+
+    // Background task transitions to running once mock sends StreamAdded.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let list2 = ext
+        .execute_command("list_streams", &serde_json::json!({}))
+        .await
+        .expect("list_streams ok");
+    let arr2 = list2
+        .get("streams")
+        .and_then(|v| v.as_array())
+        .expect("streams array");
+    let entry2 = &arr2[0];
     assert_eq!(
-        entry.get("status").and_then(|v| v.as_str()),
+        entry2.get("status").and_then(|v| v.as_str()),
         Some("running"),
-        "status should be running after add succeeds"
+        "status should be running after background task resolves"
     );
 
     handle.shutdown().await.unwrap();

@@ -4,6 +4,7 @@ import { dsCommands } from '../api';
 
 export function useStream(streamId: string | null | undefined, pollMs: number = 3000) {
   const [stream, setStream] = useState<Stream | null>(null);
+  const [serverHost, setServerHost] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -14,9 +15,10 @@ export function useStream(streamId: string | null | undefined, pollMs: number = 
       const r = await dsCommands.getStreamInfo(streamId);
       // get_stream_info returns the Stream projection directly at the top level
       // (see lib.rs cmd_get_stream_info) — there is no `{ stream: ... }`
-      // wrapper. r.data IS the stream.
+      // wrapper. r.data IS the stream, and it carries `server_host` too.
       if (r.success && r.data) {
         setStream(r.data);
+        setServerHost((r.data as any).server_host ?? '');
         setError(null);
       } else setError(r.error ?? 'get_stream_info failed');
     } catch (e: any) {
@@ -45,5 +47,5 @@ export function useStream(streamId: string | null | undefined, pollMs: number = 
     };
   }, [refresh, pollMs, streamId]);
 
-  return { stream, loading, error, refresh };
+  return { stream, serverHost, loading, error, refresh };
 }

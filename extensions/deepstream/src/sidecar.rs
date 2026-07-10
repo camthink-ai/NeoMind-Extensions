@@ -9,38 +9,162 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+/// Persistent tokio runtime for long-lived sidecar I/O tasks.
+///
+/// The SDK's FFI bridge runs each command on an EPHEMERAL runtime that is
+/// dropped when the command returns. Any `tokio::spawn`'d task (reader_loop,
+/// watch_loop) and any registered I/O resource (TcpStream, ChildStdin) tied
+/// to that runtime dies with it — which is why `send()` from a later command
+/// fails with "A Tokio 1.x context was found, but it is being shutdown" and
+/// the reader_loop silently stops draining the socket.
+///
+/// This static runtime outlives any single FFI call. Sidecar spawning,
+/// reader_loop / watch_loop, and `send`/`recv`/`shutdown` all enter this
+/// runtime's context so I/O resources and tasks live on the same reactor
+/// across calls. Mirrors the voice-assistant pattern.
+pub fn persistent_runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("failed to build deepstream persistent runtime")
+    })
+}
+
+/// Capture the currently-entered runtime if there is one (test path); fall
+/// back to the persistent runtime otherwise. Stored on `SidecarHandle` so
+/// `send()` can poll the writer on the same reactor that owns it.
+fn current_or_persistent_handle() -> tokio::runtime::Handle {
+    match tokio::runtime::Handle::try_current() {
+        Ok(h) => h,
+        Err(_) => persistent_runtime().handle().clone(),
+    }
+}
 use std::time::{Duration, Instant};
 
-use tokio::process::{Child, ChildStdin, ChildStdout};
+/// Debug logger that writes to /tmp/deepstream_debug.log (stderr is swallowed by FFI).
+pub fn dbg_log(msg: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/deepstream_debug.log")
+    {
+        let _ = writeln!(f, "{} {msg}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0));
+    }
+}
+
+use tokio::io::AsyncRead;
+use tokio::net::tcp::OwnedWriteHalf;
+use tokio::net::TcpStream;
+use tokio::process::{Child, ChildStdin};
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
 
+use crate::event_router::EventRouter;
 use crate::protocol::{read_message, write_message, ControlMessage, ProtocolError, SidecarEvent};
+
+/// Write side of the sidecar transport. Local mode wraps the child's stdin;
+/// remote mode wraps the TCP socket's owned write half. Both implement
+/// `AsyncWrite + Unpin` so `write_message` is reused for both.
+enum WriterSide {
+    Stdin(ChildStdin),
+    Tcp(OwnedWriteHalf),
+}
+
+/// How a sidecar instance is brought up.
+///
+/// `Local` spawns a child process (same machine). `Remote` connects to a
+/// `sidecar_bridge.py` daemon on another host (e.g. a Jetson) over TCP — the
+/// daemon owns the actual sidecar process and bridges its stdin/stdout to the
+/// socket. The JSONL protocol is identical either way; only the transport
+/// differs.
+#[derive(Clone)]
+pub enum SpawnConfig {
+    /// Spawn the sidecar as a local child process (default; original behavior).
+    Local {
+        python_bin: String,
+        script_path: PathBuf,
+        extra_env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    },
+    /// Connect to a remote bridge daemon over TCP. The daemon is responsible
+    /// for spawning / killing the actual sidecar process when the connection
+    /// opens / closes.
+    Remote { host: String, port: u16 },
+}
+
+impl SpawnConfig {
+    /// Materialize one sidecar instance (spawn or connect) + its reader task.
+    ///
+    /// `router` is an optional EventRouter that the reader_loop uses to publish
+    /// each parsed event to the NeoMind EventBus BEFORE queueing it on the
+    /// internal channel. None in tests / when the supervisor hasn't been
+    /// configured with a router.
+    pub async fn spawn(
+        &self,
+        router: Option<Arc<EventRouter>>,
+    ) -> std::io::Result<(SidecarHandle, JoinHandle<()>)> {
+        match self {
+            Self::Local { python_bin, script_path, extra_env } => {
+                SidecarHandle::spawn_with_env(
+                    python_bin,
+                    script_path,
+                    extra_env.iter().cloned(),
+                    router,
+                )
+                .await
+            }
+            Self::Remote { host, port } => {
+                SidecarHandle::connect_remote(host, *port, router).await
+            }
+        }
+    }
+
+    /// Whether this config connects to a remote daemon (vs spawning locally).
+    pub fn is_remote(&self) -> bool {
+        matches!(self, Self::Remote { .. })
+    }
+}
 
 /// Handle to a running Python sidecar process.
 ///
 /// Wraps the child process, its stdin (for control messages), and an mpsc receiver
 /// that drains events parsed from the child's stdout by a background reader task.
 pub struct SidecarHandle {
-    child: Mutex<Child>,
-    stdin: Mutex<Option<ChildStdin>>,
+    /// Child process; `None` in remote mode (the daemon owns the process).
+    child: Mutex<Option<Child>>,
+    /// The runtime that owns the writer's I/O reactor. Captured at construction
+    /// time so `send()` can poll the writer on the correct reactor. In FFI
+    /// production this is the persistent runtime (supervisor.start wraps the
+    /// spawn in persistent_runtime's context); in tests it's the test runtime.
+    runtime: tokio::runtime::Handle,
+    /// Write side of the transport. `None` after shutdown (or once stdin/socket
+    /// is closed). Locked separately from `child` so heartbeat writes and user
+    /// `add_stream` writes don't contend with shutdown's child.wait().
+    ///
+    /// `Arc<Mutex<...>>` so `send()` can clone the Arc into a task spawned on
+    /// `runtime` (the FFI command's ephemeral runtime dies when the command
+    /// returns; the writer must be polled on the runtime that owns it).
+    writer: Arc<Mutex<Option<WriterSide>>>,
     /// Mutex (not `&mut self`) so both the heartbeat task (Task 2.3) AND user-facing code
     /// can call recv() via shared `&SidecarHandle` references. The Mutex serializes actual
     /// recv calls — mpsc::UnboundedReceiver is single-consumer anyway.
     event_rx: Mutex<mpsc::UnboundedReceiver<SidecarEvent>>,
     /// Dedicated priority channel for `Pong` and `Bye` events (spec §4.6, §4.8.1).
-    ///
-    /// Splitting these from the main event_rx means the heartbeat task cannot be starved
-    /// by a flood of Detection/Analytics events — even with thousands queued on event_rx,
-    /// `recv_pong()` sees the next Pong immediately. `Bye` rides the same channel so
-    /// shutdown's graceful-wait cannot be starved either (during shutdown the heartbeat
-    /// task is cancelled, so `recv_pong()` is free for `shutdown()` to use).
     pong_rx: Mutex<mpsc::UnboundedReceiver<SidecarEvent>>,
     /// Number of health_check pings sent since spawn (Observable for tests + diagnostics).
-    /// Atomic because it's write-heavy (incremented each ping) and never needs `await`
-    /// while held — a Mutex<u64> would force the heartbeat task to hold across the send.
     ping_count: AtomicU64,
+    /// True in remote mode — used by `shutdown()` to skip the SIGTERM/SIGKILL
+    /// escalation (no local child to signal; closing the write half tells the
+    /// daemon to kill the sidecar).
+    is_remote: bool,
 }
 
 impl SidecarHandle {
@@ -53,7 +177,7 @@ impl SidecarHandle {
         python_bin: &str,
         script_path: &Path,
     ) -> std::io::Result<(Self, tokio::task::JoinHandle<()>)> {
-        Self::spawn_with_env(python_bin, script_path, std::iter::empty()).await
+        Self::spawn_with_env(python_bin, script_path, std::iter::empty(), None).await
     }
 
     /// Spawn the sidecar with additional environment variables.
@@ -64,7 +188,15 @@ impl SidecarHandle {
         python_bin: &str,
         script_path: &Path,
         extra_env: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+        router: Option<Arc<EventRouter>>,
     ) -> std::io::Result<(Self, tokio::task::JoinHandle<()>)> {
+        // NOTE: this function uses bare `tokio::spawn` (NOT persistent_runtime)
+        // because callers either (a) wrap us via supervisor.start() — which
+        // runs our body on the persistent runtime, so tokio::spawn is
+        // persistent — or (b) call us directly inside a #[tokio::test] with
+        // `start_paused = true`, where using the test runtime is essential
+        // for time-based assertions. Either way the current runtime is the
+        // right one.
         let mut cmd = tokio::process::Command::new(python_bin);
         cmd.arg(script_path);
         cmd.stdin(std::process::Stdio::piped());
@@ -82,31 +214,104 @@ impl SidecarHandle {
         let (event_tx, event_rx) = mpsc::unbounded_channel::<SidecarEvent>();
         let (pong_tx, pong_rx) = mpsc::unbounded_channel::<SidecarEvent>();
         let reader_task = tokio::spawn(async move {
-            stdout_reader_loop(stdout, event_tx, pong_tx).await;
+            reader_loop(stdout, event_tx, pong_tx, router).await;
         });
 
         Ok((
             Self {
-                child: Mutex::new(child),
-                stdin: Mutex::new(Some(stdin)),
+                child: Mutex::new(Some(child)),
+                runtime: current_or_persistent_handle(),
+                writer: Arc::new(Mutex::new(Some(WriterSide::Stdin(stdin)))),
                 event_rx: Mutex::new(event_rx),
                 pong_rx: Mutex::new(pong_rx),
                 ping_count: AtomicU64::new(0),
+                is_remote: false,
             },
             reader_task,
         ))
     }
 
-    /// Send a control message to the sidecar's stdin.
+    /// Connect to a remote `sidecar_bridge.py` daemon over TCP. The daemon
+    /// owns the actual sidecar process — it spawns one on connection and kills
+    /// it when the connection drops. This enables the "NeoMind host on macOS,
+    /// sidecar on Jetson" deployment topology (路 C).
+    ///
+    /// The JSONL protocol over the socket is identical to stdin/stdout; the
+    /// reader loop and heartbeat logic are shared with local mode.
+    pub async fn connect_remote(
+        host: &str,
+        port: u16,
+        router: Option<Arc<EventRouter>>,
+    ) -> std::io::Result<(Self, tokio::task::JoinHandle<()>)> {
+        dbg_log(&format!("connect_remote: connecting to {host}:{port}"));
+        // See NOTE in spawn_with_env: callers either wrap us via
+        // supervisor.start() (so we're already on persistent) or invoke us
+        // from a test runtime. Either way, bare tokio primitives are correct.
+        let stream = TcpStream::connect((host, port)).await?;
+        dbg_log("connect_remote: TCP connected");
+        // Disable Nagle — the protocol is request/response JSONL and we want
+        // each control message flushed immediately (heartbeats especially).
+        let _ = stream.set_nodelay(true);
+        let (read_half, write_half) = stream.into_split();
+
+        let (event_tx, event_rx) = mpsc::unbounded_channel::<SidecarEvent>();
+        let (pong_tx, pong_rx) = mpsc::unbounded_channel::<SidecarEvent>();
+        let reader_task = tokio::spawn(async move {
+            dbg_log("reader_loop: started");
+            reader_loop(read_half, event_tx, pong_tx, router).await;
+            dbg_log("reader_loop: exited");
+        });
+
+        Ok((
+            Self {
+                child: Mutex::new(None),
+                runtime: current_or_persistent_handle(),
+                writer: Arc::new(Mutex::new(Some(WriterSide::Tcp(write_half)))),
+                event_rx: Mutex::new(event_rx),
+                pong_rx: Mutex::new(pong_rx),
+                ping_count: AtomicU64::new(0),
+                is_remote: true,
+            },
+            reader_task,
+        ))
+    }
+
+    /// Whether this handle was created via `connect_remote` (vs local spawn).
+    pub fn is_remote(&self) -> bool {
+        self.is_remote
+    }
+
+    /// Send a control message to the sidecar's stdin (local) or TCP write half
+    /// (remote). Both paths reuse `write_message` since ChildStdin and
+    /// OwnedWriteHalf both implement `AsyncWrite + Unpin`.
     pub async fn send(&self, msg: &ControlMessage) -> Result<(), ProtocolError> {
-        let mut guard = self.stdin.lock().await;
-        let stdin = guard.as_mut().ok_or_else(|| {
-            ProtocolError::Io(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "sidecar stdin already closed",
-            ))
-        })?;
-        write_message(stdin, msg).await
+        // Spawn the write on the runtime that owns the writer's reactor (stored
+        // in `self.runtime` at construction time). The FFI command path runs on
+        // an ephemeral runtime that gets torn down when the command returns;
+        // without this indirection, `write_all` fails with "A Tokio 1.x
+        // context was found, but it is being shutdown".
+        let writer = self.writer.clone();
+        let msg_clone = msg.clone();
+        let handle = self.runtime.clone();
+        handle
+            .spawn(async move {
+                let mut guard = writer.lock().await;
+                match guard.as_mut() {
+                    Some(WriterSide::Stdin(stdin)) => write_message(stdin, &msg_clone).await,
+                    Some(WriterSide::Tcp(w)) => write_message(w, &msg_clone).await,
+                    None => Err(ProtocolError::Io(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "sidecar write side already closed",
+                    ))),
+                }
+            })
+            .await
+            .map_err(|join_err| {
+                ProtocolError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("runtime task join failed: {join_err}"),
+                ))
+            })?
     }
 
     /// Receive the next event from the sidecar's stdout.
@@ -135,12 +340,20 @@ impl SidecarHandle {
 
     /// Graceful shutdown with escalation (spec §4.8.1).
     ///
-    /// Sequence:
+    /// **Local mode** sequence:
     ///   1. Send `shutdown {graceful_secs: 5}` control message.
     ///   2. Wait up to 5s for `bye` event on the priority channel.
     ///   3. If `bye` received: wait for process exit (≤2s), done.
     ///   4. If timeout: close stdin (backup EOF signal), send SIGTERM, wait 2s.
     ///   5. If still alive: SIGKILL.
+    ///
+    /// **Remote mode** sequence:
+    ///   1. Send `shutdown {graceful_secs: 5}` over TCP.
+    ///   2. Wait up to 5s for `bye` (the daemon forwards it from the sidecar's
+    ///      stdout before the socket closes).
+    ///   3. Drop the write half (half-close). The daemon detects the EOF and
+    ///      kills the sidecar itself — no SIGTERM/SIGKILL path because there's
+    ///      no local child to signal.
     ///
     /// Returns `Err` only if the underlying wait/kill syscalls fail (not on
     /// timeout — timeout triggers the escalation path which is itself best-effort).
@@ -150,7 +363,8 @@ impl SidecarHandle {
         const SIGTERM_WAIT_SECS: u64 = 2;
 
         // 1. Try to send the shutdown control message. If send fails (broken pipe
-        //    because sidecar already died), skip straight to the SIGTERM path.
+        //    because sidecar already died / socket already closed), skip straight
+        //    to the escalation path.
         let sent_msg = self
             .send(&ControlMessage::Shutdown { graceful_secs: GRACEFUL_SECS as u32 })
             .await
@@ -162,25 +376,50 @@ impl SidecarHandle {
                 Duration::from_secs(GRACEFUL_SECS),
                 self.recv_pong(),
             ).await {
-                // 3. bye received — wait for the process to exit (≤2s).
-                let mut child = self.child.lock().await;
-                match tokio::time::timeout(Duration::from_secs(PROCESS_EXIT_SECS), child.wait()).await {
-                    Ok(Ok(_status)) => return Ok(()),
-                    Ok(Err(e)) => return Err(e),
-                    Err(_) => { /* fall through to SIGTERM */ }
+                if self.is_remote {
+                    // Remote: bye received means the sidecar is cleaning up; the
+                    // daemon will reap it. Dropping the write half signals the
+                    // daemon that we're done and it can release the sidecar.
+                    let mut guard = self.writer.lock().await;
+                    let _taken = guard.take();
+                    return Ok(());
+                }
+                // Local: bye received — wait for the process to exit (≤2s).
+                let mut child_guard = self.child.lock().await;
+                if let Some(child) = child_guard.as_mut() {
+                    match tokio::time::timeout(Duration::from_secs(PROCESS_EXIT_SECS), child.wait()).await {
+                        Ok(Ok(_status)) => return Ok(()),
+                        Ok(Err(e)) => return Err(e),
+                        Err(_) => { /* fall through to SIGTERM */ }
+                    }
+                } else {
+                    return Ok(());
                 }
             }
         }
 
-        // 4. Close stdin as a backup signal (in case the shutdown message was lost
-        //    or the sidecar's main loop is stuck before reading it).
+        // Remote mode stops here — no local process to SIGTERM/SIGKILL. Just
+        // drop the write half; the daemon will kill the sidecar on socket EOF.
+        if self.is_remote {
+            let mut guard = self.writer.lock().await;
+            let _taken = guard.take();
+            return Ok(());
+        }
+
+        // 4. Close the write side as a backup signal (in case the shutdown
+        //    message was lost or the sidecar's main loop is stuck before
+        //    reading it).
         {
-            let mut guard = self.stdin.lock().await;
+            let mut guard = self.writer.lock().await;
             let _taken = guard.take();
         }
 
         // 5. SIGTERM escalation (Unix) or direct kill (Windows).
-        let mut child = self.child.lock().await;
+        let mut child_guard = self.child.lock().await;
+        let child = match child_guard.as_mut() {
+            Some(c) => c,
+            None => return Ok(()), // Already taken (shouldn't happen in local mode)
+        };
         // Brief wait — process might be exiting from stdin close alone.
         match tokio::time::timeout(Duration::from_millis(500), child.wait()).await {
             Ok(Ok(_)) => return Ok(()),
@@ -188,7 +427,7 @@ impl SidecarHandle {
             Err(_) => {}
         }
 
-        send_sigterm_or_kill(&mut child).await?;
+        send_sigterm_or_kill(child).await?;
 
         // 6. Wait SIGTERM_WAIT_SECS; if still alive, SIGKILL.
         match tokio::time::timeout(Duration::from_secs(SIGTERM_WAIT_SECS), child.wait()).await {
@@ -225,39 +464,47 @@ async fn send_sigterm_or_kill(child: &mut tokio::process::Child) -> std::io::Res
     child.kill().await
 }
 
-/// Background task: read JSONL messages from the sidecar's stdout until EOF or error,
-/// demuxing each parsed event to either the event channel or the priority channel.
+/// Background task: read JSONL messages from the sidecar's stdout (local mode)
+/// or the TCP read half (remote mode) until EOF or error, demuxing each parsed
+/// event to either the event channel or the priority channel.
 ///
-/// Pong and Bye events go to `pong_tx` (consumed by the heartbeat task and the
-/// shutdown sequence); everything else goes to `event_tx` (consumed by user-facing
-/// recv()). This split means a flood of Detection events cannot starve the heartbeat's
-/// pong wait (spec §4.6) or shutdown's bye wait (spec §4.8.1).
+/// Generic over `R: AsyncRead + Unpin` so both `ChildStdout` and `OwnedReadHalf`
+/// reuse the same loop. Pong and Bye events go to `pong_tx` (consumed by the
+/// heartbeat task and the shutdown sequence); everything else goes to `event_tx`
+/// (consumed by user-facing recv()). This split means a flood of Detection
+/// events cannot starve the heartbeat's pong wait (spec §4.6) or shutdown's bye
+/// wait (spec §4.8.1).
 ///
 /// The BufReader is owned here so leftover bytes after a newline are preserved
-/// across reads (the bug that prompted the Part A refactor).
-async fn stdout_reader_loop(
-    stdout: ChildStdout,
+/// across reads — and on TCP, so a partial JSONL frame split across packets
+/// does not corrupt the stream.
+async fn reader_loop<R: AsyncRead + Unpin>(
+    reader: R,
     event_tx: mpsc::UnboundedSender<SidecarEvent>,
     pong_tx: mpsc::UnboundedSender<SidecarEvent>,
+    router: Option<Arc<EventRouter>>,
 ) {
-    let mut reader = tokio::io::BufReader::new(stdout);
+    let mut reader = tokio::io::BufReader::new(reader);
     loop {
         match read_message::<_, SidecarEvent>(&mut reader).await {
             Ok(ev) => {
-                // Demux: Pong and Bye go to the dedicated priority channel,
-                // everything else to event_rx. This means heartbeat pong
-                // waits cannot be starved by event floods (spec §4.6), and
-                // shutdown's bye wait (spec §4.8.1) cannot be starved either —
-                // even with thousands of buffered Detection events ahead of it.
+                // Route through the EventRouter BEFORE queueing. This publishes
+                // the event to the NeoMind EventBus (so the frontend WS
+                // receives stats / detection / analytics in real time) while
+                // the channel below still feeds command handlers (wait_event,
+                // heartbeat). Routing is best-effort: failures are logged
+                // inside route() and never break the reader loop.
+                if let Some(ref router) = router {
+                    let _ = router.route(ev.clone()).await;
+                }
                 let is_priority = matches!(ev, SidecarEvent::Pong { .. } | SidecarEvent::Bye { .. });
                 let tx = if is_priority { &pong_tx } else { &event_tx };
                 if tx.send(ev).is_err() {
-                    // Receiver dropped — SidecarHandle is gone. Stop reading.
                     break;
                 }
             }
             Err(e) => {
-                eprintln!("[deepstream] sidecar stdout reader error: {:?}", e);
+                eprintln!("[deepstream] sidecar reader error: {:?}", e);
                 break;
             }
         }
@@ -351,9 +598,12 @@ pub enum SupervisorState {
 }
 
 pub struct SidecarSupervisor {
-    python_bin: String,
-    script_path: PathBuf,
-    extra_env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    /// How to (re)spawn the sidecar — local child process or remote TCP daemon.
+    spawn_config: SpawnConfig,
+    /// Optional EventRouter passed to every reader_loop so events are published
+    /// to the NeoMind EventBus as they arrive. Set via `set_router` before
+    /// `start()`. None in unit tests.
+    router: Option<Arc<EventRouter>>,
     /// Current sidecar instance + its stdout reader task JoinHandle.
     /// `None` when between restarts or after shutdown.
     current: Mutex<Option<SupervisorEntry>>,
@@ -372,11 +622,31 @@ struct SupervisorEntry {
 }
 
 impl SidecarSupervisor {
+    /// Construct a supervisor that spawns the sidecar as a local child process
+    /// (original behavior — NeoMind host and sidecar on the same machine).
     pub fn new(python_bin: &str, script_path: PathBuf) -> Self {
-        Self {
+        Self::with_config(SpawnConfig::Local {
             python_bin: python_bin.to_string(),
             script_path,
             extra_env: Vec::new(),
+        })
+    }
+
+    /// Construct a supervisor that connects to a remote `sidecar_bridge.py`
+    /// daemon over TCP (路 C — NeoMind host on one machine, sidecar on a
+    /// Jetson elsewhere on the LAN).
+    pub fn new_remote(host: &str, port: u16) -> Self {
+        Self::with_config(SpawnConfig::Remote {
+            host: host.to_string(),
+            port,
+        })
+    }
+
+    /// Construct from an explicit [`SpawnConfig`] (covers both modes).
+    pub fn with_config(spawn_config: SpawnConfig) -> Self {
+        Self {
+            spawn_config,
+            router: None,
             current: Mutex::new(None),
             restart_count: AtomicU64::new(0),
             restart_history: Mutex::new(Vec::new()),
@@ -384,13 +654,29 @@ impl SidecarSupervisor {
         }
     }
 
+    /// Set the EventRouter used by every reader_loop to publish sidecar events
+    /// to the NeoMind EventBus. Call before `start()`. The router is cloned into
+    /// each (re)spawn so crash recovery also gets event publishing.
+    pub fn set_router(&mut self, router: Arc<EventRouter>) {
+        self.router = Some(router);
+    }
+
     /// Add an env var to be passed to every (re)spawn of the sidecar.
+    /// Only meaningful in `Local` mode; no-op in `Remote` mode (the daemon
+    /// owns the spawn environment).
     pub fn with_env(mut self, key: &str, value: &str) -> Self {
-        self.extra_env.push((
-            std::ffi::OsString::from(key),
-            std::ffi::OsString::from(value),
-        ));
+        if let SpawnConfig::Local { extra_env, .. } = &mut self.spawn_config {
+            extra_env.push((
+                std::ffi::OsString::from(key),
+                std::ffi::OsString::from(value),
+            ));
+        }
         self
+    }
+
+    /// Whether this supervisor connects to a remote daemon.
+    pub fn is_remote(&self) -> bool {
+        self.spawn_config.is_remote()
     }
 
     /// Start the supervisor: spawn the initial sidecar and launch the watch
@@ -407,29 +693,31 @@ impl SidecarSupervisor {
     where
         F: Fn(Arc<SidecarHandle>) + Send + Sync + 'static,
     {
-        // 1. Initial spawn — failure here is fatal and bubbles to the caller.
-        let (handle, reader_task) = SidecarHandle::spawn_with_env(
-            &self.python_bin,
-            &self.script_path,
-            self.extra_env.iter().cloned(),
-        )
-        .await?;
-        let handle = Arc::new(handle);
-        // Set state=Running BEFORE publishing the handle in `current` so the
-        // state transition is complete before any reader_task-exit observation
-        // can race a `state()` reader (I1 ordering invariant).
-        *self.state.lock().await = SupervisorState::Running;
-        *self.current.lock().await = Some(SupervisorEntry {
-            handle: handle.clone(),
-            reader_task,
-        });
-
-        // 2. Launch the watch loop. The callback is wrapped in Arc<F> so the
-        //    spawned task can own it (Fn is ?Sized).
+        // Run the entire body on the persistent runtime. The initial spawn
+        // and the watch loop must bind to the persistent reactor so they
+        // outlive the FFI call. EnterGuard is !Send so we can't hold it
+        // across awaits in a Send future; spawning the body sidesteps that.
         let on_restart = Arc::new(on_restart);
-        let watch_task = tokio::spawn(watch_loop(self.clone(), on_restart));
+        let join = persistent_runtime().handle().spawn(async move {
+            // 1. Initial spawn — failure here is fatal and bubbles to caller.
+            let (handle, reader_task) = self.spawn_config.spawn(self.router.clone()).await?;
+            let handle = Arc::new(handle);
+            // Set state=Running BEFORE publishing the handle in `current` so the
+            // state transition is complete before any reader_task-exit
+            // observation can race a `state()` reader (I1 ordering invariant).
+            *self.state.lock().await = SupervisorState::Running;
+            *self.current.lock().await = Some(SupervisorEntry {
+                handle: handle.clone(),
+                reader_task,
+            });
 
-        Ok((handle, watch_task))
+            // 2. Launch the watch loop. The callback is wrapped in Arc<F> so
+            //    the spawned task can own it (Fn is ?Sized).
+            let watch_task = tokio::spawn(watch_loop(self.clone(), on_restart));
+            Ok((handle, watch_task))
+        });
+        join.await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("join: {e}")))?
     }
 
     /// Cumulative restart count (for metrics / diagnostics).
@@ -544,13 +832,7 @@ where
 
         // 5. Respawn. On spawn failure, mark the supervisor Failed and exit —
         //    we treat a spawn failure as fatal (distinct from a child crash).
-        let (handle, reader_task) = match SidecarHandle::spawn_with_env(
-            &sup.python_bin,
-            &sup.script_path,
-            sup.extra_env.iter().cloned(),
-        )
-        .await
-        {
+        let (handle, reader_task) = match sup.spawn_config.spawn(sup.router.clone()).await {
             Ok(t) => t,
             Err(e) => {
                 eprintln!(

@@ -124,6 +124,16 @@ export function RefreshIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+// 9b. X mark (close / dismiss).
+export function CloseIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...BASE_PROPS} {...props}>
+      <path d="M4 4 L16 16" />
+      <path d="M16 4 L4 16" />
+    </svg>
+  );
+}
+
 // 10. Solid filled circle (status indicator).
 export function StatusDotIcon(props: SVGProps<SVGSVGElement>) {
   return (

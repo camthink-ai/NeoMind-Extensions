@@ -421,6 +421,12 @@ impl EventRouter {
             original: event,
         };
 
+        // Task 5.4: best-effort EventBus publish. Done BEFORE the channel send
+        // so that even if the channel is full or closed (nobody consuming the
+        // internal channels), the event still reaches the NeoMind EventBus and
+        // the frontend. The channel is a secondary internal delivery path.
+        self.maybe_publish(event_type, &payload);
+
         // Channel send. Bounded channels (Detection, Stats) use try_send so
         // we can apply drop-newest on Full without awaiting.
         let send_outcome = match channel {
@@ -460,11 +466,6 @@ impl EventRouter {
             tracing::debug!(channel = ?channel, "channel closed — event not delivered");
         }
 
-        // Task 5.4: best-effort EventBus publish. Done AFTER the channel send
-        // succeeds — the channel is the primary delivery path; EventBus is a
-        // secondary broadcast for the broader NeoMind event graph.
-        self.maybe_publish(event_type, &payload);
-
         RoutingOutcome::Routed(channel)
     }
 
@@ -473,10 +474,6 @@ impl EventRouter {
     fn maybe_publish(&self, event_type: &str, payload: &serde_json::Value) {
         let ctx_guard = self.context.read();
         let Some(ctx) = ctx_guard.as_ref() else {
-            tracing::debug!(
-                event_type = %event_type,
-                "EventBus context not set; event not published"
-            );
             return;
         };
 
@@ -492,7 +489,13 @@ impl EventRouter {
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
         {
-            // Published successfully.
+            // Published successfully. Trace-level by default to avoid log
+            // spam — flip to `RUST_LOG=neomind_extension_deepstream=trace`
+            // to confirm the publish path is alive.
+            tracing::trace!(
+                event_type = %event_type,
+                "EventBus publish ok"
+            );
         } else {
             tracing::warn!(
                 event_type = %event_type,

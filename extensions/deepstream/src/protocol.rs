@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
 use std::io;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 pub const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
 
@@ -65,35 +65,55 @@ pub async fn write_message<W: AsyncWrite + Unpin>(
 pub async fn read_message<R: AsyncRead + Unpin, T: DeserializeOwned>(
     reader: &mut tokio::io::BufReader<R>,
 ) -> Result<T, ProtocolError> {
-    let mut buf: Vec<u8> = Vec::with_capacity(4096);
-
+    use tokio::io::AsyncBufReadExt;
     loop {
-        let mut chunk = vec![0u8; 4096];
-        let n = reader.read(&mut chunk).await.map_err(ProtocolError::Io)?;
+        let mut buf: Vec<u8> = Vec::with_capacity(4096);
+        // read_until properly preserves BufReader internal state across
+        // calls (unlike manual read() which loses bytes after the newline).
+        let n = reader.read_until(b'\n', &mut buf).await.map_err(ProtocolError::Io)?;
         if n == 0 {
-            if buf.is_empty() {
-                return Err(ProtocolError::Io(std::io::ErrorKind::UnexpectedEof.into()));
-            }
-            break;
+            // EOF — underlying reader closed. This is a real end-of-stream,
+            // not a blank line in the middle of the banner.
+            return Err(ProtocolError::Io(std::io::ErrorKind::UnexpectedEof.into()));
         }
-        let chunk = &chunk[..n];
-        if let Some(idx) = chunk.iter().position(|&b| b == b'\n') {
-            buf.extend_from_slice(&chunk[..idx]);
-            break;
-        } else {
-            buf.extend_from_slice(chunk);
-            if buf.len() > MAX_LINE_BYTES {
-                return Err(ProtocolError::LineTooLong);
+        if buf.len() > MAX_LINE_BYTES {
+            return Err(ProtocolError::LineTooLong);
+        }
+
+        // Strip the trailing newline (read_until includes it).
+        if buf.last() == Some(&b'\n') {
+            buf.pop();
+            if buf.last() == Some(&b'\r') {
+                buf.pop();
             }
         }
-    }
 
-    if buf.len() > MAX_LINE_BYTES {
-        return Err(ProtocolError::LineTooLong);
-    }
+        // Skip empty lines and non-JSON lines. The DeepStream sidecar runs
+        // inside the NVIDIA NGC container whose entrypoint prints a CUDA
+        // banner (`\n==========\n== CUDA ==\n==========\n...`) before
+        // deepstream_runner.py emits its first JSONL frame. Any of those
+        // banner lines would fail serde_json::from_str and previously
+        // terminated the reader_loop, causing the extension to fail
+        // "sidecar stdout closed before Ready" on every remote-mode spawn.
+        // Real JSONL messages start with `{`; banner lines never do.
+        let first_non_ws = buf.iter().copied().find(|&b| !b.is_ascii_whitespace());
+        if first_non_ws != Some(b'{') {
+            let preview = std::str::from_utf8(&buf)
+                .unwrap_or("<non-utf8>")
+                .chars()
+                .take(80)
+                .collect::<String>();
+            eprintln!(
+                "[deepstream] skipping non-JSON preamble line ({}B): {:?}",
+                buf.len(),
+                preview
+            );
+            continue;
+        }
 
-    let s = std::str::from_utf8(&buf).map_err(|_| ProtocolError::InvalidUtf8)?;
-    Ok(serde_json::from_str(s)?)
+        let s = std::str::from_utf8(&buf).map_err(|_| ProtocolError::InvalidUtf8)?;
+        return serde_json::from_str(s).map_err(Into::into);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,6 +191,16 @@ pub enum SidecarEvent {
 pub struct GpuInfo {
     pub name: String,
     pub mem_mb: u32,
+}
+
+/// Handshake ack fields extracted from [`SidecarEvent::HelloAck`] so callers
+/// (e.g. `perform_handshake`) can consume them without pattern-matching the
+/// whole enum. Mirrors the variant's payload.
+#[derive(Debug, Clone)]
+pub struct HelloAck {
+    pub max_streams: u32,
+    pub rtsp_url_prefix: String,
+    pub models_loaded: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -321,5 +351,48 @@ mod tests {
         let mut reader = BufReader::new(rx);
         let err = read_message::<_, SidecarEvent>(&mut reader).await.unwrap_err();
         assert!(matches!(err, ProtocolError::LineTooLong), "got {:?}", err);
+    }
+
+    /// Reproduces the bridge-mode bug where the NVIDIA NGC container entrypoint
+    /// prints a CUDA banner before the sidecar emits its first JSONL `ready`.
+    /// The original read_message would parse the first banner line, fail
+    /// serde_json::from_str, and reader_loop would terminate — surfacing as
+    /// "sidecar stdout closed before Ready" in perform_handshake. The fix
+    /// skips any line whose first non-whitespace byte isn't `{`.
+    #[tokio::test]
+    async fn read_message_skips_ngc_container_banner() {
+        use tokio::io::{AsyncWriteExt, BufReader};
+        let banner = b"\n==========\n== CUDA ==\n==========\n\nCUDA Version 12.6.11\n\nContainer image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES.\n";
+        let ready = br#"{"type":"ready","ds_ver":"7.1","pyds_ver":"unknown","protocol_ver":1,"gpu_info":{"name":"X","mem_mb":1024}}
+"#;
+        let (mut tx, rx) = tokio::io::duplex(64 * 1024);
+        tx.write_all(banner).await.unwrap();
+        tx.write_all(ready).await.unwrap();
+        tx.shutdown().await.unwrap();
+
+        let mut reader = BufReader::new(rx);
+        let ev = read_message::<_, SidecarEvent>(&mut reader).await.expect("must skip banner and parse ready");
+        match ev {
+            SidecarEvent::Ready { ds_ver, .. } => assert_eq!(ds_ver, "7.1"),
+            other => panic!("expected Ready, got {:?}", other),
+        }
+    }
+
+    /// Plain empty lines (just `\n`) should be skipped, not treated as EOF.
+    #[tokio::test]
+    async fn read_message_skips_blank_lines() {
+        use tokio::io::{AsyncWriteExt, BufReader};
+        let (mut tx, rx) = tokio::io::duplex(8 * 1024);
+        tx.write_all(b"\n\n\n").await.unwrap();
+        tx.write_all(br#"{"type":"pong","ts":42}"#).await.unwrap();
+        tx.write_all(b"\n").await.unwrap();
+        tx.shutdown().await.unwrap();
+
+        let mut reader = BufReader::new(rx);
+        let ev = read_message::<_, SidecarEvent>(&mut reader).await.expect("must skip blanks");
+        match ev {
+            SidecarEvent::Pong { ts } => assert_eq!(ts, 42),
+            other => panic!("expected Pong, got {:?}", other),
+        }
     }
 }

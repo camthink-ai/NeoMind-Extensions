@@ -91,6 +91,7 @@ async fn shutdown_sigterm_path_when_bye_ignored() {
             "python3",
             &mock_script(),
             [("MOCK_IGNORE_SHUTDOWN".into(), "true".into())],
+            None,
         ),
     )
     .await
@@ -136,6 +137,7 @@ async fn shutdown_sigkill_path_when_sigterm_ignored() {
                 ("MOCK_IGNORE_SHUTDOWN".into(), "true".into()),
                 ("MOCK_IGNORE_SIGTERM".into(), "true".into()),
             ],
+            None,
         ),
     )
     .await
