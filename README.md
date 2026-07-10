@@ -36,6 +36,7 @@ This repository contains officially maintained extensions for the **NeoMind exte
 | Voice Assistant | `voice-assistant` | Voice | VoiceAssistantCard | Real-time voice assistant: mic → VAD → ASR → LLM → TTS → speaker |
 | Locate Anything V2 | `locate-anything-v2` | AI/ML | LocateCard | Visual grounding — object detection, phrase grounding, OCR via LocateAnything-3B |
 | Stream Player | `stream-player` | Media | StreamPlayerCard | RTSP/RTMP/HLS video player via FFmpeg |
+| DeepStream | `deepstream` | AI/Video | DeepStreamManagerCard | Multi-stream RTSP video inference on NVIDIA Jetson via DeepStream SDK |
 | Uink-RMS Bridge | `uink-rms-bridge` | Device | DisplayEditorCard | E-paper display content push & management |
 | Home Assistant Bridge | `homeassistant-bridge` | IoT Bridge | — | Bidirectional HA entity sync via REST/WebSocket |
 | LoRaWAN Bridge | `lorawan-bridge` | IoT Bridge | — | LoRaWAN NS (ChirpStack/TTN) MQTT bridge with payload decoding |
@@ -157,6 +158,7 @@ NeoMind-Extensions/
 │   ├── voice-assistant/           # Voice assistant orchestrator (ASR + LLM + TTS)
 │   ├── locate-anything-v2/
 │   ├── stream-player/
+│   ├── deepstream/               # NVIDIA DeepStream multi-stream RTSP inference (Jetson)
 │   ├── uink-rms-bridge/
 │   ├── homeassistant-bridge/
 │   ├── lorawan-bridge/

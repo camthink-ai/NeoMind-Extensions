@@ -41,6 +41,7 @@ NeoMind 边缘 AI 平台的官方扩展仓库。
 | 语音助手 | `voice-assistant` | 语音 | VoiceAssistantCard | 实时语音助手：麦克风 → VAD → ASR → LLM → TTS → 扬声器 |
 | 万物定位 V2 | `locate-anything-v2` | AI/ML | LocateCard | 视觉定位 — 目标检测、短语定位、OCR，基于 LocateAnything-3B |
 | 流媒体播放器 | `stream-player` | 媒体 | StreamPlayerCard | RTSP/RTMP/HLS 视频播放，基于 FFmpeg |
+| DeepStream | `deepstream` | AI/视频 | DeepStreamManagerCard | NVIDIA Jetson 上的多路 RTSP 视频推理，基于 DeepStream SDK |
 | Uink-RMS 桥接 | `uink-rms-bridge` | 设备 | DisplayEditorCard | 墨水屏内容推送与管理 |
 | Home Assistant 桥接 | `homeassistant-bridge` | IoT 桥接 | — | 双向同步 HA 实体，REST/WebSocket |
 | LoRaWAN 桥接 | `lorawan-bridge` | IoT 桥接 | — | ChirpStack/TTN MQTT 桥接，支持负载解码 |
@@ -335,6 +336,7 @@ NeoMind-Extension/
 │   ├── voice-assistant/        # 语音助手（ASR + LLM + TTS）
 │   ├── locate-anything-v2/     # 视觉定位扩展
 │   ├── stream-player/          # 流媒体播放扩展
+│   ├── deepstream/             # NVIDIA DeepStream 多路 RTSP 视频推理 (Jetson)
 │   ├── uink-rms-bridge/        # 墨水屏桥接扩展
 │   ├── homeassistant-bridge/   # Home Assistant 桥接
 │   ├── lorawan-bridge/         # LoRaWAN 桥接
