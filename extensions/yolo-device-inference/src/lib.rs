@@ -504,9 +504,15 @@ impl YOLODetector {
             .with_class_confs(&[conf]);
 
         let model = with_device_fallback(|device| {
-            let cfg = config.clone()
-                .with_device_all(device)
-                .commit()
+            // CUDA EP: force GraphOptimizationLevel::Level1 — Level3 triggers
+            // MatmulTransposeFusion which produces com.microsoft.FusedMatMul
+            // nodes that CUDA EP lacks kernels for (same class of bug as
+            // paddle-ocr-v6's GeluFusion). See yolo-video-v2/detector.rs.
+            let mut cfg = config.clone().with_device_all(device);
+            if matches!(device, Device::Cuda(_)) {
+                cfg = cfg.with_graph_opt_level_all(1);
+            }
+            let cfg = cfg.commit()
                 .map_err(|e| format!("Config failed: {:?}", e))?;
             YOLO::new(cfg)
                 .map_err(|e| format!("Model failed: {:?}", e))
