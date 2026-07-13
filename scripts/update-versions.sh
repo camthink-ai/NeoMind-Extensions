@@ -42,6 +42,19 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 EXTENSIONS_DIR="$(dirname "$SCRIPT_DIR")/extensions"
 GITHUB_REPO="camthink-ai/NeoMind-Extensions"
 
+# Extensions with hardware variant builds.
+# Format: "extension_id|build_key_platform|variant|filename_platform"
+#   build_key_platform = hyphen format builds key base (e.g., linux-aarch64)
+#   variant            = suffix string (e.g., jetson, cuda)
+#   filename_platform  = underscore format used in .nep filename (e.g., linux_arm64)
+VARIANT_BUILDS=(
+    "yolo-video-v2|linux-aarch64|jetson|linux_arm64"
+    "yolo-device-inference|linux-aarch64|jetson|linux_arm64"
+    "image-analyzer-v2|linux-aarch64|jetson|linux_arm64"
+    "paddle-ocr-v6|linux-aarch64|jetson|linux_arm64"
+    "ocr-device-inference|linux-aarch64|jetson|linux_arm64"
+)
+
 if [ -z "$MARKET_VERSION" ]; then
     # Read from VERSION file
     VERSION_FILE="$(dirname "$SCRIPT_DIR")/VERSION"
@@ -248,6 +261,17 @@ EOF
     done
     builds_json+="}"
 
+    # Add variant build entries for this extension
+    for vb in "${VARIANT_BUILDS[@]}"; do
+        IFS='|' read -r vb_ext vb_platform vb_variant vb_filename <<< "$vb"
+        if [ "$vb_ext" = "$ext_id" ]; then
+            vb_key="${vb_platform}-${vb_variant}"
+            vb_url="https://github.com/$GITHUB_REPO/releases/download/v$MARKET_VERSION/${ext_id}-${version}-${vb_filename}-${vb_variant}.nep"
+            builds_json=$(echo "$builds_json" | jq --arg k "$vb_key" --arg u "$vb_url" \
+                '. + {($k): {url: $u}}')
+        fi
+    done
+
     # Generate base metadata.json with builds field
     cat > "$ext_dir/metadata.json" <<EOF
 {
@@ -318,6 +342,17 @@ for ext_dir in "$EXTENSIONS_DIR"/*/; do
 
         url="https://github.com/$GITHUB_REPO/releases/download/v$MARKET_VERSION/${ext_id}-${ext_version}-${platform_suffix}.nep"
         builds=$(echo "$builds" | jq --arg p "$platform" --arg u "$url" '. + {($p): {url: $u}}')
+    done
+
+    # Add variant build entries for this extension
+    for vb in "${VARIANT_BUILDS[@]}"; do
+        IFS='|' read -r vb_ext vb_platform vb_variant vb_filename <<< "$vb"
+        if [ "$vb_ext" = "$ext_id" ]; then
+            vb_key="${vb_platform}-${vb_variant}"
+            vb_url="https://github.com/$GITHUB_REPO/releases/download/v$MARKET_VERSION/${ext_id}-${ext_version}-${vb_filename}-${vb_variant}.nep"
+            builds=$(echo "$builds" | jq --arg k "$vb_key" --arg u "$vb_url" \
+                '. + {($k): {url: $u}}')
+        fi
     done
 
     # Create extension entry

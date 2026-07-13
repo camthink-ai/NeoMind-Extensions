@@ -28,6 +28,8 @@ SKIP_PACKAGE=false
 DEV_MODE=false
 SINGLE_EXT=""
 MARKET_VERSION=""
+BUILD_VARIANT=""      # e.g., "jetson", "cuda" — empty = standard build
+CARGO_FEATURES=""     # extra cargo features, e.g., "nvdec"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -71,6 +73,14 @@ while [[ $# -gt 0 ]]; do
             SINGLE_EXT="$1"
             shift
             ;;
+        --variant)
+            BUILD_VARIANT="$2"
+            shift 2
+            ;;
+        --features)
+            CARGO_FEATURES="$2"
+            shift 2
+            ;;
         --help|-h)
             echo "NeoMind Extensions Build Script"
             echo ""
@@ -85,6 +95,9 @@ while [[ $# -gt 0 ]]; do
             echo "  --dev              Dev mode: build + install to NeoMind"
             echo "  --release [VER]    Release mode, optional version for filenames"
             echo "  --single <ext>     Build single extension only"
+            echo "  --variant <name>   Hardware variant suffix (e.g., jetson, cuda)"
+            echo "                      Produces xxx-linux_arm64-<name>.nep"
+            echo "  --features <list>  Extra cargo features (e.g., nvdec)"
             echo "  --help, -h         Show this help message"
             echo ""
             echo "Examples:"
@@ -92,6 +105,7 @@ while [[ $# -gt 0 ]]; do
             echo "  ./build.sh --dev                     # Dev build, auto-install"
             echo "  ./build.sh --release 2.4.0           # Release with version"
             echo "  ./build.sh --single weather-forecast-v2  # Single extension"
+            echo "  ./build.sh --single yolo-video-v2 --variant jetson --features nvdec  # Jetson build"
             exit 0
             ;;
         *)
@@ -144,6 +158,12 @@ case "$OS" in
         exit 1
         ;;
 esac
+
+VARIANT_SUFFIX=""
+if [ -n "$BUILD_VARIANT" ]; then
+    VARIANT_SUFFIX="-${BUILD_VARIANT}"
+    echo -e "${BLUE}Variant: $BUILD_VARIANT${NC}"
+fi
 
 # V2 Extensions list
 V2_EXTENSIONS=(
@@ -214,17 +234,24 @@ if [ ${#NATIVE_EXTENSIONS[@]} -gt 0 ]; then
     echo ""
     echo -e "${BLUE}Building Native Extensions...${NC}"
 
+    # Prepare cargo features args (used by both release and debug builds)
+    if [ -n "$CARGO_FEATURES" ]; then
+        CARGO_FEATURE_ARGS=(--features "$CARGO_FEATURES")
+    else
+        CARGO_FEATURE_ARGS=()
+    fi
+
     if [ "$BUILD_TYPE" = "release" ]; then
         for ext in "${NATIVE_EXTENSIONS[@]}"; do
             echo -e "  ${BLUE}Building${NC} $ext..."
-            if ! cargo build --release -p "$ext" 2>&1; then
+            if ! cargo build --release -p "$ext" "${CARGO_FEATURE_ARGS[@]}" 2>&1; then
                 echo -e "  ${RED}✗${NC} $ext build failed"
             fi
         done
     else
         for ext in "${NATIVE_EXTENSIONS[@]}"; do
             echo -e "  ${BLUE}Building${NC} $ext..."
-            if ! cargo build -p "$ext" 2>&1; then
+            if ! cargo build -p "$ext" "${CARGO_FEATURE_ARGS[@]}" 2>&1; then
                 echo -e "  ${RED}✗${NC} $ext build failed"
             fi
         done
@@ -1149,8 +1176,8 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             # WASM is cross-platform, no platform suffix needed
             OUTPUT_FILE="dist/${ext}-${PACKAGE_VERSION}.nep"
         else
-            # Native extensions need platform suffix
-            OUTPUT_FILE="dist/${ext}-${PACKAGE_VERSION}-${PLATFORM}.nep"
+            # Native extensions need platform suffix (+ optional variant suffix)
+            OUTPUT_FILE="dist/${ext}-${PACKAGE_VERSION}-${PLATFORM}${VARIANT_SUFFIX}.nep"
         fi
         # Resolve absolute output path BEFORE changing directory
         # Create dist/ directory first to ensure it exists
