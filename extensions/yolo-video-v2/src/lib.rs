@@ -18,7 +18,7 @@
 
 pub mod detector;
 pub mod video_source;
-use video_source::{FrameResult, SourceType};
+use video_source::{FfmpegVideoSource, FrameResult, SourceType, VideoSource, parse_source_url};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -321,6 +321,45 @@ pub fn detections_to_object_detection(detections: Vec<Detection>) -> Vec<ObjectD
             class_id: d.class_id,
         })
         .collect()
+}
+
+/// Generate a synthetic demo frame (animated orange circle on a 640x480 dark canvas).
+///
+/// Used as a fallback when no FFmpeg video source is available — i.e. for
+/// `camera://` URLs (this build has no V4L2 capture) or when an FFmpeg source
+/// fails to open. The animation gives a visible signal that the pipeline is
+/// running even without real input.
+fn generate_demo_frame(frame_num: u64) -> image::RgbImage {
+    let mut demo_frame = image::RgbImage::from_pixel(640, 480, image::Rgb([40, 44, 52]));
+
+    let cx = ((frame_num * 3) % 500) as i32 + 70;
+    let cy = ((frame_num * 2) % 300) as i32 + 90;
+
+    for y in (0.max(cy - 60))..480.min(cy + 60) {
+        for x in (0.max(cx - 60))..640.min(cx + 60) {
+            let dx = (x - cx) as f32;
+            let dy = (y - cy) as f32;
+            let dist_sq = dx * dx + dy * dy;
+            if dist_sq < 3600.0 {
+                let intensity = (1.0 - (dist_sq / 3600.0).sqrt()) * 100.0;
+                let base = 60 + (frame_num % 80) as u8;
+                let px = x as u32;
+                let py = y as u32;
+                if px < 640 && py < 480 {
+                    demo_frame.put_pixel(
+                        px, py,
+                        image::Rgb([
+                            (base as f32 + intensity).min(255.0) as u8,
+                            (base as f32 + intensity * 0.5).min(255.0) as u8,
+                            80,
+                        ]),
+                    );
+                }
+            }
+        }
+    }
+
+    demo_frame
 }
 
 /// Generate fallback detections when model is not loaded
@@ -721,51 +760,169 @@ impl StreamProcessor {
         processor: Arc<StreamProcessor>,
     ) {
         tracing::info!("[Stream {}] Processing loop started", stream_id);
+        eprintln!("[YOLO-SRC] Processing loop ENTERED for stream {} (source_url={})", stream_id, config.source_url);
 
         let frame_interval = Duration::from_millis(1000 / config.target_fps.max(1) as u64);
         let mut frame_num = 0u64;
 
-        while stream.lock().running {
-            std::thread::sleep(frame_interval);
+        // Try to open a hardware-accelerated video source for RTSP/RTMP/HLS/File/HTTP URLs.
+        // Priority: GStreamer NVDEC (Jetson) > FFmpeg software decode > demo frames.
+        // Camera/Screen/unknown sources fall back to demo frames.
+        let parsed_source = parse_source_url(&config.source_url);
 
-            // Generate demo frame
-            let mut demo_frame = image::RgbImage::from_pixel(640, 480, image::Rgb([40, 44, 52]));
-
-            // Add visual content
-            let cx = ((frame_num * 3) % 500) as i32 + 70;
-            let cy = ((frame_num * 2) % 300) as i32 + 90;
-
-            for y in (0.max(cy - 60))..480.min(cy + 60) {
-                for x in (0.max(cx - 60))..640.min(cx + 60) {
-                    let dx = (x - cx) as f32;
-                    let dy = (y - cy) as f32;
-                    let dist_sq = dx * dx + dy * dy;
-                    if dist_sq < 3600.0 {
-                        let intensity = (1.0 - (dist_sq / 3600.0).sqrt()) * 100.0;
-                        let base = 60 + (frame_num % 80) as u8;
-                        let px = x as u32;
-                        let py = y as u32;
-                        if px < 640 && py < 480 {
-                            demo_frame.put_pixel(
-                                px, py,
-                                image::Rgb([
-                                    (base as f32 + intensity).min(255.0) as u8,
-                                    (base as f32 + intensity * 0.5).min(255.0) as u8,
-                                    80,
-                                ]),
-                            );
+        // --- 1. Try GStreamer NVDEC (Linux/Jetson only) ---
+        #[cfg(feature = "nvdec")]
+        let mut nvdec_source: Option<video_source::nvdec::GstreamerNvdecSource> = {
+            if matches!(
+                parsed_source,
+                Ok(SourceType::File { .. }) | Ok(SourceType::RTSP { .. })
+                    | Ok(SourceType::HLS { .. }) | Ok(SourceType::RTMP { .. })
+            ) && video_source::nvdec::nvdec_available()
+            {
+                match parsed_source.as_ref().unwrap() {
+                    st @ (SourceType::File { .. } | SourceType::RTSP { .. }
+                        | SourceType::HLS { .. } | SourceType::RTMP { .. }) =>
+                    {
+                        match video_source::nvdec::GstreamerNvdecSource::new(st) {
+                            Ok(vs) => {
+                                eprintln!(
+                                    "[YOLO-SRC] Opened NVDEC source: {}x{} ({}) [source_url={}]",
+                                    vs.info().width, vs.info().height, vs.info().codec,
+                                    config.source_url,
+                                );
+                                Some(vs)
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "[YOLO-SRC] NVDEC open FAILED '{}': {} — trying FFmpeg",
+                                    config.source_url, e,
+                                );
+                                None
+                            }
                         }
                     }
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        };
+        #[cfg(not(feature = "nvdec"))]
+        let mut nvdec_source: Option<std::convert::Infallible> = None;
+
+        // --- 2. FFmpeg fallback (only if NVDEC didn't start) ---
+        let use_nvdec = {
+            #[cfg(feature = "nvdec")]
+            { nvdec_source.is_some() }
+            #[cfg(not(feature = "nvdec"))]
+            { false }
+        };
+
+        let mut video_source: Option<FfmpegVideoSource> = if use_nvdec {
+            None
+        } else {
+            match &parsed_source {
+                Ok(SourceType::Camera { .. }) | Ok(SourceType::Screen { .. }) => None,
+                Ok(source_type) => match FfmpegVideoSource::new(source_type) {
+                    Ok(vs) => {
+                        eprintln!(
+                            "[YOLO-SRC] Opened FFmpeg source: {}x{} @ {:.1} fps ({}) [source_url={}]",
+                            vs.info().width, vs.info().height, vs.info().fps, vs.info().codec, config.source_url,
+                        );
+                        tracing::info!(
+                            "[Stream {}] Opened FFmpeg source: {}x{} @ {:.1} fps ({})",
+                            stream_id, vs.info().width, vs.info().height, vs.info().fps, vs.info().codec,
+                        );
+                        Some(vs)
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[YOLO-SRC] FAILED to open FFmpeg source '{}': {} — falling back to demo frames",
+                            config.source_url, e,
+                        );
+                        tracing::warn!(
+                            "[Stream {}] Failed to open FFmpeg source '{}': {} — falling back to demo frames",
+                            stream_id, config.source_url, e,
+                        );
+                        None
+                    }
+                },
+                Err(e) => {
+                    eprintln!(
+                        "[YOLO-SRC] Unparseable source_url '{}': {} — using demo frames",
+                        config.source_url, e,
+                    );
+                    None
                 }
             }
+        };
+
+        while stream.lock().running {
+            let t_total = Instant::now();
+            // Acquire next frame.
+            let t_frame = Instant::now();
+
+            // Helper: convert a FrameResult into the loop control flow.
+            // Returns Some(RgbImage) on success, or None to signal continue/break.
+            macro_rules! handle_frame_result {
+                ($fr:expr) => {
+                    match $fr {
+                        FrameResult::Frame(vf) => match vf.to_rgb_image() {
+                            Some(img) => img,
+                            None => {
+                                tracing::warn!("[Stream {}] Malformed frame, skipping", stream_id);
+                                std::thread::sleep(Duration::from_millis(100));
+                                continue;
+                            }
+                        },
+                        FrameResult::NotReady => {
+                            std::thread::sleep(Duration::from_millis(5));
+                            continue;
+                        }
+                        FrameResult::EndOfStream => {
+                            eprintln!("[YOLO-SRC] End of stream (stream={})", stream_id);
+                            break;
+                        }
+                        FrameResult::Error(e) => {
+                            tracing::warn!("[Stream {}] Frame error: {}, retry in 100ms", stream_id, e);
+                            std::thread::sleep(Duration::from_millis(100));
+                            continue;
+                        }
+                    }
+                };
+            }
+
+            let frame: image::RgbImage = {
+                #[cfg(feature = "nvdec")]
+                {
+                    if let Some(vs) = nvdec_source.as_mut() {
+                        handle_frame_result!(vs.next_frame())
+                    } else if let Some(vs) = video_source.as_mut() {
+                        handle_frame_result!(vs.next_frame())
+                    } else {
+                        std::thread::sleep(frame_interval);
+                        generate_demo_frame(frame_num)
+                    }
+                }
+                #[cfg(not(feature = "nvdec"))]
+                {
+                    if let Some(vs) = video_source.as_mut() {
+                        handle_frame_result!(vs.next_frame())
+                    } else {
+                        std::thread::sleep(frame_interval);
+                        generate_demo_frame(frame_num)
+                    }
+                }
+            };
+            let d_frame = t_frame.elapsed();
 
             // Run inference
-            
+            let t_inf = Instant::now();
             let detections = match processor.get_detector() {
                 Some(detector) if detector.is_loaded() => {
                     tracing::debug!("[Stream {}] Running real inference", stream_id);
                     let raw_detections = detector.detect(
-                        &demo_frame,
+                        &frame,
                         config.confidence_threshold,
                         config.max_objects,
                     );
@@ -776,15 +933,32 @@ impl StreamProcessor {
                     generate_fallback_detections(frame_num, config.max_objects)
                 }
             };
+            let d_inf = t_inf.elapsed();
 
             // Draw boxes if enabled
-            let mut output_img = demo_frame;
+            let t_draw = Instant::now();
+            let mut output_img = frame;
             if config.draw_boxes {
                 draw_detections(&mut output_img, &detections);
             }
+            let d_draw = t_draw.elapsed();
 
             // Encode to JPEG
+            let t_jpeg = Instant::now();
             let jpeg_data = encode_jpeg(&output_img, 85);
+            let d_jpeg = t_jpeg.elapsed();
+
+            if frame_num % 30 == 0 {
+                eprintln!(
+                    "[YOLO-PERF] frame={} frame_acq={}ms infer={}ms draw={}ms jpeg={}ms TOTAL={}ms",
+                    frame_num,
+                    d_frame.as_millis(),
+                    d_inf.as_millis(),
+                    d_draw.as_millis(),
+                    d_jpeg.as_millis(),
+                    t_total.elapsed().as_millis(),
+                );
+            }
 
             // Update stream state
             {
@@ -806,6 +980,17 @@ impl StreamProcessor {
             }
 
             frame_num += 1;
+        }
+
+        // Clean up video sources
+        #[cfg(feature = "nvdec")]
+        {
+            if let Some(mut vs) = nvdec_source.take() {
+                vs.close();
+            }
+        }
+        if let Some(mut vs) = video_source.take() {
+            vs.close();
         }
 
         {

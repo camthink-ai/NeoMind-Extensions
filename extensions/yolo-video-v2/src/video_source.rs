@@ -338,6 +338,187 @@ impl VideoFrame {
     }
 }
 
+// ---------------------------------------------------------------------------
+// GStreamer NVDEC hardware decode (Linux/Jetson only)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "nvdec")]
+pub mod nvdec {
+    use super::{FrameResult, SourceInfo, SourceType, VideoFrame};
+    use gstreamer as gst;
+    use gstreamer_app as gst_app;
+    use gstreamer_app::prelude::*;
+
+    /// GStreamer-backed hardware decoder using Jetson's `nvv4l2decoder` (NVDEC)
+    /// + `nvvidconv` (hardware colorspace conversion / scaling).
+    ///
+    /// Falls back automatically if `nvv4l2decoder` is not installed — the
+    /// caller should check `nvdec_available()` first.
+    pub struct GstreamerNvdecSource {
+        pipeline: gst::Pipeline,
+        appsink: gst_app::AppSink,
+        info: SourceInfo,
+        frame_count: u64,
+        active: bool,
+    }
+
+    /// Returns true if both `nvv4l2decoder` and `nvvidconv` are installed.
+    pub fn nvdec_available() -> bool {
+        if gst::init().is_err() {
+            return false;
+        }
+        gst::ElementFactory::find("nvv4l2decoder").is_some()
+            && gst::ElementFactory::find("nvvidconv").is_some()
+    }
+
+    impl GstreamerNvdecSource {
+        pub fn new(source_type: &SourceType) -> Result<Self, String> {
+            gst::init().map_err(|e| format!("GStreamer init: {}", e))?;
+
+            // Boost nvv4l2decoder rank so uridecodebin prefers it over software decoders
+            if let Some(factory) = gst::ElementFactory::find("nvv4l2decoder") {
+                factory.set_rank(gst::Rank::Primary + 1);
+            }
+
+            let (uri, is_live) = match source_type {
+                SourceType::File { path, .. } => {
+                    let uri = if path.starts_with("http")
+                        || path.starts_with("file://")
+                        || path.starts_with("rtsp://")
+                    {
+                        path.clone()
+                    } else {
+                        format!("file://{}", path)
+                    };
+                    (uri, false)
+                }
+                SourceType::RTSP { url, .. }
+                | SourceType::HLS { url, .. }
+                | SourceType::RTMP { url, .. } => (url.clone(), true),
+                _ => return Err("Unsupported source type for NVDEC".to_string()),
+            };
+
+            const OUT_W: i32 = 960;
+            const OUT_H: i32 = 540;
+            // uridecodebin handles any container (mp4/mkv/ts/http/rtsp).
+            // nvvidconv: NVMM → system memory + hardware scale to 960x540.
+            // videoconvert: fast SIMD I420→RGB (nvvidconv can't do plain RGB from NVMM).
+            let pipeline_str = format!(
+                "uridecodebin uri={uri} name=src ! \
+                 nvvidconv ! video/x-raw,format=I420,width={w},height={h} ! \
+                 videoconvert ! video/x-raw,format=RGB ! \
+                 appsink name=sink sync=false max-buffers=2 drop=true",
+                uri = uri,
+                w = OUT_W,
+                h = OUT_H,
+            );
+
+            let pipeline = gst::parse_launch(&pipeline_str)
+                .map_err(|e| format!("Pipeline creation failed: {}", e))?;
+            let pipeline = pipeline
+                .downcast::<gst::Pipeline>()
+                .map_err(|_| "Failed to downcast to Pipeline".to_string())?;
+
+            let appsink = pipeline
+                .by_name("sink")
+                .ok_or("appsink 'sink' not found in pipeline")?
+                .dynamic_cast::<gst_app::AppSink>()
+                .map_err(|_| "sink is not an AppSink".to_string())?;
+
+            // Wait for pipeline to preroll (up to 10s) — needed for RTSP/HTTP
+            pipeline
+                .set_state(gst::State::Playing)
+                .map_err(|e| format!("Failed to start pipeline: {:?}", e))?;
+
+            Ok(Self {
+                pipeline,
+                appsink,
+                info: SourceInfo {
+                    width: OUT_W as u32,
+                    height: OUT_H as u32,
+                    fps: 25.0, // updated on first frame from caps
+                    codec: "NVDEC".to_string(),
+                    is_live,
+                },
+                frame_count: 0,
+                active: true,
+            })
+        }
+
+        /// Blocking frame pull from appsink. Returns RGB24 data.
+        pub fn next_frame(&mut self) -> FrameResult {
+            let sample = if self.frame_count == 0 {
+                self.appsink.pull_preroll()
+            } else {
+                self.appsink.pull_sample()
+            };
+
+            match sample {
+                Ok(s) => {
+                    let caps = match s.caps().and_then(|c| c.structure(0)) {
+                        Some(st) => st,
+                        None => return FrameResult::Error("No caps in sample".to_string()),
+                    };
+                    let width = caps.get::<i32>("width").unwrap_or(960) as u32;
+                    let height = caps.get::<i32>("height").unwrap_or(540) as u32;
+
+                    let buffer = match s.buffer() {
+                        Some(b) => b,
+                        None => return FrameResult::Error("No buffer in sample".to_string()),
+                    };
+
+                    let map = match buffer.map_readable() {
+                        Ok(m) => m,
+                        Err(e) => {
+                            return FrameResult::Error(format!("Failed to map buffer: {:?}", e))
+                        }
+                    };
+
+                    self.frame_count += 1;
+                    FrameResult::Frame(VideoFrame {
+                        data: map.to_vec(),
+                        width,
+                        height,
+                        timestamp: buffer.pts().map(|t| t.useconds() as i64).unwrap_or(0),
+                        frame_number: self.frame_count,
+                    })
+                }
+                Err(_) => {
+                    // pull_sample returns Err when no buffer is available (EOS or not yet ready)
+                    if self.appsink.is_eos() {
+                        self.active = false;
+                        FrameResult::EndOfStream
+                    } else {
+                        FrameResult::NotReady
+                    }
+                }
+            }
+        }
+
+        pub fn close(&mut self) {
+            if self.active {
+                self.active = false;
+                let _ = self.pipeline.set_state(gst::State::Null);
+            }
+        }
+
+        pub fn info(&self) -> &SourceInfo {
+            &self.info
+        }
+    }
+
+    impl Drop for GstreamerNvdecSource {
+        fn drop(&mut self) {
+            self.close();
+        }
+    }
+
+    // Safety: GstreamerNvdecSource is used from a single dedicated OS thread.
+    // GStreamer elements are not thread-safe; the Send impl allows moving the
+    // source to the dedicated thread at creation time.
+    unsafe impl Send for GstreamerNvdecSource {}
+}
+
 /// Factory for creating video sources
 pub struct SourceFactory;
 

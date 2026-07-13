@@ -721,23 +721,22 @@ const Icon = ({
 )
 
 // ============================================================================
-// Image compression — prevents HTTP 413 (server body limit 10 MB)
+// Image compression — prevents HTTP 413 (server body limit)
 // ============================================================================
 //
-// Why this exists: the host's `/api/extensions/:id/command` route enforces a
-// 10 MB request-body limit (MAX_REQUEST_BODY_SIZE). A raw 8 MB photo becomes
-// ~10.7 MB after base64 encoding (×4/3 expansion) + JSON envelope → 413.
-//
+// Why this exists: axum's DefaultBodyLimit (2 MB unless explicitly raised)
+// rejects large POST bodies with 413. Even after the backend fix that raises
+// the limit to 10 MB, aggressive client-side compression is still worthwhile:
 // PP-OCRv6's detector (DB) resizes its input to ≤960 px internally, so any
-// image larger than ~2048 px on its longest side is pure bandwidth + memory
-// waste. We downscale to 2048 px max and re-encode as JPEG (stepping quality
+// image larger than ~1600 px on its longest side is pure bandwidth + memory
+// waste. We downscale to 1600 px max and re-encode as JPEG (stepping quality
 // down until under a safe size). OCR accuracy is unaffected — the model never
 // sees the extra pixels anyway.
 
-const MAX_UPLOAD_DIMENSION = 2048
+const MAX_UPLOAD_DIMENSION = 1600
 // Base64 char budget. Final JSON payload ≈ base64 + ~100 B envelope.
-// 6 MB base64 → ~8 MB JSON → comfortably under the 10 MB server limit.
-const SAFE_BASE64_CHARS = 6 * 1024 * 1024
+// 1.5 MB base64 → ~2 MB JSON → safely under axum's default 2 MB limit.
+const SAFE_BASE64_CHARS = 1_500_000
 
 async function compressImageForUpload(
   file: File,

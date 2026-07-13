@@ -971,6 +971,13 @@ impl Engine {
         };
         let session = builder
             .with_optimization_level(graph_opt_level)?
+            // Disable ALL Gelu fusion variants: ORT's GeluFusion fuses
+            // Erf+Add+Mul subgraphs into com.microsoft.Gelu (contrib op) which
+            // the CUDA EP on Jetson lacks as a kernel → EP_FAIL. The fusion
+            // runs at multiple levels with different names (GeluFusionL1,
+            // GeluFusionL2, GeluFusion). Also disable BiasGeluFusion and
+            // FastGeluFusion which create similar contrib ops.
+            .with_disabled_optimizers("GeluFusionL1,GeluFusionL2,GeluFusion,BiasGeluFusion,FastGeluFusion")?
             .with_intra_threads(self.num_intra_threads.unwrap_or(n_threads_available))?
             .with_inter_threads(self.num_inter_threads.unwrap_or(2))?
             .commit_from_file(self.file())?;

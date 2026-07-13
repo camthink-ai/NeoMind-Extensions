@@ -453,8 +453,16 @@ fn try_load_detector(
     models_dir: &std::path::Path,
     device: usls::Device,
 ) -> std::result::Result<usls::models::DB, String> {
-    let cfg = preset::ppocr_det_v6(tier, models_dir)
-        .with_device_all(device)
+    let mut cfg = preset::ppocr_det_v6(tier, models_dir).with_device_all(device);
+    // CUDA EP + usls's default Level3 optimization creates a fused
+    // com.microsoft.Gelu node that the CUDA provider .so lacks a kernel for
+    // (hard error at session build → triggers CPU fallback). Level1 avoids
+    // the fusion; det model runs at ~20 ms on CUDA vs ~180 ms on CPU.
+    // Graph optimization level affects performance only, never accuracy.
+    if matches!(device, usls::Device::Cuda(_)) {
+        cfg = cfg.with_graph_opt_level_all(1);
+    }
+    let cfg = cfg
         .commit()
         .map_err(|e| format!("det config commit failed: {}", e))?;
     usls::models::DB::new(cfg).map_err(|e| format!("DB init failed: {}", e))
@@ -465,8 +473,13 @@ fn try_load_recognizer(
     models_dir: &std::path::Path,
     device: usls::Device,
 ) -> std::result::Result<usls::models::SVTR, String> {
-    let cfg = preset::ppocr_rec_v6(tier, models_dir)
-        .with_device_all(device)
+    let mut cfg = preset::ppocr_rec_v6(tier, models_dir).with_device_all(device);
+    // See try_load_detector: CUDA EP needs Level1 to avoid the GeluFusion
+    // that produces an unrunnable com.microsoft.Gelu node.
+    if matches!(device, usls::Device::Cuda(_)) {
+        cfg = cfg.with_graph_opt_level_all(1);
+    }
+    let cfg = cfg
         .commit()
         .map_err(|e| format!("rec config commit failed: {}", e))?;
     usls::models::SVTR::new(cfg).map_err(|e| format!("SVTR init failed: {}", e))
@@ -562,7 +575,15 @@ fn auto_device(hint: Option<&str>) -> usls::Device {
                 return usls::Device::Cpu(0);
             }
         }
-        if has_cuda(Some("cuda")) || has_cuda(None) {
+        // Try CUDA EP — works on Jetson with the custom ORT 1.22.0 build
+        // (Gelu kernel compiled into libonnxruntime_providers_cuda.so).
+        // CUDA EP handles the OCR det model's dynamic input shapes natively,
+        // unlike TensorRT which requires fixed shapes.
+        //
+        // Safety net: ensure_loaded() catches CUDA load failures and retries
+        // on CPU, so a misconfigured provider .so (missing RUNPATH, dlopen
+        // failure) or an OOM degrades gracefully instead of aborting.
+        if has_cuda(hint) {
             return usls::Device::Cuda(0);
         }
         usls::Device::Cpu(0)

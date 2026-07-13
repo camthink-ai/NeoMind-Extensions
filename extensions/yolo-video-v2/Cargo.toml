@@ -35,10 +35,15 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 nokhwa = { version = "0.10", features = ["input-native"] }
 crossbeam-channel = "0.5"
 ffmpeg-next = { version = "7", default-features = false, features = ["codec", "format", "software-scaling"] }
+# NVDEC hardware decode — opt-in via `nvdec` feature (Jetson only, needs libgstreamer1.0-dev)
+gstreamer = { version = "0.21", optional = true }
+gstreamer-app = { version = "0.21", optional = true }
 
 [features]
 default = []
 native = []
 wasm = []
+# NVDEC hardware video decode via GStreamer nvv4l2decoder (Jetson only)
+nvdec = ["dep:gstreamer", "dep:gstreamer-app"]
 # Process isolation feature for high-risk extensions
 process-isolated = []

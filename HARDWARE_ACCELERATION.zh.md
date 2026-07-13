@@ -127,14 +127,37 @@ echo $LD_LIBRARY_PATH  # 应包含 /usr/local/cuda/lib64
 tegrastats   # 看 GR3D_FREQ 非 0 说明 GPU 在干活
 ```
 
-### Jetson 常见坑
+### Step 5: systemd Service Permissions (Critical)
 
-| 现象 | 原因 | 解决 |
-|------|------|------|
-| `Cuda failed, falling back to CPU` | ORT wheel 版本和 JetPack CUDA 不匹配 | 装对应 JetPack 的 wheel |
-| `libonnxruntime_providers_cuda.so: cannot open` | CUDA EP 库没打包或路径不对 | 确认 `ORT_LIB_PATH` 指对，重 build |
-| `libcudnn.so: cannot open` | cuDNN 缺失 | JetPack 重装时勾选 cuDNN 组件 |
-| 编译时报 CUDA 链接错误 | `usls` cuda feature 找不到 CUDA toolkit | `export CUDA_HOME=/usr/local/cuda` |
+When NeoMind runs as a systemd service, the service user is **not** in GPU-related groups by default. This causes CUDA initialization to fail (`NvRmMemInitNvmap failed: Permission denied` / `CUDA failure 999: unknown error`), and the extension silently falls back to CPU.
+
+**Must run after deployment:**
+
+```bash
+# Add the neomind service user to video + render groups
+sudo usermod -aG video,render neomind
+
+# Restart neomind to pick up the new groups
+sudo systemctl restart neomind
+
+# Verify: the neomind process Groups line should include 44 (video) and 104 (render)
+cat /proc/$(systemctl show neomind --property=MainPID --value)/status | grep Groups
+# Expected: Groups: 44 104 ...
+```
+
+> **Note:** `systemctl restart` is required for `usermod` group changes to take effect. A simple `kill` + respawn won't work — systemd caches process group membership at start time.
+
+### Jetson Common Pitfalls
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `Cuda failed, falling back to CPU` | ORT wheel version doesn't match JetPack CUDA | Install the wheel matching your JetPack version |
+| `libonnxruntime_providers_cuda.so: cannot open` | CUDA EP library not packaged or wrong path | Verify `ORT_LIB_PATH` is correct, rebuild |
+| `libcudnn.so: cannot open` | cuDNN missing | Reinstall JetPack with cuDNN component selected |
+| CUDA link errors at compile time | `usls` cuda feature can't find CUDA toolkit | `export CUDA_HOME=/usr/local/cuda` |
+| `NvRmMemInitNvmap failed: Permission denied` | neomind service user not in `video` group | `sudo usermod -aG video,render neomind && systemctl restart neomind` (see Step 5) |
+| `CUDA failure 999: unknown error` | Same as above — no access to `/dev/nvmap` | Same as above |
+| CUDA enabled but inference still slow (~1s) | ORT graph optimization Level3 triggers fusions producing CUDA-EP-incompatible nodes (GeluFusion→`com.microsoft.Gelu` on PP-OCR; MatmulTransposeFusion→`com.microsoft.FusedMatMul` on YOLO) | Force `with_graph_opt_level_all(1)` for CUDA device in extension code (paddle-ocr-v6 + yolo-video-v2 already fixed; apply proactively to all usls+CUDA extensions) |
 
 ---
 
