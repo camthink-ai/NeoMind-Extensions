@@ -210,6 +210,9 @@
         },
         "linux-aarch64-jetson": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/image-analyzer-v2-2.7.8-linux_arm64-jetson.nep"
+        },
+        "linux-x86_64-cuda": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/image-analyzer-v2-2.7.8-linux_amd64-cuda.nep"
         }
       },
       "frontend": {
@@ -386,6 +389,9 @@
         },
         "linux-aarch64-jetson": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/ocr-device-inference-2.7.8-linux_arm64-jetson.nep"
+        },
+        "linux-x86_64-cuda": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/ocr-device-inference-2.7.8-linux_amd64-cuda.nep"
         }
       },
       "frontend": {
@@ -494,6 +500,9 @@
         },
         "linux-aarch64-jetson": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/paddle-ocr-v6-2.7.8-linux_arm64-jetson.nep"
+        },
+        "linux-x86_64-cuda": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/paddle-ocr-v6-2.7.8-linux_amd64-cuda.nep"
         }
       },
       "frontend": {
@@ -819,6 +828,9 @@
         },
         "linux-aarch64-jetson": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/yolo-device-inference-2.7.8-linux_arm64-jetson.nep"
+        },
+        "linux-x86_64-cuda": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/yolo-device-inference-2.7.8-linux_amd64-cuda.nep"
         }
       },
       "frontend": {
@@ -861,6 +873,9 @@
         },
         "linux-aarch64-jetson": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/yolo-video-v2-2.7.8-linux_arm64-jetson.nep"
+        },
+        "linux-x86_64-cuda": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/yolo-video-v2-2.7.8-linux_amd64-cuda.nep"
         }
       },
       "frontend": {
