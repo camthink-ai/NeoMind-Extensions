@@ -26,6 +26,7 @@ members = [
     "extensions/paddle-ocr-v6",
     "extensions/paddle-ocr-vl",
     "extensions/deepstream",
+    "extensions/gym-tracker",
     # "extensions/final-test",
     # "extensions/cli-test-ext",
 ]

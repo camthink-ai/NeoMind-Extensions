@@ -1,0 +1,34 @@
+[package]
+name = "gym-tracker"
+version = "2.7.8"
+edition = "2021"
+authors = ["NeoMind Team"]
+license = "Apache-2.0"
+description = "Smart-gym extension: NE503 person-tracking ingestion, live state, ROI equipment zones, member identity, pose-based rep counting, session reporting"
+
+[lib]
+name = "neomind_extension_gym_tracker"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neomind-extension-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+urlencoding = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+parking_lot = "0.12"
+tracing = "0.1"
+ureq = { version = "2", features = ["json", "tls"] }
+tokio = { version = "1", features = ["rt", "sync", "time"] }
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+rustls = "0.23"
+rusqlite = { version = "0.31", features = ["bundled"] }
+uuid = { version = "1.0", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "test-util", "time"] }
+
+[features]
+default = []
