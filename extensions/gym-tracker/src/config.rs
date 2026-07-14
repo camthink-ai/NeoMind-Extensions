@@ -1,0 +1,54 @@
+// config.rs
+use serde::Deserialize;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Config {
+    pub device: DeviceCfg,
+    pub device_id: String,
+    pub rtsp_url: Option<String>,
+    pub ingest: IngestCfg,
+    pub identity: IdentityCfg,
+    pub roi: RoiCfg,
+    pub data_dir: String,
+}
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeviceCfg { pub host: String, #[serde(default)] pub port: Option<u16>, pub username: String, pub password: String, #[serde(default = "default_true")] pub tls_insecure: bool }
+fn default_true() -> bool { true }
+#[derive(Debug, Clone, Deserialize)]
+pub struct IngestCfg { pub topic: String, pub publish_hz: u32, pub track_ttl_sec: u32, pub reconnect_backoff_sec: Vec<u64> }
+#[derive(Debug, Clone, Deserialize)]
+pub struct IdentityCfg { pub match_threshold: f32, pub auto_capture_unknown: bool, pub unknown_prefix: String }
+#[derive(Debug, Clone, Deserialize)]
+pub struct RoiCfg { pub dwell_debounce_sec: u32, pub hysteresis: bool }
+
+impl Default for IngestCfg { fn default() -> Self { Self { topic: "gym/track".into(), publish_hz: 8, track_ttl_sec: 30, reconnect_backoff_sec: vec![1,2,5,10,30] } } }
+impl Default for IdentityCfg { fn default() -> Self { Self { match_threshold: 0.55, auto_capture_unknown: true, unknown_prefix: "未知会员".into() } } }
+impl Default for RoiCfg { fn default() -> Self { Self { dwell_debounce_sec: 3, hysteresis: true } } }
+
+impl Config {
+    pub fn parse(raw: &str) -> Result<Self, serde_json::Error> {
+        if raw.trim().is_empty() { return Err(serde::de::Error::custom("empty config")); }
+        serde_json::from_str(raw)
+    }
+    // NE503 this firmware: HTTPS 443 (self-signed), WS wss, RTSP on :8554. See "NE503 device reality" in the plan.
+    pub fn ws_url(&self) -> String { format!("wss://{}/api/v1/events/stream", self.device.host) }
+    pub fn rest_base(&self) -> String { format!("https://{}", self.device.host) }
+    pub fn rtsp_url(&self, stream: &str) -> String { format!("rtsp://{}:8554/{}", self.device.host, stream) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn parse_full() {
+        let s = r#"{"device":{"host":"192.168.93.200","username":"admin","password":"password","tls_insecure":true},"device_id":"ne503-001","ingest":{"topic":"gym/track","publish_hz":8,"track_ttl_sec":30,"reconnect_backoff_sec":[1,2,5,10,30]},"identity":{"match_threshold":0.55,"auto_capture_unknown":true,"unknown_prefix":"未知会员"},"roi":{"dwell_debounce_sec":3,"hysteresis":true},"data_dir":"/tmp/gym"}"#;
+        let c = Config::parse(s).unwrap();
+        assert_eq!(c.device.host, "192.168.93.200");
+        assert_eq!(c.ws_url(), "wss://192.168.93.200/api/v1/events/stream");
+        assert_eq!(c.rest_base(), "https://192.168.93.200");
+        assert_eq!(c.rtsp_url("sub"), "rtsp://192.168.93.200:8554/sub");
+        assert!(c.device.tls_insecure);
+    }
+    #[test]
+    fn rejects_empty() { assert!(Config::parse("").is_err()); }
+}

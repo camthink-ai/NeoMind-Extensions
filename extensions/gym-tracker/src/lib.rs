@@ -1,3 +1,4 @@
+pub mod config;
 pub mod types;
 
 use std::sync::OnceLock;
