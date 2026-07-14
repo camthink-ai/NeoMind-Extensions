@@ -1,3 +1,5 @@
+pub mod types;
+
 use std::sync::OnceLock;
 use neomind_extension_sdk::{
     async_trait, json, Extension, ExtensionCommand, ExtensionMetadata, ExtensionMetricValue,
