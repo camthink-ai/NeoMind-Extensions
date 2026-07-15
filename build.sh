@@ -191,6 +191,7 @@ V2_EXTENSIONS=(
     "voice-assistant"
     "paddle-ocr-vl"
     "deepstream"
+    "gym-tracker"
 )
 
 # Filter to single extension if specified

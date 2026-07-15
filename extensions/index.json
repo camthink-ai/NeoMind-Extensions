@@ -146,6 +146,43 @@
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/face-recognition/metadata.json"
     },
     {
+      "id": "gym-tracker",
+      "name": "gym tracker",
+      "version": "2.7.8",
+      "description": "Smart-gym extension: NE503 person-tracking ingestion, live state, ROI equipment zones, member identity, pose-based rep counting, session reporting",
+      "author": "NeoMind Team",
+      "license": "Apache-2.0",
+      "type": "native",
+      "categories": [
+        "utility"
+      ],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/gym-tracker",
+      "builds": {
+        "darwin-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/gym-tracker-2.7.8-darwin_aarch64.nep"
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/gym-tracker-2.7.8-darwin_x86_64.nep"
+        },
+        "linux-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/gym-tracker-2.7.8-linux_amd64.nep"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/gym-tracker-2.7.8-linux_arm64.nep"
+        },
+        "windows-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/gym-tracker-2.7.8-windows_amd64.nep"
+        }
+      },
+      "frontend": {
+        "components": [
+          "GymLiveState"
+        ],
+        "entrypoint": "gym-tracker-components.umd.cjs"
+      },
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/gym-tracker/metadata.json"
+    },
+    {
       "id": "homeassistant-bridge",
       "name": "homeassistant uridge",
       "version": "2.7.7",
