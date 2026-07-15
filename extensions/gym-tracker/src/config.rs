@@ -6,8 +6,15 @@ pub struct Config {
     pub device: DeviceCfg,
     pub device_id: String,
     pub rtsp_url: Option<String>,
+    // `#[serde(default)]` so a host-provided partial config (e.g. `"ingest":{}` or
+    // the key omitted entirely) deserializes to the Default impl rather than failing
+    // configure(). All three have Default impls below; device/device_id/data_dir
+    // stay required (no sensible default).
+    #[serde(default)]
     pub ingest: IngestCfg,
+    #[serde(default)]
     pub identity: IdentityCfg,
+    #[serde(default)]
     pub roi: RoiCfg,
     pub data_dir: String,
 }
