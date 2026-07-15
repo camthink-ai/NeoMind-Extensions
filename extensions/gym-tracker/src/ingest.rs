@@ -1,0 +1,451 @@
+// ingest.rs — WebSocket subscriber for NE503 `gym/track` events.
+//
+// Spawns a dedicated OS thread ("gym-ingest") that owns a single-threaded
+// Tokio runtime, connects to `wss://<host>/api/v1/events/stream?token=<token>`
+// (the NE503 serves a self-signed cert, so we reuse `crate::tls`'s TLS-skip
+// `rustls::ClientConfig` via a `tokio_tungstenite::Connector::Rustls`), and
+// feeds every `gym/`-prefixed event into the shared `LiveState` mirror.
+//
+// Why a dedicated thread + own runtime? This crate is a `cdylib` loaded into a
+// host process that may or may not have an ambient Tokio runtime. Rather than
+// rely on `tokio::runtime::Handle::try_current()` (which the homeassistant-bridge
+// uses but which silently no-ops when the host has no runtime), we create our
+// own current-thread runtime inside a spawned `std::thread`. That keeps the WS
+// I/O off the SDK's metric/command threads entirely — `stop()` flips an
+// `AtomicBool` and the `tokio::select!` honors it within ~200ms.
+//
+// The CLAUDE.md note "use sync ureq, never async" is about the *HTTP* client
+// specifically; the homeassistant-bridge precedent shows async WS via
+// tokio-tungstenite is fine on a dedicated runtime thread, and we follow that.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use futures_util::StreamExt;
+use tokio_tungstenite::tungstenite::Message;
+
+use crate::config::Config;
+use crate::state::LiveState;
+use crate::tls;
+use crate::types::TrackFrame;
+
+/// Build a WS URL: `<ws_base>?token=<urlencoded token>`.
+fn build_ws_url(ws_base: &str, token: &str) -> String {
+    format!("{}?token={}", ws_base, urlencoding::encode(token))
+}
+
+/// Pure: given one raw WS text message (the NE503 event envelope), return the
+/// `TrackFrame` if its topic starts with `gym/`, else `None`. Unit-test THIS —
+/// it holds all the parse/filter logic. Everything else here is I/O glue.
+///
+/// The NE503 event bus delivers envelopes shaped like:
+/// ```jsonc
+/// {"event_id":"evt-…","payload":"{\"device_id\":\"…\",…}",  // NOTE: payload is a JSON-encoded STRING
+///  "payload_type":"json","source":"","timestamp_ns":…,"topic":"gym/test"}
+/// ```
+/// i.e. `payload` is **double-encoded** — a JSON string whose contents are the
+/// serialized `TrackFrame`. Some emitters may inline it as a nested object
+/// instead, so we handle both. Topics not under `gym/` (e.g. `device/temp`)
+/// are dropped client-side — the bus delivers all topics to every subscriber.
+pub fn parse_event(raw: &str) -> Option<TrackFrame> {
+    let ev: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let topic = ev["topic"].as_str()?;
+    if !topic.starts_with("gym/") {
+        return None;
+    }
+    let payload = &ev["payload"];
+    // Unwrap one layer of string-encoding when the bus delivered the payload
+    // as a JSON string (the real device format). Inline objects pass through.
+    let frame_val = match payload {
+        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s).ok()?,
+        other => other.clone(),
+    };
+    serde_json::from_value::<TrackFrame>(frame_val).ok()
+}
+
+/// Handle returned by `spawn` — call `stop()` to request a graceful shutdown
+/// of the ingest thread (honored within ~200ms via the runtime's `select!`).
+pub struct IngestHandle {
+    stop: Arc<AtomicBool>,
+}
+
+impl IngestHandle {
+    /// Request the ingest loop to stop. The background thread checks the flag
+    /// between WS reads and during reconnect backoff, then exits.
+    pub fn stop(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Stop the ingest thread when the handle is dropped, so re-`spawn` (e.g. a
+/// re-`configure`) can never orphan the previous thread + WS connection + runtime.
+impl Drop for IngestHandle {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// Outcome of one connect-and-listen cycle. Drives the outer reconnect loop.
+enum Disconnect {
+    /// `stop` was requested mid-cycle — exit the whole loop.
+    Stop,
+    /// Transient error (connect failure, read error, stream closed). Backoff
+    /// and retry.
+    Error(String),
+}
+
+/// Spawn the WS subscriber on a dedicated `std::thread` with its own
+/// current-thread Tokio runtime.
+///
+/// `token` is the login token from `Ne503Client::login()` / `token_string()`
+/// (NOT the password). On this firmware it includes the `Bearer ` prefix. The
+/// primary WS URL uses the token verbatim; if that handshake is rejected we
+/// also try once with the `Bearer ` prefix stripped, in case the device's WS
+/// auth wants the bare secret (decided empirically by the live test).
+pub fn spawn(cfg: Config, state: Arc<LiveState>, token: String) -> IngestHandle {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_c = stop.clone();
+    // Build the primary URL up front (task contract). The raw token is passed
+    // through to the loop so it can also build the Bearer-stripped fallback.
+    let primary_url = build_ws_url(&cfg.ws_url(), &token);
+    std::thread::Builder::new()
+        .name("gym-ingest".into())
+        .spawn(move || {
+            run_loop(&primary_url, &token, &cfg, &state, &stop_c);
+        })
+        .ok();
+    IngestHandle { stop }
+}
+
+/// The (blocking) reconnect loop, run inside the ingest thread. Owns a
+/// current-thread Tokio runtime (the cdylib has no ambient runtime to borrow).
+fn run_loop(
+    primary_url: &str,
+    token: &str,
+    cfg: &Config,
+    state: &Arc<LiveState>,
+    stop: &Arc<AtomicBool>,
+) {
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            tracing::error!("ingest: failed to build runtime: {e}");
+            return;
+        }
+    };
+
+    // Candidate URLs tried in order each cycle. Primary = token verbatim
+    // (Bearer prefix on this firmware). Fallback = bare secret, only if the
+    // token actually had a Bearer prefix to strip.
+    let mut urls: Vec<String> = vec![primary_url.to_string()];
+    if let Some(bare) = token.strip_prefix("Bearer ") {
+        urls.push(build_ws_url(&cfg.ws_url(), bare));
+    }
+
+    rt.block_on(async move {
+        let backoff = &cfg.ingest.reconnect_backoff_sec;
+        let mut attempt: usize = 0;
+        while !stop.load(Ordering::Relaxed) {
+            match connect_and_drain(&urls, cfg, state, stop).await {
+                Disconnect::Stop => break,
+                Disconnect::Error(e) => {
+                    tracing::warn!("ingest: wss cycle ended ({e})");
+                }
+            }
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            // Backoff from config (default [1,2,5,10,30]); clamp to last entry
+            // once we've exhausted the schedule.
+            let secs = backoff
+                .get(attempt)
+                .copied()
+                .or_else(|| backoff.last().copied())
+                .unwrap_or(30);
+            attempt = attempt.saturating_add(1);
+            tracing::info!("ingest: reconnecting in {secs}s (attempt {})", attempt);
+            sleep_with_stop(secs, stop).await;
+        }
+        tracing::info!("ingest: loop exiting (stop requested)");
+    });
+}
+
+/// Connect to the first reachable candidate URL, then read WS frames until the
+/// connection drops or `stop` is requested.
+async fn connect_and_drain(
+    urls: &[String],
+    cfg: &Config,
+    state: &Arc<LiveState>,
+    stop: &Arc<AtomicBool>,
+) -> Disconnect {
+    // Build the TLS connector. Insecure (NoVerify) for the self-signed NE503
+    // cert when configured; otherwise None → tokio-tungstenite uses webpki
+    // roots (the secure path, which would reject the self-signed cert).
+    let connector = if cfg.device.tls_insecure {
+        Some(tokio_tungstenite::Connector::Rustls(Arc::new(
+            tls::insecure_client_config(),
+        )))
+    } else {
+        None
+    };
+
+    // Try each candidate URL (primary, then Bearer-stripped fallback) in order.
+    let mut ws_stream = None;
+    for url in urls {
+        if stop.load(Ordering::Relaxed) {
+            return Disconnect::Stop;
+        }
+        // tokio-tungstenite 0.28 signature: (request, config, disable_nagle, connector).
+        match tokio_tungstenite::connect_async_tls_with_config(
+            url.as_str(),
+            None,
+            false,
+            connector.clone(),
+        )
+        .await
+        {
+            Ok((s, resp)) => {
+                tracing::info!("ingest: wss connected to {url} (status {})", resp.status());
+                ws_stream = Some(s);
+                break;
+            }
+            Err(e) => {
+                tracing::warn!("ingest: wss connect to {url} failed: {e}");
+            }
+        }
+    }
+
+    let mut ws_stream = match ws_stream {
+        Some(s) => s,
+        None => return Disconnect::Error("all connect attempts failed".into()),
+    };
+
+    // Read loop: select between the next WS frame and a stop ticker so a
+    // shutdown request is honored even while no frames are arriving.
+    loop {
+        tokio::select! {
+            biased;
+            _ = await_stop(stop) => return Disconnect::Stop,
+            msg = ws_stream.next() => match msg {
+                Some(Ok(Message::Text(txt))) => {
+                    tracing::debug!(target: "gym_tracker::ingest::frame", len = txt.len(), "ws text frame");
+                    if let Some(frame) = parse_event(&txt) {
+                        state.apply_frame(&frame);
+                    }
+                }
+                Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {
+                    // tungstenite auto-responds to pings; nothing to do.
+                }
+                Some(Ok(Message::Close(_))) => {
+                    return Disconnect::Error("server closed connection".into());
+                }
+                Some(Ok(_)) => {
+                    // Binary / other frames: the NE503 publishes JSON as text,
+                    // so ignore anything else.
+                }
+                Some(Err(e)) => {
+                    return Disconnect::Error(format!("ws read error: {e}"));
+                }
+                None => {
+                    return Disconnect::Error("ws stream ended".into());
+                }
+            }
+        }
+    }
+}
+
+/// Resolves once `stop` is set. Polls every 200ms — cheap, and bounds the
+/// shutdown latency of the read loop's `tokio::select!`.
+async fn await_stop(stop: &Arc<AtomicBool>) {
+    while !stop.load(Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// Sleep for `secs`, but bail early (return) as soon as `stop` is set, so
+/// reconnect backoff never blocks shutdown.
+async fn sleep_with_stop(secs: u64, stop: &Arc<AtomicBool>) {
+    let mut waited = 0u64;
+    while waited < secs {
+        if stop.load(Ordering::Relaxed) {
+            return;
+        }
+        let step = 1u64.min(secs - waited);
+        tokio::time::sleep(Duration::from_secs(step)).await;
+        waited += step;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_filters_and_decodes() {
+        let good = serde_json::json!({"topic":"gym/track","payload":{
+            "device_id":"d","frame_seq":1,"ts_ns":0,
+            "tracks":[{"track_id":3,"bbox":{"x":0,"y":0,"w":0,"h":0},"foot":{"x":0,"y":0},"pose":null,"face":null}]}})
+            .to_string();
+        assert!(parse_event(&good).is_some());
+        let other = r#"{"topic":"device/temp","payload":{"x":1}}"#;
+        assert!(parse_event(other).is_none());
+    }
+
+    #[test]
+    fn parse_accepts_gym_subtopic() {
+        // Any gym/ prefix passes the client-side filter (e.g. gym/test probes).
+        let probe = serde_json::json!({"topic":"gym/test","payload":{
+            "device_id":"d","frame_seq":9,"ts_ns":1,"tracks":[]}})
+            .to_string();
+        let f = parse_event(&probe).expect("gym/test should pass the topic filter");
+        assert_eq!(f.frame_seq, 9);
+        assert!(f.tracks.is_empty());
+    }
+
+    #[test]
+    fn parse_rejects_malformed() {
+        assert!(parse_event("not json").is_none());
+        // no topic
+        assert!(parse_event(r#"{"payload":{}}"#).is_none());
+        // gym/ topic but malformed payload (not a valid TrackFrame)
+        assert!(parse_event(r#"{"topic":"gym/track","payload":{"nope":1}}"#).is_none());
+        // non-gym topic with valid payload shape still dropped
+        assert!(parse_event(
+            r#"{"topic":"other/track","payload":{"device_id":"d","frame_seq":1,"ts_ns":0,"tracks":[]}}"#
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn parse_real_device_envelope_double_encoded_payload() {
+        // Exact shape the NE503 delivers over WSS: `payload` is a JSON-encoded
+        // STRING (double-encoded), plus the event_id/payload_type/timestamp_ns
+        // wrapper fields. This locks in the on-the-wire contract.
+        let inner = serde_json::json!({
+            "device_id": "ne503-001", "frame_seq": 4242, "ts_ns": 0u64,
+            "tracks": [{"track_id": 4242,
+                "bbox": {"x":0.1,"y":0.2,"w":0.3,"h":0.4},
+                "foot": {"x":0.25,"y":0.6}, "pose": null, "face": null}]
+        }).to_string();
+        let envelope = serde_json::json!({
+            "event_id": "evt-1784085237439-901369",
+            "payload": inner,                 // <-- STRING, not object
+            "payload_type": "json",
+            "source": "",
+            "timestamp_ns": 1784085237437820084u64,
+            "topic": "gym/test"
+        })
+        .to_string();
+        let f = parse_event(&envelope).expect("real device envelope must decode");
+        assert_eq!(f.device_id, "ne503-001");
+        assert_eq!(f.frame_seq, 4242);
+        assert_eq!(f.tracks.len(), 1);
+        assert_eq!(f.tracks[0].track_id, 4242);
+    }
+
+    #[test]
+    fn build_url_encodes_token() {
+        let u = build_ws_url("wss://h/api/v1/events/stream", "Bearer abc def");
+        // spaces and the rest of "Bearer abc def" are percent-encoded so the
+        // value survives intact in a query string.
+        assert_eq!(
+            u,
+            "wss://h/api/v1/events/stream?token=Bearer%20abc%20def"
+        );
+    }
+
+    /// LIVE integration test against the real NE503 at 192.168.93.200.
+    ///
+    /// Proves the end-to-end WSS path: TLS-skip connect, token auth via the
+    /// `?token=` query param, and receipt of a `gym/` event we publish via the
+    /// REST event bus. We publish a `gym/test` frame, then assert the
+    /// `LiveState` mirror received it within a short window.
+    ///
+    /// Run manually:
+    ///   cargo test -p gym-tracker ingest::tests::live_wss_receives_gym_event -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_wss_receives_gym_event() {
+        let raw = r#"{"device":{"host":"192.168.93.200","username":"admin","password":"password","tls_insecure":true},"device_id":"ne503-001","ingest":{"topic":"gym/track","publish_hz":8,"track_ttl_sec":30,"reconnect_backoff_sec":[1,2,5,10,30]},"identity":{"match_threshold":0.55,"auto_capture_unknown":true,"unknown_prefix":"未知会员"},"roi":{"dwell_debounce_sec":3,"hysteresis":true},"data_dir":"/tmp/gym"}"#;
+        let cfg = Config::parse(raw).expect("config parse");
+
+        // Login to get the token used for both the WS query param and the REST
+        // publish Authorization header.
+        let client = crate::ne503::Ne503Client::new(&cfg);
+        client.login().expect("login should succeed");
+        let token = client
+            .token_string()
+            .expect("token should be set after login");
+        eprintln!("[live] login ok, token = {token}");
+
+        // Fresh live-state mirror + spawn the ingest subscriber.
+        let state = Arc::new(LiveState::new(30));
+        let handle = spawn(cfg.clone(), state.clone(), token.clone());
+
+        // Give the WS subscriber a moment to connect + run its backoff cycle.
+        std::thread::sleep(Duration::from_secs(2));
+
+        // Publish a gym/test event carrying a valid TrackFrame via the REST
+        // event bus. The device fans this out to all WS subscribers, so our
+        // ingest thread should receive it and apply it to the mirror.
+        let probe = serde_json::json!({
+            "topic": "gym/test",
+            "payload": {
+                "device_id": "ne503-001",
+                "frame_seq": 4242,
+                "ts_ns": 0u64,
+                "tracks": [{
+                    "track_id": 4242,
+                    "bbox": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.4},
+                    "foot": {"x": 0.25, "y": 0.6},
+                    "pose": null,
+                    "face": null
+                }]
+            }
+        });
+        let pub_url = format!("{}/api/v1/events/publish", cfg.rest_base());
+        eprintln!("[live] publishing probe event to {pub_url}");
+        // The device's self-signed cert means we must publish via a TLS-skipping
+        // ureq agent too — a bare ureq::post() uses webpki roots and is rejected.
+        let agent = ureq::AgentBuilder::new()
+            .tls_config(Arc::new(crate::tls::insecure_client_config()))
+            .timeout(Duration::from_secs(5))
+            .build();
+        let resp = agent.post(&pub_url).set("Authorization", &token).send_json(probe);
+        match &resp {
+            Ok(r) => eprintln!("[live] publish status = {}", r.status()),
+            Err(e) => eprintln!("[live] publish error = {e}"),
+        }
+        let _ = resp;
+
+        // Wait for the WS subscriber to receive + apply the frame.
+        let mut received = false;
+        for _ in 0..20 {
+            std::thread::sleep(Duration::from_millis(200));
+            for t in state.snapshot() {
+                if t.track_id == 4242 {
+                    received = true;
+                    break;
+                }
+            }
+            if received {
+                break;
+            }
+        }
+
+        handle.stop();
+        std::thread::sleep(Duration::from_millis(400));
+
+        assert!(
+            received,
+            "did not receive the gym/test probe in LiveState within 4s — \
+             check that wss connected (see '[live]' logs above) and the REST \
+             publish succeeded"
+        );
+        eprintln!("[live] SUCCESS — gym/test probe landed in LiveState");
+    }
+}
