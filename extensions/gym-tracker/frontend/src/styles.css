@@ -1,0 +1,291 @@
+/* ==========================================================================
+   GymLiveState — scoped styles
+   Prefix: gym-live- · ALL colors via NeoMind CSS variables (light/dark)
+   ========================================================================== */
+
+.gym-live {
+  /* Variable aliases mapped to the host design system */
+  --gl-fg: var(--foreground);
+  --gl-muted: var(--muted-foreground);
+  --gl-accent: var(--primary);
+  --gl-on-primary: var(--primary-foreground, #ffffff);
+  --gl-card: var(--card);
+  --gl-border: var(--border);
+  --gl-muted-bg: var(--muted);
+  --gl-success: var(--color-success);
+  --gl-success-bg: var(--color-success-bg);
+  --gl-info: var(--color-info);
+  --gl-info-bg: var(--color-info-bg);
+  --gl-error: var(--color-error);
+  --gl-error-bg: var(--color-error-bg);
+
+  width: 100%;
+  height: 100%;
+  font-size: 13px;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+.dark .gym-live {
+  --gl-on-primary: var(--primary-foreground, #17172a);
+}
+
+.gym-live *,
+.gym-live *::before,
+.gym-live *::after {
+  box-sizing: border-box;
+}
+
+/* Card wrapper */
+.gym-live-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 14px;
+  background: var(--gl-card);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--gl-border);
+  border-radius: var(--radius-xl, 12px);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+/* Header */
+.gym-live-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  margin-bottom: 10px;
+}
+
+.gym-live-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--gl-fg);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.gym-live-title svg {
+  width: 15px;
+  height: 15px;
+  color: var(--gl-info);
+  flex-shrink: 0;
+}
+
+.gym-live-pulse {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full, 9999px);
+  background: var(--gl-success-bg);
+  color: var(--gl-success);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.gym-live-pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gl-success);
+  animation: gym-live-ping 1.6s ease-in-out infinite;
+}
+
+@keyframes gym-live-ping {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.gym-live-pulse.stale {
+  background: var(--gl-muted-bg);
+  color: var(--gl-muted);
+}
+.gym-live-pulse.stale .gym-live-pulse-dot {
+  background: var(--gl-muted);
+  animation: none;
+}
+
+/* Hero count */
+.gym-live-hero {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 2px 0 10px;
+}
+
+.gym-live-count {
+  font-size: 38px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--gl-fg);
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.gym-live-count-label {
+  font-size: 12px;
+  color: var(--gl-muted);
+  text-transform: lowercase;
+}
+
+/* Track list */
+.gym-live-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 2px;
+  margin-right: -2px;
+}
+
+.gym-live-list::-webkit-scrollbar {
+  width: 5px;
+}
+.gym-live-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.gym-live-list::-webkit-scrollbar-thumb {
+  background: var(--gl-border);
+  border-radius: var(--radius-full, 9999px);
+}
+
+.gym-live-track {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in oklch, var(--gl-muted-bg) 35%, transparent);
+  transition: background var(--duration-fast, 150ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.gym-live-track:hover {
+  background: color-mix(in oklch, var(--gl-muted-bg) 60%, transparent);
+}
+
+/* Track id chip */
+.gym-live-track-id {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--gl-info-bg);
+  color: var(--gl-info);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* Mini bbox frame — represents the person's position in the normalized frame */
+.gym-live-frame {
+  position: relative;
+  width: 28px;
+  height: 20px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--gl-border);
+  background: color-mix(in oklch, var(--gl-muted-bg) 20%, transparent);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.gym-live-frame-box {
+  position: absolute;
+  border: 1.5px solid var(--gl-accent);
+  border-radius: 1px;
+  background: color-mix(in oklch, var(--gl-accent) 25%, transparent);
+}
+
+.gym-live-foot-dot {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--gl-success);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 1.5px color-mix(in oklch, var(--gl-success) 30%, transparent);
+}
+
+.gym-live-track-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--gl-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* States — loading / empty / error */
+.gym-live-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  text-align: center;
+}
+
+.gym-live-state svg {
+  width: 32px;
+  height: 32px;
+  opacity: 0.4;
+  color: var(--gl-muted);
+}
+
+.gym-live-state-text {
+  font-size: 12px;
+  color: var(--gl-muted);
+}
+
+.gym-live-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--gl-border);
+  border-top-color: var(--gl-accent);
+  border-radius: 50%;
+  animation: gym-live-spin 0.7s linear infinite;
+}
+
+@keyframes gym-live-spin {
+  to { transform: rotate(360deg); }
+}
+
+.gym-live-error {
+  color: var(--gl-error);
+  background: var(--gl-error-bg);
+  border: 1px solid var(--gl-error);
+}
+
+.gym-live-retry {
+  margin-top: 4px;
+  padding: 4px 14px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--gl-border);
+  background: transparent;
+  color: var(--gl-fg);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background var(--duration-fast, 150ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.gym-live-retry:hover {
+  background: var(--gl-muted-bg);
+}
