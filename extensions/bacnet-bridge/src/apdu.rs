@@ -1114,7 +1114,7 @@ fn parse_application_value(data: &[u8]) -> Option<BacnetValue> {
                 return None;
             }
             let _encoding = data[value_offset];
-            let str_len = length - 1; // length includes encoding byte
+            let str_len = length.checked_sub(1)?; // underflow on length==0 — return None (malformed) // length includes encoding byte
             if data.len() < value_offset + 1 + str_len {
                 return None;
             }

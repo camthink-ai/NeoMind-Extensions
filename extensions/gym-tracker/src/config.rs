@@ -19,8 +19,9 @@ pub struct Config {
     pub data_dir: String,
 }
 #[derive(Debug, Clone, Deserialize)]
-pub struct DeviceCfg { pub host: String, #[serde(default)] pub port: Option<u16>, pub username: String, pub password: String, #[serde(default = "default_true")] pub tls_insecure: bool }
-fn default_true() -> bool { true }
+pub struct DeviceCfg { pub host: String, #[serde(default)] pub port: Option<u16>, pub username: String, pub password: String, #[serde(default)] pub tls_insecure: bool }
+// TLS verification defaults to ON; self-signed deployments
+// opt in explicitly via tls_insecure: true in config.json
 #[derive(Debug, Clone, Deserialize)]
 pub struct IngestCfg { pub topic: String, pub publish_hz: u32, pub track_ttl_sec: u32, pub reconnect_backoff_sec: Vec<u64> }
 #[derive(Debug, Clone, Deserialize)]

@@ -19,8 +19,11 @@ pub struct Ne503Client {
 
 #[derive(Debug, thiserror::Error)]
 pub enum NeError {
+    // ureq::Error is ~272B; boxing the variant keeps `NeError` small so it
+    // doesn't bloat every `Result<_, NeError>` return (clippy::result_large_err).
+    // `From<ureq::Error>` is impl'd manually below so `?` on ureq calls works.
     #[error("http {0}")]
-    Http(#[from] ureq::Error),
+    Http(Box<ureq::Error>),
     #[error("io {0}")]
     Io(#[from] std::io::Error),
     #[error("bad status {0}: {1}")]
@@ -29,6 +32,12 @@ pub enum NeError {
     NoToken,
     #[error("tls: {0}")]
     Tls(String),
+}
+
+impl From<ureq::Error> for NeError {
+    fn from(e: ureq::Error) -> Self {
+        NeError::Http(Box::new(e))
+    }
 }
 
 impl Ne503Client {
@@ -96,7 +105,7 @@ impl Ne503Client {
             .call()?;
         if resp.status() != 200 {
             return Err(NeError::Status(
-                resp.status() as u16,
+                resp.status(),
                 resp.into_string().unwrap_or_default(),
             ));
         }
@@ -181,6 +190,6 @@ mod tests {
             Some(0),
             "device status code should be 0, got: {status}"
         );
-        eprintln!("live_login_and_status OK — token={tok}, status={status}");
+        tracing::info!("live_login_and_status OK — status={status}"); // token redacted
     }
 }

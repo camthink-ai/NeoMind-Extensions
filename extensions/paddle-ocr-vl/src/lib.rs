@@ -261,6 +261,7 @@ impl PaddleOcrVlExtension {
         use_doc_orientation_classify: Option<bool>,
         use_doc_unwarping: Option<bool>,
     ) -> Result<RecognizeResult> {
+        
         self.request_count.fetch_add(1, Ordering::SeqCst);
         let cfg = self.config_snapshot();
         let t0 = std::time::Instant::now();
@@ -1002,9 +1003,18 @@ impl Extension for PaddleOcrVlExtension {
 
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...(truncated)", &s[..max])
+        return s.to_string();
+    }
+    // Find a char-safe boundary at or before `max` — slicing at a
+    // multi-byte char boundary panics (found in code review #1003).
+    match s
+        .char_indices()
+        .take_while(|(i, _)| *i <= max)
+        .map(|(i, c)| i + c.len_utf8())
+        .last()
+    {
+        Some(boundary) if boundary <= max => format!("{}…(truncated)", &s[..boundary]),
+        _ => s.chars().take(max).collect(),
     }
 }
 
@@ -1147,4 +1157,23 @@ mod tests {
         let result = ext.execute_command("nonexistent", &json!({})).await;
         assert!(matches!(result, Err(ExtensionError::CommandNotFound(_))));
     }
+}
+
+fn validate_url(url: &str) -> std::result::Result<(), String> {
+    let lower = url.to_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return Err(format!("URL scheme not allowed: {url}"));
+    }
+    if let Some(after) = url.split("://").nth(1) {
+        let host = after.split('/').next().unwrap_or("")
+            .split(':').next().unwrap_or("");
+        let is_private = host.starts_with("10.") || host.starts_with("192.168.")
+            || host.starts_with("172.") || host.starts_with("169.254.")
+            || host == "localhost" || host == "127.0.0.1"
+            || host == "metadata.google.internal";
+        if is_private {
+            return Err(format!("URL points to private address: {host}"));
+        }
+    }
+    Ok(())
 }

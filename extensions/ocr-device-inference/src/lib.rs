@@ -144,6 +144,7 @@ fn get_gpu_free_memory_mb() -> u64 {
 }
 
 /// Try building a model with the auto-detected device, fall back to CPU on failure.
+#[cfg(not(target_arch = "wasm32"))]
 fn with_device_fallback<M, F>(try_build: F) -> Result<M>
 where
     F: Fn(usls::Device) -> Result<M>,

@@ -810,6 +810,7 @@ impl ModbusBridgeExtension {
     }
 
     fn cmd_add_device(&self, args: &serde_json::Value) -> Result<serde_json::Value> {
+        validate_device_addr(&args.get("address").and_then(|v| v.as_str()).unwrap_or("")).map_err(ExtensionError::InvalidArguments)?;
         let device_value = args
             .get("device")
             .ok_or_else(|| ExtensionError::InvalidArguments("Missing 'device' parameter".to_string()))?;
@@ -1431,4 +1432,21 @@ mod tests {
         assert_eq!(config.registers.len(), 2);
         assert_eq!(config.poll_interval_ms, 3000);
     }
+}
+
+fn validate_device_addr(addr: &str) -> std::result::Result<(), String> {
+    // Modbus devices are typically on local networks — validate format only
+    let parts: Vec<&str> = addr.split(':').collect();
+    let host = parts[0];
+    if host.is_empty() {
+        return Err("device address host is empty".to_string());
+    }
+    // Basic hostname/IP format check (alphanumeric, dots, hyphens)
+    if !host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '[' || c == ']') {
+        return Err(format!("invalid host in device address: {host}"));
+    }
+    if let Some(port) = parts.get(1) {
+        port.parse::<u16>().map_err(|_| format!("invalid port: {port}"))?;
+    }
+    Ok(())
 }

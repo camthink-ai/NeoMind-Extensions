@@ -1,0 +1,12 @@
+[package]
+name = "yolo-memory-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+yolo-video-v2 = { path = "." }
+image = "0.25"
+
+[[bin]]
+name = "memory_test"
+path = "examples/memory_test.rs"

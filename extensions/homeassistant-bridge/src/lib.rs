@@ -753,6 +753,9 @@ impl HomeAssistantBridgeExtension {
     /// Connect to Home Assistant: test connection, fetch initial state,
     /// and spawn WebSocket listener for real-time updates.
     async fn cmd_connect(&self, args: &serde_json::Value) -> Result<serde_json::Value> {
+        if let Some(url) = args.get("haUrl").and_then(|v| v.as_str()) {
+            validate_ha_url(url).map_err(ExtensionError::InvalidArguments)?;
+        }
         // Disconnect first if already connected
         if self.connected.load(Ordering::SeqCst) {
             self.cmd_disconnect().await?;
@@ -1412,4 +1415,15 @@ mod tests {
 
         assert_eq!(config.entity_patterns, vec!["sensor.living_*", "light.*"]);
     }
+}
+
+/// HA bridge often connects to a LOCAL Home Assistant instance —
+/// allow private/localhost but reject non-http(s) schemes.
+fn validate_ha_url(url: &str) -> std::result::Result<(), String> {
+    let lower = url.to_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")
+         || lower.starts_with("ws://") || lower.starts_with("wss://")) {
+        return Err(format!("HA URL scheme not allowed: {url}"));
+    }
+    Ok(())
 }

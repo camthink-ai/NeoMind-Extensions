@@ -14,6 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::db::{Db, Zone};
+use crate::metrics::Metrics;
 use crate::ne503::Ne503Client;
 use crate::state::LiveState;
 
@@ -23,6 +24,10 @@ pub struct Ctx {
     pub state: Arc<LiveState>,
     pub db: Arc<Db>,
     pub ne: Arc<Ne503Client>,
+    /// Per-zone metric registry. `set_roi_zones` calls `sync_zones` on this so a
+    /// zone-set change lands in the descriptors / produced values immediately,
+    /// instead of waiting for the next `configure`.
+    pub metrics: Arc<Metrics>,
 }
 
 /// Handle one command. Returns a JSON value or an error string (the caller maps
@@ -32,6 +37,11 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
     match cmd {
         // Live mirror of tracks currently tracked by the device-app.
         "get_live_state" => {
+            // Evict departed tracks (last_seen past TTL) before reading, so the
+            // count / list reflect who's actually in-frame. The device-app owns
+            // track_id assignment; we only mirror, so a person who leaves stops
+            // being republished and ages out here (TTL = ingest.track_ttl_sec).
+            let _ = ctx.state.evict_expired();
             let tracks = ctx.state.snapshot();
             Ok(json!({
                 "present_count": ctx.state.present_count(),
@@ -72,6 +82,12 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             for z in &zones_in {
                 ctx.db.upsert_zone(z).map_err(|e| e.to_string())?;
             }
+            // Re-sync the per-zone metric registry to the persisted zone set so a
+            // runtime add / remove / rename lands in the descriptors + produced
+            // values immediately. Without this the registry stayed frozen at the
+            // set seeded by configure() until the next reload.
+            ctx.metrics
+                .sync_zones(&ctx.db.list_zones().map_err(|e| e.to_string())?);
             Ok(json!({ "saved": zones_in.len() }))
         }
         // Proxy to the NE503 REST client (network; covered by Task 7/8 live
@@ -113,14 +129,19 @@ mod tests {
     /// Ne503Client pointed at localhost. `Ne503Client::new` performs NO network
     /// I/O (it only constructs the agent + empty token), and the no-network
     /// commands below never call into it, so the host is irrelevant.
-    fn make_ctx() -> Ctx {
+    fn make_ctx_with_ttl(ttl_sec: u32) -> Ctx {
         let raw = r#"{"device":{"host":"127.0.0.1","username":"x","password":"x","tls_insecure":false},"device_id":"test","ingest":{"topic":"gym/track","publish_hz":8,"track_ttl_sec":30,"reconnect_backoff_sec":[1,2,5]},"identity":{"match_threshold":0.55,"auto_capture_unknown":true,"unknown_prefix":"U"},"roi":{"dwell_debounce_sec":3,"hysteresis":true},"data_dir":"/tmp/gym-test"}"#;
         let cfg = Config::parse(raw).expect("config parse");
         Ctx {
-            state: Arc::new(LiveState::new(30)),
+            state: Arc::new(LiveState::new(ttl_sec)),
             db: Arc::new(Db::open(":memory:").expect("db open")),
             ne: Arc::new(Ne503Client::new(&cfg)),
+            metrics: Arc::new(Metrics::new()),
         }
+    }
+
+    fn make_ctx() -> Ctx {
+        make_ctx_with_ttl(30)
     }
 
     fn track(tid: i64) -> Track {
@@ -166,6 +187,28 @@ mod tests {
         let ctx = make_ctx();
         let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
         assert_eq!(out["present_count"].as_i64(), Some(0));
+        assert_eq!(out["tracks"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn get_live_state_evicts_stale_tracks() {
+        // TTL wiring: a track whose `last_seen` is past the TTL must be evicted
+        // before present_count / the track list are read, so a person who left
+        // (track_id no longer republished) doesn't keep inflating the count.
+        // Before the fix, get_live_state never evicted — evict_expired()
+        // existed but was only called from a unit test, so the live mirror only
+        // ever grew (apply_frame upserts, nothing removed the departed).
+        let ctx = make_ctx_with_ttl(0);
+        ctx.state.apply_frame(&frame(vec![track(7)]));
+        // ttl=0, but let the clock actually tick so `now - last_seen > 0` holds
+        // (two back-to-back Instant::now() calls can land in the same tick).
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+        assert_eq!(
+            out["present_count"].as_i64(),
+            Some(0),
+            "stale track must be evicted before reading present_count"
+        );
         assert_eq!(out["tracks"].as_array().unwrap().len(), 0);
     }
 
@@ -268,6 +311,48 @@ mod tests {
         assert!(r.is_err());
         let e = r.unwrap_err();
         assert!(e.contains("invalid zones"), "err={e}");
+    }
+
+    #[test]
+    fn set_roi_zones_resyncs_metric_registry() {
+        // Zone-set changes must land in the per-zone metric registry right away,
+        // not stay frozen at whatever configure() seeded. Before the fix,
+        // set_roi_zones only wrote to the db and never called metrics.sync_zones,
+        // so a zone added at runtime never got a descriptor (and a removed one
+        // leaked) until the extension was reloaded.
+        let ctx = make_ctx();
+
+        let dyn_names = |ctx: &Ctx| -> Vec<String> {
+            ctx.metrics
+                .descriptors()
+                .iter()
+                .filter(|d| d.name.starts_with("gym.equipment_occupied."))
+                .map(|d| d.name.clone())
+                .collect()
+        };
+        assert!(
+            dyn_names(&ctx).is_empty(),
+            "no per-zone metrics before any zone is added"
+        );
+
+        // Add one enabled zone via the command.
+        let one = json!({"zones": [
+            { "id": "z1", "name": "Treadmill", "equipment_type": "treadmill",
+              "polygon": [[0.1,0.1],[0.4,0.1],[0.4,0.5],[0.1,0.5]], "enabled": true },
+        ]});
+        handle(&ctx, "set_roi_zones", &one).expect("set ok");
+        assert_eq!(
+            dyn_names(&ctx),
+            vec!["gym.equipment_occupied.Treadmill"],
+            "newly added zone must be advertised immediately"
+        );
+
+        // Full-replace with an empty set → the per-zone descriptor disappears.
+        handle(&ctx, "set_roi_zones", &json!({"zones": []})).expect("clear ok");
+        assert!(
+            dyn_names(&ctx).is_empty(),
+            "removing all zones must drop the per-zone metric"
+        );
     }
 
     #[test]

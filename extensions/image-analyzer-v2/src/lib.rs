@@ -848,7 +848,6 @@ impl Extension for ImageAnalyzer {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

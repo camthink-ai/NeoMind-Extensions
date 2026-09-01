@@ -176,6 +176,7 @@ impl Extension for OnvifBridgeExtension {
                 payload_template: String::new(),
                 parameters: vec![
                     ParameterDefinition {
+
                         name: "device".to_string(),
                         display_name: "Device Config".to_string(),
                         description: "ONVIF device configuration JSON".to_string(),
@@ -698,7 +699,12 @@ impl Extension for OnvifBridgeExtension {
 
         match command {
             "discover" => self.cmd_discover(args),
-            "add_device" => self.cmd_add_device(args),
+            "add_device" => {
+            if let Some(u) = args.get("url").and_then(|v| v.as_str()) {
+                validate_device_url(u).map_err(ExtensionError::InvalidArguments)?;
+            }
+            self.cmd_add_device(args)
+        },
             "remove_device" => self.cmd_remove_device(args),
             "list_devices" => self.cmd_list_devices(),
             "get_device" => self.cmd_get_device(args),
@@ -711,7 +717,8 @@ impl Extension for OnvifBridgeExtension {
             "list_presets" => self.cmd_list_presets(args),
             "goto_preset" => self.cmd_goto_preset(args),
             "get_status" => self.cmd_get_status(args),
-            "configure" => Ok(json!({"status": "ok"})),
+            "configure" => Ok(json!({
+            "status": "ok"})),
             _ => Err(ExtensionError::CommandNotFound(command.to_string())),
         }
     }
@@ -1643,4 +1650,16 @@ mod tests {
             panic!("expected Integer metric");
         }
     }
+}
+
+fn validate_device_url(url: &str) -> std::result::Result<(), String> {
+    let lower = url.to_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return Err(format!("ONVIF device URL must be http(s): {url}"));
+    }
+    // Basic length check to prevent abuse
+    if url.len() > 2048 {
+        return Err("device URL too long".to_string());
+    }
+    Ok(())
 }

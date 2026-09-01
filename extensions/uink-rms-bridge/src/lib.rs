@@ -843,7 +843,7 @@ impl UinkRmsBridge {
         *self.refresh_token.write() = response.refresh_token;
         let expires_in = response.expires_in.unwrap_or(3600);
         self.token_expiry.store(Utc::now().timestamp() + expires_in - 120, Ordering::SeqCst);
-        eprintln!("[uink-rms-bridge] Logged in as {} (token expires in {}s)", response.email.as_deref().unwrap_or("unknown"), expires_in);
+        eprintln!("[uink-rms-bridge] Logged in (token expires in {}s)", expires_in);
         Ok(())
     }
 
@@ -993,6 +993,29 @@ impl UinkRmsBridge {
 
     /// Download an image from a URL and return the raw bytes
     fn download_image(&self, url: &str) -> Result<Vec<u8>> {
+        // SSRF guard: only http(s), reject private/link-local hosts
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return Err(ExtensionError::InvalidArguments(
+                "image_url must be http(s)://".to_string(),
+            ));
+        }
+        // Extract host (between :// and next /)
+        if let Some(after_scheme) = url.split("://").nth(1) {
+            let host = after_scheme.split('/').next().unwrap_or("")
+                .split(':').next().unwrap_or("")
+                .trim_matches(|c: char| c == '[' || c == ']');
+            let is_private = host.starts_with("10.") || host.starts_with("192.168.")
+                || host.starts_with("172.") || host.starts_with("169.254.")
+                || host == "localhost" || host == "127.0.0.1" || host == "::1"
+                || host.starts_with("fd") || host.starts_with("fe80");
+            if is_private {
+                return Err(ExtensionError::InvalidArguments(
+                    "image_url points to a private address — refused".to_string(),
+                ));
+            }
+        }
+        const MAX_DOWNLOAD: u64 = 10 * 1024 * 1024;
+
         let response = ureq::get(url)
             .timeout(std::time::Duration::from_secs(30))
             .call()
@@ -1488,7 +1511,10 @@ impl Extension for UinkRmsBridge {
                 || (now_ts - self.last_sync_ts.load(Ordering::SeqCst)) >= sync_interval;
 
             if should_sync {
-                if let Err(e) = self.auto_sync() {
+                // block_in_place moves other tasks off this worker thread while we
+            // do sync HTTP — the old code blocked the entire metrics pipeline
+            let sync_result = tokio::task::block_in_place(|| self.auto_sync());
+            if let Err(e) = sync_result {
                     eprintln!("[uink-rms-bridge] Auto-sync failed: {}", e);
                     *self.last_error.write() = Some(format!("Auto-sync: {}", e));
                     self.total_error_count.fetch_add(1, Ordering::SeqCst);
@@ -1500,7 +1526,7 @@ impl Extension for UinkRmsBridge {
 
         // Poll telemetry if devices are registered
         if configured && (now_ts - self.last_poll_ts.load(Ordering::SeqCst)) >= poll_interval {
-            if let Err(e) = self.poll_all_telemetry() {
+            if let Err(e) = tokio::task::block_in_place(|| self.poll_all_telemetry()) {
                 *self.last_error.write() = Some(format!("{}", e));
             } else if self.last_error.read().as_ref().map_or(true, |e| e.starts_with("Auto-sync")) {
                 *self.last_error.write() = None;
@@ -1719,6 +1745,9 @@ impl UinkRmsBridge {
     }
 
     async fn cmd_sync_devices(&self, _args: &serde_json::Value) -> Result<serde_json::Value> {
+        // Sync HTTP must not block the async worker — block_in_place
+        // moves other tasks to another worker while we run.
+        let result = tokio::task::block_in_place(|| self.auto_sync());
         let ctx = CapabilityContext::default();
 
         // Register device type template

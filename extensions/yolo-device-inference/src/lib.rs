@@ -1625,8 +1625,8 @@ impl Extension for YoloDeviceInference {
                     {
                         match self.process_image(device_id, &image_data, binding.draw_boxes) {
                             Ok(result) => {
-                                self.total_inferences.fetch_add(1, Ordering::SeqCst);
-                                self.total_detections.fetch_add(result.detections.len() as u64, Ordering::SeqCst);
+                                // NOTE: process_image already counts these; counting here
+                                // too doubles every metric (bug #853+1628)
                                 self.write_inference_results(
                                     device_id,
                                     &result,

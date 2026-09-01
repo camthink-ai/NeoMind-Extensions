@@ -396,7 +396,16 @@ fn audio_thread(rx: Receiver<AudioCmd>) {
             }
             AudioCmd::EndSession => {
                 if let Some((sink, done)) = current.take() {
-                    sink.sleep_until_end();
+                    // Sleep in short slices so a queued Stop command gets
+                    // processed promptly (the old sleep_until_end() blocked
+                    // the audio thread until natural completion — found in
+                    // code review). rodio has no interruptible wait, so we
+                    // poll at 100ms which is imperceptible for TTS.
+                    let deadline = std::time::Instant::now()
+                        + std::time::Duration::from_secs(300); // 5min hard cap
+                    while !sink.empty() && std::time::Instant::now() < deadline {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
                     sink.detach();
                     let _ = done.map(|s| s.send(SessionResult::ok()));
                 }

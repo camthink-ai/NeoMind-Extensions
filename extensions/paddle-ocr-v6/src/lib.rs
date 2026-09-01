@@ -199,6 +199,16 @@ impl OcrEngine {
     /// Lazy-load detector + recognizer for `tier`. No-op if already
     /// loaded at the same tier. Records any failure in `load_error`
     /// rather than returning Err — callers check `loaded` / `load_error`.
+    /// Download any missing model files for the tier — safe to call with
+    /// only a READ lock (concurrent calls deduplicate via .part files).
+    /// Extracted from ensure_loaded so downloads don't hold the write lock.
+    pub fn download_missing(&self, tier: Tier) {
+        let resolved = tier.resolve(false, cfg!(target_os = "macos"), 16);
+        if let Err(e) = self.downloader.ensure_models(resolved, &self.models_dir) {
+            tracing::warn!("[paddle-ocr-v6] background download failed (will retry on load): {e}");
+        }
+    }
+
     pub fn ensure_loaded(&mut self, tier: Tier, device_hint: Option<&str>) {
         if self.loaded && self.tier == tier {
             return;
@@ -730,11 +740,22 @@ impl PaddleOcrV6Extension {
         // a long OCR run will block parallel switch_tier calls — that's
         // acceptable for v1 (switch_tier is rare). If it becomes a real
         // bottleneck, snapshot the engine state and release the lock.
+        // Phase 1 (no lock): download any missing model files. The old
+        // code did this inside engine.write(), blocking all parallel
+        // commands for the download duration (potentially minutes for
+        // medium tier on slow connections) — spec violation (§6.1: "download
+        // outside lock, reload under short lock").
+        {
+            let engine = self.engine.read();
+            if !engine.loaded {
+                let tier = *self.configured_tier.read();
+                // Download under READ lock (concurrent downloads OK)
+                engine.download_missing(tier);
+            }
+        }
+        // Phase 2 (short write lock): load models from disk
         let mut engine = self.engine.write();
         if !engine.loaded {
-            // Lazy-load on first recognize using configured tier. This
-            // makes the extension work out-of-the-box if models are on
-            // disk (tiny tier ships in the .nep).
             let tier = *self.configured_tier.read();
             engine.ensure_loaded(tier, None);
         }
@@ -811,6 +832,7 @@ impl PaddleOcrV6Extension {
     /// Synchronous HTTP fetch. Uses ureq (not async) to avoid pulling a
     /// Tokio runtime into the cdylib — same pattern as downloader.rs.
     fn fetch_url(url: &str) -> Result<Vec<u8>> {
+        validate_url(url).map_err(|e| ExtensionError::InvalidArguments(e))?;
         let resp = ureq::get(url)
             .timeout(std::time::Duration::from_secs(30))
             .call()
@@ -852,3 +874,22 @@ fn param_optional(
 }
 
 neomind_extension_sdk::neomind_export!(PaddleOcrV6Extension);
+
+fn validate_url(url: &str) -> std::result::Result<(), String> {
+    let lower = url.to_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return Err(format!("URL scheme not allowed: {url}"));
+    }
+    if let Some(after) = url.split("://").nth(1) {
+        let host = after.split('/').next().unwrap_or("")
+            .split(':').next().unwrap_or("");
+        let is_private = host.starts_with("10.") || host.starts_with("192.168.")
+            || host.starts_with("172.") || host.starts_with("169.254.")
+            || host == "localhost" || host == "127.0.0.1"
+            || host == "metadata.google.internal";
+        if is_private {
+            return Err(format!("URL points to private address: {host}"));
+        }
+    }
+    Ok(())
+}

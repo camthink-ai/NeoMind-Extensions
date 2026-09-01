@@ -1,0 +1,88 @@
+{
+  "id": "video-vlm-v2",
+  "version": "0.1.0",
+  "entrypoint": "video-vlm-v2-components.umd.cjs",
+  "components": [
+    {
+      "name": "VideoVlmDisplay",
+      "type": "video-vlm-display",
+      "displayName": "Video VLM",
+      "description": "Real-time video understanding: RTSP/file/camera input, on-board VLM analysis, timeline with thumbnails, voice playback",
+      "icon": "video",
+      "defaultSize": {
+        "width": 480,
+        "height": 360
+      },
+      "minSize": {
+        "width": 320,
+        "height": 240
+      },
+      "maxSize": {
+        "width": 800,
+        "height": 600
+      },
+      "configSchema": {
+        "sourceUrl": {
+          "type": "string",
+          "title": "视频源地址",
+          "required": true,
+          "default": "file:///home/ztl/wifi/test.mp4",
+          "description": "视频源: rtsp://... / file:///路径 / http://..."
+        },
+        "prompt": {
+          "type": "string",
+          "title": "分析提示词",
+          "default": "用中文简要描述当前视频画面里有什么,包括物体、人物、场景和事件。",
+          "description": "VLM 每次分析画面时使用的提示词"
+        },
+        "analyzeEvery": {
+          "type": "number",
+          "title": "分析间隔(帧)",
+          "default": 15,
+          "description": "每隔多少帧做一次 VLM 分析(数值越大越省算力,描述更新越慢)"
+        },
+        "maxTokens": {
+          "type": "number",
+          "title": "单次分析最大Token",
+          "default": 120,
+          "description": "每次 VLM 分析输出的最大 token 数"
+        },
+        "fps": {
+          "type": "number",
+          "title": "目标帧率",
+          "default": 8,
+          "description": "视频推流目标帧率"
+        },
+        "confidenceThreshold": {
+          "type": "number",
+          "title": "检测置信度阈值",
+          "default": 0.5,
+          "description": "(YOLO检测预留,当前版本不启用)"
+        },
+        "maxObjects": {
+          "type": "number",
+          "title": "最大检测数",
+          "default": 20,
+          "description": "(YOLO检测预留,当前版本不启用)"
+        }
+      },
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "device",
+        "device-metric"
+      ],
+      "refreshable": false,
+      "refreshInterval": 0
+    }
+  ],
+  "i18n": {
+    "defaultLanguage": "en",
+    "supportedLanguages": [
+      "en",
+      "zh"
+    ]
+  },
+  "dependencies": {
+    "react": ">=18.0.0"
+  }
+}

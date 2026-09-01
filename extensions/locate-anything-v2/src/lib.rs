@@ -60,6 +60,23 @@ pub struct LocateAnythingExtension {
     http_agent: ureq::Agent,
 }
 
+impl Clone for LocateAnythingExtension {
+    fn clone(&self) -> Self {
+        Self {
+            service_url: RwLock::new(self.service_url.read().clone()),
+            generation_mode: RwLock::new(self.generation_mode.read().clone()),
+            max_new_tokens: RwLock::new(*self.max_new_tokens.read()),
+            nms_iou_threshold: RwLock::new(*self.nms_iou_threshold.read()),
+            min_area_ratio: RwLock::new(*self.min_area_ratio.read()),
+            max_area_ratio: RwLock::new(*self.max_area_ratio.read()),
+            service_ok: AtomicBool::new(self.service_ok.load(Ordering::SeqCst)),
+            total_requests: AtomicI64::new(self.total_requests.load(Ordering::SeqCst)),
+            last_inference_ms: AtomicI64::new(self.last_inference_ms.load(Ordering::SeqCst)),
+            http_agent: self.http_agent.clone(),
+        }
+    }
+}
+
 impl LocateAnythingExtension {
     pub fn new() -> Self {
         let service_url = std::env::var("LOCATE_ANYTHING_SERVICE_URL")
@@ -102,6 +119,7 @@ impl LocateAnythingExtension {
 
     /// POST to the Python service and return the response
     fn call_service(&self, endpoint: &str, body: &serde_json::Value) -> Result<serde_json::Value> {
+        validate_url(&self.service_url.read()).map_err(ExtensionError::InvalidArguments)?;
         let url = format!("{}/{}", *self.service_url.read(), endpoint);
 
         let resp = self.http_agent.post(&url)
@@ -646,7 +664,13 @@ impl Extension for LocateAnythingExtension {
                     "categories": categories,
                 });
                 self.inject_defaults(&mut body);
-                let mut result = self.call_service("detect", &body)?;
+                let mut result = tokio::task::spawn_blocking({
+                let this = self.clone();
+                let b = body.clone();
+                move || this.call_service("detect", &b)
+            })
+            .await
+            .map_err(|e| ExtensionError::ExecutionFailed(format!("service task panicked: {e}")))??;
                 self.postprocess_args(&mut result, args);
                 Ok(result)
             }
@@ -668,7 +692,13 @@ impl Extension for LocateAnythingExtension {
                     "mode": mode,
                 });
                 self.inject_defaults(&mut body);
-                let mut result = self.call_service("ground", &body)?;
+                let mut result = tokio::task::spawn_blocking({
+                let this = self.clone();
+                let b = body.clone();
+                move || this.call_service("ground", &b)
+            })
+            .await
+            .map_err(|e| ExtensionError::ExecutionFailed(format!("service task panicked: {e}")))??;
                 self.postprocess_args(&mut result, args);
                 Ok(result)
             }
@@ -682,7 +712,13 @@ impl Extension for LocateAnythingExtension {
                     "image_base64": image_b64,
                 });
                 self.inject_defaults(&mut body);
-                self.call_service("detect_text", &body)
+                tokio::task::spawn_blocking({
+                let this = self.clone();
+                let b = body.clone();
+                move || this.call_service("detect_text", &b)
+            })
+            .await
+            .map_err(|e| ExtensionError::ExecutionFailed(format!("service task panicked: {e}")))?
             }
 
             "ground_gui" => {
@@ -702,7 +738,13 @@ impl Extension for LocateAnythingExtension {
                     "output_type": output_type,
                 });
                 self.inject_defaults(&mut body);
-                let mut result = self.call_service("ground_gui", &body)?;
+                let mut result = tokio::task::spawn_blocking({
+                let this = self.clone();
+                let b = body.clone();
+                move || this.call_service("ground_gui", &b)
+            })
+            .await
+            .map_err(|e| ExtensionError::ExecutionFailed(format!("service task panicked: {e}")))??;
                 self.postprocess_args(&mut result, args);
                 Ok(result)
             }
@@ -720,7 +762,13 @@ impl Extension for LocateAnythingExtension {
                     "phrase": phrase,
                 });
                 self.inject_defaults(&mut body);
-                self.call_service("point", &body)
+                tokio::task::spawn_blocking({
+                let this = self.clone();
+                let b = body.clone();
+                move || this.call_service("point", &b)
+            })
+            .await
+            .map_err(|e| ExtensionError::ExecutionFailed(format!("service task panicked: {e}")))?
             }
 
             _ => Err(ExtensionError::CommandNotFound(command.to_string())),
@@ -915,4 +963,22 @@ mod tests {
         assert!(result.get("postprocess").is_some());
         assert_eq!(result["postprocess"]["removed_count"], 3);
     }
+}
+
+fn validate_url(url: &str) -> std::result::Result<(), String> {
+    let lower = url.to_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return Err(format!("URL scheme not allowed: {url}"));
+    }
+    if let Some(after) = url.split("://").nth(1) {
+        let host = after.split('/').next().unwrap_or("")
+            .split(':').next().unwrap_or("");
+        let is_private = host.starts_with("10.") || host.starts_with("192.168.")
+            || host.starts_with("172.") || host.starts_with("169.254.")
+            || host == "localhost" || host == "127.0.0.1";
+        if is_private {
+            return Err(format!("URL points to private address: {host}"));
+        }
+    }
+    Ok(())
 }

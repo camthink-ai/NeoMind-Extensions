@@ -380,7 +380,7 @@ mod tests {
         let token = client
             .token_string()
             .expect("token should be set after login");
-        eprintln!("[live] login ok, token = {token}");
+        tracing::info!("[live] login ok"); // token redacted from logs
 
         // Fresh live-state mirror + spawn the ingest subscriber.
         let state = Arc::new(LiveState::new(30));

@@ -4,6 +4,8 @@ use neomind_extension_sdk::{
     dynamic_metrics::{DynamicMetricsRegistry, MetricTemplate},
 };
 use crate::db::Zone;
+use crate::geo;
+use crate::types::Track;
 
 const BASE_EQUIP: &str = "gym.equipment_occupied";
 
@@ -45,6 +47,22 @@ impl Metrics {
             BASE_EQUIP,
             MetricValue::Integer(if occupied { 1 } else { 0 }),
         );
+    }
+
+    /// Recompute per-zone occupation from the current live tracks + zone set.
+    /// A zone is occupied iff at least one track's `foot` is inside its polygon
+    /// (ray-cast). Disabled zones are skipped. Zones absent from the registry
+    /// are silently ignored by `set_occupied` (SDK no-op contract).
+    pub fn apply_occupation(&self, tracks: &[Track], zones: &[Zone]) {
+        for z in zones {
+            if !z.enabled {
+                continue;
+            }
+            let occupied = tracks
+                .iter()
+                .any(|t| geo::point_in_polygon(t.foot.x, t.foot.y, &z.polygon));
+            self.set_occupied(&z.id, occupied);
+        }
     }
 
     /// Static aggregate descriptors advertised via Extension::metrics().
@@ -111,6 +129,7 @@ impl Default for Metrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{Bbox, Point, Track};
 
     fn zone(id: &str, name: &str, enabled: bool) -> Zone {
         Zone {
@@ -226,5 +245,85 @@ mod tests {
             .map(|d| d.name.clone())
             .collect::<Vec<_>>();
         assert_eq!(dyn_names, vec!["gym.equipment_occupied.zone-a"]);
+    }
+
+    fn zone_poly(id: &str, name: &str, polygon: Vec<(f32, f32)>) -> Zone {
+        Zone {
+            id: id.into(),
+            name: name.into(),
+            equipment_type: "treadmill".into(),
+            polygon,
+            enabled: true,
+        }
+    }
+
+    fn track_foot(tid: i64, x: f32, y: f32) -> Track {
+        Track {
+            track_id: tid,
+            bbox: Bbox { x, y, w: 0.0, h: 0.0 },
+            foot: Point { x, y },
+            pose: None,
+            face: None,
+        }
+    }
+
+    /// Read the Integer value of a named produced metric (panics if absent or
+    /// non-integer) so the occupation assertions stay one-liners.
+    fn int_val(vals: &[ExtensionMetricValue], name: &str) -> i64 {
+        let v = vals
+            .iter()
+            .find(|v| v.name == name)
+            .unwrap_or_else(|| panic!("metric {name} not in produced set"));
+        match &v.value {
+            MetricValue::Integer(n) => *n,
+            other => panic!("expected Integer for {name}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn apply_occupation_marks_only_zones_with_a_foot_inside() {
+        let m = Metrics::new();
+        let z1 = zone_poly("z1", "Treadmill", vec![(0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)]);
+        let z2 = zone_poly("z2", "Bench", vec![(0.0, 0.0), (0.1, 0.0), (0.1, 0.1), (0.0, 0.1)]);
+        m.sync_zones(&[z1.clone(), z2.clone()]);
+
+        // Track A's foot is inside z1; track B's foot is inside neither zone.
+        let tracks = vec![track_foot(1, 0.5, 0.5), track_foot(2, 0.95, 0.95)];
+        m.apply_occupation(&tracks, &[z1, z2]);
+
+        let vals = m.produce(2, 0, 0);
+        assert_eq!(int_val(&vals, "gym.equipment_occupied.Treadmill"), 1, "foot inside z1");
+        assert_eq!(int_val(&vals, "gym.equipment_occupied.Bench"), 0, "no foot inside z2");
+    }
+
+    #[test]
+    fn apply_occupation_goes_idle_when_tracks_leave() {
+        let m = Metrics::new();
+        let z1 = zone_poly("z1", "Treadmill", vec![(0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)]);
+        m.sync_zones(std::slice::from_ref(&z1));
+
+        // Occupied while a foot is inside...
+        m.apply_occupation(&[track_foot(1, 0.5, 0.5)], std::slice::from_ref(&z1));
+        assert_eq!(int_val(&m.produce(1, 0, 0), "gym.equipment_occupied.Treadmill"), 1);
+
+        // ...then the person leaves (no tracks) → must flip back to idle.
+        m.apply_occupation(&[], &[z1]);
+        assert_eq!(int_val(&m.produce(0, 0, 0), "gym.equipment_occupied.Treadmill"), 0);
+    }
+
+    #[test]
+    fn apply_occupation_skips_disabled_zones() {
+        let m = Metrics::new();
+        let mut z1 = zone_poly("z1", "Treadmill", vec![(0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)]);
+        z1.enabled = false;
+        // sync_zones already skips disabled zones, so z1 is never registered;
+        // apply_occupation must skip it too (no phantom metric, no panic).
+        m.sync_zones(std::slice::from_ref(&z1));
+        m.apply_occupation(&[track_foot(1, 0.5, 0.5)], &[z1]);
+        let vals = m.produce(0, 0, 0);
+        assert!(
+            vals.iter().all(|v| !v.name.starts_with("gym.equipment_occupied.")),
+            "disabled zone must produce no per-zone metric"
+        );
     }
 }

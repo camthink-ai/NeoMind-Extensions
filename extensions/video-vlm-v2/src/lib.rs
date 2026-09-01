@@ -1,4 +1,4 @@
-//! YOLO Video Processor Extension (V2)
+//! Video VLM Processor Extension (V2)
 //!
 //! Real-time video stream processing with YOLOv11 object detection.
 //! Built for the NeoMind isolated extension runtime.
@@ -17,6 +17,7 @@
 //! extension starts pushing video frames with detection overlays.
 
 pub mod detector;
+pub mod vlm;
 pub mod video_source;
 use video_source::{FfmpegVideoSource, FrameResult, SourceType, VideoSource, parse_source_url};
 
@@ -43,6 +44,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use detector::{Detection, YoloDetector};
+use vlm::VlmAnalyzer;
 
 // ============================================================================
 // Constants
@@ -179,6 +181,7 @@ pub struct CaptureRule {
 }
 
 fn default_cooldown() -> f64 { 5.0 }
+fn default_analyze_every() -> u32 { 30 }
 fn default_quality() -> u8 { 80 }
 
 /// Per-rule runtime state (stored on ActiveStream)
@@ -209,6 +212,12 @@ pub struct StreamConfig {
     pub max_objects: u32,
     pub target_fps: u32,
     pub draw_boxes: bool,
+    #[serde(default)]
+    pub prompt: String,
+    #[serde(default)]
+    pub max_tokens: u32,
+    #[serde(default = "default_analyze_every")]
+    pub analyze_every: u32,
     pub rois: Vec<RoiRegion>,
     pub lines: Vec<CrossLine>,
     #[serde(default)]
@@ -223,6 +232,9 @@ impl Default for StreamConfig {
             max_objects: 20,
             target_fps: 15,
             draw_boxes: true,
+            prompt: "Briefly describe what is happening in the video frame, including objects, people, scene, and events.".to_string(),
+            max_tokens: 150,
+            analyze_every: 30,
             rois: Vec::new(),
             lines: Vec::new(),
             capture_rules: Vec::new(),
@@ -240,7 +252,17 @@ pub struct StreamInfo {
     pub height: u32,
 }
 
-/// Stream statistics
+/// One entry in the VLM analysis timeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VlmHistoryEntry {
+    pub timestamp: i64,   // unix ms
+    pub frame: u64,
+    pub latency_ms: u64,
+    pub text: String,
+    /// Small base64 JPEG thumbnail of the analyzed frame (~3KB)
+    pub thumb: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamStats {
     pub stream_id: String,
@@ -260,6 +282,12 @@ struct ActiveStream {
     total_detections: u64,
     last_frame: Option<Vec<u8>>,
     last_detections: Vec<ObjectDetection>,
+    last_vlm_text: String,
+    last_vlm_latency_ms: u64,
+    last_vlm_frame: u64,
+    /// Rolling history of VLM analyses (newest last) — sent to the frontend
+    /// as a timeline, and used as context for the next VLM prompt.
+    vlm_history: std::collections::VecDeque<VlmHistoryEntry>,
     last_frame_time: Option<Instant>,
     fps: f32,
     running: bool,
@@ -400,6 +428,54 @@ fn generate_fallback_detections(frame_count: u64, max_objects: u32) -> Vec<Objec
 }
 
 /// Draw detections on an image with standard object detection visualization
+/// Draw the VLM description as a text box at the bottom of the frame.
+pub fn draw_text_overlay(image: &mut image::RgbImage, text: &str) {
+    use imageproc::drawing::{draw_filled_rect_mut, draw_text_mut};
+    use imageproc::rect::Rect;
+    use ab_glyph::{FontRef, PxScale, Font as AbFont, ScaleFont as _};
+
+    if text.is_empty() {
+        return;
+    }
+    static FONT_RESULT: std::sync::OnceLock<std::result::Result<FontRef<'static>, ab_glyph::InvalidFont>> =
+        std::sync::OnceLock::new();
+    let font = FONT_RESULT.get_or_init(|| FontRef::try_from_slice(include_bytes!("../fonts/NotoSans-Regular.ttf")));
+    let Ok(font) = font else { return };
+
+    let (w, h) = (image.width(), image.height());
+    // 最多两行文字, 每行 60 字符
+    let lines: Vec<String> = text.chars()
+        .collect::<Vec<_>>()
+        .chunks(60)
+        .take(2)
+        .map(|c| c.iter().collect())
+        .collect();
+    if lines.is_empty() {
+        return;
+    }
+
+    let bar_h: u32 = 8 + (lines.len() as u32) * 18;
+    draw_filled_rect_mut(
+        image,
+        Rect::at(0, (h.saturating_sub(bar_h)) as i32).of_size(w, bar_h),
+        image::Rgb([16, 18, 22]),
+    );
+
+    let scale = PxScale::from(16.0);
+    for (i, line) in lines.iter().enumerate() {
+        let y = (h.saturating_sub(bar_h) + 6 + (i as u32) * 18) as i32;
+        draw_text_mut(
+            image,
+            image::Rgb([255, 255, 255]),
+            4,
+            y,
+            scale,
+            font,
+            line,
+        );
+    }
+}
+
 pub fn draw_detections(image: &mut image::RgbImage, detections: &[ObjectDetection]) {
     use imageproc::drawing::{draw_hollow_rect_mut, draw_filled_rect_mut, draw_text_mut};
     use imageproc::rect::Rect;
@@ -549,6 +625,34 @@ fn get_registry() -> &'static Mutex<StreamRegistry> {
     REGISTRY.get_or_init(|| Mutex::new(StreamRegistry::new()))
 }
 
+/// Per-session channels carrying JPEG frames uploaded from the browser's OWN
+/// camera (client-camera:// sources). Fed by process_session_chunk, drained by
+/// the client-camera pump thread spawned in start_push.
+static CLIENT_CAM_TX: std::sync::OnceLock<Mutex<std::collections::HashMap<String, std::sync::mpsc::SyncSender<Vec<u8>>>>> =
+    std::sync::OnceLock::new();
+
+fn client_cams() -> &'static Mutex<std::collections::HashMap<String, std::sync::mpsc::SyncSender<Vec<u8>>>> {
+    CLIENT_CAM_TX.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+/// 64-bit difference hash (dHash): downscale to 9x8 grayscale, one bit per
+/// pixel = right neighbor brighter. Resolution-independent, microseconds on
+/// CPU — the cheap "cognition gate" that decides whether the VLM runs at all
+/// (modeled on microsoft/Mage-VL's silent-on-routine-content behavior).
+fn dhash_64(img: &image::RgbImage) -> u64 {
+    let small = image::imageops::resize(img, 9, 8, image::imageops::FilterType::Nearest);
+    let gray = image::imageops::grayscale(&image::DynamicImage::ImageRgb8(small));
+    let mut hash = 0u64;
+    for y in 0..8usize {
+        for x in 0..8usize {
+            if gray.get_pixel(x as u32 + 1, y as u32)[0] > gray.get_pixel(x as u32, y as u32)[0] {
+                hash |= 1u64 << (y * 8 + x);
+            }
+        }
+    }
+    hash
+}
+
 // ============================================================================
 // MJPEG Frame Queue for Streaming
 // ============================================================================
@@ -621,6 +725,7 @@ pub fn remove_frame_queue(session_id: &str) {
 
 pub struct StreamProcessor {
     detector: Arc<parking_lot::Mutex<Option<YoloDetector>>>,
+    vlm: Arc<parking_lot::Mutex<Option<VlmAnalyzer>>>,
 }
 
 impl StreamProcessor {
@@ -640,7 +745,17 @@ impl StreamProcessor {
 
         Self {
             detector: Arc::new(parking_lot::Mutex::new(detector)),
+            vlm: Arc::new(parking_lot::Mutex::new(Some(VlmAnalyzer::new()))),
         }
+    }
+
+    /// Get the VLM analyzer (lazy init)
+    fn get_vlm(&self) -> Option<parking_lot::MappedMutexGuard<'_, VlmAnalyzer>> {
+        let mut lock = self.vlm.lock();
+        if lock.is_none() {
+            *lock = Some(VlmAnalyzer::new());
+        }
+        Some(parking_lot::MutexGuard::map(lock, |opt| opt.as_mut().unwrap()))
     }
 
     /// Get the YOLO detector, ensuring it's loaded (lazy initialization)
@@ -713,6 +828,10 @@ impl StreamProcessor {
             total_detections: 0,
             last_frame: None,
             last_detections: vec![],
+            last_vlm_text: String::new(),
+            last_vlm_latency_ms: 0,
+            last_vlm_frame: 0,
+            vlm_history: std::collections::VecDeque::new(),
             last_frame_time: None,
             fps: 0.0,
             running: true,
@@ -753,7 +872,7 @@ impl StreamProcessor {
 
         Ok(StreamInfo {
             stream_id: stream_id.clone(),
-            stream_url: format!("/api/extensions/yolo-video-v2/stream/{}", stream_id),
+            stream_url: format!("/api/extensions/video-vlm-v2/stream/{}", stream_id),
             status: "starting".to_string(),
             width,
             height,
@@ -772,6 +891,7 @@ impl StreamProcessor {
 
         let frame_interval = Duration::from_millis(1000 / config.target_fps.max(1) as u64);
         let mut frame_num = 0u64;
+        let mut last_vlm_text = String::new();
 
         // Try to open a hardware-accelerated video source for RTSP/RTMP/HLS/File/HTTP URLs.
         // Priority: GStreamer NVDEC (Jetson) > FFmpeg software decode > demo frames.
@@ -924,31 +1044,37 @@ impl StreamProcessor {
             };
             let d_frame = t_frame.elapsed();
 
-            // Run inference
+            // Run VLM analysis (every analyze_every frames; keep last text between)
             let t_inf = Instant::now();
-            let detections = match processor.get_detector() {
-                Some(detector) if detector.is_loaded() => {
-                    tracing::debug!("[Stream {}] Running real inference", stream_id);
-                    let raw_detections = detector.detect(
-                        &frame,
-                        config.confidence_threshold,
-                        config.max_objects,
-                    );
-                    detections_to_object_detection(raw_detections)
-                }
-                _ => {
-                    tracing::debug!("[Stream {}] Using fallback detections", stream_id);
-                    generate_fallback_detections(frame_num, config.max_objects)
+            let vlm_text = {
+                let should_analyze = frame_num % (config.analyze_every.max(1) as u64) == 0;
+                if should_analyze {
+                    if let Some(vlm) = processor.get_vlm() {
+                        let prompt = if config.prompt.is_empty() {
+                            "Briefly describe what is happening in the video frame, including objects, people, scene, and events."
+                        } else {
+                            &config.prompt
+                        };
+                        match vlm.analyze(&frame, prompt, config.max_tokens.max(50)) {
+                            Ok(r) => { last_vlm_text = r.text.clone(); r.text }
+                            Err(e) => {
+                                tracing::warn!("[Stream {}] VLM analysis failed: {}", stream_id, e);
+                                last_vlm_text.clone()
+                            }
+                        }
+                    } else {
+                        last_vlm_text.clone()
+                    }
+                } else {
+                    last_vlm_text.clone()
                 }
             };
             let d_inf = t_inf.elapsed();
 
-            // Draw boxes if enabled
+            // Draw VLM text overlay
             let t_draw = Instant::now();
             let mut output_img = frame;
-            if config.draw_boxes {
-                draw_detections(&mut output_img, &detections);
-            }
+            draw_text_overlay(&mut output_img, &vlm_text);
             let d_draw = t_draw.elapsed();
 
             // Encode to JPEG
@@ -972,9 +1098,9 @@ impl StreamProcessor {
             {
                 let mut s = stream.lock();
                 s.frame_count += 1;
-                s.total_detections += detections.len() as u64;
+                s.total_detections += 1;
                 s.last_frame = Some(jpeg_data);
-                s.last_detections = detections.clone();
+                s.last_vlm_text = vlm_text.clone();
                 s.last_frame_time = Some(Instant::now());
 
                 let elapsed = s.started_at.elapsed().as_secs_f32();
@@ -982,8 +1108,8 @@ impl StreamProcessor {
                     s.fps = s.frame_count as f32 / elapsed;
                 }
 
-                for det in &detections {
-                    *s.detected_objects.entry(det.label.clone()).or_insert(0) += 1;
+                if !vlm_text.is_empty() {
+                    *s.detected_objects.entry("vlm_analysis".to_string()).or_insert(0) += 1;
                 }
             }
 
@@ -1057,7 +1183,7 @@ impl Default for StreamProcessor {
 }
 
 // ============================================================================
-// YOLO Video Processor Extension (V2)
+// Video VLM Processor Extension (V2)
 // ============================================================================
 
 pub struct YoloVideoProcessorV2 {
@@ -1153,6 +1279,10 @@ impl YoloVideoProcessorV2 {
             total_detections: 0,
             last_frame: None,
             last_detections: Vec::new(),
+            last_vlm_text: String::new(),
+            last_vlm_latency_ms: 0,
+            last_vlm_frame: 0,
+            vlm_history: std::collections::VecDeque::new(),
             last_frame_time: None,
             fps: 0.0,
             running: true,
@@ -1218,11 +1348,11 @@ impl Extension for YoloVideoProcessorV2 {
         static META: std::sync::OnceLock<ExtensionMetadata> = std::sync::OnceLock::new();
         META.get_or_init(|| {
             ExtensionMetadata::new(
-                "yolo-video-v2",
-                "YOLO Video V2",
-                "2.0.0",
+                "video-vlm-v2",
+                "Video VLM",
+                "0.1.0",
             )
-            .with_description("Real-time video stream object detection with YOLOv11, RTSP/camera support, ROI analytics, line crossing, smart capture rules, and MJPEG streaming")
+            .with_description("Real-time video stream understanding: RTSP/file/camera input, on-board VLM analysis with timeline, voice, and hardware-accelerated streaming")
             .with_author("NeoMind Team")
             .with_config_parameters(vec![
                 ParameterDefinition {
@@ -1453,6 +1583,36 @@ impl Extension for YoloVideoProcessorV2 {
                 samples: vec![],
                 parameter_groups: Vec::new(),
             },
+            ExtensionCommand {
+                name: "upload_start".to_string(),
+                display_name: "Upload Start".to_string(),
+                description: "Begin chunked video upload".to_string(),
+                payload_template: r#"{"filename": "video.mp4"}"#.to_string(),
+                parameters: vec![],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "upload_chunk".to_string(),
+                display_name: "Upload Chunk".to_string(),
+                description: "Append base64 chunk".to_string(),
+                payload_template: r#"{"tmp":"...","data":"..."}"#.to_string(),
+                parameters: vec![],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "upload_end".to_string(),
+                display_name: "Upload End".to_string(),
+                description: "Finalize upload".to_string(),
+                payload_template: r#"{"tmp":"...","filename":"..."}"#.to_string(),
+                parameters: vec![],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                parameter_groups: Vec::new(),
+            },
         ]
     }
 
@@ -1480,7 +1640,7 @@ impl Extension for YoloVideoProcessorV2 {
                     let _ = &config; // silence unused on wasm
                     let info = StreamInfo {
                         stream_id: "wasm-mock-stream".to_string(),
-                        stream_url: "/api/extensions/yolo-video-v2/stream/wasm-mock-stream".to_string(),
+                        stream_url: "/api/extensions/video-vlm-v2/stream/wasm-mock-stream".to_string(),
                         status: "running".to_string(),
                         width: 640,
                         height: 480,
@@ -1518,6 +1678,126 @@ impl Extension for YoloVideoProcessorV2 {
                     Err(ExtensionError::SessionNotFound(stream_id.to_string()))
                 }
             }
+            "get_frame" => {
+                let stream_id = args.get("stream_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing stream_id".to_string()))?;
+
+                if let Some(jpeg) = self.processor.get_stream_frame(stream_id) {
+                    Ok(json!({
+                        "stream_id": stream_id,
+                        "format": "jpeg",
+                        "frame": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg),
+                    }))
+                } else {
+                    Err(ExtensionError::SessionNotFound(stream_id.to_string()))
+                }
+            }
+            "upload_start" => {
+                let filename = args.get("filename").and_then(|v| v.as_str())
+                    .unwrap_or("upload.mp4");
+                let safe_name: String = filename.chars()
+                    .filter(|c| c.is_alphanumeric() || *c == '.' || *c == '-' || *c == '_')
+                    .collect();
+                let safe_name = if safe_name.is_empty() { "upload.mp4".to_string() } else { safe_name };
+                let dir = std::path::Path::new("/home/ztl/wifi/uploads");
+                let _ = std::fs::create_dir_all(dir);
+                let tmp = dir.join(format!("{}.part", safe_name));
+                std::fs::write(&tmp, b"") // truncate any previous partial
+                    .map_err(|e| ExtensionError::Io(format!("Write failed: {}", e)))?;
+                Ok(json!({"success": true, "tmp": tmp.display().to_string()}))
+            }
+            "upload_chunk" => {
+                let tmp = args.get("tmp").and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing tmp".into()))?;
+                let data_b64 = args.get("data").and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing data".into()))?;
+                use base64::Engine;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(data_b64)
+                    .map_err(|e| ExtensionError::InvalidArguments(format!("Invalid base64: {}", e)))?;
+                // SECURITY: `tmp` is user-controllable — restrict to a
+                // designated staging prefix under the extension's own data
+                // dir, reject absolute/parent-escape paths outright.
+                if tmp.starts_with('/') || tmp.contains("..") || tmp.contains('\0') {
+                    return Err(ExtensionError::InvalidArguments(format!(
+                        "rejecting unsafe upload path (must be relative, no ..): {:?}", tmp
+                    )));
+                }
+                if !tmp.starts_with("uploads/") && !tmp.starts_with("./uploads/") {
+                    return Err(ExtensionError::InvalidArguments(
+                        "upload staging path must be under uploads/".to_string(),
+                    ));
+                }
+                // Size cap: reject absurdly large single chunks
+                if bytes.len() > 64 * 1024 * 1024 {
+                    return Err(ExtensionError::InvalidArguments(format!(
+                        "chunk {} bytes exceeds 64MB cap", bytes.len()
+                    )));
+                }
+                use std::io::Write;
+                let mut f = std::fs::OpenOptions::new().append(true).open(tmp)
+                    .map_err(|e| ExtensionError::Io(format!("Open failed: {}", e)))?;
+                f.write_all(&bytes)
+                    .map_err(|e| ExtensionError::Io(format!("Append failed: {}", e)))?;
+                Ok(json!({"success": true, "appended": bytes.len()}))
+            }
+            "upload_end" => {
+                let tmp = args.get("tmp").and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing tmp".into()))?;
+                let filename = args.get("filename").and_then(|v| v.as_str())
+                    .unwrap_or("upload.mp4");
+                let safe_name: String = filename.chars()
+                    .filter(|c| c.is_alphanumeric() || *c == '.' || *c == '-' || *c == '_')
+                    .collect();
+                let safe_name = if safe_name.is_empty() { "upload.mp4".to_string() } else { safe_name };
+                if tmp.starts_with('/') || tmp.contains("..") {
+                    return Err(ExtensionError::InvalidArguments("unsafe source path".into()));
+                }
+                let dir = std::env::var("NEOMIND_EXTENSION_DATA_DIR")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|_| std::path::PathBuf::from("uploads"))
+                    .join("uploads");
+                let _ = std::fs::create_dir_all(&dir);
+                let final_path = dir.join(&safe_name);
+                std::fs::rename(tmp, &final_path)
+                    .map_err(|e| ExtensionError::Io(format!("Rename failed: {}", e)))?;
+                let url = format!("file://{}", final_path.display());
+                tracing::info!("[VideoVLM] Upload complete: {} -> {}", safe_name, url);
+                Ok(json!({"success": true, "path": url, "filename": safe_name}))
+            }
+            "upload_video" => {
+                let filename = args.get("filename").and_then(|v| v.as_str())
+                    .unwrap_or("upload.mp4");
+                let data_b64 = args.get("data").and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing data".into()))?;
+
+                // Sanitize filename: strip path separators
+                let safe_name: String = filename.chars()
+                    .filter(|c| c.is_alphanumeric() || *c == '.' || *c == '-' || *c == '_')
+                    .collect();
+                let safe_name = if safe_name.is_empty() { "upload.mp4".to_string() } else { safe_name };
+
+                use base64::Engine;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(data_b64)
+                    .map_err(|e| ExtensionError::InvalidArguments(format!("Invalid base64: {}", e)))?;
+
+                let dir = std::path::Path::new("/home/ztl/wifi/uploads");
+                let _ = std::fs::create_dir_all(dir);
+                let path = dir.join(&safe_name);
+                std::fs::write(&path, &bytes)
+                    .map_err(|e| ExtensionError::Io(format!("Write failed: {}", e)))?;
+
+                let url = format!("file://{}", path.display());
+                tracing::info!("[VideoVLM] Uploaded {} ({}KB) -> {}", safe_name, bytes.len() / 1024, url);
+                Ok(json!({
+                    "success": true,
+                    "filename": safe_name,
+                    "size_kb": bytes.len() / 1024,
+                    "path": url,
+                }))
+            }
             "gc_memory" => {
                 // Trigger memory cleanup
                 self.processor.cleanup_memory();
@@ -1528,24 +1808,37 @@ impl Extension for YoloVideoProcessorV2 {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| ExtensionError::InvalidArguments("Missing stream_id".into()))?;
 
-                // Deserialize BEFORE acquiring lock to minimize lock hold time
-                let new_rois: Vec<RoiRegion> = args.get("rois")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default();
-                let new_lines: Vec<CrossLine> = args.get("lines")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default();
-                let new_capture_rules: Vec<CaptureRule> = args.get("capture_rules")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default();
-
                 let registry = get_registry().lock();
                 match registry.streams.get(stream_id) {
                     Some(stream) => {
                         let mut s = stream.lock();
-                        s._config.rois = new_rois;
-                        s._config.lines = new_lines;
-                        s._config.capture_rules = new_capture_rules;
+                        // Live-editable VLM settings (applied on the next analysis —
+                        // the worker reads these fresh from the session config)
+                        let mut prompt_applied = false;
+                        if let Some(p) = args.get("prompt").and_then(|v| v.as_str()) {
+                            s._config.prompt = p.to_string();
+                            prompt_applied = true;
+                        }
+                        if let Some(a) = args.get("analyze_every").and_then(|v| v.as_u64()) {
+                            s._config.analyze_every = (a as u32).max(1);
+                        }
+                        if let Some(m) = args.get("max_tokens").and_then(|v| v.as_u64()) {
+                            s._config.max_tokens = (m as u32).max(50);
+                        }
+                        // ROI/lines/capture_rules only overwrite when their keys are
+                        // present — a prompt-only update must not wipe them.
+                        if let Some(r) = args.get("rois")
+                            .and_then(|v| serde_json::from_value::<Vec<RoiRegion>>(v.clone()).ok()) {
+                            s._config.rois = r;
+                        }
+                        if let Some(l) = args.get("lines")
+                            .and_then(|v| serde_json::from_value::<Vec<CrossLine>>(v.clone()).ok()) {
+                            s._config.lines = l;
+                        }
+                        if let Some(c) = args.get("capture_rules")
+                            .and_then(|v| serde_json::from_value::<Vec<CaptureRule>>(v.clone()).ok()) {
+                            s._config.capture_rules = c;
+                        }
                         // Prune stale line_counts for removed lines
                         let active_ids: std::collections::HashSet<String> =
                             s._config.lines.iter().map(|l| l.id.clone()).collect();
@@ -1557,7 +1850,7 @@ impl Extension for YoloVideoProcessorV2 {
                         let roi_count = s._config.rois.len();
                         let line_count = s._config.lines.len();
                         let rule_count = s._config.capture_rules.len();
-                        Ok(json!({"success": true, "roi_count": roi_count, "line_count": line_count, "capture_rule_count": rule_count}))
+                        Ok(json!({"success": true, "prompt_applied": prompt_applied, "roi_count": roi_count, "line_count": line_count, "capture_rule_count": rule_count}))
                     }
                     None => Err(ExtensionError::SessionNotFound(stream_id.into())),
                 }
@@ -1776,7 +2069,12 @@ impl Extension for YoloVideoProcessorV2 {
             || source_url.contains(".m3u8")
             || source_url.starts_with("http://")
             || source_url.starts_with("https://")
-            || source_url.starts_with("file://");
+            || source_url.starts_with("file://")
+            || source_url.starts_with("camera://")
+            || source_url.starts_with("usb://")
+            || source_url.starts_with("v4l2://")
+            || source_url.starts_with("client-camera://")
+            || source_url.starts_with("/dev/video");
 
         let stream = ActiveStream {
             _id: stream_id.clone(),
@@ -1786,6 +2084,10 @@ impl Extension for YoloVideoProcessorV2 {
             total_detections: 0,
             last_frame: None,
             last_detections: Vec::new(),
+            last_vlm_text: String::new(),
+            last_vlm_latency_ms: 0,
+            last_vlm_frame: 0,
+            vlm_history: std::collections::VecDeque::new(),
             last_frame_time: None,
             fps: 0.0,
             running: true,
@@ -1874,7 +2176,12 @@ impl Extension for YoloVideoProcessorV2 {
             || source_url.contains(".m3u8")
             || source_url.starts_with("http://")
             || source_url.starts_with("https://")
-            || source_url.starts_with("file://");
+            || source_url.starts_with("file://")
+            || source_url.starts_with("camera://")
+            || source_url.starts_with("usb://")
+            || source_url.starts_with("v4l2://")
+            || source_url.starts_with("client-camera://")
+            || source_url.starts_with("/dev/video");
 
         if !is_network_stream {
             tracing::info!("Not a network stream, camera mode will use process_session_chunk: {}", session_id);
@@ -1886,6 +2193,16 @@ impl Extension for YoloVideoProcessorV2 {
         let confidence = config.confidence_threshold;
         let max_obj = config.max_objects;
         let draw_boxes = config.draw_boxes;
+        // VLM analysis settings (StreamConfig already carries these; the push
+        // loop historically never used them — the fork's VLM path only lived
+        // in the start_stream command loop, which the UI never reaches).
+        let analyze_every = config.analyze_every.max(1) as u64;
+        let vlm_prompt = if config.prompt.is_empty() {
+            "Briefly describe what is happening in the video frame, including objects, people, scene, and events.".to_string()
+        } else {
+            config.prompt.clone()
+        };
+        let vlm_max_tokens = config.max_tokens.max(50);
 
         tracing::info!("Starting network stream push for: {} ({})", sid, source_url);
 
@@ -1900,10 +2217,270 @@ impl Extension for YoloVideoProcessorV2 {
 
         let target_fps = config.target_fps.max(1);
 
+        // VLM worker: runs on a separate thread so the blocking analyze() call
+        // (1-2s on-card) never stalls the decode+push loop. The push thread
+        // sends frames via try_send (drops if the worker is still busy), the
+        // worker writes results into the stream registry's last_vlm_text.
+        let (vlm_tx, vlm_rx) = std::sync::mpsc::sync_channel::<image::RgbImage>(1);
+        let vlm_sid = sid.clone();
+        let vlm_processor = processor.clone();
+        // Fixed analysis cadence: pace the worker so analyses happen at a
+        // steady rhythm instead of "whenever a frame arrives + whatever the
+        // previous inference took" (which drifts and skips).
+        // Fixed cadence: at least ~1.5s between analyses (VLM takes 1-2s per
+        // frame; a shorter interval would just queue-skip and fire back-to-back
+        // with no rhythm). Derives from analyze_every/target_fps but floors it.
+        let analysis_interval = std::time::Duration::from_secs_f64(
+            (analyze_every as f64) / (target_fps.max(1) as f64)
+        ).max(std::time::Duration::from_millis(1500));
+        // UI push cap. ffmpeg already drops the decode grid to PUSH_FPS_CAP
+        // (20fps, see video_source::fps_filter_suffix) so frames arrive every
+        // 50ms; the WS throttle cap is set slightly ABOVE that (21) with a
+        // duration floor at 20fps-equivalent so every grid frame passes.
+        // (A cap equal to the grid quantizes badly: 24fps grid + 50ms gate
+        // = every-other-frame = 12fps, never 20.)
+        let push_min_interval = std::time::Duration::from_secs_f64(
+            1.0 / (target_fps as f64).min(21.0)
+        ).max(std::time::Duration::from_millis(48));
+        let vlm_worker = std::thread::Builder::new()
+            .name(format!("vlm-worker-{}", sid))
+            .spawn(move || {
+                // eprintln! lines ARE relayed to the neomind log (tracing:: is
+                // a no-op inside the runner) — keep failure paths visible.
+                eprintln!("[VLM-W] worker started sid={}", vlm_sid);
+
+                // ── Temporal memory, modeled on microsoft/Mage-VL ──────────
+                // 1. Cognition gate: a cheap CPU dHash skips the VLM while the
+                //    scene is unchanged (bounded by a staleness refresh).
+                // 2. Structured state: feed back a compact facts JSON — never
+                //    the model's own prose — so it re-observes the frame
+                //    instead of echoing its previous answer.
+                // 3. Sliding window: the timeline only gains entries on real
+                //    events (`changed: true`), making it an event stream.
+                const GATE_HAMMING: u32 = 5; // dHash bits differing ⇒ "motion"
+                const GATE_MAX_STALE_SECS: u64 = 10; // forced refresh floor
+                let mut last_hash: Option<u64> = None;
+                let mut last_analysis_at = std::time::Instant::now()
+                    - std::time::Duration::from_secs(GATE_MAX_STALE_SECS);
+
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                loop {
+                    let frame = match vlm_rx.recv() {
+                        Ok(f) => f,
+                        Err(_) => {
+                            eprintln!("[VLM-W] exit: vlm channel closed (push thread exited)");
+                            break;
+                        }
+                    };
+                    // Check stream still running before burning NPU time
+                    {
+                        let registry = get_registry().lock();
+                        let alive = registry.streams.get(&vlm_sid)
+                            .map_or(false, |s| s.lock().running);
+                        if !alive {
+                            eprintln!("[VLM-W] exit: stream marked not running");
+                            break;
+                        }
+                    }
+                    let t0 = std::time::Instant::now();
+
+                    // Cognition gate: silent on routine (unchanged) content
+                    let h = dhash_64(&frame);
+                    let stale = last_analysis_at.elapsed().as_secs();
+                    if let Some(lh) = last_hash {
+                        let dist = (h ^ lh).count_ones();
+                        if dist < GATE_HAMMING {
+                            if stale < GATE_MAX_STALE_SECS {
+                                continue; // scene unchanged — stay silent
+                            }
+                            eprintln!("[VLM-W] stale refresh ({}s, no motion)", stale);
+                        }
+                    }
+                    last_hash = Some(h);
+
+                    // Prompt is read FRESH from the session config each analysis
+                    // so UI edits apply live (via the update_config command)
+                    // without restarting the stream.
+                    let live_prompt = {
+                        let registry = get_registry().lock();
+                        registry.streams.get(&vlm_sid)
+                            .map(|s| {
+                                let s = s.lock();
+                                if s._config.prompt.is_empty() { vlm_prompt.clone() }
+                                else { s._config.prompt.clone() }
+                            })
+                            .unwrap_or_else(|| vlm_prompt.clone())
+                    };
+
+                    // Plain-text description (the JSON-envelope experiment was
+                    // dropped: the 3B model emitted JSON only intermittently).
+                    // Event vs silence is decided by the dHash gate above; the
+                    // model just describes what it sees, briefly.
+                    let prompt = format!(
+                        "{live_prompt}\n\nObserve the current frame. Answer in 1-2 short present-tense sentences."
+                    );
+
+                    match vlm_processor.get_vlm() {
+                        Some(vlm) => match vlm.analyze(&frame, &prompt, vlm_max_tokens) {
+                            Ok(r) => {
+                                let latency_ms = t0.elapsed().as_millis() as u64;
+                                last_analysis_at = std::time::Instant::now();
+                                let desc = r.text.trim().to_string();
+                                eprintln!("[VLM-W] event ({}ms): {}",
+                                    latency_ms,
+                                    desc.chars().take(70).collect::<String>());
+                                let mut registry = get_registry().lock();
+                                if let Some(stream) = registry.streams.get(&vlm_sid) {
+                                    let mut s = stream.lock();
+                                    let fc = s.frame_count;
+                                    s.last_vlm_text = desc.clone();
+                                    s.last_vlm_latency_ms = latency_ms;
+                                    s.last_vlm_frame = fc;
+                                    {
+                                        // Timeline gains entries only on real events.
+                                        // Thumbnail fits a 160x90 box preserving
+                                        // aspect (portrait frames must not squash).
+                                        let tw = 160;
+                                        let th = 90;
+                                        let thumb_scale = (tw as f64 / frame.width().max(1) as f64)
+                                            .min(th as f64 / frame.height().max(1) as f64);
+                                        let thumb_img = image::imageops::resize(
+                                            &frame,
+                                            ((frame.width() as f64 * thumb_scale).round() as u32).max(2),
+                                            ((frame.height() as f64 * thumb_scale).round() as u32).max(2),
+                                            image::imageops::FilterType::Nearest,
+                                        );
+                                        let mut cursor = std::io::Cursor::new(Vec::new());
+                                        let _ = image::DynamicImage::ImageRgb8(thumb_img)
+                                            .write_to(&mut cursor, image::ImageFormat::Jpeg);
+                                        let thumb = base64::Engine::encode(
+                                            &base64::engine::general_purpose::STANDARD,
+                                            &cursor.into_inner(),
+                                        );
+                                        s.vlm_history.push_back(VlmHistoryEntry {
+                                            timestamp: chrono::Utc::now().timestamp_millis(),
+                                            frame: fc,
+                                            latency_ms,
+                                            text: desc,
+                                            thumb,
+                                        });
+                                        if s.vlm_history.len() > 20 {
+                                            s.vlm_history.pop_front();
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("[VLM-W] analyze FAILED: {}", e);
+                            }
+                        },
+                        None => {
+                            eprintln!("[VLM-W] get_vlm() returned None (analyzer not loaded?)");
+                        }
+                    }
+                    // Pace to a steady cadence: each analysis starts at least
+                    // `analysis_interval` after the previous one STARTED (not
+                    // finished), so a 1-2s inference + sleep keeps a fixed
+                    // rhythm instead of firing back-to-back.
+                    let elapsed = t0.elapsed();
+                    if elapsed < analysis_interval {
+                        std::thread::sleep(analysis_interval - elapsed);
+                    }
+                }
+                }));
+                if let Err(p) = outcome {
+                    let msg = p.downcast_ref::<&str>().map(|s| s.to_string())
+                        .or_else(|| p.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "<non-string panic payload>".to_string());
+                    eprintln!("[VLM-W] !!! worker thread PANICKED: {}", msg);
+                }
+                eprintln!("[VLM-W] worker thread exiting sid={}", vlm_sid);
+            });
+
+        // ── Client-camera source ──────────────────────────────────────────
+        // Frames come from the browser's own camera (getUserMedia → canvas →
+        // JPEG, uploaded as binary WS frames). The pump echoes frames back as
+        // the pushed stream and feeds the VLM worker; no ffmpeg involved.
+        if source_url.starts_with("client-camera://") {
+            let (ctx, crx) = std::sync::mpsc::sync_channel::<Vec<u8>>(4);
+            client_cams().lock().insert(sid.clone(), ctx);
+            let cam_sid = sid.clone();
+            let cam_vlm_tx = vlm_tx;
+            std::thread::Builder::new()
+                .name(format!("clientcam-{}", sid))
+                .spawn(move || {
+                    eprintln!("[CLICAM] pump started {}", cam_sid);
+                    let mut seq: u64 = 0;
+                    let mut last_sent_vlm_frame: u64 = 0;
+                    loop {
+                        let jpeg = match crx.recv() {
+                            Ok(j) => j,
+                            Err(_) => break, // channel dropped — session gone
+                        };
+                        {
+                            let registry = get_registry().lock();
+                            let alive = registry.streams.get(&cam_sid)
+                                .map_or(false, |s| s.lock().running);
+                            if !alive { break; }
+                        }
+                        // Decode for the VLM worker (its dHash gate sets cadence)
+                        if let Ok(img) = image::load_from_memory(&jpeg) {
+                            let _ = cam_vlm_tx.try_send(img.to_rgb8());
+                        }
+                        // Echo back with VLM metadata (vlm_entry delta, same
+                        // protocol as the ffmpeg push loop)
+                        let (vlm_text_now, vlm_latency, vlm_frame, entry_json) = {
+                            let registry = get_registry().lock();
+                            registry.streams.get(&cam_sid)
+                                .map(|s| {
+                                    let mut s = s.lock();
+                                    let (t, lat, vf) =
+                                        (s.last_vlm_text.clone(), s.last_vlm_latency_ms, s.last_vlm_frame);
+                                    let entry = if s.last_vlm_frame != last_sent_vlm_frame {
+                                        last_sent_vlm_frame = s.last_vlm_frame;
+                                        match s.vlm_history.back() {
+                                            Some(e) => serde_json::to_value(e).unwrap_or_default(),
+                                            None => serde_json::Value::Null,
+                                        }
+                                    } else {
+                                        serde_json::Value::Null
+                                    };
+                                    (t, lat, vf, entry)
+                                })
+                                .unwrap_or((String::new(), 0, 0, serde_json::Value::Null))
+                        };
+                        let output = PushOutputMessage::image_jpeg(&cam_sid, seq, jpeg.clone())
+                            .with_metadata(serde_json::json!({
+                                "vlm_text": vlm_text_now,
+                                "vlm_latency_ms": vlm_latency,
+                                "vlm_frame": vlm_frame,
+                                "vlm_entry": entry_json,
+                                "frame": seq,
+                            }));
+                        let _ = send_push_output(&output);
+                        {
+                            let mut registry = get_registry().lock();
+                            if let Some(st) = registry.streams.get(&cam_sid) {
+                                let mut s = st.lock();
+                                s.frame_count += 1;
+                                s.last_frame = Some(jpeg);
+                                s.last_frame_time = Some(Instant::now());
+                            }
+                        }
+                        seq += 1;
+                    }
+                    client_cams().lock().remove(&cam_sid);
+                    eprintln!("[CLICAM] pump exited {}", cam_sid);
+                });
+            return Ok(());
+        }
+
         // Run FFmpeg decode + YOLO inference on a dedicated OS thread
         // (FFmpeg is blocking I/O, must not run inside tokio)
         let task_handle = std::thread::spawn(move || {
             let mut sequence = 0u64;
+            let mut last_sent_vlm_frame: u64 = 0;
+            let mut last_push_at: Option<std::time::Instant> = None;
             let frame_duration = std::time::Duration::from_millis(1000 / target_fps as u64);
             let mut reconnect_count = 0u32;
             const MAX_RECONNECT: u32 = 3;
@@ -1914,9 +2491,63 @@ impl Extension for YoloVideoProcessorV2 {
             // The previous push_in_flight wrapper was redundant and dropped frames
             // unnecessarily.
 
-            // Open the stream via FFmpeg
-            let mut video_source_opt: Option<crate::video_source::FfmpegVideoSource> = match crate::video_source::FfmpegVideoSource::new(&source_type) {
-                Ok(vs) => {
+            // Open the stream via FFmpeg.
+            // v4l2 cameras are EXCLUSIVE: only one ffmpeg can hold /dev/videoN.
+            // For camera sources, take over: stop other running camera sessions
+            // (last viewer wins — the demo flow of handing an iPad to a
+            // customer), then retry while the old ffmpeg releases the device.
+            let is_camera_source = matches!(&source_type,
+                crate::video_source::SourceType::File { path, .. } if path.starts_with("/dev/video"));
+            if is_camera_source {
+                {
+                    let mut registry = get_registry().lock();
+                    let victims: Vec<String> = registry.streams.iter()
+                        .filter(|(other_sid, st)| {
+                            other_sid.as_str() != sid && {
+                                let s = st.lock();
+                                s.running && matches!(&s._config.source_url[..], u if
+                                    u.starts_with("camera://") || u.starts_with("usb://")
+                                    || u.starts_with("v4l2://") || u.starts_with("/dev/video"))
+                            }
+                        })
+                        .map(|(k, _)| k.clone())
+                        .collect();
+                    if !victims.is_empty() {
+                        eprintln!("[CAM] session {} taking over camera from {:?}", sid, victims);
+                        for v in victims {
+                            if let Some(st) = registry.streams.get(&v) {
+                                let mut s = st.lock();
+                                s.running = false; // their push loop exits and kills ffmpeg
+                            }
+                        }
+                    }
+                }
+            }
+            let mut video_source_opt: Option<crate::video_source::FfmpegVideoSource> = {
+                let mut attempt = 0u32;
+                loop {
+                    attempt += 1;
+                    match crate::video_source::FfmpegVideoSource::new(&source_type) {
+                        Ok(vs) => break Some(vs),
+                        Err(e) => {
+                            // Device handover takes a moment — retry briefly
+                            if is_camera_source && attempt < 6 && e.contains("busy") {
+                                std::thread::sleep(std::time::Duration::from_millis(400));
+                                continue;
+                            }
+                            eprintln!("[Stream {}] FFmpeg failed to connect: {}", sid, e);
+                            let _ = send_push_output(
+                                &PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                    "type": "error", "message": format!("Failed to connect: {}", e)
+                                })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                            );
+                            break None;
+                        }
+                    }
+                }
+            };
+            let mut video_source_opt = match video_source_opt {
+                Some(vs) => {
                     tracing::info!("[Stream {}] FFmpeg connected to: {}", sid, source_url);
                     let _ = send_push_output(
                         &PushOutputMessage::json(&sid, sequence, serde_json::json!({
@@ -1925,15 +2556,7 @@ impl Extension for YoloVideoProcessorV2 {
                     );
                     Some(vs)
                 }
-                Err(e) => {
-                    tracing::error!("[Stream {}] FFmpeg failed to connect: {}", sid, e);
-                    let _ = send_push_output(
-                        &PushOutputMessage::json(&sid, sequence, serde_json::json!({
-                            "type": "error", "message": format!("Failed to connect: {}", e)
-                        })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
-                    );
-                    return;
-                }
+                None => return,
             };
 
             loop {
@@ -1945,8 +2568,6 @@ impl Extension for YoloVideoProcessorV2 {
                 if !should_continue {
                     break;
                 }
-
-                let frame_start = std::time::Instant::now();
 
                 // Decode next frame via watchdog. RTSP `stimeout` should fire at ~5s on
                 // network stalls, but some server/pathology combinations can hold the
@@ -1965,6 +2586,11 @@ impl Extension for YoloVideoProcessorV2 {
                     };
                     let (tx, rx) = std::sync::mpsc::sync_channel::<(crate::video_source::FfmpegVideoSource, crate::video_source::FrameResult)>(1);
                     let builder_tx = tx.clone();
+                    // Capture the child PID before moving the source into the
+                    // watchdog thread: on timeout we hard-kill ffmpeg so the
+                    // device (e.g. a v4l2 camera) frees immediately instead of
+                    // leaking a stuck source+decoder pair.
+                    let stuck_child_pid = src.child_pid();
                     let _handle = std::thread::Builder::new()
                         .name(format!("yolo-frame-{}", sid))
                         .spawn(move || {
@@ -1981,6 +2607,13 @@ impl Extension for YoloVideoProcessorV2 {
                                 "[Stream {}] Watchdog: next_frame did not return in {}ms; forcing reconnect",
                                 sid, WATCHDOG_MS
                             );
+                            if let Some(pid) = stuck_child_pid {
+                                let _ = std::process::Command::new("kill")
+                                    .arg("-9").arg(pid.to_string())
+                                    .stdout(std::process::Stdio::null())
+                                    .stderr(std::process::Stdio::null())
+                                    .status();
+                            }
                             // rx dropped → spawned thread's send will fail when it eventually runs.
                             // Make a fresh source. If even that fails, fall through to Error path.
                             drop(tx);
@@ -2004,170 +2637,68 @@ impl Extension for YoloVideoProcessorV2 {
                     FrameResult::Frame(video_frame) => {
                         reconnect_count = 0;
 
-                        // Convert FFmpeg RGB24 → RgbImage
-                        let original_image = match video_frame.to_rgb_image() {
-                            Some(img) => img,
-                            None => {
-                                tracing::warn!("[Stream {}] RgbImage conversion failed", sid);
-                                continue;
-                            }
-                        };
+                        // --- Hardware JPEG fast path ---
+                        // When the FFmpeg pipeline outputs hardware-encoded JPEG
+                        // (mjpeg_rkmpp + RGA), skip all CPU image processing.
+                        // Push the JPEG as-is; only decode for VLM analysis.
+                        let is_hw_jpeg = video_frame.data.len() > 4
+                            && video_frame.data[0] == 0xFF
+                            && video_frame.data[1] == 0xD8;
 
-                        let (orig_width, orig_height) = (original_image.width(), original_image.height());
-
-                        // Resize to 640x640 for YOLO inference
-                        // Triangle (bilinear) is ~5-10x faster than CatmullRom for real-time video
-                        let inference_image = image::imageops::resize(
-                            &original_image, 640, 640,
-                            image::imageops::FilterType::Triangle,
-                        );
-
-                        // Output resolution: cap at 960x540 to accelerate draw/encode.
-                        // Keeps 16:9 aspect; if source is smaller, leaves it untouched.
-                        const OUT_W: u32 = 960;
-                        const OUT_H: u32 = 540;
-                        let (out_w, out_h) = if orig_width > OUT_W || orig_height > OUT_H {
-                            (OUT_W, OUT_H)
+                        let (jpeg_data, vlm_image_opt) = if is_hw_jpeg {
+                            // JPEG fast path: no decode, no resize, no encode.
+                            // Decode to RgbImage only for the VLM worker.
+                            let img = image::load_from_memory(&video_frame.data)
+                                .ok()
+                                .map(|d| d.to_rgb8());
+                            (video_frame.data.clone(), img)
                         } else {
-                            (orig_width, orig_height)
-                        };
-
-                        // Run YOLO detection
-                        let detections = match processor.get_detector() {
-                            Some(detector) if detector.is_loaded() => {
-                                let dets = detector.detect(&inference_image, confidence, max_obj);
-                                eprintln!("[YOLO-Detect] raw detections: {}", dets.len());
-                                if !dets.is_empty() {
-                                    // Scale coords directly into output resolution
-                                    // (avoids full-res coordinate path downstream)
-                                    let scale_x = out_w as f32 / 640.0;
-                                    let scale_y = out_h as f32 / 640.0;
-                                    let scaled: Vec<_> = dets.into_iter().map(|mut d| {
-                                        d.bbox.x *= scale_x;
-                                        d.bbox.y *= scale_y;
-                                        d.bbox.width *= scale_x;
-                                        d.bbox.height *= scale_y;
-                                        d
-                                    }).collect();
-                                    detections_to_object_detection(scaled)
-                                } else {
-                                    vec![]
+                            // CPU rawvideo fallback: decode → process → encode
+                            let original_image = match video_frame.to_rgb_image() {
+                                Some(img) => img,
+                                None => {
+                                    tracing::warn!("[Stream {}] RgbImage conversion failed", sid);
+                                    continue;
                                 }
-                            }
-                            _ => vec![],
+                            };
+                            let jpeg = encode_jpeg(&original_image, 50);
+                            (jpeg, Some(original_image))
                         };
 
-                        // Build output image at (out_w, out_h): downscale once, then draw + encode there.
-                        let mut output_image = if (out_w, out_h) == (orig_width, orig_height) {
-                            original_image
-                        } else {
-                            image::imageops::resize(
-                                &original_image, out_w, out_h,
-                                image::imageops::FilterType::Triangle,
-                            )
+                        let sequence_now = sequence;
+
+                        // VLM: send frame to worker (non-blocking, busy = skip).
+                        // analyze_every is read fresh so live config updates
+                        // (update_stream_config) change the cadence immediately.
+                        let analyze_every_now = {
+                            let registry = get_registry().lock();
+                            registry.streams.get(&sid)
+                                .map(|s| s.lock()._config.analyze_every.max(1) as u64)
+                                .unwrap_or(analyze_every)
                         };
-                        if draw_boxes {
-                            draw_detections(&mut output_image, &detections);
+                        if sequence_now % analyze_every_now == 0 {
+                            if let Some(img) = &vlm_image_opt {
+                                let _ = vlm_tx.try_send(img.clone());
+                            }
                         }
-
-                        // ROI counting and line crossing detection (normalized against output dims)
-                        let norm_dets: Vec<(f32, f32, &str)> = detections.iter()
-                            .filter_map(|d| {
-                                let cx = (d.bbox.x + d.bbox.width / 2.0) / out_w as f32;
-                                let cy = (d.bbox.y + d.bbox.height / 2.0) / out_h as f32;
-                                if cx >= 0.0 && cx <= 1.0 && cy >= 0.0 && cy <= 1.0 {
-                                    Some((cx, cy, d.label.as_str()))
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-
-                        let (roi_stats, line_stats) = {
-                            let stream_arc = {
-                                let registry = get_registry().lock();
-                                match registry.streams.get(&sid).cloned() {
-                                    Some(s) => s,
-                                    None => {
-                                        eprintln!("[YOLO-Push] Stream {} lost during ROI processing", sid);
-                                        break;
-                                    }
-                                }
-                            };
-                            let mut s = stream_arc.lock();
-
-                            let roi_stats = count_roi_detections(&norm_dets, &s._config.rois);
-            s.last_roi_stats = roi_stats.clone();
-                            s.last_roi_stats = roi_stats.clone();
-
-                            let lines_cfg = s._config.lines.clone();
-                            let line_stats = if !lines_cfg.is_empty() {
-                                let track_dets: Vec<(f32, f32, u32, &str)> = detections.iter()
-                                    .filter_map(|d| {
-                                        let cx = (d.bbox.x + d.bbox.width / 2.0) / out_w as f32;
-                                        let cy = (d.bbox.y + d.bbox.height / 2.0) / out_h as f32;
-                                        Some((cx, cy, d.class_id as u32, d.label.as_str()))
-                                    })
-                                    .collect();
-                                let matches = s.tracker.update(&track_dets);
-
-                                // Pre-collect prev/curr centers for matched tracks
-                                let track_movements: Vec<(u32, (f32, f32), (f32, f32))> = matches.iter()
-                                    .filter_map(|(track_id, _det_idx)| {
-                                        let prev = s.tracker.get_prev_center(*track_id)?;
-                                        let curr = s.tracker.objects.iter().find(|t| t.id == *track_id).map(|t| t.center)?;
-                                        Some((*track_id, prev, curr))
-                                    })
-                                    .collect();
-
-                                for line in &lines_cfg {
-                                    let entry = s.line_counts.entry(line.id.clone()).or_insert((0u64, 0u64));
-                                    for (_track_id, prev, curr) in &track_movements {
-                                        let dir = line_crossing_direction(*prev, *curr, line.start, line.end);
-                                        if dir > 0 { entry.0 += 1; }
-                                        else if dir < 0 { entry.1 += 1; }
-                                    }
-                                }
-
-                                lines_cfg.iter().map(|line| {
-                                    let (fwd, bwd) = s.line_counts.get(&line.id).copied().unwrap_or((0, 0));
-                                    LineStat { id: line.id.clone(), name: line.name.clone(), forward_count: fwd, backward_count: bwd }
-                                }).collect()
-                            } else {
-                                Vec::new()
-                            };
-
-                            // ROI/Line overlay drawing is handled by the frontend canvas
-                            // to avoid double-drawing (backend JPEG + frontend canvas overlay)
-
-                            (roi_stats, line_stats)
+                        let (vlm_text_now, vlm_latency, vlm_frame) = {
+                            let registry = get_registry().lock();
+                            registry.streams.get(&sid)
+                                .map(|s| {
+                                    let s = s.lock();
+                                    (s.last_vlm_text.clone(), s.last_vlm_latency_ms, s.last_vlm_frame)
+                                })
+                                .unwrap_or_default()
                         };
 
-                        // Evaluate capture rules (separate borrow scope from stream lock)
-                        let capture_events = {
-                            let stream_arc = {
-                                let registry = get_registry().lock();
-                                match registry.streams.get(&sid).cloned() {
-                                    Some(s) => s,
-                                    None => break,
-                                }
-                            };
-                            let mut s = stream_arc.lock();
-                            let detailed_counts = count_roi_detections_detailed(&norm_dets, &s._config.rois);
-                            let rules = s._config.capture_rules.clone();
-                            let rois = s._config.rois.clone();
-                            evaluate_capture_rules(
-                                &rules,
-                                &mut s.capture_rule_states,
-                                &detailed_counts,
-                                &output_image,
-                                &rois,
-                                chrono::Utc::now().timestamp_millis(),
-                            )
-                        };
+                        let detections: Vec<ObjectDetection> = Vec::new();
+                        let roi_stats: Vec<RoiStat> = Vec::new();
+                        let line_stats: Vec<LineStat> = Vec::new();
+                        let capture_events: Vec<CaptureEvent> = Vec::new();
+                        let _ = &detections; let _ = &roi_stats; let _ = &line_stats; let _ = &capture_events;
 
-                        // Encode to JPEG — quality 65 is plenty for streaming preview and faster than 75/85
-                        let jpeg_data = encode_jpeg(&output_image, 65);
+                        // jpeg_data and vlm info are already computed above.
+                        // Push the frame with metadata directly — no YOLO, no re-encode.
 
                         // Update stream statistics (quick lock)
                         {
@@ -2175,8 +2706,8 @@ impl Extension for YoloVideoProcessorV2 {
                             if let Some(stream) = registry.streams.get(&sid) {
                                 let mut s = stream.lock();
                                 s.frame_count += 1;
-                                s.total_detections += detections.len() as u64;
-                                s.last_detections = detections.clone();
+                                s.total_detections += 1;
+                                s.last_vlm_text = s.last_vlm_text.clone();
                                 s.last_frame = Some(jpeg_data.clone());
                                 s.last_frame_time = Some(Instant::now());
                                 let elapsed = s.started_at.elapsed().as_secs_f32();
@@ -2195,15 +2726,62 @@ impl Extension for YoloVideoProcessorV2 {
                         // IPC path cannot stall the decode/detect loop. If the previous push is
                         // still in flight, drop this frame (counter still increments so the
                         // frontend can detect drops via sequence gaps).
+                        // VLM history goes as an INCREMENTAL delta: only the single newest
+                        // entry, and only when a new analysis landed (keyed on last_vlm_frame,
+                        // NOT entry count — the deque is capped at 20 so the count freezes
+                        // once full and a count-based check would stop sending forever).
+                        // The old full-history piggyback shipped ~200KB every 2s and, on top
+                        // of the 25fps MJPEG push, saturated the WebSocket faster than the
+                        // client could consume it (ws_out_tx full → permanent frame drops).
+                        let vlm_entry_json = {
+                            let registry = get_registry().lock();
+                            registry.streams.get(&sid)
+                                .map(|s| {
+                                    let s = s.lock();
+                                    if s.last_vlm_frame != last_sent_vlm_frame {
+                                        last_sent_vlm_frame = s.last_vlm_frame;
+                                        match s.vlm_history.back() {
+                                            Some(e) => serde_json::to_value(e).unwrap_or_default(),
+                                            None => serde_json::Value::Null,
+                                        }
+                                    } else {
+                                        serde_json::Value::Null // no new analysis, skip
+                                    }
+                                })
+                                .unwrap_or_default()
+                        };
+
+                        // Push pacing: hold each frame until its due time, then
+                        // push IT (the freshest decoded frame). mjpeg_rkmpp
+                        // delivers frames in ~4-frame bursts every ~160ms; a
+                        // skip-style gate would let only the first frame of
+                        // each burst through (= burst rate ≈ 6fps). Sleeping to
+                        // the due time instead drains bursts at the full push
+                        // rate. The ffmpeg stdout pipe (64KB ≈ one burst)
+                        // absorbs the frames that queue up while we sleep.
+                        {
+                            let now = std::time::Instant::now();
+                            let since = last_push_at.map_or(std::time::Duration::ZERO, |t| now.duration_since(t));
+                            if since < push_min_interval {
+                                std::thread::sleep(push_min_interval - since);
+                            }
+                            last_push_at = Some(std::time::Instant::now());
+                        }
+
                         let output = PushOutputMessage::image_jpeg(&sid, sequence, jpeg_data)
                             .with_metadata(serde_json::json!({
                                 "detections": detections,
                                 "roi_stats": roi_stats,
                                 "line_stats": line_stats,
                                 "capture_events": capture_events,
+                                "vlm_text": vlm_text_now,
+                                "vlm_latency_ms": vlm_latency,
+                                "vlm_frame": vlm_frame,
+                                "vlm_entry": vlm_entry_json,
+                                "frame": sequence,
                             }));
 
-                        if sequence % 30 == 0 {
+                        if sequence % 60 == 0 {
                             eprintln!("[YOLO-Push] frame {} detections={} size={}KB", sequence, detections.len(), output.data.len() / 1024);
                         }
 
@@ -2211,12 +2789,6 @@ impl Extension for YoloVideoProcessorV2 {
                             tracing::warn!("[Stream {}] send_push_output failed: {}", sid, e);
                         }
                         sequence += 1;
-
-                        // Frame rate throttling
-                        let elapsed = frame_start.elapsed();
-                        if elapsed < frame_duration {
-                            std::thread::sleep(frame_duration - elapsed);
-                        }
                     }
                     FrameResult::NotReady => {
                         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -2428,6 +3000,26 @@ impl Extension for YoloVideoProcessorV2 {
             let registry = get_registry().lock();
             registry.streams.get(session_id).cloned()
         };
+
+        // Client-camera frames: binary JPEG uploads from the browser's own
+        // camera → forward to the client-camera pump for that session.
+        if chunk.data.len() > 4 && chunk.data[0] == 0xFF && chunk.data[1] == 0xD8 {
+            let routed = {
+                let cams = client_cams().lock();
+                cams.get(session_id)
+                    .map(|tx| tx.try_send(chunk.data.clone()).is_ok())
+                    .unwrap_or(false)
+            };
+            if routed {
+                return Ok(StreamResult::success(
+                    Some(chunk.sequence),
+                    chunk.sequence,
+                    Vec::new(),
+                    neomind_extension_sdk::StreamDataType::Binary,
+                    start.elapsed().as_secs_f32() * 1000.0,
+                ));
+            }
+        }
 
         let stream = match stream {
             Some(s) => s,
@@ -2665,11 +3257,9 @@ impl Extension for YoloVideoProcessorV2 {
 
             // Update frame stats
             s.frame_count += 1;
-            s.total_detections += detections.len() as u64;
-            s.last_detections = detections.clone();
-            for det in &detections {
-                *s.detected_objects.entry(det.label.clone()).or_insert(0) += 1;
-            }
+            s.total_detections += 1;
+            s.last_vlm_text = s.last_vlm_text.clone();
+            *s.detected_objects.entry("vlm_analysis".to_string()).or_insert(0) += 1;
             if s.frame_count % 30 == 0 {
                 s.detected_objects.clear();
                 s.last_frame = None;
@@ -3412,8 +4002,8 @@ mod tests {
     fn test_extension_metadata() {
         let ext = YoloVideoProcessorV2::new();
         let meta = ext.metadata();
-        assert_eq!(meta.id, "yolo-video-v2");
-        assert_eq!(meta.name, "YOLO Video V2");
+        assert_eq!(meta.id, "video-vlm");
+        assert_eq!(meta.name, "Video VLM");
         assert_eq!(
             meta.description.as_deref(),
             Some("Real-time video stream object detection with YOLOv11, RTSP/camera support, ROI analytics, line crossing, smart capture rules, and MJPEG streaming")
@@ -3473,6 +4063,10 @@ mod tests {
             total_detections: 0,
             last_frame: None,
             last_detections: Vec::new(),
+            last_vlm_text: String::new(),
+            last_vlm_latency_ms: 0,
+            last_vlm_frame: 0,
+            vlm_history: std::collections::VecDeque::new(),
             last_frame_time: None,
             fps: 0.0,
             running: true,

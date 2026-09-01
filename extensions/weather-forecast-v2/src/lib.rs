@@ -77,45 +77,77 @@ struct CurrentWeather {
 // Extension Implementation
 // ============================================================================
 
+/// Shared state — Arc-wrapped so `execute_command` can clone the Arc into
+/// `spawn_blocking` (the sync HTTP calls must not block the async runtime,
+/// but `&self` can't cross the 'static boundary; an Arc clone can).
+pub struct WeatherInner {
+    pub default_city: std::sync::RwLock<String>,
+    pub request_count: AtomicI64,
+    pub last_temperature_c: AtomicI64,
+    pub last_feels_like_c: AtomicI64,
+    pub last_humidity_percent: AtomicI64,
+    pub last_wind_speed_kmph: AtomicI64,
+    pub last_wind_direction_deg: AtomicI64,
+    pub last_cloud_cover_percent: AtomicI64,
+    pub last_pressure_hpa: AtomicI64,
+    pub last_update_ts: AtomicI64,
+    pub has_data: AtomicBool,
+}
+
 pub struct WeatherExtension {
-    default_city: std::sync::RwLock<String>,
-    request_count: AtomicI64,
-    last_temperature_c: AtomicI64,
-    last_feels_like_c: AtomicI64,
-    last_humidity_percent: AtomicI64,
-    last_wind_speed_kmph: AtomicI64,
-    last_wind_direction_deg: AtomicI64,
-    last_cloud_cover_percent: AtomicI64,
-    last_pressure_hpa: AtomicI64,
-    last_update_ts: AtomicI64,
-    has_data: AtomicBool,
+    inner: std::sync::Arc<WeatherInner>,
 }
 
 impl WeatherExtension {
     pub fn new() -> Self {
         Self {
-            default_city: std::sync::RwLock::new("Beijing".to_string()),
-            request_count: AtomicI64::new(0),
-            last_temperature_c: AtomicI64::new(0),
-            last_feels_like_c: AtomicI64::new(0),
-            last_humidity_percent: AtomicI64::new(0),
-            last_wind_speed_kmph: AtomicI64::new(0),
-            last_wind_direction_deg: AtomicI64::new(0),
-            last_cloud_cover_percent: AtomicI64::new(0),
-            last_pressure_hpa: AtomicI64::new(101325),
-            last_update_ts: AtomicI64::new(0),
-            has_data: AtomicBool::new(false),
+            inner: std::sync::Arc::new(WeatherInner {
+                default_city: std::sync::RwLock::new("Beijing".to_string()),
+                request_count: AtomicI64::new(0),
+                last_temperature_c: AtomicI64::new(0),
+                last_feels_like_c: AtomicI64::new(0),
+                last_humidity_percent: AtomicI64::new(0),
+                last_wind_speed_kmph: AtomicI64::new(0),
+                last_wind_direction_deg: AtomicI64::new(0),
+                last_cloud_cover_percent: AtomicI64::new(0),
+                last_pressure_hpa: AtomicI64::new(101325),
+                last_update_ts: AtomicI64::new(0),
+                has_data: AtomicBool::new(false),
+            }),
         }
     }
 
+
+
+
+
+
+
+
+
+
+
+
+}
+
+impl Default for WeatherExtension {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
+// Extension Trait Implementation
+// ============================================================================
+
+
+impl WeatherInner {
     fn get_default_city(&self) -> String {
         self.default_city.read().unwrap().clone()
     }
-
     fn set_default_city(&self, city: &str) {
         *self.default_city.write().unwrap() = city.to_string();
     }
-
     fn store_weather_metrics(&self, weather: &WeatherResult) {
         self.last_temperature_c.store((weather.temperature_c * 100.0) as i64, Ordering::SeqCst);
         self.last_feels_like_c.store((weather.feels_like_c * 100.0) as i64, Ordering::SeqCst);
@@ -127,8 +159,6 @@ impl WeatherExtension {
         self.last_update_ts.store(chrono::Utc::now().timestamp_millis(), Ordering::SeqCst);
         self.has_data.store(true, Ordering::SeqCst);
     }
-
-    /// Get weather using sync HTTP client (ureq)
     fn get_weather_sync(&self, city: &str) -> Result<WeatherResult> {
         self.request_count.fetch_add(1, Ordering::SeqCst);
 
@@ -143,7 +173,6 @@ impl WeatherExtension {
 
         Ok(weather)
     }
-
     fn geocode_sync(&self, city: &str) -> std::result::Result<GeoLocation, String> {
         let encoded_city = urlencoding::encode(city);
         let url = format!(
@@ -165,7 +194,6 @@ impl WeatherExtension {
             .and_then(|mut v| v.pop())
             .ok_or_else(|| format!("City not found: {}", city))
     }
-
     fn fetch_weather_sync(&self, location: &GeoLocation) -> std::result::Result<WeatherResult, String> {
         let url = format!(
             "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,is_day&timezone=auto&windspeed_unit=kmh",
@@ -203,16 +231,6 @@ impl WeatherExtension {
         })
     }
 }
-
-impl Default for WeatherExtension {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// ============================================================================
-// Extension Trait Implementation
-// ============================================================================
 
 #[async_trait]
 impl Extension for WeatherExtension {
@@ -427,14 +445,26 @@ impl Extension for WeatherExtension {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| ExtensionError::InvalidArguments("Missing 'city' parameter".to_string()))?;
 
-                let result = self.get_weather_sync(city)?;
+                let inner = self.inner.clone();
+                let c = city.to_string();
+                let result = tokio::task::spawn_blocking(move || {
+                    inner.get_weather_sync(&c)
+                })
+                .await
+                .map_err(|e| ExtensionError::ExecutionFailed(format!("weather task panicked: {e}")))??;
                 serde_json::to_value(result)
                     .map_err(|e| ExtensionError::ExecutionFailed(e.to_string()))
             }
 
             "refresh" => {
-                let default_city = self.get_default_city();
-                let result = self.get_weather_sync(&default_city)?;
+                let default_city = self.inner.get_default_city();
+                let inner = self.inner.clone();
+                let dc = default_city.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    inner.get_weather_sync(&dc)
+                })
+                .await
+                .map_err(|e| ExtensionError::ExecutionFailed(format!("weather task panicked: {e}")))??;
                 Ok(json!({
                     "success": true,
                     "city": default_city,
@@ -447,7 +477,7 @@ impl Extension for WeatherExtension {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| ExtensionError::InvalidArguments("Missing 'city' parameter".to_string()))?;
 
-                self.set_default_city(city);
+                self.inner.set_default_city(city);
                 Ok(json!({
                     "success": true,
                     "default_city": city
@@ -469,50 +499,50 @@ impl Extension for WeatherExtension {
 
         metrics.push(ExtensionMetricValue {
             name: "request_count".to_string(),
-            value: ParamMetricValue::Integer(self.request_count.load(Ordering::SeqCst)),
+            value: ParamMetricValue::Integer(self.inner.request_count.load(Ordering::SeqCst)),
             timestamp: now,
         });
 
-        if self.has_data.load(Ordering::SeqCst) {
+        if self.inner.has_data.load(Ordering::SeqCst) {
             metrics.extend(vec![
                 ExtensionMetricValue {
                     name: "temperature_c".to_string(),
-                    value: ParamMetricValue::Float(self.last_temperature_c.load(Ordering::SeqCst) as f64 / 100.0),
+                    value: ParamMetricValue::Float(self.inner.last_temperature_c.load(Ordering::SeqCst) as f64 / 100.0),
                     timestamp: now,
                 },
                 ExtensionMetricValue {
                     name: "feels_like_c".to_string(),
-                    value: ParamMetricValue::Float(self.last_feels_like_c.load(Ordering::SeqCst) as f64 / 100.0),
+                    value: ParamMetricValue::Float(self.inner.last_feels_like_c.load(Ordering::SeqCst) as f64 / 100.0),
                     timestamp: now,
                 },
                 ExtensionMetricValue {
                     name: "humidity_percent".to_string(),
-                    value: ParamMetricValue::Integer(self.last_humidity_percent.load(Ordering::SeqCst)),
+                    value: ParamMetricValue::Integer(self.inner.last_humidity_percent.load(Ordering::SeqCst)),
                     timestamp: now,
                 },
                 ExtensionMetricValue {
                     name: "wind_speed_kmph".to_string(),
-                    value: ParamMetricValue::Float(self.last_wind_speed_kmph.load(Ordering::SeqCst) as f64 / 100.0),
+                    value: ParamMetricValue::Float(self.inner.last_wind_speed_kmph.load(Ordering::SeqCst) as f64 / 100.0),
                     timestamp: now,
                 },
                 ExtensionMetricValue {
                     name: "wind_direction_deg".to_string(),
-                    value: ParamMetricValue::Integer(self.last_wind_direction_deg.load(Ordering::SeqCst)),
+                    value: ParamMetricValue::Integer(self.inner.last_wind_direction_deg.load(Ordering::SeqCst)),
                     timestamp: now,
                 },
                 ExtensionMetricValue {
                     name: "cloud_cover_percent".to_string(),
-                    value: ParamMetricValue::Integer(self.last_cloud_cover_percent.load(Ordering::SeqCst)),
+                    value: ParamMetricValue::Integer(self.inner.last_cloud_cover_percent.load(Ordering::SeqCst)),
                     timestamp: now,
                 },
                 ExtensionMetricValue {
                     name: "pressure_hpa".to_string(),
-                    value: ParamMetricValue::Float(self.last_pressure_hpa.load(Ordering::SeqCst) as f64 / 100.0),
+                    value: ParamMetricValue::Float(self.inner.last_pressure_hpa.load(Ordering::SeqCst) as f64 / 100.0),
                     timestamp: now,
                 },
                 ExtensionMetricValue {
                     name: "last_update_ts".to_string(),
-                    value: ParamMetricValue::Integer(self.last_update_ts.load(Ordering::SeqCst)),
+                    value: ParamMetricValue::Integer(self.inner.last_update_ts.load(Ordering::SeqCst)),
                     timestamp: now,
                 },
             ]);
@@ -524,7 +554,7 @@ impl Extension for WeatherExtension {
     async fn configure(&mut self, config: &serde_json::Value) -> Result<()> {
         // Apply configuration parameters
         if let Some(default_city) = config.get("defaultCity").and_then(|v| v.as_str()) {
-            self.set_default_city(default_city);
+            self.inner.set_default_city(default_city);
         }
 
         // Note: refreshInterval and unit would be used by the frontend component
@@ -664,7 +694,7 @@ mod tests {
             is_day: true,
             timestamp: None,
         };
-        ext.store_weather_metrics(&weather);
+        ext.inner.store_weather_metrics(&weather);
 
         let metrics = ext.produce_metrics().unwrap();
         assert_eq!(metrics.len(), 9);
@@ -680,10 +710,10 @@ mod tests {
     #[test]
     fn test_default_city() {
         let ext = WeatherExtension::new();
-        assert_eq!(ext.get_default_city(), "Beijing");
+        assert_eq!(ext.inner.get_default_city(), "Beijing");
 
-        ext.set_default_city("Shanghai");
-        assert_eq!(ext.get_default_city(), "Shanghai");
+        ext.inner.set_default_city("Shanghai");
+        assert_eq!(ext.inner.get_default_city(), "Shanghai");
     }
 
     #[test]

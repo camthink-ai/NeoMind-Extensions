@@ -21,6 +21,7 @@
 pub mod commands;
 pub mod config;
 pub mod db;
+pub mod geo;
 pub mod ingest;
 pub mod metrics;
 pub mod ne503;
@@ -50,7 +51,7 @@ pub struct GymTrackerExtension {
 struct Inner {
     state: Arc<LiveState>,
     db: Arc<Db>,
-    metrics: Metrics,
+    metrics: Arc<Metrics>,
     ne: Arc<Ne503Client>,
     #[allow(dead_code)]
     cfg: Config,
@@ -113,11 +114,26 @@ impl Extension for GymTrackerExtension {
     // metric thread; locking the inner RwLock for a read is cheap.
     fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
         match &*self.inner.read() {
-            Some(i) => Ok(i.metrics.produce(
-                i.state.present_count() as i64,
-                0, // visits_today = 0 in P1 (sessions land in P2)
-                chrono::Utc::now().timestamp_millis(),
-            )),
+            Some(i) => {
+                // Evict departed tracks before reading present_count, matching
+                // get_live_state's TTL wiring — otherwise the gauge drifts up as
+                // track_ids that stopped being republished never leave the mirror.
+                let _ = i.state.evict_expired();
+                let tracks = i.state.snapshot();
+                // Drive the per-zone `gym.equipment_occupied` gauges from real
+                // foot positions: a zone is occupied iff a live track's foot is
+                // inside its polygon (ray-cast). Recomputed every metric tick
+                // from the current mirror + the persisted zone set, so the
+                // gauges reflect who's actually on each piece of equipment.
+                if let Ok(zones) = i.db.list_zones() {
+                    i.metrics.apply_occupation(&tracks, &zones);
+                }
+                Ok(i.metrics.produce(
+                    tracks.len() as i64,
+                    0, // visits_today = 0 in P1 (sessions land in P2)
+                    chrono::Utc::now().timestamp_millis(),
+                ))
+            }
             None => Ok(vec![]),
         }
     }
@@ -141,6 +157,7 @@ impl Extension for GymTrackerExtension {
                 state: inner.state.clone(),
                 db: inner.db.clone(),
                 ne: inner.ne.clone(),
+                metrics: inner.metrics.clone(),
             }
         };
         commands::handle(&ctx, cmd, args).map_err(ExtensionError::Other)
@@ -176,7 +193,7 @@ impl Extension for GymTrackerExtension {
             .unwrap_or_default();
 
         let state = Arc::new(LiveState::new(cfg.ingest.track_ttl_sec));
-        let metrics = Metrics::new();
+        let metrics = Arc::new(Metrics::new());
         // Seed the per-zone metric registry from the persisted zone set so the
         // first produce_metrics() advertises the right descriptors.
         metrics.sync_zones(&db.list_zones().unwrap_or_default());
