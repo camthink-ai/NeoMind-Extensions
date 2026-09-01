@@ -1,0 +1,89 @@
+[
+  {
+    "id": "deadlock-test",
+    "enabled": true,
+    "source": {
+      "type": "device",
+      "device_id": "D1",
+      "metric": "image"
+    },
+    "tasks": [
+      {
+        "type": "detect",
+        "params": null,
+        "device": null
+      }
+    ],
+    "sinks": {
+      "virtual_metrics": true,
+      "event": true,
+      "capture": null,
+      "snapshot": true
+    },
+    "schedule": {
+      "on_frame": {
+        "fps_limit": null,
+        "cooldown_secs": 2
+      }
+    },
+    "draw": true
+  },
+  {
+    "id": "stress",
+    "enabled": true,
+    "source": {
+      "type": "device",
+      "device_id": "stress-test",
+      "metric": "image"
+    },
+    "tasks": [
+      {
+        "type": "detect",
+        "params": null,
+        "device": null
+      }
+    ],
+    "sinks": {
+      "virtual_metrics": true,
+      "event": true,
+      "capture": null,
+      "snapshot": true
+    },
+    "schedule": {
+      "on_frame": {
+        "fps_limit": null,
+        "cooldown_secs": 2
+      }
+    },
+    "draw": true
+  },
+  {
+    "id": "test-pl",
+    "enabled": true,
+    "source": {
+      "type": "device",
+      "device_id": "D1",
+      "metric": "image"
+    },
+    "tasks": [
+      {
+        "type": "detect",
+        "params": null,
+        "device": null
+      }
+    ],
+    "sinks": {
+      "virtual_metrics": true,
+      "event": true,
+      "capture": null,
+      "snapshot": true
+    },
+    "schedule": {
+      "on_frame": {
+        "fps_limit": null,
+        "cooldown_secs": 2
+      }
+    },
+    "draw": true
+  }
+]

@@ -1,0 +1,30 @@
+[package]
+name = "vision-hub"
+version = "0.1.0"
+edition = "2021"
+authors = ["NeoMind Team"]
+license = "Apache-2.0"
+description = "Unified vision extension: hardware-accelerated detection/OCR/face/grounding/VLM pipelines on device streams, uploads and URLs — one task schema, one config, no usls"
+
+[lib]
+name = "neomind_extension_vision_hub"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neomind-extension-sdk = { workspace = true }
+vision-common = { workspace = true, features = ["engine-ort"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+base64 = "0.22"
+image = "0.25"
+parking_lot = "0.12"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tracing = "0.1"
+chrono = "0.4"
+uuid = { version = "1.0", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+neomind-extension-sdk = { workspace = true, features = ["testkit"] }
