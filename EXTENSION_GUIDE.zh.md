@@ -103,11 +103,11 @@ NeoMind 扩展在 Native 和 WASM 目标上共享一套运行时模型。
 
 ```bash
 # 从模板复制
-cp -r extensions/weather-forecast-v2 extensions/my-extension  # THEN add "extensions/my-extension" to [workspace].members in the root Cargo.toml — cargo ignores it otherwise
+cp -r extensions/weather-forecast extensions/my-extension  # THEN add "extensions/my-extension" to [workspace].members in the root Cargo.toml — cargo ignores it otherwise
 cd extensions/my-extension
 
 # 更新 Cargo.toml
-sed -i 's/weather-forecast-v2/my-extension/g' Cargo.toml
+sed -i 's/weather-forecast/my-extension/g' Cargo.toml
 ```
 
 ### 2. 配置 Cargo.toml
@@ -283,9 +283,9 @@ ExtensionMetadata::new("my-extension", "My Extension", "1.0.0")
 {类别}-{名称}-v{主版本}
 
 示例：
-- weather-forecast-v2
-- image-analyzer-v2
-- yolo-video-v2
+- weather-forecast
+- image-analyzer
+- yolo-video
 ```
 
 ---
@@ -810,7 +810,7 @@ fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
 
 ```json
 {
-  "id": "yolo-video-v2",
+  "id": "yolo-video",
   "version": "2.0.0",
   "process_config": {
     "timeout_seconds": 60,

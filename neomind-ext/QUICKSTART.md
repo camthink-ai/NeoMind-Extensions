@@ -68,7 +68,7 @@ neomind-ext test --verbose
 
 ```bash
 # 1. 手动复制目录
-cp -r extensions/weather-forecast-v2 extensions/my-extension
+cp -r extensions/weather-forecast extensions/my-extension
 cd extensions/my-extension
 
 # 2. 手动编辑多个文件

@@ -6,7 +6,7 @@
 #   ./build.sh                    # Build all, create packages
 #   ./build.sh --dev              # Dev build, install to NeoMind
 #   ./build.sh --release 2.4.0    # Release build with version
-#   ./build.sh --single yolo-video-v2  # Build single extension
+#   ./build.sh --single yolo-video  # Build single extension
 #
 # For release: ./build.sh --release VERSION
 
@@ -104,8 +104,8 @@ while [[ $# -gt 0 ]]; do
             echo "  ./build.sh                           # Build all, create packages"
             echo "  ./build.sh --dev                     # Dev build, auto-install"
             echo "  ./build.sh --release 2.4.0           # Release with version"
-            echo "  ./build.sh --single weather-forecast-v2  # Single extension"
-            echo "  ./build.sh --single yolo-video-v2 --variant jetson --features nvdec  # Jetson build"
+            echo "  ./build.sh --single weather-forecast  # Single extension"
+            echo "  ./build.sh --single yolo-video --variant jetson --features nvdec  # Jetson build"
             exit 0
             ;;
         *)
@@ -167,10 +167,10 @@ fi
 
 # V2 Extensions list
 V2_EXTENSIONS=(
-    "weather-forecast-v2"
-    "image-analyzer-v2"
-    "yolo-video-v2"
-    "video-vlm-v2"
+    "weather-forecast"
+    "image-analyzer"
+    "yolo-video"
+    "video-vlm"
     "yolo-device-inference"
     "ocr-device-inference"
     "paddle-ocr-v6"
@@ -184,7 +184,7 @@ V2_EXTENSIONS=(
     "bacnet-bridge"
     "onvif-bridge"
     "opcua-bridge"
-    "locate-anything-v2"
+    "locate-anything"
     "moss-tts-nano"
     "cosyvoice-3"
     "sensevoice-asr"
@@ -484,7 +484,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                     NEOMIND_EXT_DIR="$HOME/Library/Application Support/com.neomind.neomind/data/extensions"
                     FALLBACK=""
                     if [ -d "$NEOMIND_EXT_DIR" ]; then
-                        for cand in vision-hub ocr-device-inference yolo-device-inference image-analyzer-v2 yolo-video-v2; do
+                        for cand in vision-hub ocr-device-inference yolo-device-inference image-analyzer yolo-video; do
                             cand_lib="$NEOMIND_EXT_DIR/$cand/binaries/$PLATFORM/libonnxruntime.dylib"
                             if [ -f "$cand_lib" ]; then
                                 cand_minor=$(otool -L "$cand_lib" 2>/dev/null | grep -oE 'current version [0-9]+\.[0-9]+' | head -1 | awk '{print $3}' | cut -d. -f2)
@@ -964,7 +964,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             # Generate component type from extension ID
             # Use full extension ID (with hyphens converted) to ensure uniqueness
             # e.g., yolo-device-inference -> yolo-device-inference-card
-            # e.g., yolo-video-v2 -> yolo-video-card (remove -v2 suffix for cleaner names)
+            # e.g., yolo-video -> yolo-video-card (remove -v2 suffix for cleaner names)
             COMPONENT_TYPE=$(echo "$ext" | sed 's/-v2$//' | sed 's/-v1$//')"-card"
 
             # For multi-component extensions, each component needs a unique type

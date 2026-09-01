@@ -233,7 +233,7 @@ unsafe impl Send for FfmpegDecoder {}
 // JPEG Encoder (using `image` crate — fast, pure Rust)
 // ============================================================================
 
-/// Encode RGB24 data to JPEG using the `image` crate (same as yolo-video-v2).
+/// Encode RGB24 data to JPEG using the `image` crate (same as yolo-video).
 /// Much faster than ffmpeg MJPEG encoder — no color space conversion needed.
 fn encode_jpeg(rgb_data: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
     let img = match image::RgbImage::from_raw(width, height, rgb_data.to_vec()) {

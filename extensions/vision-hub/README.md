@@ -6,7 +6,7 @@ NeoMind 的统一视觉扩展 —— 一个扩展覆盖全部视觉任务,一条
 
 ## 为什么需要它
 
-此前的视觉能力分散在 7 个扩展里(yolo-device-inference、ocr-device-inference、face-recognition、image-analyzer-v2、locate-anything-v2、stream-player、yolo-video-v2),约 3 万行代码、30–40% 互相复制:6 份相同的 ORT 引导、5 份设备选择、5 份画框、3 份设备绑定框架。Vision Hub 把公共层收进 `crates/vision-common`,对用户意味着:
+此前的视觉能力分散在 7 个扩展里(yolo-device-inference、ocr-device-inference、face-recognition、image-analyzer、locate-anything、stream-player、yolo-video),约 3 万行代码、30–40% 互相复制:6 份相同的 ORT 引导、5 份设备选择、5 份画框、3 份设备绑定框架。Vision Hub 把公共层收进 `crates/vision-common`,对用户意味着:
 
 - **装一个扩展**就有视觉能力,不用按任务挑扩展
 - **一条命令面**(`analyze` / pipeline CRUD),LLM 工具调用不再需要在 40 个命名各异的命令里找
@@ -117,10 +117,10 @@ extensions/vision-hub            # 本扩展
 | 旧扩展 | vision-hub 对应 |
 |---|---|
 | yolo-device-inference bind_device | `create_pipeline`(source=device) |
-| image-analyzer-v2 analyze_image | `analyze`(tasks=[detect]) |
-| yolo-video-v2(流+ROI/越线)| source 批次(pipeline source=stream)|
+| image-analyzer analyze_image | `analyze`(tasks=[detect]) |
+| yolo-video(流+ROI/越线)| source 批次(pipeline source=stream)|
 | ocr-device-inference / face-recognition | ocr / face 批次 |
-| locate-anything-v2 / video-vlm-v2 | ground / vlm 批次 |
+| locate-anything / video-vlm | ground / vlm 批次 |
 | stream-player | source 批次(快照命令)|
 
 过渡期旧扩展全部保留可用;Stage B 删除前会在 marketplace 公告。

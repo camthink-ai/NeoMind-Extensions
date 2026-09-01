@@ -1,6 +1,6 @@
 # AI 扩展硬件加速指南
 
-NeoMind 的 AI 扩展（yolo-video-v2、yolo-device-inference、image-analyzer-v2、face-recognition）使用 ONNX Runtime 做推理。本文说明各平台如何启用 GPU / NPU 加速。
+NeoMind 的 AI 扩展（yolo-video、yolo-device-inference、image-analyzer、face-recognition）使用 ONNX Runtime 做推理。本文说明各平台如何启用 GPU / NPU 加速。
 
 ## 现状总览
 
@@ -100,7 +100,7 @@ echo $CUDA_HOME    # 应为 /usr/local/cuda
 echo $LD_LIBRARY_PATH  # 应包含 /usr/local/cuda/lib64
 
 # 编译打包单个扩展
-./build.sh --single yolo-video-v2
+./build.sh --single yolo-video
 
 # 装到本机 NeoMind
 ./build.sh --yes
@@ -157,7 +157,7 @@ cat /proc/$(systemctl show neomind --property=MainPID --value)/status | grep Gro
 | CUDA link errors at compile time | `usls` cuda feature can't find CUDA toolkit | `export CUDA_HOME=/usr/local/cuda` |
 | `NvRmMemInitNvmap failed: Permission denied` | neomind service user not in `video` group | `sudo usermod -aG video,render neomind && systemctl restart neomind` (see Step 5) |
 | `CUDA failure 999: unknown error` | Same as above — no access to `/dev/nvmap` | Same as above |
-| CUDA enabled but inference still slow (~1s) | ORT graph optimization Level3 triggers fusions producing CUDA-EP-incompatible nodes (GeluFusion→`com.microsoft.Gelu` on PP-OCR; MatmulTransposeFusion→`com.microsoft.FusedMatMul` on YOLO) | Force `with_graph_opt_level_all(1)` for CUDA device in extension code (paddle-ocr-v6 + yolo-video-v2 already fixed; apply proactively to all usls+CUDA extensions) |
+| CUDA enabled but inference still slow (~1s) | ORT graph optimization Level3 triggers fusions producing CUDA-EP-incompatible nodes (GeluFusion→`com.microsoft.Gelu` on PP-OCR; MatmulTransposeFusion→`com.microsoft.FusedMatMul` on YOLO) | Force `with_graph_opt_level_all(1)` for CUDA device in extension code (paddle-ocr-v6 + yolo-video already fixed; apply proactively to all usls+CUDA extensions) |
 
 ---
 
@@ -171,7 +171,7 @@ pip3 install onnxruntime-gpu
 
 # 同样要在本机编译扩展，让 build.sh 打包 CUDA EP
 export ORT_LIB_PATH=$(python3 -c "import onnxruntime, os; print(os.path.dirname(onnxruntime.__file__)+'/capi')")
-./build.sh --single yolo-video-v2
+./build.sh --single yolo-video
 ```
 
 ---
@@ -202,7 +202,7 @@ grep -E "\[HW\]" <后端日志>
 
 ## 相关代码
 
-- 设备选择：`extensions/yolo-video-v2/src/detector.rs` → `auto_device()` + `with_device_fallback()`
-- ORT 库搜索路径：`extensions/yolo-video-v2/src/detector.rs` → `setup_native_lib_paths()`
+- 设备选择：`extensions/yolo-video/src/detector.rs` → `auto_device()` + `with_device_fallback()`
+- ORT 库搜索路径：`extensions/yolo-video/src/detector.rs` → `setup_native_lib_paths()`
 - ORT 打包逻辑：`build.sh` L396-448（`ORT_LIB_PATH` 优先，其次 `LD_LIBRARY_PATH`）
 - usls features：各扩展 `Cargo.toml` → `usls = { features = ["yolo", "ort-load-dynamic", "coreml", "cuda"] }`

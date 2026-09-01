@@ -1,6 +1,6 @@
 //! Remote inference over HTTP — for models that run outside this process
 //! (rkllm3-server on Rockchip boards, PaddleOCR-VL FastAPI, any
-//! OpenAI-compatible VLM endpoint). Ported from video-vlm-v2/vlm.rs.
+//! OpenAI-compatible VLM endpoint). Ported from video-vlm/vlm.rs.
 
 use std::time::Duration;
 

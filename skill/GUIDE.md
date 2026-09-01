@@ -253,7 +253,7 @@ The skill complements existing NeoMind documentation:
 - **Extension Guide**: `EXTENSION_GUIDE.md` - Detailed SDK documentation
 - **Quick Start**: `QUICKSTART.md` - Getting started with development
 - **User Guide**: `USER_GUIDE.md` - End-user documentation
-- **Template Extensions**: `extensions/weather-forecast-v2`, etc.
+- **Template Extensions**: `extensions/weather-forecast`, etc.
 
 ## Platform Support
 

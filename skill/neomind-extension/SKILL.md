@@ -22,12 +22,12 @@ description: |
   - Python sidecar pattern: Rust WS/HTTP client + external Python service
   - Cross-platform building for 6 platforms + hardware acceleration caveats
 
-  Based on 27 production extensions: weather-forecast-v2, image-analyzer-v2,
-  yolo-video-v2, yolo-device-inference, face-recognition, ocr-device-inference,
+  Based on 27 production extensions: weather-forecast, image-analyzer,
+  yolo-video, yolo-device-inference, face-recognition, ocr-device-inference,
   paddle-ocr-v6, paddle-ocr-vl, stream-player, deepstream,
   modbus/lorawan/homeassistant/opcua/onvif/bacnet-bridge,
-  uink-rms-bridge, locate-anything-v2, voice-assistant, cosyvoice-3, moss-tts-nano,
-  sensevoice-asr, voice-edge-tts, wasm-demo, gym-tracker, video-vlm-v2, vision-hub.
+  uink-rms-bridge, locate-anything, voice-assistant, cosyvoice-3, moss-tts-nano,
+  sensevoice-asr, voice-edge-tts, wasm-demo, gym-tracker, video-vlm, vision-hub.
 
 version: 3.0.0
 argument-hint: "[extension-name]"
@@ -49,7 +49,7 @@ Learn to create production-ready extensions for the NeoMind Edge AI Platform (SD
 cd NeoMind-Extensions
 
 # 1) Scaffold by copying the simplest reference impl that matches your goal
-cp -r extensions/weather-forecast-v2 extensions/my-extension-v2
+cp -r extensions/weather-forecast extensions/my-extension-v2
 # (bridge? cp -r extensions/modbus-bridge)
 # (voice? cp -r extensions/voice-edge-tts)
 cd extensions/my-extension-v2
@@ -230,7 +230,7 @@ Full API surface (every trait method, every enum variant) is in
 
 ```
 {category}-{feature}-v{major}
-✅ weather-forecast-v2  ✅ modbus-bridge  ✅ voice-edge-tts  ✅ deepstream
+✅ weather-forecast  ✅ modbus-bridge  ✅ voice-edge-tts  ✅ deepstream
 ❌ weather_forecast (use hyphens, not underscores)
 ```
 
@@ -1076,7 +1076,7 @@ git add . && git commit -m "chore: bump to v$VERSION"
 
 # Step 5: Verify filenames
 ls dist/*.nep
-# e.g. weather-forecast-v2-2.7.0-darwin_aarch64.nep
+# e.g. weather-forecast-2.7.0-darwin_aarch64.nep
 
 # Step 6: Tag + publish
 git tag v$VERSION
@@ -1273,18 +1273,18 @@ Usually caused by bad metadata.json format. Regenerate with
 ## Real Extension Examples (by category)
 
 ### Simple API client
-- **weather-forecast-v2** — sync HTTP (ureq), metric caching, config parameters.
+- **weather-forecast** — sync HTTP (ureq), metric caching, config parameters.
   Best template for new API-polling extensions.
 
 ### ML inference (image)
-- **image-analyzer-v2** — YOLOv8 base64 image input, lazy model load with graceful fallback.
+- **image-analyzer** — YOLOv8 base64 image input, lazy model load with graceful fallback.
 - **yolo-device-inference** — event-driven; runs inference when bound device updates.
 - **face-recognition** — face embedding + matching across device events.
 - **ocr-device-inference** — OCR on device-supplied images.
 - **paddle-ocr-vl** — PaddleOCR-VL multimodal (Python sidecar + Rust wrapper).
 
 ### Video / streaming
-- **yolo-video-v2** — `StreamCapability` + MJPEG push, keep detector across sessions.
+- **yolo-video** — `StreamCapability` + MJPEG push, keep detector across sessions.
 - **stream-player** — generic stream player.
 - **deepstream** — GStreamer pipeline (RTSP → detection → RTSP output), on-demand
   snapshot via one-shot pipeline. Read its commit history before touching GStreamer.
@@ -1306,7 +1306,7 @@ Usually caused by bad metadata.json format. Regenerate with
   Read `lib.rs` `run_session_pump` before writing anything similar.
 
 ### Other
-- **locate-anything-v2** — location/geo extension.
+- **locate-anything** — location/geo extension.
 - **wasm-demo** — WASM extension experiment.
 
 ---

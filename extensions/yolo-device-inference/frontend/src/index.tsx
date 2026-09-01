@@ -1,6 +1,6 @@
 /**
  * YOLO Device Inference Extension
- * Image-focused design matching Image Analyzer V2 style
+ * Image-focused design matching Image Analyzer style
  */
 
 import { forwardRef, useEffect, useState, useRef, useCallback, useMemo } from 'react'

@@ -233,7 +233,7 @@ fn draw_detections_on_image(
         draw_hollow_rect_mut(&mut img, Rect::at(x, y).of_size(w, h), image_color);
         draw_hollow_rect_mut(&mut img, Rect::at(x + 1, y + 1).of_size(w.saturating_sub(2), h.saturating_sub(2)), image_color);
 
-        // Draw label with text using font (matching yolo-video-v2 style)
+        // Draw label with text using font (matching yolo-video style)
         if let Ok(font) = font {
             let label_text = format!("{} {:.0}%", det.label, det.confidence * 100.0);
             let font_size = if img_w > 1200 { 24.0 } else if img_w > 800 { 18.0 } else if w > 100 { 14.0 } else { 11.0 };
@@ -507,7 +507,7 @@ impl YOLODetector {
             // CUDA EP: force GraphOptimizationLevel::Level1 — Level3 triggers
             // MatmulTransposeFusion which produces com.microsoft.FusedMatMul
             // nodes that CUDA EP lacks kernels for (same class of bug as
-            // paddle-ocr-v6's GeluFusion). See yolo-video-v2/detector.rs.
+            // paddle-ocr-v6's GeluFusion). See yolo-video/detector.rs.
             let mut cfg = config.clone().with_device_all(device);
             if matches!(device, Device::Cuda(_)) {
                 cfg = cfg.with_graph_opt_level_all(1);

@@ -1,12 +1,12 @@
 // API helpers for invoking deepstream extension commands.
 //
-// Pattern mirrors yolo-video-v2/frontend/src/index.tsx:
+// Pattern mirrors yolo-video/frontend/src/index.tsx:
 //   const isTauri = !!(window as any).__TAURI_INTERNALS__
 //   const host = isTauri ? 'localhost:9375' : window.location.host
 //   `${protocol}//${host}/api/extensions/${extensionId}/command`
 //
 // Auth token (when present) is forwarded as `Authorization: Bearer <token>`
-// exactly like yolo-video-v2 does for its update_stream_config call — without
+// exactly like yolo-video does for its update_stream_config call — without
 // it, command requests 401 silently and the user-visible state never updates.
 
 import type { Stream, ModelInfo, SystemStatus } from './types';

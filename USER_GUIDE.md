@@ -74,7 +74,7 @@ cp target/release/libneomind_extension_*.dylib ~/.neomind/extensions/
 
 ```bash
 # Package a specific extension
-./build.sh --single weather-forecast-v2
+./build.sh --single weather-forecast
 
 # Install the .nep package via NeoMind Web UI
 # Extensions → Add Extension → File Mode → Upload
@@ -84,9 +84,9 @@ cp target/release/libneomind_extension_*.dylib ~/.neomind/extensions/
 
 ## Available Extensions
 
-### Weather Forecast V2
+### Weather Forecast
 
-**ID**: `weather-forecast-v2`
+**ID**: `weather-forecast`
 
 Real-time weather data using Open-Meteo API.
 
@@ -104,14 +104,14 @@ Real-time weather data using Open-Meteo API.
 
 ```bash
 # Build
-cargo build --release -p weather-forecast-v2
+cargo build --release -p weather-forecast
 ```
 
 ---
 
-### Image Analyzer V2
+### Image Analyzer
 
-**ID**: `image-analyzer-v2`
+**ID**: `image-analyzer`
 
 AI-powered image analysis using YOLOv8.
 
@@ -129,14 +129,14 @@ AI-powered image analysis using YOLOv8.
 
 ```bash
 # Build
-cargo build --release -p image-analyzer-v2
+cargo build --release -p image-analyzer
 ```
 
 ---
 
-### YOLO Video V2
+### YOLO Video
 
-**ID**: `yolo-video-v2`
+**ID**: `yolo-video`
 
 Real-time video processing with YOLOv11.
 
@@ -156,7 +156,7 @@ Real-time video processing with YOLOv11.
 
 ```bash
 # Build
-cargo build --release -p yolo-video-v2
+cargo build --release -p yolo-video
 ```
 
 ---
@@ -177,12 +177,12 @@ cargo build --release -p yolo-video-v2
 curl http://localhost:9375/api/extensions
 
 # Execute extension command
-curl -X POST http://localhost:9375/api/extensions/weather-forecast-v2/command \
+curl -X POST http://localhost:9375/api/extensions/weather-forecast/command \
   -H "Content-Type: application/json" \
   -d '{"command": "get_weather", "args": {"city": "Beijing"}}'
 
 # Get extension metrics
-curl http://localhost:9375/api/extensions/image-analyzer-v2/metrics
+curl http://localhost:9375/api/extensions/image-analyzer/metrics
 ```
 
 ### Via Dashboard
@@ -234,7 +234,7 @@ V2 extensions provide React components for the dashboard:
 make build
 
 # Build specific extension
-cargo build --release -p weather-forecast-v2
+cargo build --release -p weather-forecast
 
 # Build and install
 ./build.sh --yes

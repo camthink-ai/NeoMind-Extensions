@@ -109,10 +109,10 @@ This file provides an overview of all documentation available in this repository
 
 ```bash
 # Development (recommended)
-./build.sh --dev yolo-video-v2
+./build.sh --dev yolo-video
 
 # Package for testing
-./build.sh --single yolo-video-v2
+./build.sh --single yolo-video
 
 # Full build
 ./build.sh --skip-install

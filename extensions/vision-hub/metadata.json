@@ -2,12 +2,14 @@
   "id": "vision-hub",
   "name": "Vision Hub",
   "version": "0.1.0",
-  "description": "Unified vision extension: hardware-accelerated detection/OCR/face/grounding/VLM pipelines on device streams, uploads and URLs — one task schema, one config, no usls",
+  "description": "Unified vision extension: hardware-accelerated detection/OCR/face/grounding/VLM pipelines on device streams, uploads and URLs \u2014 one task schema, one config, no usls",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
   "type": "native",
   "categories": [
-    "utility"
+    "ai",
+    "vision",
+    "detection"
   ],
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/vision-hub",
   "builds": {

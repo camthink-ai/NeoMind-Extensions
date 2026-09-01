@@ -4,7 +4,7 @@
  * Shows the current in-gym presence count and the list of active tracks
  * (track id + a tiny normalized bbox/foot indicator). Polls the extension's
  * `get_live_state` command directly via the host REST API — the same proven
- * pattern used by weather-forecast-v2 / yolo-device-inference. Works whether
+ * pattern used by weather-forecast / yolo-device-inference. Works whether
  * or not a data source is bound (defaults to the gym-tracker extension id).
  */
 
@@ -226,7 +226,7 @@ export const GymLiveState = forwardRef<HTMLDivElement, ExtensionComponentProps>(
       setLoading(false)
     }, [extensionId])
 
-    // Initial fetch (small delay, like weather-forecast-v2, to avoid a flash
+    // Initial fetch (small delay, like weather-forecast, to avoid a flash
     // of spinner when the dashboard is still laying out cards).
     useEffect(() => {
       const t = setTimeout(() => {

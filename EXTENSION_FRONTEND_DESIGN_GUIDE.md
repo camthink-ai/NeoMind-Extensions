@@ -887,9 +887,9 @@ Use `{extension-prefix}-{element}` format:
 ```
 
 Extension ID prefix reference:
-- `weather-` → weather-forecast-v2
-- `ia-` → image-analyzer-v2
-- `yolo-` → yolo-video-v2
+- `weather-` → weather-forecast
+- `ia-` → image-analyzer
+- `yolo-` → yolo-video
 - `ydi-` → yolo-device-inference
 - `ocr-` → ocr-device-inference
 - `frc-` → face-recognition

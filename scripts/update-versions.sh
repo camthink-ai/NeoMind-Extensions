@@ -48,16 +48,16 @@ GITHUB_REPO="camthink-ai/NeoMind-Extensions"
 #   variant            = suffix string (e.g., jetson, cuda)
 #   filename_platform  = underscore format used in .nep filename (e.g., linux_arm64)
 VARIANT_BUILDS=(
-    "yolo-video-v2|linux-aarch64|jetson|linux_arm64"
+    "yolo-video|linux-aarch64|jetson|linux_arm64"
     "yolo-device-inference|linux-aarch64|jetson|linux_arm64"
-    "image-analyzer-v2|linux-aarch64|jetson|linux_arm64"
+    "image-analyzer|linux-aarch64|jetson|linux_arm64"
     "paddle-ocr-v6|linux-aarch64|jetson|linux_arm64"
     "ocr-device-inference|linux-aarch64|jetson|linux_arm64"
     "vision-hub|linux-aarch64|jetson|linux_arm64"
     # x86_64 CUDA variants (built on GPU box 43.132.189.162, Tesla T4)
-    "yolo-video-v2|linux-x86_64|cuda|linux_amd64"
+    "yolo-video|linux-x86_64|cuda|linux_amd64"
     "yolo-device-inference|linux-x86_64|cuda|linux_amd64"
-    "image-analyzer-v2|linux-x86_64|cuda|linux_amd64"
+    "image-analyzer|linux-x86_64|cuda|linux_amd64"
     "paddle-ocr-v6|linux-x86_64|cuda|linux_amd64"
     "ocr-device-inference|linux-x86_64|cuda|linux_amd64"
     "vision-hub|linux-x86_64|cuda|linux_amd64"

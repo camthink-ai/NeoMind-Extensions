@@ -133,7 +133,7 @@ Characters `.` and whitespace in labels are auto-replaced with `_` by the SDK
 helper, so the `<base>.<label>` boundary stays unambiguous. Other punctuation
 passes through unchanged.
 
-Example derivation for video streams (`yolo-video-v2`):
+Example derivation for video streams (`yolo-video`):
 
 ```rust
 fn derive_label(source_url: &str) -> String {
@@ -202,7 +202,7 @@ lower the TTL via `ExtensionMetricsCollector::with_descriptor_ttl(...)`.
 
 ## Reference implementation
 
-`extensions/yolo-video-v2/src/lib.rs` is the canonical example:
+`extensions/yolo-video/src/lib.rs` is the canonical example:
 
 - 4 templates (`fps`, `dropped_frames`, `frame_count`, `detection_count`)
 - `upsert` on `init_session` and `recover_session`
@@ -211,5 +211,5 @@ lower the TTL via `ExtensionMetricsCollector::with_descriptor_ttl(...)`.
 - Static extension-level aggregates (`active_streams`, `total_frames_processed`)
   preserved alongside for backwards compatibility
 
-Future candidates: `image-analyzer-v2` (per-job metrics), voice-assistant
+Future candidates: `image-analyzer` (per-job metrics), voice-assistant
 (per-session first-token latency).

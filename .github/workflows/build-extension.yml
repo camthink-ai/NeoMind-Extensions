@@ -6,20 +6,20 @@ on:
       extension:
         description: 'Extension name'
         required: true
-        default: 'weather-forecast-v2'
+        default: 'weather-forecast'
         type: choice
         options:
-          - weather-forecast-v2
-          - image-analyzer-v2
-          - yolo-video-v2
-          - video-vlm-v2
+          - weather-forecast
+          - image-analyzer
+          - yolo-video
+          - video-vlm
           - yolo-device-inference
           - ocr-device-inference
           - paddle-ocr-v6
           - face-recognition
           - stream-player
           - vision-hub
-          - locate-anything-v2
+          - locate-anything
           - uink-rms-bridge
           - homeassistant-bridge
           - lorawan-bridge

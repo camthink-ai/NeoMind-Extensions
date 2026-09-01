@@ -84,11 +84,11 @@ There are 3 build/release scripts available, each designed for different use cas
 
 **Usage:**
 ```bash
-# Build and deploy yolo-video-v2
-./build.sh --dev yolo-video-v2
+# Build and deploy yolo-video
+./build.sh --dev yolo-video
 
 # Specify custom NeoMind path
-./build.sh --dev yolo-video-v2 /path/to/NeoMind
+./build.sh --dev yolo-video /path/to/NeoMind
 ```
 
 **Output:**
@@ -113,11 +113,11 @@ There are 3 build/release scripts available, each designed for different use cas
 
 **Usage:**
 ```bash
-# Package yolo-video-v2 to ./dist/
-./build.sh --single yolo-video-v2
+# Package yolo-video to ./dist/
+./build.sh --single yolo-video
 
 # Package to custom output directory
-./build.sh --single yolo-video-v2 ./my-output
+./build.sh --single yolo-video ./my-output
 ```
 
 **Output:**

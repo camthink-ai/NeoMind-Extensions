@@ -9,14 +9,14 @@ NeoMindProject/
 ├── NeoMind/                    # Main project
 │   ├── data/
 │   │   └── extensions/         # ← Unified extension installation directory
-│   │       ├── yolo-video-v2/
-│   │       ├── image-analyzer-v2/
+│   │       ├── yolo-video/
+│   │       ├── image-analyzer/
 │   │       └── ...
 │   └── ...
 │
 └── NeoMind-Extension/          # Extension development repository
     ├── extensions/
-    │   ├── yolo-video-v2/
+    │   ├── yolo-video/
     │   │   ├── src/
     │   │   ├── models/
     │   │   ├── frontend/
@@ -52,7 +52,7 @@ cd NeoMind-Extensions
 
 Example:
 ```bash
-./build.sh --dev yolo-video-v2
+./build.sh --dev yolo-video
 ```
 
 This script will:
@@ -193,8 +193,8 @@ NEOMIND_EXTENSION_DIR=/path/to/data/extensions/<extension-id>
 ./build.sh --dev <extension-name> [neomind-root]
 
 # Examples
-./build.sh --dev yolo-video-v2
-./build.sh --dev image-analyzer-v2 /path/to/NeoMind
+./build.sh --dev yolo-video
+./build.sh --dev image-analyzer /path/to/NeoMind
 ```
 
 ### build.sh --single
@@ -204,7 +204,7 @@ NEOMIND_EXTENSION_DIR=/path/to/data/extensions/<extension-id>
 ./build.sh --single <extension-name> [output-dir]
 
 # Examples
-./build.sh --single yolo-video-v2 ./dist
+./build.sh --single yolo-video ./dist
 ```
 
 ---
@@ -215,8 +215,8 @@ Each extension requires a `metadata.json` file:
 
 ```json
 {
-  "id": "yolo-video-v2",
-  "name": "YOLO Video V2",
+  "id": "yolo-video",
+  "name": "YOLO Video",
   "version": "2.0.0",
   "description": "Real-time video stream processing",
   "author": "Your Name",

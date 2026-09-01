@@ -50,9 +50,9 @@ NeoMind-Extension/
 │               └── simple-counter.md
 │
 ├── extensions/                     # Existing extensions
-│   ├── weather-forecast-v2/
-│   ├── image-analyzer-v2/
-│   └── yolo-video-v2/
+│   ├── weather-forecast/
+│   ├── image-analyzer/
+│   └── yolo-video/
 │
 ├── install-skill.sh                # ← NEW: Installation script
 ├── SKILL_GUIDE.md                  # ← NEW: Complete skill docs

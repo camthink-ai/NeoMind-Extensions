@@ -103,11 +103,11 @@ The main process communicates with extension processes via JSON messages:
 
 ```bash
 # Copy from template
-cp -r extensions/weather-forecast-v2 extensions/my-extension  # THEN add "extensions/my-extension" to [workspace].members in the root Cargo.toml — cargo ignores it otherwise
+cp -r extensions/weather-forecast extensions/my-extension  # THEN add "extensions/my-extension" to [workspace].members in the root Cargo.toml — cargo ignores it otherwise
 cd extensions/my-extension
 
 # Update Cargo.toml
-sed -i 's/weather-forecast-v2/my-extension/g' Cargo.toml
+sed -i 's/weather-forecast/my-extension/g' Cargo.toml
 ```
 
 ### 2. Configure Cargo.toml
@@ -283,9 +283,9 @@ ExtensionMetadata::new("my-extension", "My Extension", "1.0.0")
 {category}-{name}-v{major}
 
 Examples:
-- weather-forecast-v2
-- image-analyzer-v2
-- yolo-video-v2
+- weather-forecast
+- image-analyzer
+- yolo-video
 ```
 
 ---
@@ -852,7 +852,7 @@ Configure resource limits in `metadata.json`:
 
 ```json
 {
-  "id": "yolo-video-v2",
+  "id": "yolo-video",
   "version": "2.0.0",
   "process_config": {
     "timeout_seconds": 60,

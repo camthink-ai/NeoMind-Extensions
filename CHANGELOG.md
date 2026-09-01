@@ -19,7 +19,7 @@
   generator (BSD-sed name corruption fixed; env_hints + variant entries
   preserved); build.sh dev-install now copies models; ORT packaging no
   longer duplicates mismatched versioned dylibs.
-- **Repo hygiene** — 27 extensions in marketplace index (video-vlm-v2 and
+- **Repo hygiene** — 27 extensions in marketplace index (video-vlm and
   vision-hub added, names de-corrupted); 6 broken test files fixed;
-  video-vlm-v2 fork residue corrected (package id, UMD global, frontend
+  video-vlm fork residue corrected (package id, UMD global, frontend
   manifest); neomind-ext scaffold uses crates.io SDK; docs overhauled.

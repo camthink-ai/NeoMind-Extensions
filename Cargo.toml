@@ -5,10 +5,10 @@ members = [
     # release scripts glob extensions/ so keep shared crates under crates/)
     "crates/vision-common",
     # Extensions targeting the isolated NeoMind runtime protocol
-    "extensions/weather-forecast-v2",
-    "extensions/image-analyzer-v2",
-    "extensions/yolo-video-v2",
-    "extensions/video-vlm-v2",
+    "extensions/weather-forecast",
+    "extensions/image-analyzer",
+    "extensions/yolo-video",
+    "extensions/video-vlm",
     "extensions/yolo-device-inference",
     "extensions/ocr-device-inference",
     "extensions/face-recognition",
@@ -21,7 +21,7 @@ members = [
     "extensions/opcua-bridge",
     "extensions/onvif-bridge",
     "extensions/bacnet-bridge",
-    "extensions/locate-anything-v2",
+    "extensions/locate-anything",
     "extensions/moss-tts-nano",
     "extensions/sensevoice-asr",
     "extensions/cosyvoice-3",

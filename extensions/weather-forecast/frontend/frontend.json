@@ -1,0 +1,47 @@
+{
+  "id": "weather-forecast",
+  "version": "2.0.0",
+  "entrypoint": "weather-forecast-components.umd.cjs",
+  "components": [
+    {
+      "name": "WeatherCard",
+      "type": "card",
+      "displayName": "Weather Forecast",
+      "description": "Real-time weather display with temperature, humidity, wind and more. Supports automatic data collection with configurable interval.",
+      "icon": "cloud-sun",
+      "defaultSize": { "width": 340, "height": 320 },
+      "minSize": { "width": 240, "height": 260 },
+      "maxSize": { "width": 480, "height": 400 },
+      "configSchema": {
+        "defaultCity": {
+          "type": "string",
+          "required": false,
+          "default": "Beijing",
+          "description": "Default city for weather display"
+        },
+        "refreshInterval": {
+          "type": "number",
+          "required": false,
+          "default": 300000,
+          "description": "Refresh interval in milliseconds (default: 5 minutes)"
+        },
+        "unit": {
+          "type": "string",
+          "required": false,
+          "default": "celsius",
+          "description": "Temperature unit",
+          "options": ["celsius", "fahrenheit"]
+        }
+      },
+      "refreshable": true,
+      "refreshInterval": 300000
+    }
+  ],
+  "i18n": {
+    "defaultLanguage": "en",
+    "supportedLanguages": ["en", "zh"]
+  },
+  "dependencies": {
+    "react": ">=18.0.0"
+  }
+}

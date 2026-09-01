@@ -67,7 +67,7 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 // (which is the case on that FFI thread). That ephemeral runtime is dropped
 // the moment the FFI call returns, cancelling every `tokio::spawn` task it
 // hosted. `run_session_pump` must outlive `init_session`, so we spawn it onto
-// this global persistent runtime instead. Mirrors the yolo-video-v2 pattern
+// this global persistent runtime instead. Mirrors the yolo-video pattern
 // (which side-steps the issue entirely with `std::thread::spawn`).
 fn persistent_runtime() -> &'static tokio::runtime::Runtime {
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();

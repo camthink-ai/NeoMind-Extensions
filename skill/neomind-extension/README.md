@@ -39,7 +39,7 @@ You can use this skill in two ways:
 
 1. **Create a new extension:**
    ```bash
-   cp -r extensions/weather-forecast-v2 extensions/my-extension-v2
+   cp -r extensions/weather-forecast extensions/my-extension-v2
    cd extensions/my-extension-v2
    ```
 

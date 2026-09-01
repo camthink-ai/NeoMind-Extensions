@@ -603,7 +603,7 @@ impl OcrEngine {
             // CUDA EP: force GraphOptimizationLevel::Level1 — Level3 triggers
             // MatmulTransposeFusion which produces com.microsoft.FusedMatMul
             // nodes that CUDA EP lacks kernels for (same class of bug as
-            // paddle-ocr-v6's GeluFusion). See yolo-video-v2/detector.rs.
+            // paddle-ocr-v6's GeluFusion). See yolo-video/detector.rs.
             let mut cfg = config.clone().with_device_all(device);
             if matches!(device, usls::Device::Cuda(_)) {
                 cfg = cfg.with_graph_opt_level_all(1);

@@ -26,9 +26,9 @@ NeoMind 边缘 AI 平台的官方扩展仓库。
 
 | 扩展 | ID | 分类 | 前端 | 说明 |
 |------|----|------|------|------|
-| 天气预报 V2 | `weather-forecast-v2` | 数据 | WeatherCard | 基于 Open-Meteo API 的实时天气 |
-| 图像分析器 V2 | `image-analyzer-v2` | AI/ML | ImageAnalyzer | YOLOv11 图像目标检测 |
-| YOLO 视频 V2 | `yolo-video-v2` | AI/ML | YoloVideoDisplay | 实时视频流检测，支持 ROI/越线分析 |
+| 天气预报 | `weather-forecast` | 数据 | WeatherCard | 基于 Open-Meteo API 的实时天气 |
+| 图像分析器 | `image-analyzer` | AI/ML | ImageAnalyzer | YOLOv11 图像目标检测 |
+| YOLO 视频 | `yolo-video` | AI/ML | YoloVideoDisplay | 实时视频流检测，支持 ROI/越线分析 |
 | YOLO 设备推理 | `yolo-device-inference` | AI/ML | DeviceBindingCard | 绑定设备摄像头的自动 YOLO 检测 |
 | 人脸识别 | `face-recognition` | AI/ML | FaceRecognitionCard | ArcFace 人脸识别，支持人脸库管理 |
 | OCR 设备推理 | `ocr-device-inference` | AI/ML | OcrDeviceCard | PP-OCRv4 文字识别，绑定设备图像流 |
@@ -39,7 +39,7 @@ NeoMind 边缘 AI 平台的官方扩展仓库。
 | MOSS-TTS-Nano | `moss-tts-nano` | 语音 | — | MOSS-TTS-Nano 语音克隆 TTS — 主机音频播放 + wav 合成 |
 | Edge TTS | `voice-edge-tts` | 语音 | — | Edge TTS（sherpa-onnx ZipVoice）— 跨平台 CPU 流式 TTS |
 | 语音助手 | `voice-assistant` | 语音 | VoiceAssistantCard | 实时语音助手：麦克风 → VAD → ASR → LLM → TTS → 扬声器 |
-| 万物定位 V2 | `locate-anything-v2` | AI/ML | LocateCard | 视觉定位 — 目标检测、短语定位、OCR，基于 LocateAnything-3B |
+| 万物定位 | `locate-anything` | AI/ML | LocateCard | 视觉定位 — 目标检测、短语定位、OCR，基于 LocateAnything-3B |
 | 流媒体播放器 | `stream-player` | 媒体 | StreamPlayerCard | RTSP/RTMP/HLS 视频播放，基于 FFmpeg |
 | DeepStream | `deepstream` | AI/视频 | DeepStreamManagerCard | NVIDIA Jetson 上的多路 RTSP 视频推理，基于 DeepStream SDK |
 | Uink-RMS 桥接 | `uink-rms-bridge` | 设备 | DisplayEditorCard | 墨水屏内容推送与管理 |
@@ -167,7 +167,7 @@ neomind-ext package --with-frontend
 | `neomind-ext watch` | 监视文件变化并自动重建 |
 | `neomind-ext clean` | 清理构建产物 |
 | 健身房追踪 | `gym-tracker` | 视觉 | — | NE503 摄像头轨迹驱动的器械占用状态机 |
-| 视频 VLM V2 | `video-vlm-v2` | AI/ML | VideoVlmDisplay | 实时视频流 VLM 理解(板端 LFM2.5-VL)|
+| 视频 VLM | `video-vlm` | AI/ML | VideoVlmDisplay | 实时视频流 VLM 理解(板端 LFM2.5-VL)|
 | Vision Hub | `vision-hub` | AI/ML | (前端批次中)| 统一视觉扩展:硬件加速检测管线 + 许可门控 |
 
 ### 优势
@@ -204,13 +204,13 @@ cargo build --release
 ### 构建前端组件
 
 ```bash
-cd extensions/weather-forecast-v2/frontend
+cd extensions/weather-forecast/frontend
 npm install && npm run build
 
-cd ../../image-analyzer-v2/frontend
+cd ../../image-analyzer/frontend
 npm install && npm run build
 
-cd ../../yolo-video-v2/frontend
+cd ../../yolo-video/frontend
 npm install && npm run build
 ```
 
@@ -255,7 +255,7 @@ pub extern "C" fn neomind_extension_destroy(ptr: *mut RwLock<Box<dyn Any>>) {
 ### 受影响的扩展
 
 - `yolo-device-inference` - 38MB+ 二进制文件 + 200MB+ 模型文件
-- `yolo-video-v2` - 视频处理扩展
+- `yolo-video` - 视频处理扩展
 
 ### 手动加载方法
 
@@ -324,9 +324,9 @@ panic = "unwind"  # 安全必需！
 ```
 NeoMind-Extension/
 ├── extensions/
-│   ├── weather-forecast-v2/    # 天气扩展
-│   ├── image-analyzer-v2/      # 图像分析扩展
-│   ├── yolo-video-v2/          # 视频处理扩展
+│   ├── weather-forecast/    # 天气扩展
+│   ├── image-analyzer/      # 图像分析扩展
+│   ├── yolo-video/          # 视频处理扩展
 │   ├── yolo-device-inference/  # 设备推理扩展
 │   ├── face-recognition/       # 人脸识别扩展
 │   ├── ocr-device-inference/   # OCR 文字识别扩展
@@ -337,7 +337,7 @@ NeoMind-Extension/
 │   ├── moss-tts-nano/          # MOSS-TTS-Nano 语音克隆 TTS
 │   ├── voice-edge-tts/         # Edge TTS（ZipVoice）
 │   ├── voice-assistant/        # 语音助手（ASR + LLM + TTS）
-│   ├── locate-anything-v2/     # 视觉定位扩展
+│   ├── locate-anything/     # 视觉定位扩展
 │   ├── stream-player/          # 流媒体播放扩展
 │   ├── deepstream/             # NVIDIA DeepStream 多路 RTSP 视频推理 (Jetson)
 │   ├── uink-rms-bridge/        # 墨水屏桥接扩展
