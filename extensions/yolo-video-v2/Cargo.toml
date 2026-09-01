@@ -47,3 +47,7 @@ wasm = []
 nvdec = ["dep:gstreamer", "dep:gstreamer-app"]
 # Process isolation feature for high-risk extensions
 process-isolated = []
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+neomind-extension-sdk = { workspace = true, features = ["testkit"] }

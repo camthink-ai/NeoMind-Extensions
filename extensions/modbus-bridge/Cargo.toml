@@ -28,6 +28,7 @@ tokio-serial = "5.4"
 tokio = { version = "1", features = ["rt", "sync", "macros"] }
 
 [dev-dependencies]
+neomind-extension-sdk = { workspace = true, features = ["testkit"] }
 tokio-modbus = { version = "0.17", default-features = false, features = ["tcp-server"] }
 tokio = { version = "1", features = ["rt", "net", "macros", "time"] }
 

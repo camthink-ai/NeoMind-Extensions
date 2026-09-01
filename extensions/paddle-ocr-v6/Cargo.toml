@@ -33,5 +33,6 @@ usls = { version = "0.1.11", default-features = false, features = ["yolo", "db",
 default = []
 
 [dev-dependencies]
+neomind-extension-sdk = { workspace = true, features = ["testkit"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "test-util"] }
 tempfile = "3"

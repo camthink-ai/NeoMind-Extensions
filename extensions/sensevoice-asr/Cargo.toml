@@ -26,3 +26,7 @@ tracing = "0.1"
 chrono = "0.4"
 tokio = { version = "1", features = ["rt", "sync", "rt-multi-thread"] }
 ureq = { version = "3", features = ["json"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+neomind-extension-sdk = { workspace = true, features = ["testkit"] }

@@ -39,3 +39,7 @@ rodio = { version = "0.17", default-features = false }
 
 [target.'cfg(all(not(target_arch = "wasm32"), target_os = "windows"))'.dependencies]
 rodio = { version = "0.17", default-features = false }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+neomind-extension-sdk = { workspace = true, features = ["testkit"] }

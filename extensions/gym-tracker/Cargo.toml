@@ -29,6 +29,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 uuid = { version = "1.0", features = ["v4"] }
 
 [dev-dependencies]
+neomind-extension-sdk = { workspace = true, features = ["testkit"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "test-util", "time"] }
 
 [features]

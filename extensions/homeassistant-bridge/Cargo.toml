@@ -24,6 +24,7 @@ tokio = { version = "1", features = ["rt", "sync"] }
 ureq = { version = "2", features = ["json"] }
 
 [dev-dependencies]
+neomind-extension-sdk = { workspace = true, features = ["testkit"] }
 tokio = { version = "1", features = ["rt", "net", "macros", "time"] }
 
 [features]

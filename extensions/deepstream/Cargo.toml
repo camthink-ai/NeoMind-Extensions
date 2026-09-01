@@ -24,6 +24,7 @@ thiserror = { workspace = true }
 url = "2"
 
 [dev-dependencies]
+neomind-extension-sdk = { workspace = true, features = ["testkit"] }
 tokio = { version = "1", features = ["test-util"] }
 tempfile = "3"
 

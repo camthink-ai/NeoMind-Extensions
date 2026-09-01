@@ -40,3 +40,7 @@ js-sys = "0.3"
 default = []
 native = []
 wasm = []
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+neomind-extension-sdk = { workspace = true, features = ["testkit"] }
