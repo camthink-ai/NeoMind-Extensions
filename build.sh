@@ -1432,9 +1432,15 @@ if [ "$AUTO_INSTALL" = true ]; then
                 COMPONENT_TYPE=$(echo "$ext" | sed 's/-v2$//' | sed 's/-v1//')"-card"
 
                 if [ -n "$GLOBAL_NAME" ]; then
-                    DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" --arg global_name "$GLOBAL_NAME" '
+                    # Multi-component extensions need a unique registry type per
+                    # component (DynamicRegistry keys by type) — same rule as the
+                    # release path: slugify the export name when count > 1.
+                    DEV_COMPONENT_COUNT=$(jq '.components | length' "$FRONTEND_JSON" 2>/dev/null || echo "0")
+                    DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" --arg global_name "$GLOBAL_NAME" --argjson component_count "$DEV_COMPONENT_COUNT" '
                         [.components[] | {
-                            "type": $component_type,
+                            "type": (if $component_count > 1 then
+                                (.name | gsub("(?<=[a-z0-9])(?=[A-Z])"; "-") | ascii_downcase)
+                            else $component_type end),
                             "name": .displayName,
                             "description": .description,
                             "category": (if .type == "card" then "custom"
@@ -1499,9 +1505,15 @@ if [ "$AUTO_INSTALL" = true ]; then
                         }]
                     ' "$FRONTEND_JSON" 2>/dev/null)
                 else
-                    DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" '
+                    # Multi-component extensions need a unique registry type per
+                    # component (DynamicRegistry keys by type) — same rule as the
+                    # release path below: slugify the export name when count > 1.
+                    DEV_COMPONENT_COUNT=$(jq '.components | length' "$FRONTEND_JSON" 2>/dev/null || echo "0")
+                    DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" --argjson component_count "$DEV_COMPONENT_COUNT" '
                         [.components[] | {
-                            "type": $component_type,
+                            "type": (if $component_count > 1 then
+                                (.name | gsub("(?<=[a-z0-9])(?=[A-Z])"; "-") | ascii_downcase)
+                            else $component_type end),
                             "name": .displayName,
                             "description": .description,
                             "category": (if .type == "card" then "custom"
