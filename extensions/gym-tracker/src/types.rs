@@ -31,6 +31,15 @@ pub struct Face {
     pub det: f32,
 }
 
+/// Frame-level face box from the secondary detector (P2 mosaic pipeline).
+/// Frame-level, not per-track: the 4-class detector reports faces
+/// independently of pose tracks, and association is left to consumers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FaceBox {
+    pub bbox: Bbox,
+    pub det: f32,
+}
+
 /// A single tracked person within a frame.
 ///
 /// `pose` and `face` are nullable per-frame: the P1 device-app only performs
@@ -55,6 +64,10 @@ pub struct TrackFrame {
     pub frame_seq: u64,
     pub ts_ns: u64,
     pub tracks: Vec<Track>,
+    /// Absent on frames from pre-P2 producers (serde default keeps old
+    /// payloads parsing).
+    #[serde(default)]
+    pub faces: Vec<FaceBox>,
 }
 
 #[cfg(test)]
@@ -144,5 +157,39 @@ mod tests {
         let f: TrackFrame = serde_json::from_value(json).unwrap();
         assert!(f.tracks[0].pose.is_none());
         assert!(f.tracks[0].face.is_none());
+        assert!(f.faces.is_empty());
+    }
+
+    #[test]
+    fn frame_level_faces_parse_and_default() {
+        // Absent field → empty vec (pre-P2 producer compatibility).
+        let legacy = serde_json::json!({
+            "device_id": "ne503-004",
+            "frame_seq": 5,
+            "ts_ns": 1u64,
+            "tracks": []
+        });
+        let f: TrackFrame = serde_json::from_value(legacy).unwrap();
+        assert!(f.faces.is_empty());
+
+        // P2 frame: faces alongside tracks, det-scored bboxes.
+        let json = serde_json::json!({
+            "device_id": "ne503-004",
+            "frame_seq": 6,
+            "ts_ns": 2u64,
+            "tracks": [],
+            "faces": [{
+                "bbox": {"x": 0.1, "y": 0.05, "w": 0.08, "h": 0.12},
+                "det": 0.87
+            }]
+        });
+        let f: TrackFrame = serde_json::from_value(json).unwrap();
+        assert_eq!(f.faces.len(), 1);
+        assert_eq!(f.faces[0].bbox.w, 0.08);
+        assert_eq!(f.faces[0].det, 0.87);
+
+        let back: TrackFrame =
+            serde_json::from_value(serde_json::to_value(&f).unwrap()).unwrap();
+        assert_eq!(back, f);
     }
 }

@@ -13,7 +13,9 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::db::{Db, Zone};
+use crate::analytics::Analytics;
+use crate::config::IdentityCfg;
+use crate::db::{l2_dist, Db, Zone};
 use crate::metrics::Metrics;
 use crate::ne503::Ne503Client;
 use crate::state::LiveState;
@@ -28,6 +30,10 @@ pub struct Ctx {
     /// zone-set change lands in the descriptors / produced values immediately,
     /// instead of waiting for the next `configure`.
     pub metrics: Arc<Metrics>,
+    /// Trails / line crossings / heatmap accumulators (P1).
+    pub analytics: Arc<Analytics>,
+    /// Identity matching knobs (identity.* from the extension config).
+    pub identity: IdentityCfg,
 }
 
 /// Handle one command. Returns a JSON value or an error string (the caller maps
@@ -43,13 +49,60 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             // being republished and ages out here (TTL = ingest.track_ttl_sec).
             let _ = ctx.state.evict_expired();
             let tracks = ctx.state.snapshot();
+            let trails = ctx.analytics.get_trails(40);
+            // Frame-level face boxes for the P2 mosaic (empty when the
+            // producer stopped sending faces — the frontend then skips
+            // mosaicking rather than acting on stale geometry).
+            let faces = ctx.state.snapshot_faces().unwrap_or_default();
+            // P3 member recognition: nearest member by L2 distance in the
+            // osnet uint8-quantized space (cosine is useless there — quant
+            // bias pins unrelated inputs at ~0.999), matched when the
+            // distance is within identity.match_threshold. Members load per
+            // poll — tiny (a gym's worth of rows) and always fresh.
+            let members = ctx.db.list_members().map_err(|e| e.to_string())?;
+            let match_one = |emb: &[f32]| -> Option<(String, String, f32)> {
+                let mut best: Option<(usize, f32)> = None;
+                for (i, m) in members.iter().enumerate() {
+                    let d = l2_dist(emb, &m.embedding);
+                    if d.is_finite() && best.map_or(true, |(_, b)| d < b) {
+                        best = Some((i, d));
+                    }
+                }
+                best.filter(|(_, d)| *d <= ctx.identity.match_threshold)
+                    .map(|(i, d)| (members[i].id.clone(), members[i].name.clone(), d))
+            };
+            // Opportunistic heatmap persistence — polls are frequent enough
+            // that this bounds dirty-frame loss to one poll interval.
+            ctx.analytics.maybe_save(&ctx.db);
             Ok(json!({
                 "present_count": ctx.state.present_count(),
-                "tracks": tracks.iter().map(|t| json!({
-                    "track_id": t.track_id,
-                    "bbox": t.bbox,
-                    "foot": t.foot,
-                })).collect::<Vec<_>>(),
+                "tracks": tracks.iter().map(|t| {
+                    // emb is large (512 f32) — expose the matched member, not
+                    // the raw vector; register_member reads it from state.
+                    let member = t.face.as_ref()
+                        .and_then(|f| match_one(&f.emb))
+                        .map(|(id, name, dist)| json!({
+                            "id": id, "name": name,
+                            "dist": (dist * 1000.0).round() / 1000.0,
+                        }));
+                    json!({
+                        "track_id": t.track_id,
+                        "bbox": t.bbox,
+                        "foot": t.foot,
+                        // Pose/face round-trip the producer's optional fields so
+                        // debug tooling (and P2 rep counting) can see them without
+                        // reading the ingest stream directly. Null when the
+                        // device-app didn't supply them.
+                        "pose": t.pose,
+                        "has_emb": t.face.as_ref().map_or(false, |f| !f.emb.is_empty()),
+                        // Matched member (P3) or null.
+                        "member": member,
+                        // Fading-tail points (oldest first) for the Monitor overlay.
+                        "trail": trails.get(&t.track_id).cloned().unwrap_or_default(),
+                    })
+                }).collect::<Vec<_>>(),
+                "faces": faces,
+                "members_count": members.len(),
             }))
         }
         // List all ROI zones (round-trips the full Zone struct incl. polygon).
@@ -96,6 +149,58 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             let v = ctx.ne.get_device_status().map_err(|e| e.to_string())?;
             Ok(v)
         }
+        // ---- P1: line crossing (出入口) ----
+        "get_lines" => Ok(json!({ "lines": ctx.analytics.get_lines() })),
+        "set_lines" => {
+            let lines: Vec<crate::analytics::CrossLine> =
+                serde_json::from_value(args["lines"].clone())
+                    .map_err(|e| format!("invalid lines: {e}"))?;
+            let n = lines.len();
+            ctx.analytics.set_lines(&ctx.db, lines)?;
+            Ok(json!({ "saved": n }))
+        }
+        "get_crossings" => Ok(json!({ "lines": ctx.analytics.get_crossings() })),
+        // ---- P1: heatmap ----
+        "get_heatmap" => Ok(ctx.analytics.get_heatmap()),
+        // ---- P3: member library (body-ReID via osnet embeddings) ----
+        // Register the CURRENT embedding of a live track as a named member.
+        // Takes the track's latest face.emb from the mirror — the device
+        // refreshes it every reid_interval (2 s), so a person standing in
+        // view for a few seconds has a fresh embedding.
+        "register_member" => {
+            let track_id: i64 = args["track_id"].as_i64()
+                .ok_or("register_member: missing track_id")?;
+            let name = args["name"].as_str().map(str::trim)
+                .ok_or("register_member: missing name")?;
+            if name.is_empty() {
+                return Err("register_member: name is empty".into());
+            }
+            let _ = ctx.state.evict_expired();
+            let track = ctx.state.snapshot().into_iter()
+                .find(|t| t.track_id == track_id)
+                .ok_or_else(|| format!("track {track_id} not in frame"))?;
+            let emb = track.face.as_ref().filter(|f| !f.emb.is_empty())
+                .ok_or("track has no embedding yet — wait a few seconds and retry")?;
+            let id = format!("member_{}", uuid::Uuid::new_v4().simple());
+            ctx.db.insert_member(&id, name, &emb.emb).map_err(|e| e.to_string())?;
+            Ok(json!({ "member": { "id": id, "name": name, "dim": emb.emb.len() } }))
+        }
+        "list_members" => {
+            let members = ctx.db.list_members().map_err(|e| e.to_string())?;
+            Ok(json!({ "members": members.iter().map(|m| json!({
+                "id": m.id, "name": m.name, "dim": m.embedding.len(),
+                "created_at": m.created_at,
+            })).collect::<Vec<_>>() }))
+        }
+        "delete_member" => {
+            let id = args["id"].as_str()
+                .ok_or("delete_member: missing id")?;
+            let n = ctx.db.delete_member(id).map_err(|e| e.to_string())?;
+            if n == 0 {
+                return Err(format!("member {id} not found"));
+            }
+            Ok(json!({ "deleted": id }))
+        }
         // P1 stub: no single-frame REST endpoint on this firmware yet. Not
         // fatal — the dispatch maps the client error to an error object so the
         // frontend can render a placeholder. P2 will grab a frame via RTSP.
@@ -132,11 +237,15 @@ mod tests {
     fn make_ctx_with_ttl(ttl_sec: u32) -> Ctx {
         let raw = r#"{"device":{"host":"127.0.0.1","username":"x","password":"x","tls_insecure":false},"device_id":"test","ingest":{"topic":"gym/track","publish_hz":8,"track_ttl_sec":30,"reconnect_backoff_sec":[1,2,5]},"identity":{"match_threshold":0.55,"auto_capture_unknown":true,"unknown_prefix":"U"},"roi":{"dwell_debounce_sec":3,"hysteresis":true},"data_dir":"/tmp/gym-test"}"#;
         let cfg = Config::parse(raw).expect("config parse");
+        let db = Arc::new(Db::open(":memory:").expect("db open"));
+        let identity = cfg.identity.clone();
         Ctx {
             state: Arc::new(LiveState::new(ttl_sec)),
-            db: Arc::new(Db::open(":memory:").expect("db open")),
+            analytics: Arc::new(Analytics::new(&db)),
+            db,
             ne: Arc::new(Ne503Client::new(&cfg)),
             metrics: Arc::new(Metrics::new()),
+            identity,
         }
     }
 
@@ -155,7 +264,7 @@ mod tests {
     }
 
     fn frame(tracks: Vec<Track>) -> TrackFrame {
-        TrackFrame { device_id: "d".into(), frame_seq: 1, ts_ns: 0, tracks }
+        TrackFrame { device_id: "d".into(), frame_seq: 1, ts_ns: 0, tracks, faces: vec![] }
     }
 
     #[test]
@@ -188,6 +297,69 @@ mod tests {
         let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
         assert_eq!(out["present_count"].as_i64(), Some(0));
         assert_eq!(out["tracks"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn member_register_match_delete_flow() {
+        let ctx = make_ctx();
+        // threshold 0.1 in this fixture — unit-scale test embeddings
+        // track 3 carries a fresh embedding (P3 wire: face {emb, det}).
+        let mut t3 = track(3);
+        t3.face = Some(crate::types::Face {
+            emb: vec![1.0, 0.0, 0.0, 0.5],
+            det: 0.8,
+        });
+        ctx.state.apply_frame(&frame(vec![t3, track(4)]));
+
+        // register track 3's embedding as 张三
+        let out = handle(&ctx, "register_member",
+                         &json!({ "track_id": 3, "name": "张三" })).expect("ok");
+        let mid = out["member"]["id"].as_str().unwrap().to_string();
+        assert_eq!(out["member"]["name"], "张三");
+        assert_eq!(out["member"]["dim"], 4);
+
+        // list shows it
+        let out = handle(&ctx, "list_members", &json!({})).expect("ok");
+        assert_eq!(out["members"].as_array().unwrap().len(), 1);
+
+        // a near-identical embedding matches (L2 ≈ 0.014 ≤ 0.1); an
+        // orthogonal embedding must NOT match (L2 ≈ 1.19 > 0.1)
+        let mut t3b = track(3);
+        t3b.face = Some(crate::types::Face {
+            emb: vec![0.99, 0.01, 0.0, 0.5],
+            det: 0.7,
+        });
+        ctx.state.apply_frame(&frame(vec![t3b]));
+        let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+        let t3s = out["tracks"].as_array().unwrap().iter()
+            .find(|t| t["track_id"] == 3).unwrap();
+        assert_eq!(t3s["member"]["name"], "张三", "re-embedding still matches");
+        assert_eq!(t3s["member"]["id"], mid.as_str());
+        assert_eq!(t3s["has_emb"], true);
+
+        let mut t3c = track(3);
+        t3c.face = Some(crate::types::Face {
+            emb: vec![0.0, 1.0, 0.0, 0.0],
+            det: 0.6,
+        });
+        ctx.state.apply_frame(&frame(vec![t3c]));
+        let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+        let t3s = out["tracks"].as_array().unwrap().iter()
+            .find(|t| t["track_id"] == 3).unwrap();
+        assert!(t3s["member"].is_null(), "far embedding must not match");
+
+        // register without an embedding is a clean error
+        let err = handle(&ctx, "register_member",
+                         &json!({ "track_id": 4, "name": "李四" }));
+        assert!(err.is_err());
+
+        // delete → matching gone
+        handle(&ctx, "delete_member", &json!({ "id": mid })).expect("ok");
+        let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+        let t3s = out["tracks"].as_array().unwrap().iter()
+            .find(|t| t["track_id"] == 3).unwrap();
+        assert!(t3s["member"].is_null(), "no member after delete");
+        assert_eq!(out["members_count"], 0);
     }
 
     #[test]

@@ -289,3 +289,284 @@
 .gym-live-retry:hover {
   background: var(--gl-muted-bg);
 }
+
+/* ============================================================================
+   GymEquipmentGrid
+   ============================================================================ */
+
+.gym-eq { height: 100%; min-height: 0; }
+.gym-eq-card {
+  display: flex; flex-direction: column; height: 100%;
+  border: 1px solid var(--border, #2a2a2a); border-radius: 10px;
+  background: var(--card, #171717); color: var(--foreground, #fafafa);
+  font-family: inherit; font-size: 13px; overflow: hidden;
+}
+.gym-eq-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--border, #2a2a2a);
+}
+.gym-eq-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.gym-eq-title svg { width: 16px; height: 16px; }
+.gym-eq-summary { color: var(--muted-foreground, #a1a1aa); font-size: 12px; }
+.gym-eq-state {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px; color: var(--muted-foreground, #a1a1aa); padding: 24px;
+}
+.gym-eq-state svg { width: 28px; height: 28px; opacity: .6; }
+.gym-eq-grid {
+  flex: 1; overflow: auto; padding: 10px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px; align-content: start;
+}
+.gym-eq-cell {
+  display: flex; align-items: center; gap: 10px; padding: 10px;
+  border: 1px solid var(--border, #2a2a2a); border-radius: 8px;
+  background: color-mix(in srgb, var(--card, #171717) 92%, transparent);
+}
+.gym-eq-cell.busy { border-color: rgba(34, 197, 94, .55); background: rgba(34, 197, 94, .07); }
+.gym-eq-dot {
+  width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0;
+  background: #52525b; box-shadow: none;
+}
+.gym-eq-dot.on { background: #22c55e; box-shadow: 0 0 8px rgba(34, 197, 94, .8); }
+.gym-eq-cell-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.gym-eq-zone-name {
+  font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gym-eq-zone-meta {
+  font-size: 11px; color: var(--muted-foreground, #a1a1aa);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gym-eq-count {
+  font-weight: 700; font-size: 16px; color: var(--muted-foreground, #a1a1aa);
+  min-width: 20px; text-align: right;
+}
+.gym-eq-count.on { color: #22c55e; }
+
+/* ============================================================================
+   GymTrafficChart
+   ============================================================================ */
+
+.gym-traffic { height: 100%; min-height: 0; }
+.gym-traffic-card {
+  display: flex; flex-direction: column; height: 100%;
+  border: 1px solid var(--border, #2a2a2a); border-radius: 10px;
+  background: var(--card, #171717); color: var(--foreground, #fafafa);
+  font-family: inherit; font-size: 13px; overflow: hidden;
+}
+.gym-traffic-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--border, #2a2a2a);
+}
+.gym-traffic-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.gym-traffic-title svg { width: 16px; height: 16px; }
+.gym-traffic-window { color: var(--muted-foreground, #a1a1aa); font-size: 12px; }
+.gym-traffic-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 10px 14px 12px; gap: 6px; }
+.gym-traffic-now { display: flex; align-items: baseline; gap: 8px; }
+.gym-traffic-now-value { font-size: 30px; font-weight: 700; line-height: 1; }
+.gym-traffic-now-label { color: var(--muted-foreground, #a1a1aa); }
+.gym-traffic-stats { margin-left: auto; color: var(--muted-foreground, #a1a1aa); font-size: 12px; }
+.gym-traffic-plot { flex: 1; min-height: 60px; position: relative; display: flex; flex-direction: column; }
+.gym-traffic-svg { width: 100%; flex: 1; }
+.gym-traffic-area { fill: rgba(34, 197, 94, .15); }
+.gym-traffic-line { fill: none; stroke: #22c55e; stroke-width: .8; vector-effect: non-scaling-stroke; }
+.gym-traffic-pt { fill: rgba(34, 197, 94, .55); }
+.gym-traffic-plot { align-items: stretch; justify-content: center; }
+.gym-traffic-plot > .gym-live-spinner { align-self: center; }
+.gym-traffic-empty { align-self: center; color: var(--muted-foreground, #a1a1aa); font-size: 12px; }
+.gym-traffic-ticks { position: relative; height: 14px; font-size: 10px; color: var(--muted-foreground, #a1a1aa); }
+.gym-traffic-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.gym-traffic-ticks span:first-child { transform: none; }
+.gym-traffic-ticks span:last-child { transform: translateX(-100%); }
+
+/* ============================================================================
+   GymVideoOverlay
+   ============================================================================ */
+
+.gym-ov { height: 100%; min-height: 0; }
+.gym-ov-card {
+  display: flex; flex-direction: column; height: 100%;
+  border: 1px solid var(--border, #2a2a2a); border-radius: 10px;
+  background: var(--card, #171717); color: var(--foreground, #fafafa);
+  font-family: inherit; font-size: 13px; overflow: hidden;
+}
+.gym-ov-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--border, #2a2a2a);
+}
+.gym-ov-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.gym-ov-title svg { width: 16px; height: 16px; }
+.gym-ov-status { display: flex; gap: 6px; }
+.gym-ov-badge {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--border, #2a2a2a); color: var(--muted-foreground, #a1a1aa);
+}
+.gym-ov-badge.streaming { color: #22c55e; border-color: rgba(34, 197, 94, .5); }
+.gym-ov-badge.error { color: #ef4444; border-color: rgba(239, 68, 68, .5); }
+.gym-ov-badge.people { color: var(--foreground, #fafafa); }
+.gym-ov-body { flex: 1; min-height: 0; position: relative; background: #000; }
+.gym-ov-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.gym-ov-veil {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px;
+  color: var(--muted-foreground, #a1a1aa); font-size: 12px; text-align: center; padding: 16px;
+}
+.gym-ov-error { color: #ef4444; }
+.gym-ov-actions {
+  position: absolute; right: 8px; top: 8px; display: flex; gap: 6px;
+}
+.gym-ov-btn {
+  font-size: 11px; padding: 3px 10px; border-radius: 6px; cursor: pointer;
+  background: rgba(0, 0, 0, .55); color: #fafafa;
+  border: 1px solid rgba(255, 255, 255, .25);
+}
+.gym-ov-btn:hover { background: rgba(0, 0, 0, .8); }
+.gym-ov-legend {
+  display: flex; gap: 14px; padding: 6px 14px 8px; font-size: 11px;
+  color: var(--muted-foreground, #a1a1aa); border-top: 1px solid var(--border, #2a2a2a);
+}
+.gym-ov-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.gym-ov-legend .lg { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
+.gym-ov-legend .lg-bbox { background: #22c55e; }
+.gym-ov-legend .lg-skel { background: #3b82f6; }
+.gym-ov-legend .lg-foot { background: #f59e0b; width: 7px; height: 7px; border-radius: 999px; }
+
+/* ============================================================================
+   GymZoneEditor
+   ============================================================================ */
+
+.gym-zones { height: 100%; min-height: 0; }
+.gym-zones-card {
+  display: flex; flex-direction: column; height: 100%;
+  border: 1px solid var(--border, #2a2a2a); border-radius: 10px;
+  background: var(--card, #171717); color: var(--foreground, #fafafa);
+  font-family: inherit; font-size: 13px; overflow: hidden;
+}
+.gym-zones-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--border, #2a2a2a); gap: 8px;
+}
+.gym-zones-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.gym-zones-title svg { width: 16px; height: 16px; }
+.gym-zones-actions { display: flex; gap: 6px; align-items: center; }
+.gym-zones-saved { color: #22c55e; font-size: 12px; }
+.gym-zones-btn {
+  font-size: 12px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+  background: transparent; color: var(--foreground, #fafafa);
+  border: 1px solid var(--border, #3a3a3a);
+}
+.gym-zones-btn:hover:not(:disabled) { border-color: var(--primary, #22c55e); }
+.gym-zones-btn:disabled { opacity: .45; cursor: default; }
+.gym-zones-btn.primary { background: var(--primary, #22c55e); color: #04250f; border-color: transparent; font-weight: 600; }
+.gym-zones-btn.danger { color: #ef4444; border-color: rgba(239, 68, 68, .4); }
+.gym-zones-hint {
+  padding: 6px 14px; font-size: 11px; color: var(--muted-foreground, #a1a1aa);
+  border-bottom: 1px solid var(--border, #2a2a2a);
+}
+.gym-zones-live-hint { color: var(--muted-foreground, #71717a); }
+.gym-zones-frame { padding: 8px 14px 4px; }
+.gym-zones-svg {
+  width: 100%; aspect-ratio: 16 / 9; display: block; cursor: crosshair;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.02) 0%, rgba(255,255,255,.05) 100%),
+    #0d0d0d;
+  border: 1px solid var(--border, #2a2a2a); border-radius: 8px;
+}
+.gym-zones-gridline { stroke: rgba(255, 255, 255, .05); stroke-width: .2; }
+.gym-zones-ghost { fill: rgba(255, 255, 255, .08); stroke: rgba(255, 255, 255, .35); stroke-width: .3; stroke-dasharray: 1 1; }
+.gym-zones-zone polygon { fill: rgba(34, 197, 94, .16); stroke: #22c55e; stroke-width: .45; }
+.gym-zones-zone.off polygon { fill: rgba(120, 120, 120, .1); stroke: #71717a; }
+.gym-zones-zone text { fill: #bbf7d0; font-size: 3px; }
+.gym-zones-draft polygon, .gym-zones-draft polyline { fill: rgba(59, 130, 246, .12); stroke: #3b82f6; stroke-width: .45; stroke-dasharray: 1.2 .8; }
+.gym-zones-draft circle { fill: #3b82f6; }
+.gym-zones-list { flex: 1; min-height: 0; overflow: auto; padding: 8px 14px; display: flex; flex-direction: column; gap: 6px; }
+.gym-zones-empty { color: var(--muted-foreground, #a1a1aa); justify-content: center; align-items: center; }
+.gym-zones-row { display: flex; align-items: center; gap: 8px; }
+.gym-zones-row-idx {
+  width: 20px; height: 20px; border-radius: 999px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(34, 197, 94, .18); color: #4ade80; font-size: 11px; font-weight: 700;
+}
+.gym-zones-input {
+  background: transparent; color: var(--foreground, #fafafa);
+  border: 1px solid var(--border, #3a3a3a); border-radius: 6px;
+  padding: 4px 8px; font-size: 12px; min-width: 0;
+}
+.gym-zones-input.name { flex: 1; }
+.gym-zones-input.type { flex: 1; color: var(--muted-foreground, #a1a1aa); }
+.gym-zones-input:focus { outline: none; border-color: var(--primary, #22c55e); }
+
+/* ============================================================================
+   GymMonitor (all-in-one) additions
+   ============================================================================ */
+
+.gym-ov-canvas.editing { cursor: crosshair; }
+.gym-ov-btn.primary { background: var(--primary, #22c55e); color: #04250f; border-color: transparent; font-weight: 600; }
+.gym-ov-btn.danger { color: #ef4444; border-color: rgba(239, 68, 68, .4); }
+.gym-ov-badge.ok { color: #22c55e; border-color: rgba(34, 197, 94, .5); }
+.gym-ov-edit-tip {
+  position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
+  background: rgba(9, 9, 11, .82); border: 1px solid rgba(255, 255, 255, .14);
+  color: #e4e4e7; font-size: 12px; padding: 5px 14px; border-radius: 999px;
+  pointer-events: none; white-space: nowrap;
+}
+.gym-ov-zonelist {
+  max-height: 160px; overflow: auto; padding: 8px 14px;
+  border-top: 1px solid var(--border, #2a2a2a);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.gym-ov-zonelist-empty { color: var(--muted-foreground, #a1a1aa); font-size: 12px; padding: 4px 0; }
+.gym-ov-zonerow { display: flex; align-items: center; gap: 8px; }
+.gym-ov-zoneidx {
+  width: 20px; height: 20px; border-radius: 999px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(148, 163, 184, .18); color: #cbd5e1; font-size: 11px; font-weight: 700;
+}
+.gym-ov-input {
+  background: transparent; color: var(--foreground, #fafafa);
+  border: 1px solid var(--border, #3a3a3a); border-radius: 6px;
+  padding: 4px 8px; font-size: 12px; min-width: 0;
+}
+.gym-ov-input.name { flex: 1; }
+.gym-ov-input.type { flex: 1; color: var(--muted-foreground, #a1a1aa); }
+.gym-ov-input:focus { outline: none; border-color: var(--primary, #22c55e); }
+
+/* Monitor P1 additions */
+.gym-ov-btn.on { border-color: var(--primary, #22c55e); color: #4ade80; }
+.gym-ov-seg { display: inline-flex; border: 1px solid var(--border, #3a3a3a); border-radius: 6px; overflow: hidden; }
+.gym-ov-seg .gym-ov-btn { border: none; border-radius: 0; }
+.gym-ov-zoneidx.line { background: rgba(245, 158, 11, .18); color: #fbbf24; }
+.gym-ov-linecount { font-size: 12px; color: #fbbf24; white-space: nowrap; min-width: 64px; text-align: center; }
+
+/* ---- P3: member registration panel (view mode, click a person) ---- */
+.gym-ov-register {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(34, 197, 94, 0.45);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  z-index: 6;
+}
+.gym-ov-register-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #86efac;
+  white-space: nowrap;
+}
+.gym-ov-register-err {
+  font-size: 12px;
+  color: #fca5a5;
+  max-width: 220px;
+}
+.gym-ov-zoneidx.member {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.4);
+}

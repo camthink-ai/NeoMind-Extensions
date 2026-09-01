@@ -9,18 +9,130 @@
       "displayName": "Gym · Live",
       "description": "Current in-gym presence and tracks",
       "icon": "users",
-      "defaultSize": { "width": 340, "height": 260 },
-      "minSize": { "width": 240, "height": 180 },
+      "defaultSize": {
+        "width": 340,
+        "height": 260
+      },
+      "minSize": {
+        "width": 240,
+        "height": 180
+      },
       "refreshable": true,
       "refreshInterval": 2000,
       "hasDataSource": true,
-      "dataSourceAllowedTypes": ["extension", "extension-command"],
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
       "configSchema": {}
+    },
+    {
+      "name": "GymEquipmentGrid",
+      "type": "gym-equipment-grid",
+      "displayName": "Gym · Equipment",
+      "description": "Equipment-zone occupancy board (computed from live tracks + ROI zones)",
+      "icon": "grid",
+      "defaultSize": {
+        "width": 420,
+        "height": 300
+      },
+      "minSize": {
+        "width": 280,
+        "height": 200
+      },
+      "refreshable": true,
+      "refreshInterval": 2000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {}
+    },
+    {
+      "name": "GymTrafficChart",
+      "type": "gym-traffic-chart",
+      "displayName": "Gym · Traffic",
+      "description": "Presence trend over the last N hours (gym.present_count history)",
+      "icon": "line-chart",
+      "defaultSize": {
+        "width": 420,
+        "height": 260
+      },
+      "minSize": {
+        "width": 280,
+        "height": 180
+      },
+      "refreshable": true,
+      "refreshInterval": 30000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "hours": {
+          "type": "number",
+          "default": 6,
+          "description": "Trend window in hours (1-24)",
+          "minimum": 1,
+          "maximum": 24
+        }
+      }
+    },
+    {
+      "name": "GymVideoOverlay",
+      "type": "gym-video-overlay",
+      "displayName": "Gym · Monitor",
+      "description": "All-in-one gym monitor: live video + AI overlay (bbox/skeleton) + zone drawing on the real scene + live occupancy badges",
+      "icon": "video",
+      "defaultSize": {
+        "width": 760,
+        "height": 560
+      },
+      "minSize": {
+        "width": 420,
+        "height": 320
+      },
+      "maxSize": {
+        "width": 1400,
+        "height": 1000
+      },
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "sourceUrl": {
+          "type": "string",
+          "default": "",
+          "description": "RTSP/RTMP/HLS source URL (e.g. rtsp://host:8554/sub); requires the stream-player extension"
+        },
+        "targetFps": {
+          "type": "number",
+          "default": 10,
+          "description": "Video target FPS (1-24)"
+        },
+        "outputWidth": {
+          "type": "number",
+          "default": 960,
+          "description": "Decode width in px"
+        },
+        "statePollMs": {
+          "type": "number",
+          "default": 600,
+          "description": "Track-state poll interval ms (250-5000)"
+        }
+      }
     }
   ],
   "i18n": {
     "defaultLanguage": "en",
-    "supportedLanguages": ["en", "zh"]
+    "supportedLanguages": [
+      "en",
+      "zh"
+    ]
   },
   "dependencies": {
     "react": ">=18.0.0"

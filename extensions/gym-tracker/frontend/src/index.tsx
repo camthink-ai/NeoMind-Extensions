@@ -1,14 +1,23 @@
 /**
  * Gym Tracker — frontend entry (UMD).
  *
- * Host loads `gym-tracker-components.umd.cjs` and reads the named export
- * `GymLiveState` (or the default object map). React / ReactDOM are external —
+ * One extension bundle, four business components:
+ *  - GymLiveState     presence + track list + ROI zone editor
+ *  - GymEquipmentGrid equipment-zone occupancy board
+ *  - GymTrafficChart  presence trend over the last N hours
+ *  - GymVideoOverlay  live video + bbox/skeleton overlay
+ *
+ * The host loads `gym-tracker-components.umd.cjs` and reads the named
+ * exports (or the default object map). React / ReactDOM are external —
  * provided by the host app, NOT bundled.
  */
 
 import { GymLiveState } from './GymLiveState'
+import { GymEquipmentGrid } from './GymEquipmentGrid'
+import { GymTrafficChart } from './GymTrafficChart'
+import { GymVideoOverlay } from './GymVideoOverlay'
 
-export { GymLiveState }
-export type { ExtensionComponentProps, DataSource } from './GymLiveState'
+export { GymLiveState, GymEquipmentGrid, GymTrafficChart, GymVideoOverlay }
+export type { ExtensionComponentProps, DataSource } from './common'
 
-export default { GymLiveState }
+export default { GymLiveState, GymEquipmentGrid, GymTrafficChart, GymVideoOverlay }

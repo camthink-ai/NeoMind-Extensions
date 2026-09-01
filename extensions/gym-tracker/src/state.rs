@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
 
-use crate::types::{Track, TrackFrame};
+use crate::types::{FaceBox, Track, TrackFrame};
 
 #[derive(Debug, Clone)]
 struct Entry {
@@ -26,6 +26,11 @@ struct Entry {
 pub struct LiveState {
     ttl: Duration,
     inner: RwLock<HashMap<i64, Entry>>,
+    /// Latest frame-level face boxes (P2). Refreshed per frame; faces are
+    /// detected every Nth frame on the device and reused in between, so a
+    /// plain last-value cache matches the producer's own semantics.
+    faces: RwLock<Vec<FaceBox>>,
+    faces_seen: RwLock<Instant>,
 }
 
 impl LiveState {
@@ -33,6 +38,10 @@ impl LiveState {
         Self {
             ttl: Duration::from_secs(ttl_sec as u64),
             inner: Default::default(),
+            faces: Default::default(),
+            faces_seen: RwLock::new(
+                Instant::now() - Duration::from_secs(3600),
+            ),
         }
     }
 
@@ -49,6 +58,9 @@ impl LiveState {
                 },
             );
         }
+        drop(g);
+        *self.faces.write() = f.faces.clone();
+        *self.faces_seen.write() = now;
     }
 
     /// Evict tracks not seen within `ttl`. Returns the expired `track_id`s
@@ -74,6 +86,17 @@ impl LiveState {
     pub fn snapshot(&self) -> Vec<Track> {
         self.inner.read().values().map(|e| e.track.clone()).collect()
     }
+
+    /// Latest frame-level face boxes, `None` when the last face-bearing
+    /// payload is older than the track TTL (producer stopped sending —
+    /// don't mosaic against stale geometry).
+    pub fn snapshot_faces(&self) -> Option<Vec<FaceBox>> {
+        let seen = *self.faces_seen.read();
+        if seen.elapsed() > self.ttl {
+            return None;
+        }
+        Some(self.faces.read().clone())
+    }
 }
 
 #[cfg(test)]
@@ -98,6 +121,7 @@ mod tests {
                 pose: None,
                 face: None,
             }],
+            faces: vec![],
         }
     }
 
@@ -109,5 +133,29 @@ mod tests {
         s.evict_expired();
         assert_eq!(s.present_count(), 0);
         assert!(s.evict_expired().is_empty());
+    }
+
+    #[test]
+    fn faces_mirror_and_ttl() {
+        use crate::types::FaceBox;
+        let s = LiveState::new(3600);
+        // Empty producer frames (no faces field / detector off) mirror as
+        // an empty-but-fresh list.
+        s.apply_frame(&frame(1));
+        assert_eq!(s.snapshot_faces(), Some(vec![]));
+
+        let mut f = frame(2);
+        f.faces = vec![FaceBox {
+            bbox: Bbox { x: 0.1, y: 0.1, w: 0.2, h: 0.2 },
+            det: 0.9,
+        }];
+        s.apply_frame(&f);
+        assert_eq!(s.snapshot_faces().unwrap().len(), 1);
+
+        // ttl 0 -> any age exceeds it -> stale faces drop to None.
+        let old = LiveState::new(0);
+        old.apply_frame(&f);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert_eq!(old.snapshot_faces(), None);
     }
 }

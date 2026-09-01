@@ -29,7 +29,10 @@
   },
   "frontend": {
     "components": [
-      "GymLiveState"
+      "GymLiveState",
+      "GymEquipmentGrid",
+      "GymTrafficChart",
+      "GymVideoOverlay"
     ],
     "entrypoint": "gym-tracker-components.umd.cjs"
   }

@@ -18,6 +18,7 @@
 // `as_any`, `stop`, `OnceLock` metadata, `#[async_trait]`, `Default`,
 // `neomind_export!`. No `initialize`/`shutdown`/`async produce_metrics`.
 
+pub mod analytics;
 pub mod commands;
 pub mod config;
 pub mod db;
@@ -37,6 +38,7 @@ use neomind_extension_sdk::{
 };
 use parking_lot::RwLock;
 
+use analytics::Analytics;
 use commands::Ctx;
 use config::Config;
 use db::Db;
@@ -52,6 +54,7 @@ struct Inner {
     state: Arc<LiveState>,
     db: Arc<Db>,
     metrics: Arc<Metrics>,
+    analytics: Arc<Analytics>,
     ne: Arc<Ne503Client>,
     #[allow(dead_code)]
     cfg: Config,
@@ -95,11 +98,18 @@ impl Extension for GymTrackerExtension {
 
     fn commands(&self) -> Vec<ExtensionCommand> {
         vec![
-            cmd("get_live_state", "Current in-gym tracks"),
+            cmd("get_live_state", "Current in-gym tracks (incl. trails)"),
             cmd("get_roi_zones", "List ROI equipment zones"),
             cmd("set_roi_zones", "Replace ROI zones (full set)"),
             cmd("get_device_status", "NE503 device status"),
             cmd("get_snapshot", "Capture one frame (base64 JPEG)"),
+            cmd("get_lines", "List crossing lines"),
+            cmd("set_lines", "Replace crossing lines (full set)"),
+            cmd("get_crossings", "Per-line in/out counters (today)"),
+            cmd("get_heatmap", "Foot-position heatmap grid (today)"),
+            cmd("register_member", "Register a live track's embedding as a named member"),
+            cmd("list_members", "List registered members"),
+            cmd("delete_member", "Delete a member by id"),
         ]
     }
 
@@ -158,6 +168,8 @@ impl Extension for GymTrackerExtension {
                 db: inner.db.clone(),
                 ne: inner.ne.clone(),
                 metrics: inner.metrics.clone(),
+                analytics: inner.analytics.clone(),
+                identity: inner.cfg.identity.clone(),
             }
         };
         commands::handle(&ctx, cmd, args).map_err(ExtensionError::Other)
@@ -172,6 +184,10 @@ impl Extension for GymTrackerExtension {
         let cfg: Config = serde_json::from_value(config.clone())
             .map_err(|e| ExtensionError::Other(format!("config: {e}")))?;
 
+        // The data dir may not exist yet (fresh install / moved data_dir) —
+        // create it so Db::open doesn't strand the extension in the inert
+        // cold-load state on a hot-reload.
+        std::fs::create_dir_all(&cfg.data_dir).ok();
         let db = Arc::new(
             Db::open(&format!(
                 "{}/gym-tracker.db",
@@ -179,6 +195,24 @@ impl Extension for GymTrackerExtension {
             ))
             .map_err(|e| ExtensionError::Other(format!("db: {e}")))?,
         );
+
+        // Cold-load path: the host's Init handshake sends `{}` before any real
+        // config exists. Stay inert (no login, no ingest thread) until a
+        // ConfigUpdate supplies a device host; configure() runs again then.
+        if !cfg.provisioned() {
+            tracing::info!("gym-tracker: no device.host configured, idling until ConfigUpdate");
+            let analytics = Arc::new(Analytics::new(&db));
+            *self.inner.write() = Some(Inner {
+                state: Arc::new(LiveState::new(cfg.ingest.track_ttl_sec)),
+                db,
+                metrics: Arc::new(Metrics::new()),
+                analytics,
+                ne: Arc::new(Ne503Client::new(&cfg)),
+                cfg,
+                ingest: None,
+            });
+            return Ok(());
+        }
 
         let ne = Arc::new(Ne503Client::new(&cfg));
 
@@ -194,11 +228,13 @@ impl Extension for GymTrackerExtension {
 
         let state = Arc::new(LiveState::new(cfg.ingest.track_ttl_sec));
         let metrics = Arc::new(Metrics::new());
+        let analytics = Arc::new(Analytics::new(&db));
         // Seed the per-zone metric registry from the persisted zone set so the
         // first produce_metrics() advertises the right descriptors.
         metrics.sync_zones(&db.list_zones().unwrap_or_default());
 
-        let ingest_handle = ingest::spawn(cfg.clone(), state.clone(), token);
+        let ingest_handle =
+            ingest::spawn(cfg.clone(), state.clone(), analytics.clone(), token);
 
         // Replacing a previous Inner drops the old IngestHandle → its Drop stops
         // the old ingest thread. Single write-lock acquisition.
@@ -206,6 +242,7 @@ impl Extension for GymTrackerExtension {
             state,
             db,
             metrics,
+            analytics,
             ne,
             cfg,
             ingest: Some(ingest_handle),
