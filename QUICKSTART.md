@@ -38,7 +38,7 @@ extension-name-version.nep  (ZIP archive)
   "id": "weather-forecast-v2",
   "name": "Weather Forecast",
   "version": "2.0.0",
-  "sdk_version": "2.0.0",
+  "sdk_version": "0.6.5",
   "type": "native",
   "binaries": {
     "darwin_aarch64": "binaries/darwin_aarch64/libneomind_extension_weather_forecast_v2.dylib",
@@ -65,10 +65,10 @@ extension-name-version.nep  (ZIP archive)
 
 ### 构建单个扩展
 ```bash
-bash scripts/package.sh -d extensions/weather-forecast-v2
-bash scripts/package.sh -d extensions/image-analyzer-v2
-bash scripts/package.sh -d extensions/yolo-video-v2
-bash scripts/package.sh -d extensions/yolo-device-inference
+./build.sh --single weather-forecast-v2
+./build.sh --single image-analyzer-v2
+./build.sh --single yolo-video-v2
+./build.sh --single yolo-device-inference
 ```
 
 ### 其他命令
@@ -76,7 +76,7 @@ bash scripts/package.sh -d extensions/yolo-device-inference
 ./build.sh --help         # 查看帮助
 ./build.sh --skip-install # 仅构建，不安装
 ./build.sh --debug        # Debug 模式构建
-make list                 # 列出所有扩展
+make help                 # 列出所有扩展
 make clean                # 清理构建产物
 ```
 
@@ -198,7 +198,7 @@ GitHub Actions 自动构建：
 ```
 NeoMind-Extension/
 ├── extensions/
-│   └── */Cargo.toml → neomind-extension-sdk = { path = "../../../NeoMind/crates/neomind-extension-sdk" }
+│   └── */Cargo.toml → neomind-extension-sdk = { workspace = true }
 └── Cargo.toml (workspace)
 ```
 

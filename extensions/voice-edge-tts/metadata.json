@@ -1,6 +1,6 @@
 {
   "id": "voice-edge-tts",
-  "name": "voice edge tts",
+  "name": "Voice Edge Tts",
   "version": "2.7.7",
   "description": "Edge TTS (sherpa-onnx ZipVoice) extension — cross-platform CPU streaming TTS",
   "author": "NeoMind Team",

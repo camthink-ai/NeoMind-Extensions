@@ -1,6 +1,6 @@
 {
   "id": "stream-player",
-  "name": "stream player",
+  "name": "Stream Player",
   "version": "2.7.7",
   "description": "Universal video player supporting RTSP, RTMP, HLS, local files via FFmpeg transcoding and JSMpeg canvas rendering",
   "author": "NeoMind Team",

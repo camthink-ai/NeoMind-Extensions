@@ -1,6 +1,6 @@
 {
   "id": "ocr-device-inference",
-  "name": "ocr device inference",
+  "name": "Ocr Device Inference",
   "version": "2.7.8",
   "description": "Automatic OCR text recognition bound to device image streams with SVTR model, bounding box drawing, and real-time metric output",
   "author": "NeoMind Team",

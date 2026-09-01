@@ -4,7 +4,7 @@
   "extensions": [
     {
       "id": "bacnet-bridge",
-      "name": "uacnet uridge",
+      "name": "Bacnet Bridge",
       "version": "2.7.7",
       "description": "BACnet/IP bridge extension for NeoMind — discover building automation devices, read sensors, write controls",
       "author": "NeoMind Team",
@@ -37,7 +37,7 @@
     },
     {
       "id": "cosyvoice-3",
-      "name": "cosyvoice 3",
+      "name": "Cosyvoice 3",
       "version": "2.7.7",
       "description": "CosyVoice 3 (Fun-CosyVoice3-0.5B) streaming TTS extension — speak on host audio + synthesize wav",
       "author": "NeoMind Team",
@@ -68,7 +68,7 @@
     },
     {
       "id": "deepstream",
-      "name": "deepstream",
+      "name": "Deepstream",
       "version": "2.8.0",
       "description": "NVIDIA DeepStream extension for multi-stream RTSP video inference on Jetson",
       "author": "NeoMind Team",
@@ -108,7 +108,7 @@
     },
     {
       "id": "face-recognition",
-      "name": "face recognition",
+      "name": "Face Recognition",
       "version": "2.7.8",
       "description": "Real-time face recognition with ArcFace embeddings, device camera binding, face registration gallery, and identity matching for NeoMind Edge AI",
       "author": "NeoMind Team",
@@ -147,7 +147,7 @@
     },
     {
       "id": "gym-tracker",
-      "name": "gym tracker",
+      "name": "Gym Tracker",
       "version": "2.7.8",
       "description": "Smart-gym extension: NE503 person-tracking ingestion, live state, ROI equipment zones, member identity, pose-based rep counting, session reporting",
       "author": "NeoMind Team",
@@ -184,7 +184,7 @@
     },
     {
       "id": "homeassistant-bridge",
-      "name": "homeassistant uridge",
+      "name": "Homeassistant Bridge",
       "version": "2.7.7",
       "description": "Home Assistant bridge for NeoMind — import 3000+ HA entity integrations as devices",
       "author": "NeoMind Team",
@@ -217,7 +217,7 @@
     },
     {
       "id": "image-analyzer-v2",
-      "name": "image analyzer",
+      "name": "Image Analyzer",
       "version": "2.7.8",
       "description": "Standalone image object detection using YOLOv11 with ONNX Runtime, CoreML/CUDA acceleration, and annotated bounding box visualization",
       "author": "NeoMind Team",
@@ -262,7 +262,7 @@
     },
     {
       "id": "locate-anything-v2",
-      "name": "locate anything",
+      "name": "Locate Anything",
       "version": "2.7.7",
       "description": "LocateAnything visual grounding extension - AI skill for object detection, phrase grounding, OCR, GUI grounding, and pointing via LocateAnything-3B model",
       "author": "NeoMind Team",
@@ -299,7 +299,7 @@
     },
     {
       "id": "lorawan-bridge",
-      "name": "lorawan uridge",
+      "name": "Lorawan Bridge",
       "version": "2.7.7",
       "description": "LoRaWAN bridge extension for NeoMind — connect ChirpStack/TTN sensors with auto-discovery",
       "author": "NeoMind Team",
@@ -332,7 +332,7 @@
     },
     {
       "id": "modbus-bridge",
-      "name": "moduus uridge",
+      "name": "Modbus Bridge",
       "version": "2.7.7",
       "description": "Modbus TCP/RTU bridge extension for NeoMind — connect PLCs, power meters, sensors, and industrial devices",
       "author": "NeoMind Team",
@@ -365,7 +365,7 @@
     },
     {
       "id": "moss-tts-nano",
-      "name": "moss tts nano",
+      "name": "Moss Tts Nano",
       "version": "2.7.7",
       "description": "MOSS-TTS-Nano voice cloning TTS extension (speak on host audio device + synthesize wav)",
       "author": "NeoMind Team",
@@ -396,7 +396,7 @@
     },
     {
       "id": "ocr-device-inference",
-      "name": "ocr device inference",
+      "name": "Ocr Device Inference",
       "version": "2.7.8",
       "description": "Automatic OCR text recognition bound to device image streams with SVTR model, bounding box drawing, and real-time metric output",
       "author": "NeoMind Team",
@@ -441,7 +441,7 @@
     },
     {
       "id": "onvif-bridge",
-      "name": "onvif uridge",
+      "name": "Onvif Bridge",
       "version": "2.7.7",
       "description": "ONVIF camera bridge extension for NeoMind — discover IP cameras, get RTSP streams, PTZ control",
       "author": "NeoMind Team",
@@ -474,7 +474,7 @@
     },
     {
       "id": "opcua-bridge",
-      "name": "opcua uridge",
+      "name": "Opcua Bridge",
       "version": "2.7.7",
       "description": "OPC-UA bridge extension for NeoMind — connect industrial servers, browse nodes, subscribe to data changes",
       "author": "NeoMind Team",
@@ -507,7 +507,7 @@
     },
     {
       "id": "paddle-ocr-v6",
-      "name": "paddle ocr v6",
+      "name": "Paddle Ocr V6",
       "version": "2.7.8",
       "description": "PP-OCRv6 native ONNX inference extension with multi-tier model support (tiny/small/medium)",
       "author": "NeoMind Team",
@@ -552,7 +552,7 @@
     },
     {
       "id": "paddle-ocr-vl",
-      "name": "paddle ocr vl",
+      "name": "Paddle Ocr Vl",
       "version": "2.7.7",
       "description": "PaddleOCR-VL bridge extension — high-accuracy multilingual OCR, table recognition, and key information extraction via a remote PaddleOCR-VL inference service",
       "author": "NeoMind Team",
@@ -591,7 +591,7 @@
     },
     {
       "id": "sensevoice-asr",
-      "name": "sensevoice asr",
+      "name": "Sensevoice Asr",
       "version": "2.7.7",
       "description": "SenseVoice-Small ASR extension (Mandarin/English/Japanese/Korean/Cantonese) via sherpa-onnx ONNX CPU backend",
       "author": "NeoMind Team",
@@ -622,7 +622,7 @@
     },
     {
       "id": "stream-player",
-      "name": "stream player",
+      "name": "Stream Player",
       "version": "2.7.7",
       "description": "Universal video player supporting RTSP, RTMP, HLS, local files via FFmpeg transcoding and JSMpeg canvas rendering",
       "author": "NeoMind Team",
@@ -660,7 +660,7 @@
     },
     {
       "id": "uink-rms-bridge",
-      "name": "uink rms uridge",
+      "name": "Uink Rms Bridge",
       "version": "2.7.7",
       "description": "Bridge extension for Uink-RMS e-paper displays, providing device registration, telemetry collection, and image push capabilities",
       "author": "NeoMind Team",
@@ -698,8 +698,87 @@
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/uink-rms-bridge/metadata.json"
     },
     {
+      "id": "video-vlm-v2",
+      "name": "Video Vlm",
+      "version": "0.1.0",
+      "description": "Real-time video stream VLM understanding: RTSP/file input, frames analyzed by on-board LFM2.5-VL, text overlay + MJPEG streaming",
+      "author": "NeoMind Team",
+      "license": "Apache-2.0",
+      "type": "native",
+      "categories": [
+        "video",
+        "streaming",
+        "detection"
+      ],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/video-vlm-v2",
+      "builds": {
+        "darwin-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/video-vlm-v2-0.1.0-darwin_aarch64.nep"
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/video-vlm-v2-0.1.0-darwin_x86_64.nep"
+        },
+        "linux-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/video-vlm-v2-0.1.0-linux_amd64.nep"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/video-vlm-v2-0.1.0-linux_arm64.nep"
+        },
+        "windows-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/video-vlm-v2-0.1.0-windows_amd64.nep"
+        }
+      },
+      "frontend": {
+        "components": [
+          "VideoVlmDisplay"
+        ],
+        "entrypoint": "video-vlm-v2-components.umd.cjs"
+      },
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/video-vlm-v2/metadata.json"
+    },
+    {
+      "id": "vision-hub",
+      "name": "Vision Hub",
+      "version": "0.1.0",
+      "description": "Unified vision extension: hardware-accelerated detection/OCR/face/grounding/VLM pipelines on device streams, uploads and URLs — one task schema, one config, no usls",
+      "author": "NeoMind Team",
+      "license": "Apache-2.0",
+      "type": "native",
+      "categories": [
+        "utility"
+      ],
+      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/vision-hub",
+      "builds": {
+        "darwin-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/vision-hub-0.1.0-darwin_aarch64.nep"
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/vision-hub-0.1.0-darwin_x86_64.nep"
+        },
+        "linux-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/vision-hub-0.1.0-linux_amd64.nep"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/vision-hub-0.1.0-linux_arm64.nep"
+        },
+        "windows-x86_64": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/vision-hub-0.1.0-windows_amd64.nep"
+        },
+        "linux-aarch64-jetson": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/vision-hub-0.1.0-linux_arm64-jetson.nep"
+        },
+        "linux-x86_64-cuda": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/vision-hub-0.1.0-linux_amd64-cuda.nep"
+        }
+      },
+      "env_hints": {
+        "ORT_DYLIB_PATH": "{binaries}/{ort_lib}"
+      },
+      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/vision-hub/metadata.json"
+    },
+    {
       "id": "voice-assistant",
-      "name": "voice assistant",
+      "name": "Voice Assistant",
       "version": "2.7.7",
       "description": "Real-time voice assistant orchestrator: mic → VAD → ASR → echo reply → TTS → speaker",
       "author": "NeoMind Team",
@@ -736,7 +815,7 @@
     },
     {
       "id": "voice-edge-tts",
-      "name": "voice edge tts",
+      "name": "Voice Edge Tts",
       "version": "2.7.7",
       "description": "Edge TTS (sherpa-onnx ZipVoice) extension — cross-platform CPU streaming TTS",
       "author": "NeoMind Team",
@@ -767,7 +846,7 @@
     },
     {
       "id": "wasm-demo",
-      "name": "wasm demo",
+      "name": "Wasm Demo",
       "version": "2.7.7",
       "description": "WASM sandbox demo extension showcasing NeoMind extension SDK capabilities with counter, greeting, and echo commands",
       "author": "NeoMind Team",
@@ -798,7 +877,7 @@
     },
     {
       "id": "weather-forecast-v2",
-      "name": "weather forecast",
+      "name": "Weather Forecast",
       "version": "2.7.7",
       "description": "Real-time weather forecast with multi-city support, OpenWeatherMap API integration, and metric data export for NeoMind dashboards",
       "author": "NeoMind Team",
@@ -835,7 +914,7 @@
     },
     {
       "id": "yolo-device-inference",
-      "name": "yolo device inference",
+      "name": "Yolo Device Inference",
       "version": "2.7.8",
       "description": "Automatic YOLOv11 object detection bound to device image streams with ROI monitoring, line crossing analytics, and annotated output",
       "author": "NeoMind Team",
@@ -880,7 +959,7 @@
     },
     {
       "id": "yolo-video-v2",
-      "name": "yolo video",
+      "name": "Yolo Video",
       "version": "2.7.8",
       "description": "Real-time video stream object detection with YOLOv11, RTSP/camera support, ROI analytics, line crossing, smart capture rules, and MJPEG streaming",
       "author": "NeoMind Team",

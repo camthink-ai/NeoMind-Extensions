@@ -1,6 +1,6 @@
 {
   "id": "weather-forecast-v2",
-  "name": "weather forecast",
+  "name": "Weather Forecast",
   "version": "2.7.7",
   "description": "Real-time weather forecast with multi-city support, OpenWeatherMap API integration, and metric data export for NeoMind dashboards",
   "author": "NeoMind Team",

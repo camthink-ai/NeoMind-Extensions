@@ -124,9 +124,15 @@ mod tests {
 
         assert_eq!(meta.id, "weather-forecast-v2");
         assert_eq!(meta.name, "Weather Forecast V2");
-        assert_eq!(meta.version.major, 2);
-        assert_eq!(meta.version.minor, 0);
-        assert_eq!(meta.version.patch, 0);
+        // version is a String now — assert the major component like the
+        // old semver-struct assertions did.
+        let major: u32 = meta
+            .version
+            .split('.')
+            .next()
+            .and_then(|s| s.parse().ok())
+            .expect("version should start with a numeric major");
+        assert_eq!(major, 2);
     }
 
     #[test]

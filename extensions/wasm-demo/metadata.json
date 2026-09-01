@@ -1,6 +1,6 @@
 {
   "id": "wasm-demo",
-  "name": "wasm demo",
+  "name": "Wasm Demo",
   "version": "2.7.7",
   "description": "WASM sandbox demo extension showcasing NeoMind extension SDK capabilities with counter, greeting, and echo commands",
   "author": "NeoMind Team",

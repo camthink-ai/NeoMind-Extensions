@@ -12,6 +12,30 @@ on:
           - weather-forecast-v2
           - image-analyzer-v2
           - yolo-video-v2
+          - video-vlm-v2
+          - yolo-device-inference
+          - ocr-device-inference
+          - paddle-ocr-v6
+          - face-recognition
+          - stream-player
+          - vision-hub
+          - locate-anything-v2
+          - uink-rms-bridge
+          - homeassistant-bridge
+          - lorawan-bridge
+          - modbus-bridge
+          - bacnet-bridge
+          - onvif-bridge
+          - opcua-bridge
+          - moss-tts-nano
+          - cosyvoice-3
+          - sensevoice-asr
+          - voice-edge-tts
+          - voice-assistant
+          - paddle-ocr-vl
+          - deepstream
+          - gym-tracker
+          - wasm-demo
       release:
         description: 'Create GitHub Release'
         required: false
@@ -70,7 +94,7 @@ jobs:
 
       - name: Setup workspace structure
         run: |
-          # Move NeoMind to parent directory to match Cargo.toml paths
+          # Historical: workspace used path deps on the NeoMind repo; SDK now comes from crates.io (kept harmless)
           mv NeoMind ../NeoMind
 
       - name: Install Rust
@@ -122,7 +146,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="2.0.0"
+          VERSION=$(cat VERSION)
           EXT="${{ inputs.extension }}"
 
           if gh release view "v$VERSION" &>/dev/null; then

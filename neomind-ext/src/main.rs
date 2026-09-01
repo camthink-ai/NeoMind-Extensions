@@ -69,8 +69,15 @@ fn main() -> Result<()> {
         Commands::Build { path, release } => {
             cmd_build(path, release)?;
         }
-        Commands::Package { path, with_frontend } => {
-            cmd_package(path, with_frontend)?;
+        Commands::Package { path, .. } => {
+            // name falls back to the current dir's crate name when omitted
+            let name = path.clone().unwrap_or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .and_then(|d| d.file_name().map(|n| n.to_string_lossy().to_string()))
+                    .unwrap_or_else(|| "extension".to_string())
+            });
+            cmd_package(&name)?;
         }
         Commands::Validate { path } => {
             cmd_validate(path)?;
@@ -178,67 +185,25 @@ fn cmd_build(path: Option<String>, release: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_package(path: Option<String>, with_frontend: bool) -> Result<()> {
-    let ext_path = get_extension_path(path)?;
-
-    println!("{}", "📦 Packaging extension as .nep".green().bold());
-
-    // Get package name from Cargo.toml
-    let cargo_toml = ext_path.join("Cargo.toml");
-    let package_name = extract_package_name(&cargo_toml)?;
-
-    // Find package.sh script
-    let repo_root = get_repo_root()?;
-    let package_script = repo_root.join("build-package.sh");
-
-    if !package_script.exists() {
-        anyhow::bail!("Package script not found: {}", package_script.display());
-    }
-
-    println!("{}", "Running package.sh...".yellow());
-
-    // Build command - use package name
-    let ext_dir_name = ext_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| anyhow::anyhow!("Invalid extension path"))?;
-
-    let mut cmd = Command::new("bash");
-    cmd.arg(&package_script);
-    cmd.arg(&ext_dir_name);
-
-    let status = cmd
+fn cmd_package(name: &str) -> anyhow::Result<()> {
+    // The old build-package.sh was removed; build.sh is the single
+    // packaging entrypoint. We shell out to it from the repo root.
+    let repo_root = std::env::current_dir()?
+        .ancestors()
+        .find(|p| p.join("build.sh").exists())
+        .map(|p| p.to_path_buf())
+        .ok_or_else(|| anyhow::anyhow!("build.sh not found — run from inside the NeoMind-Extensions repo"))?;
+    println!("{} Packaging via build.sh (single source of truth)...", "→".green());
+    let status = std::process::Command::new("./build.sh")
+        .arg("--single")
+        .arg(name)
         .current_dir(&repo_root)
         .status()
-        .context("Failed to run package.sh")?;
-
+        .map_err(|e| anyhow::anyhow!("failed to run build.sh: {e}"))?;
     if !status.success() {
-        anyhow::bail!("Packaging failed with exit code: {:?}", status.code());
+        anyhow::bail!("build.sh --single {name} failed");
     }
-
-    println!("{}", "✅ Package created successfully!".green().bold());
-
-    // Show output path
-    let dist_dir = repo_root.join("dist");
-    if dist_dir.exists() {
-        let mut entries: Vec<_> = fs::read_dir(&dist_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .map(|ext| ext == "nep")
-                    .unwrap_or(false)
-            })
-            .collect();
-
-        entries.sort_by_key(|e| e.metadata().ok().and_then(|m| m.modified().ok()));
-
-        if let Some(last_entry) = entries.last() {
-            println!("\n{}: {}", "Output".cyan(), last_entry.path().display());
-        }
-    }
-
+    println!("{} Package created under {}/dist", "✓".green(), repo_root.display());
     Ok(())
 }
 

@@ -74,7 +74,7 @@ cp target/release/libneomind_extension_*.dylib ~/.neomind/extensions/
 
 ```bash
 # Package a specific extension
-bash scripts/package.sh -d extensions/weather-forecast-v2
+./build.sh --single weather-forecast-v2
 
 # Install the .nep package via NeoMind Web UI
 # Extensions → Add Extension → File Mode → Upload
@@ -104,7 +104,7 @@ Real-time weather data using Open-Meteo API.
 
 ```bash
 # Build
-cargo build --release -p neomind-weather-forecast-v2
+cargo build --release -p weather-forecast-v2
 ```
 
 ---
@@ -129,7 +129,7 @@ AI-powered image analysis using YOLOv8.
 
 ```bash
 # Build
-cargo build --release -p neomind-image-analyzer-v2
+cargo build --release -p image-analyzer-v2
 ```
 
 ---
@@ -156,7 +156,7 @@ Real-time video processing with YOLOv11.
 
 ```bash
 # Build
-cargo build --release -p neomind-yolo-video-v2
+cargo build --release -p yolo-video-v2
 ```
 
 ---
@@ -234,7 +234,7 @@ V2 extensions provide React components for the dashboard:
 make build
 
 # Build specific extension
-cargo build --release -p neomind-weather-forecast-v2
+cargo build --release -p weather-forecast-v2
 
 # Build and install
 ./build.sh --yes
@@ -246,7 +246,7 @@ make clean
 make test
 
 # Format code
-make fmt
+cargo fmt
 ```
 
 ---

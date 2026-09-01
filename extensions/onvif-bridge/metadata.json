@@ -1,6 +1,6 @@
 {
   "id": "onvif-bridge",
-  "name": "onvif uridge",
+  "name": "Onvif Bridge",
   "version": "2.7.7",
   "description": "ONVIF camera bridge extension for NeoMind — discover IP cameras, get RTSP streams, PTZ control",
   "author": "NeoMind Team",

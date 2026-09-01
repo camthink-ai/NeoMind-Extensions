@@ -21,13 +21,13 @@ cargo build --release -p weather-forecast-v2
 cargo test
 
 # Generate JSON files (metadata.json, index.json)
-./scripts/update-versions.sh 2.4.0
+./scripts/update-versions.sh 2.7.9
 
 # Build .nep packages (uses Cargo.toml versions)
 ./build.sh
 
 # Build with specific version for filenames
-./build.sh --release 2.4.0
+./build.sh --release 2.7.9
 
 # Dev build + auto-install to NeoMind
 ./build.sh --dev
@@ -51,7 +51,7 @@ cargo test
 ```bash
 ./build.sh                           # Build all, create packages
 ./build.sh --dev                     # Dev build, auto-install to NeoMind
-./build.sh --release 2.4.0           # Release with version in filenames
+./build.sh --release 2.7.9           # Release with version in filenames
 ./build.sh --single weather-forecast-v2  # Single extension
 ./build.sh --skip-frontend           # Skip frontend builds
 ./build.sh --skip-package            # Skip .nep creation
@@ -131,8 +131,8 @@ gh release create v$VERSION ./dist/*.nep --title "v$VERSION"
 ### Legacy Scripts (Removed)
 
 These scripts have been consolidated into `build.sh`:
-- ~~`build-package.sh`~~ - Use `./build.sh --single <ext>`
-- ~~`build-dev.sh`~~ - Use `./build.sh --dev`
+- ~~`build.sh --single`~~ - Use `./build.sh --single <ext>`
+- ~~`build.sh --dev`~~ - Use `./build.sh --dev`
 - ~~`build-all-platforms.sh`~~ - Use `./build.sh`
 
 ## Project Structure
@@ -159,7 +159,9 @@ NeoMind-Extensions/
 │   └── wasm-demo/
 ├── scripts/
 │   ├── update-versions.sh  # Generate all JSON files
-│   └── generate-json.ts    # Alternative TypeScript generator
+│   └── generate-json.ts    # DEPRECATED — does NOT handle env_hints; running it
+│                           # silently strips vision-hub's ORT_DYLIB_PATH declaration.
+│                           # Always use scripts/update-versions.sh instead.
 ├── release.sh              # Build .nep packages
 └── Cargo.toml              # Workspace configuration
 ```
@@ -473,7 +475,7 @@ npm run build
 
 ## Bridge Extensions
 
-Three IoT bridge extensions connect external systems into NeoMind's device model. Each auto-registers discovered devices and exports per-device metrics via `CapabilityContext.invoke_capability()`.
+Six IoT bridge extensions connect external systems into NeoMind's device model (modbus, lorawan, homeassistant, opcua, onvif, bacnet). Each auto-registers discovered devices and exports per-device metrics via `CapabilityContext.invoke_capability()`.
 
 ### homeassistant-bridge
 

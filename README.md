@@ -24,7 +24,7 @@ This repository contains officially maintained extensions for the **NeoMind exte
 | Weather Forecast V2 | `weather-forecast-v2` | Data | WeatherCard | Real-time weather via Open-Meteo API |
 | Image Analyzer V2 | `image-analyzer-v2` | AI/ML | ImageAnalyzer | YOLOv11 object detection on images |
 | YOLO Video V2 | `yolo-video-v2` | AI/ML | YoloVideoDisplay | Real-time video stream detection with ROI/line crossing |
-| YOLO Device Inference | `yolo-device-inference` | AI/ML | DeviceBindingCard | Auto YOLO detection on device camera feeds |
+| YOLO Device Inference | `yolo-device-inference` | AI/ML | DeviceInferenceCard | Auto YOLO detection on device camera feeds |
 | Face Recognition | `face-recognition` | AI/ML | FaceRecognitionCard | ArcFace face recognition with gallery management |
 | OCR Device Inference | `ocr-device-inference` | AI/ML | OcrDeviceCard | PP-OCRv4 text recognition on device images |
 | PaddleOCR V6 | `paddle-ocr-v6` | AI/ML | PaddleOcrV6Card | PP-OCRv6 native ONNX OCR (multi-tier: tiny/small/medium) with lazy HuggingFace model download |
@@ -67,7 +67,7 @@ This repository contains officially maintained extensions for the **NeoMind exte
 ./build.sh --dev --single weather-forecast-v2
 
 # Build release packages
-./build.sh --release 2.6.0
+./build.sh --release 2.7.9
 
 # Or manual build
 cargo build --release -p weather-forecast-v2
@@ -188,9 +188,12 @@ NeoMind-Extensions/
 | `./build.sh` | Build all + create .nep packages |
 | `./build.sh --dev` | Dev build + auto-install |
 | `./build.sh --dev --single <ext>` | Dev build single extension |
-| `./build.sh --release 2.6.0` | Release with version |
+| `./build.sh --release 2.7.9` | Release with version |
 | `./build.sh --skip-frontend` | Skip frontend builds |
-| `./release.sh 2.6.0` | Same as `./build.sh --release` |
+| `./release.sh 2.7.9` | Same as `./build.sh --release` |
+| Gym Tracker | `gym-tracker` | Vision | — | Equipment occupancy state machine from NE503 camera tracks |
+| Video VLM V2 | `video-vlm-v2` | AI/ML | VideoVlmDisplay | Real-time video stream VLM understanding (on-board LFM2.5-VL) |
+| Vision Hub | `vision-hub` | AI/ML | (in frontend batch) | Unified vision: hardware-accelerated detection pipelines with license gating |
 
 ---
 

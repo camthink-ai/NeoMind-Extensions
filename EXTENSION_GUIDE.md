@@ -103,7 +103,7 @@ The main process communicates with extension processes via JSON messages:
 
 ```bash
 # Copy from template
-cp -r extensions/weather-forecast-v2 extensions/my-extension
+cp -r extensions/weather-forecast-v2 extensions/my-extension  # THEN add "extensions/my-extension" to [workspace].members in the root Cargo.toml — cargo ignores it otherwise
 cd extensions/my-extension
 
 # Update Cargo.toml
@@ -123,7 +123,7 @@ name = "neomind_extension_my_extension"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-neomind-extension-sdk = { path = "../../NeoMind/crates/neomind-extension-sdk" }
+neomind-extension-sdk = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 async-trait = "0.1"
@@ -910,3 +910,57 @@ Configure resource limits in `metadata.json`:
 ## License
 
 MIT License
+
+
+## Platform contracts (SDK 0.6.5+)
+
+### Extension data directory — `NEOMIND_EXTENSION_DATA_DIR`
+
+The runner injects this env var at spawn: a private `data/` subdirectory
+whose contents survive upgrades AND uninstall (the platform's uninstall
+explicitly preserves it). Store user state there — pipeline configs, face
+libraries, licenses, capture history. Never next to package files.
+
+```rust
+let data_dir = std::env::var("NEOMIND_EXTENSION_DATA_DIR")
+    .map(PathBuf::from)
+    .unwrap_or_else(|_| PathBuf::from("."));  // legacy platforms fallback
+let config_path = data_dir.join("config.json");
+```
+
+### Manifest `env_hints` — runtime env injection
+
+Extensions that need runtime-specific env vars (ORT_DYLIB_PATH for
+load-dynamic ONNX Runtime, RKNN/TensorRT lib paths, …) declare them in
+`metadata.json`; the runner resolves `{binaries}` / `{extension_dir}`
+placeholders and injects at spawn — only when the var is unset AND the
+target file exists:
+
+```json
+"env_hints": { "ORT_DYLIB_PATH": "{binaries}/{ort_lib}" }
+```
+
+`{ort_lib}` is resolved by build.sh per platform (dylib/so/dll). The
+platform stays runtime-agnostic; extensions stop shipping bootstrap code.
+
+### Typed events — `neomind_extension_sdk::events`
+
+`SdkEvent::parse(event_type, payload)` accepts both the
+`{event_type, payload}` envelope and a bare payload; `DeviceMetricEvent`
+carries device_id/metric/value (with `MetricValueData` unwrapping
+`{"Float": 1.0}`-style envelopes) and `is_virtual` — skip virtual metrics
+to avoid feedback loops with your own `device_metrics_write` output.
+
+### Multimodal chat — `chat::invoke_with_images`
+
+Attach data-URL images to a chat turn; the platform routes them to a
+vision-capable backend. Mind the ~1MB capability-input cap — downscale
+frames first (≤1024px JPEG is safe).
+
+### Shared vision runtime — `crates/vision-common`
+
+New vision extensions should depend on the workspace crate
+`vision-common` (hardware-acceleration abstraction over direct ort,
+YOLO/OCR decoders, image IO, drawing, model manager with download/cache,
+license gating, remote engines) instead of vendoring usls or copy-pasting
+bootstrap code. See `extensions/vision-hub/` for the reference consumer.

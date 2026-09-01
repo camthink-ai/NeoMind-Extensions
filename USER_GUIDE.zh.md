@@ -74,7 +74,7 @@ cp target/release/libneomind_extension_*.dylib ~/.neomind/extensions/
 
 ```bash
 # 打包特定扩展
-bash scripts/package.sh -d extensions/weather-forecast-v2
+./build.sh --single weather-forecast-v2
 
 # 通过 NeoMind Web UI 安装 .nep 包
 # 扩展 → 添加扩展 → 文件模式 → 上传
@@ -104,7 +104,7 @@ bash scripts/package.sh -d extensions/weather-forecast-v2
 
 ```bash
 # 构建
-cargo build --release -p neomind-weather-forecast-v2
+cargo build --release -p weather-forecast-v2
 ```
 
 ---
@@ -129,7 +129,7 @@ cargo build --release -p neomind-weather-forecast-v2
 
 ```bash
 # 构建
-cargo build --release -p neomind-image-analyzer-v2
+cargo build --release -p image-analyzer-v2
 ```
 
 ---
@@ -156,7 +156,7 @@ cargo build --release -p neomind-image-analyzer-v2
 
 ```bash
 # 构建
-cargo build --release -p neomind-yolo-video-v2
+cargo build --release -p yolo-video-v2
 ```
 
 ---
@@ -234,7 +234,7 @@ V2 扩展为仪表板提供 React 组件：
 make build
 
 # 构建特定扩展
-cargo build --release -p neomind-weather-forecast-v2
+cargo build --release -p weather-forecast-v2
 
 # 构建并安装
 ./build.sh --yes
@@ -246,7 +246,7 @@ make clean
 make test
 
 # 格式化代码
-make fmt
+cargo fmt
 ```
 
 ---

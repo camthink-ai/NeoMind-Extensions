@@ -1,6 +1,6 @@
 {
   "id": "yolo-device-inference",
-  "name": "yolo device inference",
+  "name": "Yolo Device Inference",
   "version": "2.7.8",
   "description": "Automatic YOLOv11 object detection bound to device image streams with ROI monitoring, line crossing analytics, and annotated output",
   "author": "NeoMind Team",

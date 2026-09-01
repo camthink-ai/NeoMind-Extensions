@@ -1,6 +1,6 @@
 {
   "id": "locate-anything-v2",
-  "name": "locate anything",
+  "name": "Locate Anything",
   "version": "2.7.7",
   "description": "LocateAnything visual grounding extension - AI skill for object detection, phrase grounding, OCR, GUI grounding, and pointing via LocateAnything-3B model",
   "author": "NeoMind Team",

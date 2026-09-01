@@ -1,6 +1,6 @@
 {
   "id": "lorawan-bridge",
-  "name": "lorawan uridge",
+  "name": "Lorawan Bridge",
   "version": "2.7.7",
   "description": "LoRaWAN bridge extension for NeoMind — connect ChirpStack/TTN sensors with auto-discovery",
   "author": "NeoMind Team",

@@ -1,10 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
+    # Shared runtime crate for vision extensions (NOT an extension itself;
+    # release scripts glob extensions/ so keep shared crates under crates/)
+    "crates/vision-common",
     # Extensions targeting the isolated NeoMind runtime protocol
     "extensions/weather-forecast-v2",
     "extensions/image-analyzer-v2",
     "extensions/yolo-video-v2",
+    "extensions/video-vlm-v2",
     "extensions/yolo-device-inference",
     "extensions/ocr-device-inference",
     "extensions/face-recognition",
@@ -27,16 +31,16 @@ members = [
     "extensions/paddle-ocr-vl",
     "extensions/deepstream",
     "extensions/gym-tracker",
+    "extensions/vision-hub",
     # "extensions/final-test",
     # "extensions/cli-test-ext",
 ]
-exclude = [
-    "extensions/as-hello",              # AssemblyScript project (not Rust)
-    "extensions/test-dashboard-component",  # Frontend-only component (not Rust)
-]
+
 
 [workspace.package]
-version = "2.5.0"
+# Placeholder — no member uses version.workspace; the authoritative market
+# version is the root VERSION file, per-crate versions live in their Cargo.toml.
+version = "0.0.0"
 edition = "2021"
 authors = ["NeoMind"]
 license = "MIT"
@@ -59,7 +63,11 @@ ort = { version = "2.0.0-rc.10", default-features = false, features = ["half", "
 
 ndarray = "0.16"
 
-neomind-extension-sdk = "0.6.4"
+neomind-extension-sdk = "0.6.6"
+
+# Shared vision runtime (hardware accel abstraction, direct-ort engine,
+# model wrappers, image IO, model manager) — consumed by vision extensions.
+vision-common = { path = "crates/vision-common" }
 
 # Patch usls to skip unreliable is_available() check for CUDA EP.
 # When ORT is loaded dynamically (load-dynamic), GetAvailableProviders()

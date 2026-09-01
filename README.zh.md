@@ -20,7 +20,7 @@ NeoMind 边缘 AI 平台的官方扩展仓库。
 
 ## 可用扩展
 
-> **最新版本**：6 个平台，16 个扩展
+> **最新版本**：6 个平台，27 个扩展
 > **运行时协议**：v3（隔离扩展架构）
 > **发布地址**：[GitHub Releases](https://github.com/camthink-ai/NeoMind-Extensions/releases)
 
@@ -47,7 +47,7 @@ NeoMind 边缘 AI 平台的官方扩展仓库。
 | LoRaWAN 桥接 | `lorawan-bridge` | IoT 桥接 | — | ChirpStack/TTN MQTT 桥接，支持负载解码 |
 | Modbus 桥接 | `modbus-bridge` | IoT 桥接 | — | Modbus TCP/RTU 设备轮询，寄存器读写 |
 | BACnet 桥接 | `bacnet-bridge` | IoT 桥接 | — | BACnet/IP 楼宇自动化 — 设备发现、传感器读取、COV 订阅 |
-| ONVIF 桥接 | `onvif-bridge` | IoT 桥接 | — | ONVIP IP 摄像头发现、RTSP 取流、PTZ 控制 |
+| ONVIF 桥接 | `onvif-bridge` | IoT 桥接 | — | ONVIF IP 摄像头发现、RTSP 取流、PTZ 控制 |
 | OPC-UA 桥接 | `opcua-bridge` | IoT 桥接 | — | OPC-UA 服务器连接、节点浏览、数据订阅 |
 | WASM 演示 | `wasm-demo` | 演示 | — | WASM 目标的计数器演示 |
 
@@ -166,6 +166,9 @@ neomind-ext package --with-frontend
 | `neomind-ext test` | 运行测试 |
 | `neomind-ext watch` | 监视文件变化并自动重建 |
 | `neomind-ext clean` | 清理构建产物 |
+| 健身房追踪 | `gym-tracker` | 视觉 | — | NE503 摄像头轨迹驱动的器械占用状态机 |
+| 视频 VLM V2 | `video-vlm-v2` | AI/ML | VideoVlmDisplay | 实时视频流 VLM 理解(板端 LFM2.5-VL)|
+| Vision Hub | `vision-hub` | AI/ML | (前端批次中)| 统一视觉扩展:硬件加速检测管线 + 许可门控 |
 
 ### 优势
 
@@ -188,8 +191,8 @@ neomind-ext package --with-frontend
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # 克隆仓库
-git clone https://github.com/camthink-ai/NeoMind-Extension.git
-cd NeoMind-Extension
+git clone https://github.com/camthink-ai/NeoMind-Extensions.git
+cd NeoMind-Extensions
 ```
 
 ### 构建所有扩展
@@ -374,7 +377,7 @@ NeoMind-Extension/
 | Windows | x86_64 (64-bit) | `*.dll` |
 | Windows | x86 (32-bit) | `*.dll` |
 
-**总计：6 个平台，16 个扩展**
+**总计：6 个平台，27 个扩展**
 
 ---
 

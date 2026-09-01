@@ -43,8 +43,8 @@ This file provides an overview of all documentation available in this repository
 
 **Contents**:
 - Detailed explanation of all 4 scripts:
-  - `build-dev.sh` - Development builds
-  - `build-package.sh` - Single extension packaging
+  - `build.sh --dev` - Development builds
+  - `build.sh --single` - Single extension packaging
   - `build.sh` - Full batch builds
   - `release.sh` - Release preparation
 - Workflow recommendations
@@ -100,8 +100,8 @@ This file provides an overview of all documentation available in this repository
 
 | Script | Description | Output |
 |--------|-------------|--------|
-| `build-dev.sh` | Development build for single extension | `NeoMind/data/extensions/` |
-| `build-package.sh` | Package single extension as .nep | `dist/*.nep` |
+| `build.sh --dev` | Development build for single extension | `NeoMind/data/extensions/` |
+| `build.sh --single` | Package single extension as .nep | `dist/*.nep` |
 | `build.sh` | Build all extensions | `target/release/` + `dist/*.nep` |
 | `release.sh` | Clean build for releases | `dist/*.nep` |
 
@@ -109,10 +109,10 @@ This file provides an overview of all documentation available in this repository
 
 ```bash
 # Development (recommended)
-./build-dev.sh yolo-video-v2
+./build.sh --dev yolo-video-v2
 
 # Package for testing
-./build-package.sh yolo-video-v2
+./build.sh --single yolo-video-v2
 
 # Full build
 ./build.sh --skip-install
@@ -129,13 +129,13 @@ This file provides an overview of all documentation available in this repository
 
 1. **Start with README.md** - Get overview
 2. **Read DEPLOYMENT.md** - Understand workflow
-3. **Use build-dev.sh** - Daily development
+3. **Use build.sh --dev** - Daily development
 4. **Refer to SCRIPTS.md** - When confused about scripts
 
 ### For Release Managers
 
 1. **Use build.sh or release.sh** - Full builds
-2. **Test with build-package.sh** - Individual packages
+2. **Test with build.sh --single** - Individual packages
 3. **Upload via frontend** - Distribution
 
 ---

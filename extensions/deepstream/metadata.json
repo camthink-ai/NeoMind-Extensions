@@ -1,6 +1,6 @@
 {
   "id": "deepstream",
-  "name": "deepstream",
+  "name": "Deepstream",
   "version": "2.8.0",
   "description": "NVIDIA DeepStream extension for multi-stream RTSP video inference on Jetson",
   "author": "NeoMind Team",

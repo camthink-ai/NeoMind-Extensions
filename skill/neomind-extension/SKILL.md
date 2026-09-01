@@ -22,11 +22,12 @@ description: |
   - Python sidecar pattern: Rust WS/HTTP client + external Python service
   - Cross-platform building for 6 platforms + hardware acceleration caveats
 
-  Based on 23 production extensions: weather-forecast-v2, image-analyzer-v2,
+  Based on 27 production extensions: weather-forecast-v2, image-analyzer-v2,
   yolo-video-v2, yolo-device-inference, face-recognition, ocr-device-inference,
-  paddle-ocr-vl, stream-player, deepstream, modbus/lorawan/homeassistant/opcua/onvif/bacnet-bridge,
+  paddle-ocr-v6, paddle-ocr-vl, stream-player, deepstream,
+  modbus/lorawan/homeassistant/opcua/onvif/bacnet-bridge,
   uink-rms-bridge, locate-anything-v2, voice-assistant, cosyvoice-3, moss-tts-nano,
-  sensevoice-asr, voice-edge-tts, wasm-demo.
+  sensevoice-asr, voice-edge-tts, wasm-demo, gym-tracker, video-vlm-v2, vision-hub.
 
 version: 3.0.0
 argument-hint: "[extension-name]"
@@ -371,7 +372,7 @@ Cross-platform ML deployment has sharp edges:
 - **Windows**: CPU EP works out of the box; CUDA needs manual setup
 - Current SDK uses `ort = "2.0.0-rc.10"` which requires **ONNX Runtime 1.22.x**
 
-Read [`HARDWARE_ACCELERATION.zh.md`](../../../../CamThink%20Project/NeoMind-Extensions/HARDWARE_ACCELERATION.zh.md)
+Read [`HARDWARE_ACCELERATION.zh.md`](../../HARDWARE_ACCELERATION.zh.md)
 before building .nep packages for any platform you can't test locally.
 
 ---
@@ -469,7 +470,7 @@ impl Extension for YoloDeviceInference {
 
 ## Step 8: Frontend Components (Optional)
 
-> **Read [`EXTENSION_FRONTEND_DESIGN_GUIDE.md`](../../../../CamThink%20Project/NeoMind-Extensions/EXTENSION_FRONTEND_DESIGN_GUIDE.md)
+> **Read [`EXTENSION_FRONTEND_DESIGN_GUIDE.md`](../../EXTENSION_FRONTEND_DESIGN_GUIDE.md)
 > before writing frontend.** The rules below are the short version.
 
 ### Hard rules

@@ -1,6 +1,6 @@
 {
   "id": "paddle-ocr-v6",
-  "name": "paddle ocr v6",
+  "name": "Paddle Ocr V6",
   "version": "2.7.8",
   "description": "PP-OCRv6 native ONNX inference extension with multi-tier model support (tiny/small/medium)",
   "author": "NeoMind Team",

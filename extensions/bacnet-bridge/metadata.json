@@ -1,6 +1,6 @@
 {
   "id": "bacnet-bridge",
-  "name": "uacnet uridge",
+  "name": "Bacnet Bridge",
   "version": "2.7.7",
   "description": "BACnet/IP bridge extension for NeoMind — discover building automation devices, read sensors, write controls",
   "author": "NeoMind Team",
