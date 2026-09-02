@@ -37,6 +37,10 @@ pub struct LiveState {
     frame_img: RwLock<Option<(String, Vec<Track>, Vec<FaceBox>)>>,
     /// Display-rate preview stream (`gym/preview`): latest (ts_ns, img).
     preview: RwLock<Option<(u64, String)>>,
+    /// ts_ns of the TrackFrame the latest tracks came from — the TRUE
+    /// capture time of those positions (they lag the preview stream by the
+    /// inference latency; keying overlay history by this keeps A/V sync).
+    tracks_ts: RwLock<u64>,
     /// Wakes the push thread when a new preview frame lands.
     preview_wait: Mutex<()>,
     preview_cv: Condvar,
@@ -52,6 +56,7 @@ impl LiveState {
             faces: Default::default(),
             frame_img: Default::default(),
             preview: Default::default(),
+            tracks_ts: RwLock::new(0),
             preview_wait: Mutex::new(()),
             preview_cv: Condvar::new(),
             track_hist: Default::default(),
@@ -78,6 +83,7 @@ impl LiveState {
         drop(g);
         *self.faces.write() = f.faces.clone();
         *self.faces_seen.write() = now;
+        *self.tracks_ts.write() = f.ts_ns;
         if let Some(img) = f.img_b64.as_ref() {
             *self.frame_img.write() =
                 Some((img.clone(), tracks_now, f.faces.clone()));
@@ -110,6 +116,11 @@ impl LiveState {
     /// Latest tracks (of the most recent TrackFrame).
     pub fn snapshot_tracks(&self) -> Vec<Track> {
         self.snapshot()
+    }
+
+    /// ts_ns of the TrackFrame the latest tracks came from.
+    pub fn snapshot_tracks_ts(&self) -> u64 {
+        *self.tracks_ts.read()
     }
 
     /// Latest display preview from `gym/preview`.

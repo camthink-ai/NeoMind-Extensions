@@ -303,6 +303,7 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                         "img_b64": i,
                         "ts_ns": ts,
                         "tracks_hist": hist,
+                        "tracks_ts": ctx.state.snapshot_tracks_ts(),
                         "tracks": tracks,
                         "faces": faces,
                         "present_count": tracks.len(),

@@ -321,6 +321,7 @@ impl Extension for GymTrackerExtension {
                 else { continue };
                 let faces = state.snapshot_faces().unwrap_or_default();
                 let tracks = state.snapshot_tracks();
+                let tracks_ts = state.snapshot_tracks_ts();
                 seq += 1;
                 let msg = PushOutputMessage::json(
                     &sid,
@@ -333,6 +334,10 @@ impl Extension for GymTrackerExtension {
                         // (sending the full hist per frame doubled the
                         // parse cost and stalled the browser at 23 fps)
                         "tracks": tracks,
+                        // TRUE capture time of those track positions — the
+                        // client keys its overlay history by this, not by
+                        // the preview ts (which is one inference-latency ahead)
+                        "tracks_ts": tracks_ts,
                         "faces": faces,
                         "present_count": tracks.len(),
                     }),

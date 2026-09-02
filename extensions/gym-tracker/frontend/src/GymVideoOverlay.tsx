@@ -77,6 +77,11 @@ const MOSAIC_PAD = 0.12
 // between history samples (smooth motion) and extrapolating at most
 // EXTRAP_MAX_MS when data is momentarily behind the picture.
 const OVERLAY_DELAY_MS = 0.15 // sec
+// Jitter-buffer depth: the renderer plays the preview stream at
+// (newest_ts - PLAY_DELAY), so both the video frame AND the track
+// keyframes have samples on EITHER side of the playhead — interpolation
+// instead of extrapolation, i.e. true A/V sync at a fixed ~300 ms latency.
+const PLAY_DELAY = 0.30 // sec
 const EXTRAP_MAX_MS = 0.45 // sec (kept name for history)
 
 interface HistEntry { t: number; bbox: Bbox; foot?: Point | null }
@@ -295,6 +300,10 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     const lastImgRef = useRef<string>('')
     // ts_ns (seconds) of the currently displayed device frame, when present
     const lastTsRef = useRef<number | null>(null)
+    // jitter buffer: decoded frames (ts sec, Image) in arrival order
+    const frameBufRef = useRef<Array<{ t: number; img: HTMLImageElement }>>([])
+    // TRUE ts (sec) of the latest track data — drives the adaptive playhead
+    const lastTracksTsRef = useRef(0)
     const applyFrameBundle = useCallback((data: FrameBundle) => {
       if (!data.img_b64 || data.img_b64 === lastImgRef.current) return
       lastImgRef.current = data.img_b64
@@ -306,10 +315,15 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       // every device frame proves the display pipeline is alive — also
       // overrides any stale error status from the superseded video path
       setStatus('streaming')
+      const frameTs = ((data as any).ts_ns as number) / 1e6
       const im = new Image()
       im.onload = () => {
         if (!mountedRef.current) return
-        imgRef.current = im
+        // jitter buffer, not direct display: the draw loop picks the frame
+        // at the playhead (newest - PLAY_DELAY)
+        const buf = frameBufRef.current
+        buf.push({ t: frameTs, img: im })
+        while (buf.length > 0 && frameTs - buf[0].t > 1.5) buf.shift()
         const c = fpsCounterRef.current
         c.frames++
         const now = Date.now()
@@ -318,8 +332,6 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           c.frames = 0
           c.last = now
         }
-        // rAF may be paused entirely in occluded tabs — draw NOW
-        drawRef.current?.()
         dirtyRef.current = true
       }
       im.src = `data:image/jpeg;base64,${data.img_b64}`
@@ -336,8 +348,11 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         // heartbeat so a stationary person doesn't age out). A staircase
         // history (identical positions at 20 Hz) zeroes the interpolation
         // velocity and the overlay visibly trails the video.
-        lastTsRef.current = tsNs / 1e6
-        const tSec = tsNs / 1e6
+        // TRUE capture time of the positions — the preview ts is one
+        // inference-latency ahead of when these positions were real
+        const tracksTs = ((data as any).tracks_ts as number) / 1e6
+        const tSec = tracksTs > 0 ? tracksTs : tsNs / 1e6
+        if (tracksTs > 0) lastTracksTsRef.current = tracksTs
         const seen = new Set<number>()
         for (const t of data.tracks ?? []) {
           if (!t.bbox) continue
@@ -590,7 +605,27 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
 
       ctx.fillStyle = '#050505'
       ctx.fillRect(0, 0, VW, VH)
-      const img = imgRef.current
+      // jitter buffer playhead: display the newest frame that is at least
+      // PLAY_DELAY old — keyframes then straddle the playhead and overlay
+      // interpolation is exact (no extrapolation drift)
+      const buf = frameBufRef.current
+      let img: HTMLImageElement | null = null
+      if (buf.length > 0) {
+        const newest = buf[buf.length - 1].t
+        // adaptive delay: never play video NEWER than the track data
+        // (+margin) — inference latency varies 0.2-2 s with scene load, so
+        // a fixed 300 ms buffer still desynced; this way the picture waits
+        // for the data and interpolation always has straddling keyframes
+        const dataLag = newest - lastTracksTsRef.current
+        const delay = Math.max(PLAY_DELAY, dataLag > 0 ? dataLag + 0.12 : PLAY_DELAY)
+        const playhead = newest - Math.min(delay, 1.5)
+        for (let i = buf.length - 1; i >= 0; i--) {
+          if (buf[i].t <= playhead + 0.004) { img = buf[i].img; break }
+        }
+        if (!img) img = buf[0].img
+        lastTsRef.current = playhead
+      }
+      if (!img) img = imgRef.current
       if (img && img.naturalWidth > 0) {
         const scale = Math.min(
           VW / img.naturalWidth,
@@ -788,7 +823,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       // aligns to the displayed video time; device-frame mode targets "now"
       // so boxes keep moving smoothly between ~5 Hz device updates.
       const drawNow = deviceFramesRef.current && lastTsRef.current != null
-        ? lastTsRef.current
+        ? lastTsRef.current // = jitter-buffer playhead (set above)
         : performance.now() / 1000 - OVERLAY_DELAY_MS
       const alignedTracks = tracks.map((tr) => {
         const hist = trackHistRef.current.get(tr.track_id)
