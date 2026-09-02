@@ -1288,50 +1288,60 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       <div ref={ref} className={`gym-ov ${className}`}>
         <div className="gym-ov-card">
           <div className="gym-ov-header">
-            <div className="gym-ov-title">
-              <span>Gym · Monitor</span>
+            {/* brand row: identity + live state */}
+            <div className="gym-ov-brand">
+              <div className="gym-ov-brand-logo" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                  strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 11l18-7-7 18-2.5-7.5z" /><path d="M11.5 14.5L21 4" />
+                </svg>
+              </div>
+              <div className="gym-ov-brand-text">
+                <span className="gym-ov-brand-name">智慧健身 · 实时监看</span>
+                <span className="gym-ov-brand-sub">SMART GYM · LIVE MONITOR</span>
+              </div>
+              <span className={`gym-ov-live-pill ${status === 'streaming' ? 'on' : status}`}>
+                <span className="gym-ov-live-dot" />
+                {status === 'streaming' ? 'LIVE' : status === 'connecting' ? '连接中' : status === 'error' ? '离线' : '待机'}
+              </span>
             </div>
-            <div className="gym-ov-status">
-              <span className={`gym-ov-badge ${status}`}>
-                {status === 'streaming' ? `${videoFps} fps` : status}
-              </span>
-              <span className="gym-ov-badge people">
-                {present} {present === 1 ? 'person' : 'people'}
-              </span>
+
+            {/* metric chips + toolbar */}
+            <div className="gym-ov-toolbar">
+              <div className="gym-ov-chips">
+                <span className="gym-ov-chip" title="视频帧率">{videoFps} fps</span>
+                <span className="gym-ov-chip" title="在场人数">{present} 在场</span>
+                <span className="gym-ov-chip" title="注册会员数">{members.length} 会员</span>
+              </div>
+
               {!editing && (
                 <>
-                  <button
-                    className={`gym-ov-btn ${showTrails ? 'on' : ''}`}
-                    onClick={() => setShowTrails((v) => !v)}
-                  >拖尾</button>
-                  <button
-                    className={`gym-ov-btn ${showZones ? 'on' : ''}`}
-                    onClick={() => setShowZones((v) => !v)}
-                  >分区</button>
-                  <button
-                    className={`gym-ov-btn ${showHeatmap ? 'on' : ''}`}
-                    onClick={() => setShowHeatmap((v) => !v)}
-                  >热力</button>
-                  <button
-                    className={`gym-ov-btn ${mosaic ? 'on' : ''}`}
-                    title="人脸隐私打码"
-                    onClick={() => setMosaic((v) => !v)}
-                  >打码</button>
-                  <button className="gym-ov-btn" onClick={() => setMode('edit')}>
+                  <div className="gym-ov-seg" role="group" aria-label="叠加图层">
+                    <button className={`gym-ov-btn ${showTrails ? 'on' : ''}`} title="运动轨迹拖尾"
+                      onClick={() => setShowTrails((v) => !v)}>轨迹</button>
+                    <button className={`gym-ov-btn ${showZones ? 'on' : ''}`} title="器材 ROI 分区"
+                      onClick={() => setShowZones((v) => !v)}>分区</button>
+                    <button className={`gym-ov-btn ${showHeatmap ? 'on' : ''}`} title="停留热力图"
+                      onClick={() => setShowHeatmap((v) => !v)}>热力</button>
+                    <button className={`gym-ov-btn ${mosaic ? 'on' : ''}`} title="人脸隐私打码"
+                      onClick={() => setMosaic((v) => !v)}>打码</button>
+                  </div>
+                  <button className="gym-ov-btn gym-ov-edit-toggle" onClick={() => setMode('edit')}>
                     编辑
                   </button>
                 </>
               )}
+
               {editing && (
                 <>
                   {savedFlash > 0 && Date.now() - savedFlash < 3000 && (
-                    <span className="gym-ov-badge ok">saved ✓</span>
+                    <span className="gym-ov-badge ok">已保存 ✓</span>
                   )}
                   <div className="gym-ov-seg">
                     <button className={`gym-ov-btn ${editKind === 'zones' ? 'on' : ''}`}
                       onClick={() => { setEditKind('zones'); setDraftLine([]) }}>分区</button>
                     <button className={`gym-ov-btn ${editKind === 'lines' ? 'on' : ''}`}
-                      onClick={() => { setEditKind('lines'); setDraft([]) }}>画线</button>
+                      onClick={() => { setEditKind('lines'); setDraft([]) }}>计数线</button>
                     <button className={`gym-ov-btn ${editKind === 'members' ? 'on' : ''}`}
                       onClick={() => { setEditKind('members'); setDraft([]); setDraftLine([]); loadMembers() }}>会员</button>
                   </div>
@@ -1351,7 +1361,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                   <button className="gym-ov-btn primary" onClick={save} disabled={saving}>
                     {saving ? '保存中…' : dirty ? '保存 *' : '保存'}
                   </button>
-                  <button className="gym-ov-btn" onClick={() => {
+                  <button className="gym-ov-btn gym-ov-edit-toggle" onClick={() => {
                     setMode('view'); setDraft([]); setDraftLine([])
                   }}>完成</button>
                 </>

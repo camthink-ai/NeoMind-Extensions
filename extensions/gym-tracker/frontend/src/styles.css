@@ -920,3 +920,158 @@
   border: 1.5px solid var(--gl-border, var(--border, #888));
   background: #111;
 }
+
+/* ==========================================================================
+   Monitor v2 — solution-grade header (brand / live pill / chips / toolbar)
+   ========================================================================== */
+
+.gym-ov-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.55), rgba(15, 23, 42, 0.25));
+  flex-shrink: 0;
+}
+
+.gym-ov-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gym-ov-brand-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #e0f7ff;
+  background: linear-gradient(135deg, #0891b2 0%, #2563eb 100%);
+  box-shadow: 0 2px 10px rgba(8, 145, 178, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  flex-shrink: 0;
+}
+.gym-ov-brand-logo svg { width: 16px; height: 16px; }
+
+.gym-ov-brand-text { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.gym-ov-brand-name {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+.gym-ov-brand-sub {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--muted-foreground);
+  opacity: 0.85;
+}
+
+.gym-ov-live-pill {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 3.5px 10px;
+  border-radius: 999px;
+  color: #cbd5e1;
+  background: rgba(100, 116, 139, 0.18);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+.gym-ov-live-pill.on {
+  color: #86efac;
+  background: rgba(22, 163, 74, 0.16);
+  border-color: rgba(34, 197, 94, 0.45);
+}
+.gym-ov-live-pill.connecting { color: #fde68a; background: rgba(202, 138, 4, 0.15); border-color: rgba(245, 158, 11, 0.4); }
+.gym-ov-live-pill.error { color: #fca5a5; background: rgba(185, 28, 28, 0.15); border-color: rgba(239, 68, 68, 0.4); }
+
+.gym-ov-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: gymOvPulse 1.6s ease-in-out infinite;
+}
+.gym-ov-live-pill:not(.on):not(.connecting) .gym-ov-live-dot { animation: none; opacity: 0.6; }
+
+@keyframes gymOvPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(134, 239, 172, 0.5); }
+  50% { opacity: 0.55; box-shadow: 0 0 0 5px rgba(134, 239, 172, 0); }
+}
+
+.gym-ov-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.gym-ov-chips { display: flex; gap: 6px; }
+
+.gym-ov-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #e2e8f0;
+  padding: 3.5px 9px;
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.1);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+.gym-ov-chip svg { width: 12px; height: 12px; color: #67e8f9; opacity: 0.9; }
+
+.gym-ov-toolbar .gym-ov-seg { margin-left: auto; }
+
+.gym-ov-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #cbd5e1;
+  padding: 4.5px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(148, 163, 184, 0.07);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.gym-ov-btn svg { width: 12px; height: 12px; opacity: 0.9; }
+.gym-ov-btn:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.16);
+  border-color: rgba(148, 163, 184, 0.35);
+  color: #f1f5f9;
+}
+.gym-ov-btn:disabled { opacity: 0.4; cursor: default; }
+.gym-ov-btn.on {
+  color: #a5f3fc;
+  background: rgba(34, 211, 238, 0.14);
+  border-color: rgba(34, 211, 238, 0.45);
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.12), 0 1px 8px rgba(34, 211, 238, 0.12);
+}
+.gym-ov-btn.primary {
+  color: #06202a;
+  background: linear-gradient(135deg, #22d3ee, #0ea5e9);
+  border-color: rgba(34, 211, 238, 0.6);
+  font-weight: 700;
+}
+.gym-ov-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+  color: #06202a;
+}
+.gym-ov-edit-toggle {
+  border-color: rgba(34, 211, 238, 0.35);
+  color: #a5f3fc;
+}
