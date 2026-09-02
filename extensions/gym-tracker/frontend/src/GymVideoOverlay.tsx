@@ -81,7 +81,7 @@ const OVERLAY_DELAY_MS = 0.15 // sec
 // (newest_ts - PLAY_DELAY), so both the video frame AND the track
 // keyframes have samples on EITHER side of the playhead — interpolation
 // instead of extrapolation, i.e. true A/V sync at a fixed ~300 ms latency.
-const PLAY_DELAY = 0.25 // sec
+const PLAY_DELAY = 0.12 // sec
 const EXTRAP_MAX_MS = 0.45 // sec (kept name for history)
 
 interface HistEntry { t: number; bbox: Bbox; foot?: Point | null }
@@ -620,7 +620,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         // a fixed 300 ms buffer still desynced; this way the picture waits
         // for the data and interpolation always has straddling keyframes
         const dataLag = newest - lastTracksTsRef.current
-        const delay = Math.max(PLAY_DELAY, dataLag > 0 ? dataLag + 0.06 : PLAY_DELAY)
+        const delay = Math.max(PLAY_DELAY, dataLag > 0 ? dataLag - 0.05 : PLAY_DELAY)
         const playhead = newest - Math.min(delay, 0.9)
         for (let i = buf.length - 1; i >= 0; i--) {
           if (buf[i].t <= playhead + 0.004) { img = buf[i].img; break }
