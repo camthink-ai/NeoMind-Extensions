@@ -42,6 +42,7 @@ import {
   fetchZones,
   getToken,
   injectStyles,
+  mergeMembers,
   pointInPolygon,
   registerMember,
   renameMember,
@@ -108,6 +109,8 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     // mode; the panel collects a name and calls register_member.
     const [register, setRegister] = useState<{ trackId: number; name: string; busy: boolean; msg: string | null } | null>(null)
     const [members, setMembers] = useState<Member[]>([])
+  // P4: member being merged — holds the src id while the user picks dst
+  const [merging, setMerging] = useState<string | null>(null)
 
     const [showTrails, setShowTrails] = useState(true)
     const [showZones, setShowZones] = useState(true)
@@ -609,6 +612,15 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       if (mountedRef.current) loadMembers()
     }, [extensionId, loadMembers])
 
+    const doMerge = useCallback(async (dstId: string) => {
+      if (!merging || merging === dstId) return
+      const r = await mergeMembers(extensionId, merging, dstId)
+      if (mountedRef.current) {
+        setMerging(null)
+        if (r.success) { setSavedFlash(Date.now()); loadMembers() }
+      }
+    }, [merging, extensionId, loadMembers])
+
     const save = useCallback(async () => {
       setSaving(true)
       try {
@@ -942,8 +954,25 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                                   }
                                 }} />
                               <span className="gym-ov-linecount">
-                                {m.source === 'auto' ? '自动' : '手动'}
+                                {m.source === 'auto' ? '自动' : '手动'} · {m.samples ?? 1}样本
                               </span>
+                              {merging === m.id ? (
+                                <select
+                                  className="gym-ov-input type"
+                                  autoFocus
+                                  value=""
+                                  onChange={(e) => { if (e.target.value) doMerge(e.target.value) }}
+                                  onBlur={() => setMerging(null)}
+                                >
+                                  <option value="">并入哪位会员？</option>
+                                  {members.filter((x) => x.id !== m.id).map((x) => (
+                                    <option key={x.id} value={x.id}>{x.name}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <button className="gym-ov-btn" title="把此人的特征并入另一位会员（换装确认）"
+                                  onClick={() => { setMerging(m.id); setSavedFlash(0) }}>并入</button>
+                              )}
                               <button className="gym-ov-btn danger"
                                 onClick={() => removeMember(m.id)}>删除</button>
                             </div>

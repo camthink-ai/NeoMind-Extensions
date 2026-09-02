@@ -1,4 +1,5 @@
 // db.rs
+use std::collections::HashMap;
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -48,6 +49,16 @@ impl Db {
             CREATE TABLE IF NOT EXISTS heatmap_day (
                 day INTEGER PRIMARY KEY, grid TEXT NOT NULL, updated_at INTEGER);
             CREATE TABLE IF NOT EXISTS kv_settings (key TEXT PRIMARY KEY, value TEXT);
+            -- P4: per-member embedding LIBRARY. members.embedding stays as the
+            -- primary (first) sample; this table holds the additional samples
+            -- accumulated over sessions/outfits so matching takes the min
+            -- distance over all of them.
+            CREATE TABLE IF NOT EXISTS member_embeddings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                member_id TEXT NOT NULL,
+                embedding TEXT NOT NULL,
+                created_at INTEGER,
+                FOREIGN KEY(member_id) REFERENCES members(id));
         "#)?;
         Ok(())
     }
@@ -166,7 +177,7 @@ impl Db {
              VALUES(?1, ?2, 0, 'auto', ?3, ?4, ?4, ?4)",
             params![id, name, raw, now],
         )?;
-        Ok(Member { id, name, source: "auto".into(), embedding: embedding.to_vec(), created_at: Some(now) })
+        Ok(Member { id, name, source: "auto".into(), embedding: embedding.to_vec(), extra_embeddings: Vec::new(), created_at: Some(now) })
     }
 
     /// Rename a member (fills in / corrects the display name later).
@@ -183,25 +194,119 @@ impl Db {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, display_name, source, embedding, created_at FROM members ORDER BY created_at")?;
-        let rows = stmt.query_map([], |r| {
-            let raw: Option<String> = r.get(3)?;
-            let embedding: Vec<f32> = raw
-                .as_deref()
-                .and_then(|s| serde_json::from_str(s).ok())
-                .unwrap_or_default();
-            Ok(Member {
-                id: r.get(0)?,
-                name: r.get(1)?,
-                source: r.get(2)?,
-                embedding,
-                created_at: r.get(4)?,
+        let members: Vec<Member> = {
+            let rows = stmt.query_map([], |r| {
+                let raw: Option<String> = r.get(3)?;
+                let embedding: Vec<f32> = raw
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str(s).ok())
+                    .unwrap_or_default();
+                Ok(Member {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    source: r.get(2)?,
+                    embedding,
+                    extra_embeddings: Vec::new(),
+                    created_at: r.get(4)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        drop(stmt);
+        // attach the accumulated extra samples (usually empty — one query)
+        let mut extras: HashMap<String, Vec<Vec<f32>>> = HashMap::new();
+        {
+            let mut stmt = conn.prepare(
+                "SELECT member_id, embedding FROM member_embeddings ORDER BY id")?;
+            let rows = stmt.query_map([], |r| {
+                let mid: String = r.get(0)?;
+                let raw: String = r.get(1)?;
+                let emb: Vec<f32> = serde_json::from_str(&raw).unwrap_or_default();
+                Ok((mid, emb))
+            })?;
+            for row in rows {
+                let (mid, emb) = row?;
+                if !emb.is_empty() {
+                    extras.entry(mid).or_default().push(emb);
+                }
+            }
+        }
+        Ok(members
+            .into_iter()
+            .map(|mut m| {
+                m.extra_embeddings = extras.remove(&m.id).unwrap_or_default();
+                m
             })
-        })?;
-        rows.collect()
+            .collect())
+    }
+
+    /// Append a new sample to a member's embedding library.
+    ///
+    /// Gated by the caller (confidence + diversity + cooldown live in
+    /// commands.rs where the live state is); this only enforces the hard
+    /// cap. Returns true when the sample was stored.
+    pub fn append_member_embedding(&self, member_id: &str, embedding: &[f32])
+        -> Result<bool, rusqlite::Error> {
+        let conn = self.conn.lock();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM member_embeddings WHERE member_id=?1",
+            params![member_id], |r| r.get(0))?;
+        // +1: members.embedding is sample #0, extras cap at max_samples-1
+        if n >= crate::config::MAX_EMBEDDINGS_PER_MEMBER as i64 - 1 {
+            return Ok(false);
+        }
+        let raw = serde_json::to_string(embedding).unwrap();
+        conn.execute(
+            "INSERT INTO member_embeddings(member_id, embedding, created_at) VALUES(?1, ?2, ?3)",
+            params![member_id, raw, now_secs()],
+        )?;
+        Ok(true)
+    }
+
+    /// Timestamp of the member's most recent sample append (0 when none).
+    pub fn last_embedding_append_at(&self, member_id: &str) -> i64 {
+        self.conn.lock().query_row(
+            "SELECT COALESCE(MAX(created_at), 0) FROM member_embeddings WHERE member_id=?1",
+            params![member_id], |r| r.get(0))
+            .unwrap_or(0)
+    }
+
+    /// Merge `src` into `dst`: src's primary embedding becomes an extra
+    /// sample of dst, src's extras move over, src is deleted. This is the
+    /// human confirmation path for outfit changes — a new outfit
+    /// legitimately looks like a stranger to body-ReID and lands as its
+    /// own auto entry; merging reunifies the identities.
+    pub fn merge_members(&self, src_id: &str, dst_id: &str)
+        -> Result<(), rusqlite::Error> {
+        let conn = self.conn.lock();
+        let raw: Option<String> = conn.query_row(
+            "SELECT embedding FROM members WHERE id=?1", params![src_id],
+            |r| r.get(0)).ok();
+        if let Some(raw) = raw {
+            conn.execute(
+                "INSERT INTO member_embeddings(member_id, embedding, created_at) VALUES(?1, ?2, ?3)",
+                params![dst_id, raw, now_secs()],
+            )?;
+        }
+        conn.execute(
+            "UPDATE member_embeddings SET member_id=?2 WHERE member_id=?1",
+            params![src_id, dst_id],
+        )?;
+        // respect the hard cap: keep the newest samples if over
+        conn.execute(
+            "DELETE FROM member_embeddings WHERE member_id=?1 AND id NOT IN (
+                 SELECT id FROM member_embeddings WHERE member_id=?1
+                 ORDER BY id DESC LIMIT ?2)",
+            params![dst_id, crate::config::MAX_EMBEDDINGS_PER_MEMBER as i64 - 1],
+        )?;
+        conn.execute("DELETE FROM members WHERE id=?1", params![src_id])?;
+        Ok(())
     }
 
     pub fn delete_member(&self, id: &str) -> Result<usize, rusqlite::Error> {
-        let n = self.conn.lock().execute("DELETE FROM members WHERE id=?1", params![id])?;
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM member_embeddings WHERE member_id=?1", params![id])?;
+        let n = conn.execute("DELETE FROM members WHERE id=?1", params![id])?;
         Ok(n)
     }
 }
@@ -215,8 +320,19 @@ pub struct Member {
     pub name: String,
     #[serde(default)]
     pub source: String,
+    /// Primary (first) sample — members.embedding column.
     pub embedding: Vec<f32>,
+    /// Additional accumulated samples (member_embeddings table).
+    #[serde(default)]
+    pub extra_embeddings: Vec<Vec<f32>>,
     pub created_at: Option<i64>,
+}
+
+impl Member {
+    pub fn all_embeddings(&self) -> impl Iterator<Item = &[f32]> {
+        std::iter::once(self.embedding.as_slice())
+            .chain(self.extra_embeddings.iter().map(|v| v.as_slice()))
+    }
 }
 
 /// Euclidean (L2) distance between two embeddings (∞ when lengths mismatch —

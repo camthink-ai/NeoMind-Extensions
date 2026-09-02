@@ -110,6 +110,7 @@ impl Extension for GymTrackerExtension {
             cmd("register_member", "Register a live track's embedding as a named member"),
             cmd("list_members", "List registered members"),
             cmd("rename_member", "Fill in / correct a member's name"),
+            cmd("merge_members", "Merge one member's samples into another (outfit-change confirmation)"),
             cmd("delete_member", "Delete a member by id"),
         ]
     }

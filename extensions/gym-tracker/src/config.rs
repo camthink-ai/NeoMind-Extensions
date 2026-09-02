@@ -42,8 +42,26 @@ pub struct IdentityCfg {
     /// (same-person re-embeds were measured 0-352, unknown persons 684+).
     #[serde(default = "default_auto_capture_distance")]
     pub auto_capture_distance: f32,
+    /// Strong-confidence line for auto-appending a sample to a matched
+    /// member's library (new outfits accumulate only when we're SURE).
+    #[serde(default = "default_append_confidence")]
+    pub append_confidence: f32,
+    /// A new sample must be at least this far from every stored sample of
+    /// that member (closer samples are redundant, not diversity).
+    #[serde(default = "default_append_min_dist")]
+    pub append_min_dist: f32,
+    /// Seconds between auto-appends to the same member.
+    #[serde(default = "default_append_cooldown_sec")]
+    pub append_cooldown_sec: i64,
 }
 fn default_auto_capture_distance() -> f32 { 600.0 }
+fn default_append_confidence() -> f32 { 250.0 }
+fn default_append_min_dist() -> f32 { 150.0 }
+fn default_append_cooldown_sec() -> i64 { 60 }
+
+/// Hard cap on samples per member (primary + extras). Bounded library =
+/// bounded matching cost and bounded damage from a poisoned sample.
+pub const MAX_EMBEDDINGS_PER_MEMBER: usize = 20;
 #[derive(Debug, Clone, Deserialize)]
 pub struct RoiCfg { pub dwell_debounce_sec: u32, pub hysteresis: bool }
 
@@ -58,6 +76,9 @@ impl Default for IdentityCfg {
             auto_capture_unknown: true,
             unknown_prefix: "未知会员".into(),
             auto_capture_distance: 600.0,
+            append_confidence: 250.0,
+            append_min_dist: 150.0,
+            append_cooldown_sec: 60,
         }
     }
 }

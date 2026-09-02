@@ -251,6 +251,8 @@ export interface Member {
   dim: number
   /** "manual" (registered from the Monitor) | "auto" (auto-enrolled unknown) */
   source?: string
+  /** Total embeddings in the member's library (primary + accumulated). */
+  samples?: number
   created_at?: number | null
 }
 
@@ -266,6 +268,14 @@ export async function fetchMembers(
   extensionId: string
 ): Promise<{ success: boolean; data?: { members: Member[] }; error?: string }> {
   return runExtensionCommand<{ members: Member[] }>(extensionId, 'list_members')
+}
+
+export async function mergeMembers(
+  extensionId: string,
+  srcId: string,
+  dstId: string
+): Promise<{ success: boolean; data?: { name: string; samples: number }; error?: string }> {
+  return runExtensionCommand(extensionId, 'merge_members', { src_id: srcId, dst_id: dstId })
 }
 
 export async function renameMember(

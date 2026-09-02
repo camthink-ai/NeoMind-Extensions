@@ -62,12 +62,17 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             let mut members = ctx.db.list_members().map_err(|e| e.to_string())?;
             // (free fns, not closures: the borrow checker otherwise pins
             // `members` immutable while the auto-enroll loop pushes to it)
+            // Nearest member = min L2 over ALL of that member's samples
+            // (primary + accumulated extras) — a member recognized in any
+            // of their recorded outfits.
             let nearest_member = |ems: &[crate::db::Member], emb: &[f32]| -> Option<(usize, f32)> {
                 let mut best: Option<(usize, f32)> = None;
                 for (i, m) in ems.iter().enumerate() {
-                    let d = l2_dist(emb, &m.embedding);
-                    if d.is_finite() && best.map_or(true, |(_, b)| d < b) {
-                        best = Some((i, d));
+                    for sample in m.all_embeddings() {
+                        let d = l2_dist(emb, sample);
+                        if d.is_finite() && best.map_or(true, |(_, b)| d < b) {
+                            best = Some((i, d));
+                        }
                     }
                 }
                 best
@@ -104,6 +109,54 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                         Err(e) => tracing::warn!(
                             member_err = %e, "auto member insert failed"),
                     }
+                }
+            }
+            // ---- library growth: strong-confidence sample appending ----
+            // A MATCHED member (d ≤ match_threshold) seen with STRONG
+            // confidence (d ≤ append_confidence, much tighter) whose
+            // current embedding is far from every stored sample
+            // (≥ append_min_dist — i.e. a new look, not a redundant
+            // re-sample) gets the new sample appended, subject to a
+            // cooldown. This is how the library persists across outfits:
+            // day 1 red shirt (auto-enrolled), day 2 blue shirt → new
+            // visitor → renamed/confirmed → the blue-shirt embedding
+            // accumulates once identity is certain.
+            let now = chrono::Utc::now().timestamp();
+            for t in &tracks {
+                let Some(f) = t.face.as_ref() else { continue };
+                if f.emb.is_empty() {
+                    continue;
+                }
+                let Some((i, d)) = nearest_member(&members, &f.emb) else { continue };
+                if d > ctx.identity.append_confidence {
+                    continue; // matched but not certain enough to write
+                }
+                let m = &members[i];
+                let diverse = m.all_embeddings()
+                    .all(|s| l2_dist(&f.emb, s) >= ctx.identity.append_min_dist);
+                if !diverse {
+                    continue;
+                }
+                if m.extra_embeddings.len() as i64
+                    >= crate::config::MAX_EMBEDDINGS_PER_MEMBER as i64 - 1
+                {
+                    continue; // library full
+                }
+                if now - ctx.db.last_embedding_append_at(&m.id)
+                    < ctx.identity.append_cooldown_sec
+                {
+                    continue; // cooldown — one sample per minute max
+                }
+                match ctx.db.append_member_embedding(&m.id, &f.emb) {
+                    Ok(true) => {
+                        tracing::info!(
+                            member_id = %m.id, dist = d,
+                            samples = m.extra_embeddings.len() + 2,
+                            "member embedding library extended");
+                        members[i].extra_embeddings.push(f.emb.clone());
+                    }
+                    Ok(false) => {}
+                    Err(e) => tracing::warn!(member_err = %e, "append failed"),
                 }
             }
             // Opportunistic heatmap persistence — polls are frequent enough
@@ -225,6 +278,8 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             Ok(json!({ "members": members.iter().map(|m| json!({
                 "id": m.id, "name": m.name, "dim": m.embedding.len(),
                 "source": m.source, "created_at": m.created_at,
+                // total samples in the member's embedding library
+                "samples": m.extra_embeddings.len() + 1,
             })).collect::<Vec<_>>() }))
         }
         // Fill in / correct a member's display name (auto-enrolled entries
@@ -243,6 +298,24 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 return Err(format!("member {id} not found"));
             }
             Ok(json!({ "renamed": id, "name": name }))
+        }
+        // Merge src into dst (outfit-change confirmation): src's samples
+        // join dst's library and src disappears. Name always stays dst's.
+        "merge_members" => {
+            let src = args["src_id"].as_str()
+                .ok_or("merge_members: missing src_id")?;
+            let dst = args["dst_id"].as_str()
+                .ok_or("merge_members: missing dst_id")?;
+            if src == dst {
+                return Err("merge_members: src and dst are the same member".into());
+            }
+            ctx.db.merge_members(src, dst).map_err(|e| e.to_string())?;
+            let out = ctx.db.list_members().map_err(|e| e.to_string())?;
+            let target = out.iter().find(|m| m.id == dst)
+                .ok_or("mergeMembers: dst vanished")?;
+            Ok(json!({ "merged": src, "into": dst,
+                       "name": target.name,
+                       "samples": target.extra_embeddings.len() + 1 }))
         }
         "delete_member" => {
             let id = args["id"].as_str()
@@ -394,6 +467,51 @@ mod tests {
             .find(|t| t["track_id"] == tid).unwrap().clone();
         assert_eq!(by(&out, 5)["member"]["name"], "张三",
             "renamed member matches under the new name");
+    }
+
+    #[test]
+    fn merge_members_unifies_outfit_identities() {
+        let ctx = make_ctx_identity(30,
+            r#"{ "match_threshold": 0.1, "auto_capture_unknown": false, "unknown_prefix": "U", "auto_capture_distance": 0.5 }"#);
+        let emb = |v: Vec<f32>| Some(crate::types::Face { emb: v, det: 0.8 });
+
+        // day 1 outfit: 小王 registered manually
+        let mut t = track(1);
+        t.face = emb(vec![1.0, 0.0, 0.0]);
+        ctx.state.apply_frame(&frame(vec![t]));
+        let r1 = handle(&ctx, "register_member",
+                        &json!({ "track_id": 1, "name": "小王" })).unwrap();
+        let wang = r1["member"]["id"].as_str().unwrap().to_string();
+
+        // day 2 outfit: auto-enrolled as a separate 访客 entry
+        let mut t2 = track(2);
+        t2.face = emb(vec![0.0, 1.0, 0.0]);
+        ctx.state.apply_frame(&frame(vec![t2]));
+        let r2 = handle(&ctx, "register_member",
+                        &json!({ "track_id": 2, "name": "访客X" })).unwrap();
+        let guest = r2["member"]["id"].as_str().unwrap().to_string();
+
+        // human confirms: 访客X is 小王 in different clothes → merge
+        let out = handle(&ctx, "merge_members",
+                         &json!({ "src_id": guest, "dst_id": wang })).unwrap();
+        assert_eq!(out["name"], "小王");
+        assert_eq!(out["samples"], 2);
+
+        // both outfits now resolve to 小王
+        for (tid, e) in [(3, vec![1.0, 0.0, 0.0]), (4, vec![0.0, 1.0, 0.0])] {
+            let mut t = track(tid);
+            t.face = emb(e);
+            ctx.state.apply_frame(&frame(vec![t]));
+        }
+        let st = handle(&ctx, "get_live_state", &json!({})).unwrap();
+        for tid in [3, 4] {
+            let t = st["tracks"].as_array().unwrap().iter()
+                .find(|t| t["track_id"] == tid).unwrap();
+            assert_eq!(t["member"]["name"], "小王",
+                "outfit {} resolves after merge", tid - 2);
+        }
+        let list = handle(&ctx, "list_members", &json!({})).unwrap();
+        assert_eq!(list["members"].as_array().unwrap().len(), 1);
     }
 
     #[test]
@@ -684,5 +802,60 @@ mod tests {
         let e = r.unwrap_err();
         assert!(e.contains("unknown command"), "err={e}");
         assert!(e.contains("frobnicate"), "err={e}");
+    }
+
+    #[test]
+    fn embedding_library_grows_on_strong_confident_match() {
+        // unit-scale: match 0.3, append confidence 0.3, diversity 0.15,
+        // cooldown 60 s, auto-capture off (library growth under test)
+        let ctx = make_ctx_identity(30,
+            r#"{ "match_threshold": 0.3, "auto_capture_unknown": false, "unknown_prefix": "U", "auto_capture_distance": 0.5, "append_confidence": 0.3, "append_min_dist": 0.15, "append_cooldown_sec": 60 }"#);
+        let emb = |v: Vec<f32>| Some(crate::types::Face { emb: v, det: 0.8 });
+
+        // day 1: red shirt — enrolled as the primary sample
+        let mut t1 = track(1);
+        t1.face = emb(vec![1.0, 0.0, 0.0]);
+        ctx.state.apply_frame(&frame(vec![t1]));
+        handle(&ctx, "register_member", &json!({ "track_id": 1, "name": "小王" }))
+            .expect("register");
+
+        // day 2: blue shirt — same person, new look. Distance 0.2 sits in
+        // the [diversity 0.15, confidence 0.3] band → appended
+        let mut t2 = track(2);
+        t2.face = emb(vec![1.0, 0.2, 0.0]);
+        ctx.state.apply_frame(&frame(vec![t2]));
+        let out = handle(&ctx, "get_live_state", &json!({})).unwrap();
+        let t2s = out["tracks"].as_array().unwrap().iter()
+            .find(|t| t["track_id"] == 2).unwrap();
+        assert_eq!(t2s["member"]["name"], "小王");
+        let list = handle(&ctx, "list_members", &json!({})).unwrap();
+        assert_eq!(list["members"][0]["samples"], 2, "blue shirt appended");
+
+        // min-over-samples: the blue-shirt embedding itself now matches
+        // (d=0 via its own sample), even though it started 0.2 away
+        let mut t3 = track(3);
+        t3.face = emb(vec![1.0, 0.2, 0.0]);
+        ctx.state.apply_frame(&frame(vec![t3]));
+        let out = handle(&ctx, "get_live_state", &json!({})).unwrap();
+        let t3s = out["tracks"].as_array().unwrap().iter()
+            .find(|t| t["track_id"] == 3).unwrap();
+        assert_eq!(t3s["member"]["name"], "小王");
+
+        // redundant sample (0.1 from both stored) does NOT append
+        let mut t4 = track(4);
+        t4.face = emb(vec![1.0, 0.1, 0.0]);
+        ctx.state.apply_frame(&frame(vec![t4]));
+        handle(&ctx, "get_live_state", &json!({})).unwrap();
+        let list = handle(&ctx, "list_members", &json!({})).unwrap();
+        assert_eq!(list["members"][0]["samples"], 2, "redundant sample skipped");
+
+        // another diverse look (distance 0.28) IS diverse but the cooldown
+        // (60 s) blocks a same-minute second append
+        let mut t5 = track(5);
+        t5.face = emb(vec![1.0, -0.28, 0.0]);
+        ctx.state.apply_frame(&frame(vec![t5]));
+        handle(&ctx, "get_live_state", &json!({})).unwrap();
+        let list = handle(&ctx, "list_members", &json!({})).unwrap();
+        assert_eq!(list["members"][0]["samples"], 2, "cooldown blocks rapid append");
     }
 }
