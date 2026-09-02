@@ -319,6 +319,11 @@ impl Extension for GymTrackerExtension {
                 let Some((ts_ns, img)) =
                     state.wait_preview(std::time::Duration::from_millis(120))
                 else { continue };
+                // evict departed tracks BEFORE snapshotting — otherwise a
+                // person who left lingers in every pushed frame until the
+                // (much slower) REST poll happens to evict, and the Monitor
+                // draws a frozen box for seconds after they're gone
+                let _ = state.evict_expired();
                 let faces = state.snapshot_faces().unwrap_or_default();
                 let tracks = state.snapshot_tracks();
                 let tracks_ts = state.snapshot_tracks_ts();
