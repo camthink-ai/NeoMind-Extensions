@@ -330,15 +330,30 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       const tsNs = (data as any).ts_ns as number | undefined
       const hist = trackHistRef.current
       if (tsNs) {
+        // device-clock keyframes: tracks only change at inference rate
+        // (~5 Hz) while preview frames arrive at ~20 Hz — append a history
+        // entry ONLY when the position actually moved (plus a 500 ms
+        // heartbeat so a stationary person doesn't age out). A staircase
+        // history (identical positions at 20 Hz) zeroes the interpolation
+        // velocity and the overlay visibly trails the video.
         lastTsRef.current = tsNs / 1e6
+        const tSec = tsNs / 1e6
         const seen = new Set<number>()
         for (const t of data.tracks ?? []) {
           if (!t.bbox) continue
           seen.add(t.track_id)
           let arr = hist.get(t.track_id)
           if (!arr) { arr = []; hist.set(t.track_id, arr) }
-          arr.push({ t: tsNs / 1e6, bbox: t.bbox, foot: t.foot }) // seconds key
-          while (arr.length > 0 && tsNs / 1e6 - arr[0].t > 3) arr.shift()
+          const last = arr[arr.length - 1]
+          const moved = !last
+            || Math.abs(last.bbox.x - t.bbox.x) > 1e-4
+            || Math.abs(last.bbox.y - t.bbox.y) > 1e-4
+            || Math.abs(last.bbox.w - t.bbox.w) > 1e-4
+            || Math.abs(last.bbox.h - t.bbox.h) > 1e-4
+          if (moved || tSec - last.t > 0.5) {
+            arr.push({ t: tSec, bbox: t.bbox, foot: t.foot })
+          }
+          while (arr.length > 0 && tSec - arr[0].t > 3) arr.shift()
         }
         for (const k of [...hist.keys()]) if (!seen.has(k)) hist.delete(k)
       } else {
