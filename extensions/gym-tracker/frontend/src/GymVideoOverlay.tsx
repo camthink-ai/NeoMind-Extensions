@@ -828,7 +828,13 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       const drawNow = deviceFramesRef.current && lastTsRef.current != null
         ? lastTsRef.current // = jitter-buffer playhead (set above)
         : performance.now() / 1000 - OVERLAY_DELAY_MS
-      const alignedTracks = tracks.map((tr) => {
+      // far-field false positives: a bbox with <3 visible keypoints is an
+      // "empty box" — skip it (defensive; the device also gates at publish)
+      const visibleKpts = (kpts?: [number, number, number][]) =>
+        (kpts ?? []).filter(k => k[2] > KPT_MIN_SCORE).length
+      const alignedTracks = tracks.filter((tr) =>
+        !tr.pose || visibleKpts(tr.pose.kpts) >= 3 || tr.member
+      ).map((tr) => {
         const hist = trackHistRef.current.get(tr.track_id)
         if (!tr.bbox || !hist || hist.length === 0) return tr
         const ib = bboxAt(hist, drawNow)
