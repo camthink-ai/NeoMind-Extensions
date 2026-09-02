@@ -107,6 +107,11 @@ impl LiveState {
         self.preview.read().clone()
     }
 
+    /// Latest tracks (of the most recent TrackFrame).
+    pub fn snapshot_tracks(&self) -> Vec<Track> {
+        self.snapshot()
+    }
+
     /// Latest display preview from `gym/preview`.
     pub fn snapshot_preview(&self) -> Option<(u64, String)> {
         self.preview.read().clone()

@@ -319,9 +319,8 @@ impl Extension for GymTrackerExtension {
                 let Some((ts_ns, img)) =
                     state.wait_preview(std::time::Duration::from_millis(120))
                 else { continue };
-                let hist = state.tracks_near(ts_ns);
                 let faces = state.snapshot_faces().unwrap_or_default();
-                let tracks = hist.last().map(|(_, t)| t.clone()).unwrap_or_default();
+                let tracks = state.snapshot_tracks();
                 seq += 1;
                 let msg = PushOutputMessage::json(
                     &sid,
@@ -329,9 +328,10 @@ impl Extension for GymTrackerExtension {
                     serde_json::json!({
                         "img_b64": img,
                         "ts_ns": ts_ns,
-                        // ts-keyed track keyframes: the client interpolates
-                        // positions to ts_ns (device clock on BOTH streams)
-                        "tracks_hist": hist,
+                        // latest tracks at the device clock — the client
+                        // builds its own ts-keyed history from the stream
+                        // (sending the full hist per frame doubled the
+                        // parse cost and stalled the browser at 23 fps)
                         "tracks": tracks,
                         "faces": faces,
                         "present_count": tracks.len(),

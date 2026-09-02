@@ -320,26 +320,25 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         }
         // rAF may be paused entirely in occluded tabs — draw NOW
         drawRef.current?.()
+        dirtyRef.current = true
       }
       im.src = `data:image/jpeg;base64,${data.img_b64}`
-      // ts-keyed track keyframes from the device: both streams share the
-      // device clock, so interpolation to the displayed frame's ts_ns is
-      // exact. Falls back to receive-time keys when ts is absent (poll mode).
+      // ts-keyed from the device clock: each preview frame carries the
+      // latest tracks + its own ts — the local history built from these is
+      // the interpolation source (exact, and no server-side hist needed).
+      // Falls back to receive-time keys when ts is absent (old producers).
       const tsNs = (data as any).ts_ns as number | undefined
-      const histData = (data as any).tracks_hist as Array<[number, any[]]> | undefined
       const hist = trackHistRef.current
-      if (tsNs && Array.isArray(histData)) {
+      if (tsNs) {
         lastTsRef.current = tsNs / 1e6
         const seen = new Set<number>()
-        for (const [ts, trks] of histData) {
-          for (const t of trks) {
-            if (!t?.bbox) continue
-            seen.add(t.track_id)
-            let arr = hist.get(t.track_id)
-            if (!arr) { arr = []; hist.set(t.track_id, arr) }
-            arr.push({ t: ts / 1e6, bbox: t.bbox, foot: t.foot }) // seconds key
-            while (arr.length > 0 && ts / 1e6 - arr[0].t > 3) arr.shift()
-          }
+        for (const t of data.tracks ?? []) {
+          if (!t.bbox) continue
+          seen.add(t.track_id)
+          let arr = hist.get(t.track_id)
+          if (!arr) { arr = []; hist.set(t.track_id, arr) }
+          arr.push({ t: tsNs / 1e6, bbox: t.bbox, foot: t.foot }) // seconds key
+          while (arr.length > 0 && tsNs / 1e6 - arr[0].t > 3) arr.shift()
         }
         for (const k of [...hist.keys()]) if (!seen.has(k)) hist.delete(k)
       } else {
@@ -558,6 +557,10 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       const canvas = canvasRef.current
       const ctx = canvas?.getContext('2d')
       if (!canvas || !ctx) return
+      const nowMs = performance.now()
+      if (!dirtyRef.current && nowMs - lastDrawRef.current < 250) return
+      dirtyRef.current = false
+      lastDrawRef.current = nowMs
 
       // Virtual coordinate space: everything below draws in a 960-wide
       // viewport so fonts/line widths stay proportional regardless of the
@@ -908,16 +911,18 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         }
       }
 
-      // Redraw loop: rAF when the page composites; when rAF is throttled
-      // (occluded/energy-saving tabs pause it entirely), a 250 ms interval
-      // fallback keeps the canvas alive, and every arrived device frame
-      // kicks an immediate draw (see device-frame poll).
+      // Redraw loop: rAF-paced but dirty-flagged — see dirtyRef above.
       rafRef.current = requestAnimationFrame(draw)
-      fallbackRef.current = window.setInterval(() => draw(), 250)
+      fallbackRef.current = window.setInterval(() => { dirtyRef.current = true }, 250)
     }, [])
 
     // latest draw closure for external kicks (image onload)
     const drawRef = useRef<(() => void) | null>(null)
+    // dirty-flag: rAF redraws only when a new frame arrived (or 250 ms
+    // passed) — a full canvas redraw per rAF tick at 60 Hz starved the
+    // main thread while frames arrived at only ~23 Hz
+    const dirtyRef = useRef(true)
+    const lastDrawRef = useRef(0)
 
     useEffect(() => {
       rafRef.current = requestAnimationFrame(draw)
