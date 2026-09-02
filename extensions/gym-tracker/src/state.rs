@@ -37,6 +37,9 @@ pub struct LiveState {
     frame_img: RwLock<Option<(String, Vec<Track>, Vec<FaceBox>)>>,
     /// Display-rate preview stream (`gym/preview`): latest (ts_ns, img).
     preview: RwLock<Option<(u64, String)>>,
+    /// Per-track consecutive-unknown counters gating auto-enrollment
+    /// (see commands.rs persistence gate).
+    unknown_streaks: RwLock<HashMap<i64, u32>>,
     /// ts_ns of the TrackFrame the latest tracks came from — the TRUE
     /// capture time of those positions (they lag the preview stream by the
     /// inference latency; keying overlay history by this keeps A/V sync).
@@ -57,6 +60,7 @@ impl LiveState {
             frame_img: Default::default(),
             preview: Default::default(),
             tracks_ts: RwLock::new(0),
+            unknown_streaks: Default::default(),
             preview_wait: Mutex::new(()),
             preview_cv: Condvar::new(),
             track_hist: Default::default(),
@@ -116,6 +120,11 @@ impl LiveState {
     /// Latest tracks (of the most recent TrackFrame).
     pub fn snapshot_tracks(&self) -> Vec<Track> {
         self.snapshot()
+    }
+
+    /// Auto-enrollment persistence counters (track_id → consecutive unknown).
+    pub fn unknown_streaks_write(&self) -> parking_lot::RwLockWriteGuard<'_, HashMap<i64, u32>> {
+        self.unknown_streaks.write()
     }
 
     /// ts_ns of the TrackFrame the latest tracks came from.

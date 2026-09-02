@@ -175,14 +175,36 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                     if f.emb.is_empty() {
                         continue;
                     }
-                    let enrollable = nearest_member(&members, &f.emb)
-                        .map_or(true, |(_, d)| d > ctx.identity.auto_capture_distance);
-                    if !enrollable {
+                    // Persistence gate: enroll only after the track has been
+                    // unknown for N consecutive observations. Far-field /
+                    // moving people flicker between "unknown" and "matched"
+                    // as embeddings drift — enrolling on the first unknown
+                    // reading forks a duplicate member per dropout.
+                    {
+                        let mut streaks = ctx.state.unknown_streaks_write();
+                        if nearest_member(&members, &f.emb)
+                            .map_or(false, |(_, d)| d <= ctx.identity.auto_capture_distance)
+                        {
+                            streaks.insert(t.track_id, 0);
+                            continue;
+                        }
+                        let s = streaks.entry(t.track_id).or_insert(0);
+                        *s += 1;
+                        if *s < 3 {
+                            continue; // need 3 consecutive unknown readings
+                        }
+                    }
+                    // Size gate: tiny far-field bodies produce unstable
+                    // embeddings — don't build a member library from them.
+                    if t.bbox.h < 0.10 {
                         continue;
                     }
                     match ctx.db.insert_auto_member(
                         &ctx.identity.unknown_prefix, &f.emb) {
-                        Ok(m) => members.push(m),
+                        Ok(m) => {
+                            ctx.state.unknown_streaks_write().insert(t.track_id, 0);
+                            members.push(m)
+                        }
                         Err(e) => tracing::warn!(
                             member_err = %e, "auto member insert failed"),
                     }
@@ -630,8 +652,14 @@ mod tests {
         // first visitor: empty library → auto-enrolled as U-1 on first poll
         let mut t = track(1);
         t.face = emb(vec![1.0, 0.0, 0.0]);
-        ctx.state.apply_frame(&frame(vec![t]));
-        let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+        ctx.state.apply_frame(&frame(vec![t.clone()]));
+        // persistence gate: enrollment needs 3 consecutive unknown polls
+        let mut out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+        assert_eq!(out["members_count"], 0, "first unknown reading does not enroll");
+        for _ in 0..2 {
+            ctx.state.apply_frame(&frame(vec![t.clone()]));
+            out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+        }
         assert_eq!(out["members_count"], 1);
         let by = |out: &Value, tid: i64| out["tracks"].as_array().unwrap().iter()
             .find(|t| t["track_id"] == tid).unwrap().clone();
@@ -664,8 +692,12 @@ mod tests {
         // enrolled as U-2
         let mut t4 = track(4);
         t4.face = emb(vec![0.0, 1.0, 0.0]);
-        ctx.state.apply_frame(&frame(vec![t4]));
-        let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+        ctx.state.apply_frame(&frame(vec![t4.clone()]));
+        let mut out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+        for _ in 0..2 { // persistence gate again
+            ctx.state.apply_frame(&frame(vec![t4.clone()]));
+            out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+        }
         assert_eq!(out["members_count"], 2);
         let names: Vec<&str> = out["tracks"].as_array().unwrap().iter()
             .map(|t| t["member"]["name"].as_str().unwrap_or(""))
