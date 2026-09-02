@@ -822,6 +822,40 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       }
 
       // ---- AI overlay (people) ----
+      // High-contrast styling: every stroke is drawn twice — a black
+      // underlay slightly thicker, then a bright color on top — so boxes
+      // and skeletons stay readable on both bright and dark video.
+      const HC = {
+        member: '#2dd4a7',   // teal-green (matched member)
+        unknown: '#38e1ff',  // cyan (unknown person)
+        skeleton: '#d9ff3d', // lime (skeleton edges)
+        kpt: '#ffffff',      // keypoint fill
+        underlay: 'rgba(0, 0, 0, 0.85)',
+        foot: '#ffb020',
+      }
+      // four corner brackets instead of a full rectangle — lighter visual
+      // weight, surveillance-style, and doesn't cover the person's body
+      const drawCorners = (bx: number, by: number, bw: number, bh: number,
+                           color: string) => {
+        const len = Math.max(8, Math.min(22, Math.min(bw, bh) * 0.28))
+        const corners: Array<[number, number, number, number]> = [
+          [bx, by, len, 0], [bx, by, 0, len],                       // TL
+          [bx + bw - len, by, len, 0], [bx + bw, by, 0, len],       // TR
+          [bx, by + bh - len, 0, len], [bx, by + bh, len, 0],       // BL
+          [bx + bw, by + bh - len, 0, len], [bx + bw - len, by + bh, len, 0], // BR
+        ]
+        for (const pass of [ [HC.underlay, 4.5], [color, 2.5] ] as const) {
+          ctx.strokeStyle = pass[0]
+          ctx.lineWidth = pass[1]
+          ctx.lineCap = 'round'
+          ctx.beginPath()
+          for (const [sx, sy, dx, dy] of corners) {
+            ctx.moveTo(sx, sy)
+            ctx.lineTo(sx + dx, sy + dy)
+          }
+          ctx.stroke()
+        }
+      }
       // Both modes interpolate along the bbox history: stream-player mode
       // aligns to the displayed video time; device-frame mode targets "now"
       // so boxes keep moving smoothly between ~5 Hz device updates.
@@ -864,9 +898,8 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       for (const track of alignedTracks) {
         if (track.bbox) {
           const { x, y, w, h } = track.bbox
-          ctx.strokeStyle = 'rgba(250, 250, 250, 0.9)'
-          ctx.lineWidth = 2
-          ctx.strokeRect(X(x), Y(y), w * dw, h * dh)
+          drawCorners(X(x), Y(y), w * dw, h * dh,
+                      track.member ? HC.member : HC.unknown)
           // member name when matched (P3) + live exercise/reps (P4)
           const ex = track.exercise
             ? track.exercise.reps > 0
@@ -880,12 +913,14 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             : `#${track.track_id}${ex}`
           ctx.font = 'bold 13px system-ui, sans-serif'
           const tw = ctx.measureText(label).width + 10
-          ctx.fillStyle = track.member
-            ? 'rgba(34, 197, 94, 0.9)'
-            : 'rgba(250, 250, 250, 0.85)'
-          ctx.fillRect(X(x), Math.max(0, Y(y) - 18), tw, 17)
-          ctx.fillStyle = track.member ? '#04250f' : '#0a0a0a'
-          ctx.fillText(label, X(x) + 5, Math.max(12, Y(y) - 6))
+          // label plate: black base + colored edge, white text — readable
+          // on any background
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.82)'
+          ctx.fillRect(X(x) - 1, Math.max(0, Y(y) - 19), tw + 2, 18)
+          ctx.fillStyle = track.member ? HC.member : HC.unknown
+          ctx.fillRect(X(x) - 1, Math.max(0, Y(y) - 19), 3, 18)
+          ctx.fillStyle = '#ffffff'
+          ctx.fillText(label, X(x) + 6, Math.max(12, Y(y) - 6))
         }
 
         const kpts = track.pose?.kpts
@@ -894,31 +929,46 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             const k = kpts[i]
             return k && k[2] > KPT_MIN_SCORE ? { x: X(k[0]), y: Y(k[1]) } : null
           }
-          ctx.lineWidth = 2.5
-          ctx.strokeStyle = 'rgba(59, 130, 246, 0.95)'
-          ctx.beginPath()
-          for (const [a, b] of SKELETON_EDGES) {
-            const pa = pt(a)
-            const pb = pt(b)
-            if (!pa || !pb) continue
-            ctx.moveTo(pa.x, pa.y)
-            ctx.lineTo(pb.x, pb.y)
+          // skeleton: black underlay pass then bright lime pass
+          for (const pass of [ [HC.underlay, 5], [HC.skeleton, 2.5] ] as const) {
+            ctx.strokeStyle = pass[0]
+            ctx.lineWidth = pass[1]
+            ctx.lineCap = 'round'
+            ctx.beginPath()
+            for (const [a, b] of SKELETON_EDGES) {
+              const pa = pt(a)
+              const pb = pt(b)
+              if (!pa || !pb) continue
+              ctx.moveTo(pa.x, pa.y)
+              ctx.lineTo(pb.x, pb.y)
+            }
+            ctx.stroke()
           }
-          ctx.stroke()
-          ctx.fillStyle = 'rgba(248, 250, 252, 0.95)'
+          // keypoints: white dot with dark ring — pops on any background
           for (let i = 0; i < kpts.length; i++) {
             const p = pt(i)
             if (!p) continue
             ctx.beginPath()
-            ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2)
+            ctx.arc(p.x, p.y, 4.2, 0, Math.PI * 2)
+            ctx.fillStyle = HC.underlay
+            ctx.fill()
+            ctx.beginPath()
+            ctx.arc(p.x, p.y, 3, 0, Math.PI * 2)
+            ctx.fillStyle = HC.kpt
             ctx.fill()
           }
         }
 
         if (track.foot) {
-          ctx.fillStyle = 'rgba(245, 158, 11, 0.95)'
+          const fx = X(track.foot.x)
+          const fy = Y(track.foot.y)
           ctx.beginPath()
-          ctx.arc(X(track.foot.x), Y(track.foot.y), 5, 0, Math.PI * 2)
+          ctx.arc(fx, fy, 7, 0, Math.PI * 2)
+          ctx.fillStyle = HC.underlay
+          ctx.fill()
+          ctx.beginPath()
+          ctx.arc(fx, fy, 4.5, 0, Math.PI * 2)
+          ctx.fillStyle = HC.foot
           ctx.fill()
         }
       }
