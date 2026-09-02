@@ -1075,3 +1075,72 @@
   border-color: rgba(34, 211, 238, 0.35);
   color: #a5f3fc;
 }
+
+/* ---- Monitor header: single compact strip (~34px) ---- */
+
+.gym-ov-header {
+  display: block;
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(15, 23, 42, 0.35);
+  flex-shrink: 0;
+}
+
+.gym-ov-compact {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+
+.gym-ov-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.gym-ov-dot.on { background: #22c55e; animation: gymOvDot 1.8s ease-in-out infinite; }
+.gym-ov-dot.wait { background: #f59e0b; animation: gymOvDot 1.2s ease-in-out infinite; }
+.gym-ov-dot.off { background: #64748b; }
+
+@keyframes gymOvDot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.gym-ov-metric {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.gym-ov-flex { flex: 1 1 auto; }
+
+.gym-ov-tg {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+.gym-ov-tg:hover { color: var(--foreground); background: rgba(148, 163, 184, 0.12); }
+.gym-ov-tg.on {
+  color: #67e8f9;
+  background: rgba(34, 211, 238, 0.12);
+  border-color: rgba(34, 211, 238, 0.3);
+}
+.gym-ov-tg:disabled { opacity: 0.35; cursor: default; }
+.gym-ov-tg-edit { color: #a5f3fc; }
+.gym-ov-tg-save {
+  color: #05242e;
+  background: #22d3ee;
+  font-weight: 600;
+}
+.gym-ov-tg-save:hover:not(:disabled) { background: #06b6d4; color: #05242e; }
