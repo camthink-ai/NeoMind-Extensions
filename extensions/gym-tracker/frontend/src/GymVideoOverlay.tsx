@@ -380,7 +380,22 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         poll()
       }
 
+      // The server kills a push session whose client stalls >2 s (throttled
+      // tab, GC pause) — reconnect with backoff so playback RESUMES instead
+      // of silently dropping to the (slower) polling fallback forever.
+      let wsGeneration = 0
+      let pollingActive = false
+      const startPollingOnce = () => {
+        if (pollingActive) return
+        pollingActive = true
+        startPolling()
+      }
       const startPush = () => {
+        const gen = ++wsGeneration
+        const retry = (delayMs: number) => {
+          if (stopped || gen !== wsGeneration) return
+          timer = window.setTimeout(() => startPush(), delayMs)
+        }
         try {
           const isTauri = !!(window as any).__TAURI_INTERNALS__
           const proto = (isTauri ? false : window.location.protocol === 'https:') ? 'wss:' : 'ws:'
@@ -411,13 +426,16 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
               }
             } catch { /* malformed frame — skip */ }
           }
-          ws.onerror = () => { if (!stopped) startPolling() }
+          ws.onerror = () => { /* handled by onclose */ }
           ws.onclose = () => {
             if (frameWsRef.current === ws) frameWsRef.current = null
-            if (!stopped) startPolling() // WS lost — degrade to polling
+            if (stopped || gen !== wsGeneration) return
+            startPollingOnce() // keep frames coming while disconnected
+            retry(2000)        // then rebuild the push session
           }
         } catch {
-          startPolling()
+          startPollingOnce()
+          retry(2000)
         }
       }
       startPush()

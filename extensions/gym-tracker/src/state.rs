@@ -107,6 +107,11 @@ impl LiveState {
         self.preview.read().clone()
     }
 
+    /// Latest display preview from `gym/preview`.
+    pub fn snapshot_preview(&self) -> Option<(u64, String)> {
+        self.preview.read().clone()
+    }
+
     /// Tracks interpolated keyframes around `ts_ns` (for frontend or push).
     pub fn tracks_near(&self, ts_ns: u64) -> Vec<(u64, Vec<Track>)> {
         self.track_hist.read().iter().cloned().collect()

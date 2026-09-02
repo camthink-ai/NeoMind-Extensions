@@ -288,8 +288,30 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
         // separate video/data pipelines (and their clock desync) are gone.
         // Null img_b64 when the producer doesn't attach previews (PREVIEW=0).
         "get_frame" => {
-            let Some((img, tracks, faces)) = ctx.state.snapshot_frame() else {
-                return Ok(json!({ "img_b64": serde_json::Value::Null }));
+            // Prefer the display-rate preview stream (gym/preview); fall back
+            // to the (now rare) TrackFrame-carried image. The REST shape must
+            // stay identical to the WS push payload so the Monitor's polling
+            // fallback renders the same way.
+            let (img, tracks, faces) = match ctx.state.snapshot_preview() {
+                Some((ts, i)) => {
+                    let hist = ctx.state.tracks_near(ts);
+                    let tracks =
+                        hist.last().map(|(_, t)| t.clone()).unwrap_or_default();
+                    let faces =
+                        ctx.state.snapshot_faces().unwrap_or_default();
+                    return Ok(json!({
+                        "img_b64": i,
+                        "ts_ns": ts,
+                        "tracks_hist": hist,
+                        "tracks": tracks,
+                        "faces": faces,
+                        "present_count": tracks.len(),
+                    }));
+                }
+                None => match ctx.state.snapshot_frame() {
+                    Some(b) => b,
+                    None => return Ok(json!({ "img_b64": serde_json::Value::Null })),
+                },
             };
             let members = ctx.db.list_members().map_err(|e| e.to_string())?;
             let workouts = ctx.analytics.workout_snapshot();
