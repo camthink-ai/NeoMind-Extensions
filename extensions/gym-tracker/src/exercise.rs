@@ -84,8 +84,11 @@ pub fn zone_exercise(equipment_type: &str) -> Option<(&'static str, bool)> {
         "pullup_bar" => Some(("pullup", false)),
         "cable_machine" => Some(("lat_pulldown", false)),
         "mat" | "yoga_mat" | "crunch_mat" => Some(("crunch", false)),
-        "dumbbell" | "free_weights" => Some(("bicep_curl", false)),
         "kettlebell" => Some(("kettlebell_swing", false)),
+        // NOTE: dumbbell / free_weights zones are deliberately NOT mapped —
+        // one pair of dumbbells hosts curls, presses, raises, rows, flyes…
+        // The exercise comes from the temporal pose tier; the zone only
+        // anchors the usage-time record.
         _ => None,
     }
 }
@@ -150,6 +153,9 @@ fn thresholds(exercise: &str) -> Option<(f32, f32)> {
         "bicep_curl" | "crunch" | "situp" => (150.0, 60.0), // elbow / torso-hip
         "shoulder_press" => (150.0, 80.0),     // elbow
         "pullup" => (160.0, 90.0),             // elbow
+        "lateral_raise" => (85.0, 20.0),       // wrist elevation
+        "chest_fly" => (150.0, 110.0),         // elbow (shallow arc)
+        "dumbbell_row" => (160.0, 90.0),       // elbow
         "kettlebell_swing" => (170.0, 120.0),  // hip angle
         _ => return None,   // cardio / plank / standing: duration only
     })
@@ -174,6 +180,17 @@ fn primary_angle(pose: &Pose, exercise: &str) -> Option<f32> {
         "squat" | "lunge" => best((L_HIP, L_KNEE, L_ANKLE)),
         "deadlift" | "kettlebell_swing" => best((L_SHOULDER, L_HIP, L_KNEE)),
         "crunch" | "situp" => best((L_SHOULDER, L_HIP, L_KNEE)),
+        // raises count on wrist ELEVATION (straight arm), not a joint.
+        // (the local `best` closure takes joint triplets — inline instead)
+        "lateral_raise" => {
+            return match (wrist_elevation(pose, L_SHOULDER, L_WRIST),
+                          wrist_elevation(pose, R_SHOULDER, R_WRIST)) {
+                (Some(a), Some(b)) => Some((a + b) / 2.0),
+                (Some(a), None) => Some(a),
+                (None, Some(b)) => Some(b),
+                (None, None) => None,
+            };
+        }
         "bench_press" | "pushup" | "lat_pulldown" | "bicep_curl"
         | "shoulder_press" | "pullup" => best((L_SHOULDER, L_ELBOW, L_WRIST)),
         _ => None,
@@ -217,6 +234,10 @@ pub struct PoseTimeline {
     pub arms_up: Vec<bool>,
     /// ankle x distance (normalized stride)
     pub stride: Vec<f32>,
+    /// best wrist elevation from straight-down (deg): 0 = arm at side,
+    /// 90 = raised to horizontal, 180 = overhead. Straight-arm raises
+    /// oscillate HERE while the elbow stays quiet.
+    pub wrist_elev: Vec<Option<f32>>,
 }
 
 fn shoulder_hip_angle(pose: &Pose) -> Option<f32> {
@@ -231,6 +252,14 @@ fn hip_center_y(pose: &Pose) -> Option<f32> {
     let l = kp(pose, L_HIP)?;
     let r = kp(pose, R_HIP)?;
     Some((l.y + r.y) / 2.0)
+}
+
+fn wrist_elevation(pose: &Pose, shoulder: usize, wrist: usize) -> Option<f32> {
+    let s = kp(pose, shoulder)?;
+    let w = kp(pose, wrist)?;
+    let (dx, dy) = (w.x - s.x, w.y - s.y); // image coords: +y down
+    // angle from straight-down (0°) rotating outward/up
+    Some(dy.atan2(dx.abs().max(1e-6)).to_degrees() + 90.0)
 }
 
 fn stride_width(pose: &Pose) -> Option<f32> {
@@ -261,6 +290,10 @@ impl PoseTimeline {
                     .map_or(false, |(w, s)| w.y < s.y),
         );
         self.stride.push(stride_width(pose).unwrap_or(f32::NAN));
+        self.wrist_elev.push(best(
+            wrist_elevation(pose, L_SHOULDER, L_WRIST),
+            wrist_elevation(pose, R_SHOULDER, R_WRIST),
+        ));
         if self.t.len() > MAX {
             for v in [&mut self.torso, &mut self.torso_hip, &mut self.knee, &mut self.elbow] {
                 v.remove(0);
@@ -269,6 +302,7 @@ impl PoseTimeline {
             self.hip_y.remove(0);
             self.arms_up.remove(0);
             self.stride.remove(0);
+            self.wrist_elev.remove(0);
         }
     }
 
@@ -356,14 +390,24 @@ pub fn classify_with_history(tl: &PoseTimeline) -> &'static str {
         if all_quiet && tl.arms_up.iter().all(|_| true) {
             return "plank";
         }
-        // elbow oscillating → bench_press (feet up/elevated) vs pushup
-        // (body straight, ankles on ground) — approximate via hip height
-        // stability: pushup keeps hips level
-        return if hip_y_osc.map_or(false, |o| o.amplitude < 0.05) {
-            "pushup"
-        } else {
-            "bench_press"
-        };
+        // elbow oscillating → fly (straight arms) vs press/pushup (bent)
+        // vs pushup (body straight, hips level)
+        if let Some(e) = elbow_osc {
+            if e.amplitude > 25.0 {
+                // elbow MIN during the cycle: bench bottom ~90°, fly ~130°+
+                let min_elbow = tl.elbow.iter().filter_map(|v| *v)
+                    .fold(f32::MAX, f32::min);
+                if min_elbow > 120.0 {
+                    return "chest_fly";
+                }
+                return if hip_y_osc.map_or(false, |o| o.amplitude < 0.05) {
+                    "pushup"
+                } else {
+                    "bench_press"
+                };
+            }
+        }
+        return "plank";
     }
 
     // ---- upright family ----
@@ -399,9 +443,6 @@ pub fn classify_with_history(tl: &PoseTimeline) -> &'static str {
                 let up_frac = tl.arms_up.iter().filter(|u| **u).count() as f32
                     / tl.arms_up.len() as f32;
                 if up_frac > 0.7 {
-                    // bar above (static wrists high) → shoulder_press /
-                    // pullup; distinguish by hip height oscillation
-                    // (pullups lift the whole body)
                     return if hip_y_osc.map_or(false, |h| h.amplitude > 0.03) {
                         "pullup"
                     } else {
@@ -411,7 +452,32 @@ pub fn classify_with_history(tl: &PoseTimeline) -> &'static str {
                 return "bicep_curl";
             }
         }
+        // quiet ELBOW but oscillating WRIST ELEVATION with a straight arm
+        // → the raise family: lateral/front raise (to ~90°) vs overhead
+        // press variants (already caught above by elbow osc)
+        if let Some(we) = oscillation(&tl.wrist_elev, &tl.t) {
+            let elbow_straight = tl.elbow.iter().filter_map(|v| *v)
+                .fold(f32::MAX, f32::min) > 120.0;
+            if we.amplitude > 30.0 && elbow_straight {
+                // tops out near horizontal → lateral_raise; goes overhead
+                // with straight arm → front-raise-to-overhead (rare) —
+                // treat 90°-ish as the raise family
+                return "lateral_raise";
+            }
+        }
         return "standing";
+    }
+
+    // ---- bent-over band (torso 30-60°): rows ----
+    if let Some(o) = elbow_osc {
+        if o.amplitude > 25.0 {
+            return "dumbbell_row";
+        }
+    }
+    if let Some(we) = oscillation(&tl.wrist_elev, &tl.t) {
+        if we.amplitude > 30.0 {
+            return "dumbbell_row"; // straight-arm row variant
+        }
     }
 
     // seated / transitional postures — static classifier fallback
@@ -617,6 +683,8 @@ mod temporal_tests {
             hip_y: hip_y.to_vec(),
             arms_up: vec![arms_up; n],
             stride: vec![stride; n],
+            // old tests: quiet straight-arm elevation by default
+            wrist_elev: vec![Some(30.0); n],
         };
         t.torso[0] = Some(torso);
         t
@@ -704,5 +772,75 @@ mod temporal_tests {
         let t = tl(5.0, &vec![170.0; 4], &vec![170.0; 4], &vec![160.0; 4],
                    &vec![0.5; 4], false, 0.08);
         assert_eq!(classify_with_history(&t), "pending");
+    }
+}
+
+#[cfg(test)]
+mod dumbbell_tests {
+    use super::*;
+
+    fn tl2(torso: f32, torso_hip: &[f32], knee: &[f32], elbow: &[f32],
+           hip_y: &[f32], arms_up: bool, stride: f32,
+           wrist_elev: &[f32]) -> PoseTimeline {
+        let n = elbow.len();
+        PoseTimeline {
+            t: (0..n).map(|i| i as f64 * 0.2).collect(),
+            torso: vec![Some(torso); n],
+            torso_hip: torso_hip.iter().map(|v| Some(*v)).collect(),
+            knee: knee.iter().map(|v| Some(*v)).collect(),
+            elbow: elbow.iter().map(|v| Some(*v)).collect(),
+            hip_y: hip_y.to_vec(),
+            arms_up: vec![arms_up; n],
+            stride: vec![stride; n],
+            wrist_elev: wrist_elev.iter().map(|v| Some(*v)).collect(),
+        }
+    }
+
+    fn osc(n: usize, hi: f32, lo: f32, period: usize) -> Vec<f32> {
+        (0..n).map(|i| if (i % period) < period / 2 { hi } else { lo }).collect()
+    }
+
+    #[test]
+    fn curl_vs_raise_by_elbow() {
+        // elbow BENDS (170↔50), wrists stay low → bicep_curl
+        let t = tl2(5.0, &vec![170.0; 20], &vec![170.0; 20],
+                    &osc(20, 170.0, 50.0, 10), &vec![0.5; 20],
+                    false, 0.08, &osc(20, 30.0, 20.0, 10));
+        assert_eq!(classify_with_history(&t), "bicep_curl");
+        // elbow STRAIGHT (150↔130), wrist ELEVATION swings 15↔95 → raise
+        let t = tl2(5.0, &vec![170.0; 20], &vec![170.0; 20],
+                    &osc(20, 150.0, 130.0, 10), &vec![0.5; 20],
+                    false, 0.08, &osc(20, 95.0, 15.0, 10));
+        assert_eq!(classify_with_history(&t), "lateral_raise");
+    }
+
+    #[test]
+    fn fly_vs_bench_by_elbow_min() {
+        // lying + elbow osc to 95° → bench family
+        let t = tl2(60.0, &vec![145.0; 20], &vec![140.0; 20],
+                    &osc(20, 165.0, 95.0, 10), &vec![0.4; 20],
+                    false, 0.08, &vec![60.0; 20]);
+        assert!(matches!(classify_with_history(&t), "bench_press" | "pushup"));
+        // same but elbow stays straight-ish (135° min) → chest_fly
+        let t = tl2(60.0, &vec![145.0; 20], &vec![140.0; 20],
+                    &osc(20, 170.0, 135.0, 10), &vec![0.4; 20],
+                    false, 0.08, &osc(20, 90.0, 40.0, 10));
+        assert_eq!(classify_with_history(&t), "chest_fly");
+    }
+
+    #[test]
+    fn bent_over_row() {
+        // torso 38° (bent-over band) + elbow osc → dumbbell_row
+        let t = tl2(38.0, &vec![160.0; 20], &vec![165.0; 20],
+                    &osc(20, 165.0, 70.0, 10), &vec![0.5; 20],
+                    false, 0.15, &osc(20, 70.0, 30.0, 10));
+        assert_eq!(classify_with_history(&t), "dumbbell_row");
+    }
+
+    #[test]
+    fn free_weight_zone_defers_to_pose() {
+        assert_eq!(zone_exercise("dumbbell"), None);
+        assert_eq!(zone_exercise("free_weights"), None);
+        assert_eq!(zone_exercise("kettlebell"), Some(("kettlebell_swing", false)));
     }
 }
