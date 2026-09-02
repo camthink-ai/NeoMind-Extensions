@@ -780,3 +780,131 @@
 }
 .gym-sum-state svg { width: 24px; height: 24px; opacity: 0.5; }
 .gym-sum-state-text { font-size: 12px; }
+
+/* ---- GymWorkoutSummary v2: Gantt timeline + donut ---- */
+
+.gym-sum-tl {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 16px; /* room for hour labels */
+  position: relative;
+}
+
+.gym-sum-tl-row {
+  display: grid;
+  grid-template-columns: minmax(56px, 84px) 1fr 40px;
+  align-items: center;
+  gap: 6px;
+  height: 14px;
+}
+
+.gym-sum-tl-name {
+  font-size: 11px;
+  color: var(--gs-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gym-sum-tl-track {
+  position: relative;
+  height: 8px;
+  background: var(--gs-muted-bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.gym-sum-tl-block {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  min-width: 3px;
+  border-radius: 4px;
+  opacity: 0.9;
+}
+.gym-sum-tl-block:hover { opacity: 1; }
+
+.gym-sum-tl-dur {
+  font-size: 10px;
+  color: var(--gs-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.gym-sum-tl-hours {
+  position: absolute;
+  left: calc(minmax(56px, 84px) + 6px);
+  right: 46px;
+  bottom: 0;
+  height: 14px;
+  pointer-events: none;
+}
+.gym-sum-tl-hours span {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 9px;
+  color: var(--gs-muted);
+  opacity: 0.8;
+}
+.gym-sum-tl-hours span:first-child { transform: none; }
+.gym-sum-tl-hours span:last-child { transform: translateX(-100%); }
+
+.gym-sum-donutrow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.gym-sum-donut {
+  width: 88px;
+  height: 88px;
+  flex-shrink: 0;
+}
+.gym-sum-donut-bg { stroke: var(--gs-muted-bg); }
+
+.gym-sum-donut-total {
+  font-size: 7.5px;
+  font-weight: 700;
+  fill: var(--gs-fg);
+}
+.gym-sum-donut-sub {
+  font-size: 4.5px;
+  fill: var(--gs-muted);
+}
+
+.gym-sum-legend {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.gym-sum-legrow {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.gym-sum-legdot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.gym-sum-legname {
+  font-size: 12px;
+  color: var(--gs-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gym-sum-legval {
+  font-size: 11px;
+  color: var(--gs-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

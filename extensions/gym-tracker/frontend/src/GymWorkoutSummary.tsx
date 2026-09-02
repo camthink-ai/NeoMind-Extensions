@@ -2,10 +2,11 @@
  * GymWorkoutSummary — daily workout analytics card.
  *
  * Reads `get_workout_summary` (sessions + equipment_usage since local
- * midnight, or the picked day): total training time, visit count, per-zone
- * equipment duration ranking, and the session list with member names.
- * Day navigation is client-side — `day_from` is recomputed as the local
- * midnight of the picked date.
+ * midnight, or the picked day) and renders three visual layers:
+ *  - hero stats row (total time / visits / unique members)
+ *  - a 24h Gantt timeline: one lane per member, colored session blocks
+ *  - an equipment-duration donut with a proportional legend
+ *  - the raw session list beneath
  */
 
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -17,7 +18,7 @@ import {
 } from './common'
 import STYLES from './styles.css?raw'
 
-const STYLE_ID = 'gym-sum-styles-v1'
+const STYLE_ID = 'gym-sum-styles-v2'
 
 interface SessionRow {
   id: string
@@ -90,6 +91,13 @@ const EXERCISE_ZH: Record<string, string> = {
 
 const exLabel = (name: string): string => EXERCISE_ZH[name] ?? name
 
+/** Distinct lane/donut colors that read on both light & dark themes. */
+const PALETTE = [
+  '#3b82f6', '#22c55e', '#f59e0b', '#ec4899',
+  '#06b6d4', '#8b5cf6', '#ef4444', '#84cc16',
+  '#f97316', '#14b8a6',
+]
+
 const ClockIcon = ({ className = '' }: { className?: string }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor"
     strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -99,6 +107,14 @@ const ClockIcon = ({ className = '' }: { className?: string }) => (
 )
 
 const DAY_MS = 86400000
+
+interface MemberLane {
+  key: string
+  name: string
+  color: string
+  total: number
+  blocks: Array<{ id: string; start: number; end: number; dur: number }>
+}
 
 export const GymWorkoutSummary =
   forwardRef<HTMLDivElement, ExtensionComponentProps>(
@@ -145,14 +161,89 @@ export const GymWorkoutSummary =
       }, [isToday, refresh])
 
       const sessions = summary?.sessions ?? []
-      const equipment = summary?.equipment ?? []
-      const maxEqSec = Math.max(1, ...equipment.map((e) => e.duration_sec))
+      const equipment = useMemo(
+        () => (summary?.equipment ?? []).sort((a, b) => b.duration_sec - a.duration_sec),
+        [summary]
+      )
+
+      // ---- Gantt lanes: group sessions by member (named first, then by id) ----
+      const lanes = useMemo<MemberLane[]>(() => {
+        const map = new Map<string, MemberLane>()
+        for (const s of sessions) {
+          const key = s.member_id || `anon:${s.id}`
+          const name = s.member_name?.trim() || (s.member_id ? s.member_id : '访客')
+          let lane = map.get(key)
+          if (!lane) {
+            lane = { key, name, color: '', total: 0, blocks: [] }
+            map.set(key, lane)
+          }
+          const dur = Math.max(s.duration_sec, 30)
+          lane.total += s.duration_sec
+          lane.blocks.push({
+            id: s.id,
+            start: (s.started_at ?? since) - since,
+            end: (s.ended_at ?? (s.started_at ?? since) + dur) - since,
+            dur: s.duration_sec,
+          })
+        }
+        return [...map.values()]
+          .sort((a, b) => b.total - a.total)
+          .slice(0, 10)
+          .map((l, i) => ({ ...l, color: PALETTE[i % PALETTE.length] }))
+      }, [sessions, since])
+
+      // Merge anonymous visitors into one lane when there are too many.
+      const lanesMerged = useMemo(() => {
+        const anon = lanes.filter((l) => l.key.startsWith('anon:'))
+        if (anon.length <= 1) return lanes
+        const rest = lanes.filter((l) => !l.key.startsWith('anon:'))
+        const total = anon.reduce((s, l) => s + l.total, 0)
+        const blocks = anon.flatMap((l) => l.blocks)
+        return [
+          ...rest,
+          { key: 'anon', name: `访客 ×${anon.length}`, color: PALETTE[9], total, blocks },
+        ]
+      }, [lanes])
+
+      const tlMaxSec = useMemo(() => {
+        const ends = lanesMerged.flatMap((l) => l.blocks.map((b) => Math.max(b.end, b.start + 60)))
+        return Math.max(3600, ...ends)
+      }, [lanesMerged])
+
+      // ---- Donut geometry ----
+      const donut = useMemo(() => {
+        const total = equipment.reduce((s, e) => s + e.duration_sec, 0)
+        if (total <= 0) return null
+        const R = 15.9155 // circumference 100 → stroke-dasharray in %
+        const C = 2 * Math.PI * R
+        let acc = 0
+        const segs = equipment.slice(0, 6).map((e, i) => {
+          const frac = e.duration_sec / total
+          const seg = {
+            color: PALETTE[i % PALETTE.length],
+            dash: frac * C,
+            offset: -acc * C,
+            name: e.exercise ? exLabel(e.exercise) : e.zone_id,
+            dur: e.duration_sec,
+            pct: Math.round(frac * 100),
+          }
+          acc += frac
+          return seg
+        })
+        return { segs, total, C, R }
+      }, [equipment])
+
       const uniqueMembers = new Set(
         sessions.map((s) => s.member_id).filter(Boolean)
       ).size
       const today = localMidnight(new Date())
       const fmtDay = (d: Date) =>
         d.toLocaleDateString([], { month: 'numeric', day: 'numeric' })
+
+      const hourLabel = (sec: number) => {
+        const h = Math.floor(sec / 3600)
+        return `${String(h).padStart(2, '0')}:00`
+      }
 
       return (
         <div ref={ref} className={`gym-sum ${className}`}>
@@ -218,29 +309,102 @@ export const GymWorkoutSummary =
                   </div>
                 </div>
 
-                {/* Equipment ranking */}
-                {equipment.length > 0 && (
+                {/* 24h Gantt timeline */}
+                {lanesMerged.length > 0 && (
                   <div className="gym-sum-section">
-                    <div className="gym-sum-section-title">器材使用时长</div>
-                    <div className="gym-sum-eqlist">
-                      {equipment.map((e) => (
-                        <div className="gym-sum-eqrow" key={e.zone_id}>
-                          <span className="gym-sum-eqname" title={e.zone_id}>
-                            {e.exercise ? exLabel(e.exercise) : e.zone_id}
+                    <div className="gym-sum-section-title">到店时间轴</div>
+                    <div className="gym-sum-tl">
+                      {lanesMerged.map((l) => (
+                        <div className="gym-sum-tl-row" key={l.key}>
+                          <span className="gym-sum-tl-name" title={l.name}>
+                            {l.name}
                           </span>
-                          <div className="gym-sum-eqbar">
-                            <div
-                              className="gym-sum-eqfill"
-                              style={{
-                                width: `${Math.max(4, (e.duration_sec / maxEqSec) * 100)}%`,
-                              }}
-                            />
+                          <div className="gym-sum-tl-track">
+                            {l.blocks.map((b) => (
+                              <div
+                                key={b.id}
+                                className="gym-sum-tl-block"
+                                style={{
+                                  left: `${(b.start / tlMaxSec) * 100}%`,
+                                  width: `${Math.max(0.8, (Math.max(b.end - b.start, 60) / tlMaxSec) * 100)}%`,
+                                  background: l.color,
+                                }}
+                                title={`${l.name} · ${fmtTime((since + b.start))} - ${fmtTime(since + Math.max(b.end, b.start + 60))} · ${fmtDuration(b.dur)}`}
+                              />
+                            ))}
                           </div>
-                          <span className="gym-sum-eqsec">
-                            {fmtDuration(e.duration_sec)}
+                          <span className="gym-sum-tl-dur">
+                            {fmtDuration(l.total)}
                           </span>
                         </div>
                       ))}
+                      <div className="gym-sum-tl-hours">
+                        {[0, 0.25, 0.5, 0.75, 1].map((f) => (
+                          <span
+                            key={f}
+                            style={{ left: `${f * 100}%` }}
+                          >{hourLabel(f * tlMaxSec)}</span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Equipment donut + legend */}
+                {donut && (
+                  <div className="gym-sum-section">
+                    <div className="gym-sum-section-title">器材使用时长</div>
+                    <div className="gym-sum-donutrow">
+                      <svg
+                        className="gym-sum-donut"
+                        viewBox="0 0 40 40"
+                        role="img"
+                        aria-label="器材使用时长占比"
+                      >
+                        <circle
+                          className="gym-sum-donut-bg"
+                          cx="20" cy="20" r={donut.R}
+                          fill="none" strokeWidth="6"
+                        />
+                        {donut.segs.map((s, i) => (
+                          <circle
+                            key={i}
+                            cx="20" cy="20" r={donut.R}
+                            fill="none"
+                            stroke={s.color}
+                            strokeWidth="6"
+                            strokeDasharray={`${s.dash} ${donut.C - s.dash}`}
+                            strokeDashoffset={s.offset}
+                            transform="rotate(-90 20 20)"
+                          >
+                            <title>{`${s.name} ${fmtDuration(s.dur)} (${s.pct}%)`}</title>
+                          </circle>
+                        ))}
+                        <text
+                          className="gym-sum-donut-total"
+                          x="20" y="19" textAnchor="middle"
+                        >{fmtDuration(donut.total)}</text>
+                        <text
+                          className="gym-sum-donut-sub"
+                          x="20" y="25" textAnchor="middle"
+                        >总计</text>
+                      </svg>
+                      <div className="gym-sum-legend">
+                        {donut.segs.map((s, i) => (
+                          <div className="gym-sum-legrow" key={i}>
+                            <span
+                              className="gym-sum-legdot"
+                              style={{ background: s.color }}
+                            />
+                            <span className="gym-sum-legname" title={s.name}>
+                              {s.name}
+                            </span>
+                            <span className="gym-sum-legval">
+                              {fmtDuration(s.dur)} · {s.pct}%
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}
