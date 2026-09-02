@@ -38,6 +38,10 @@ pub struct Face {
 pub struct FaceBox {
     pub bbox: Bbox,
     pub det: f32,
+    /// arcface identity embedding (present only when the face was large
+    /// enough to embed — near-field faces). Absent on older producers.
+    #[serde(default)]
+    pub emb: Option<Vec<f32>>,
 }
 
 /// A single tracked person within a frame.
@@ -180,13 +184,15 @@ mod tests {
             "tracks": [],
             "faces": [{
                 "bbox": {"x": 0.1, "y": 0.05, "w": 0.08, "h": 0.12},
-                "det": 0.87
+                "det": 0.87,
+                "emb": [1.0, 0.5]
             }]
         });
         let f: TrackFrame = serde_json::from_value(json).unwrap();
         assert_eq!(f.faces.len(), 1);
         assert_eq!(f.faces[0].bbox.w, 0.08);
         assert_eq!(f.faces[0].det, 0.87);
+        assert_eq!(f.faces[0].emb.as_deref(), Some(&[1.0, 0.5][..]));
 
         let back: TrackFrame =
             serde_json::from_value(serde_json::to_value(&f).unwrap()).unwrap();

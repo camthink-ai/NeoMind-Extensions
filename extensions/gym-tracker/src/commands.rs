@@ -60,6 +60,82 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             // distance is within identity.match_threshold. Members load per
             // poll — tiny (a gym's worth of rows) and always fresh.
             let mut members = ctx.db.list_members().map_err(|e| e.to_string())?;
+            // ---- face identity anchor (arcface) ----
+            // A frame-level face emb matching a member's FACE library
+            // anchors that member's identity on the geometrically enclosing
+            // track — clothing-independent. The anchored track's BODY emb
+            // then auto-appends to that member's body library WITHOUT the
+            // body confidence gate (the face already confirmed identity;
+            // that is precisely how new outfits get recorded), and the
+            // face emb itself appends under the usual diversity/cooldown
+            // gates. Face overrides body when both speak.
+            let now = chrono::Utc::now().timestamp();
+            // track_id -> (member_idx, face_dist)
+            let mut face_anchored: HashMap<i64, (usize, f32)> = HashMap::new();
+            for fe in &faces {
+                let Some(emb) = fe.emb.as_ref() else { continue };
+                if emb.is_empty() { continue; }
+                let mut best: Option<(usize, f32)> = None;
+                for (i, m) in members.iter().enumerate() {
+                    for sample in &m.face_embeddings {
+                        let d = l2_dist(emb, sample);
+                        if d.is_finite() && best.map_or(true, |(_, b)| d < b) {
+                            best = Some((i, d));
+                        }
+                    }
+                }
+                let Some((i, d)) = best.filter(|(_, d)| *d <= ctx.identity.face_match_threshold)
+                    else { continue; };
+                let m = &members[i];
+                // grow the face library: diverse + cooldown gated
+                if m.face_embeddings.iter().all(|s| l2_dist(emb, s) >= ctx.identity.append_min_dist)
+                    && (m.face_embeddings.is_empty()
+                        || now - ctx.db.last_embedding_append_kind(&m.id, "face")
+                           >= ctx.identity.append_cooldown_sec)
+                {
+                    if ctx.db.append_member_embedding_kind(&m.id, emb, "face")
+                        .unwrap_or(false)
+                    {
+                        members[i].face_embeddings.push(emb.clone());
+                    }
+                }
+                // anchor: among tracks whose bbox contains the face center,
+                // pick the TIGHTEST fit — a departed person's track can
+                // linger inside the TTL with an overlapping bbox, and the
+                // smallest containing box is the one actually on the face.
+                let (fx, fy) = (fe.bbox.x + fe.bbox.w / 2.0, fe.bbox.y + fe.bbox.h / 2.0);
+                let tightest = tracks.iter()
+                    .filter(|t| {
+                        let b = &t.bbox;
+                        fx >= b.x && fx <= b.x + b.w && fy >= b.y && fy <= b.y + b.h
+                    })
+                    .min_by(|a, b| {
+                        (a.bbox.w * a.bbox.h).total_cmp(&(b.bbox.w * b.bbox.h))
+                    });
+                if let Some(t) = tightest {
+                    face_anchored.insert(t.track_id, (i, d));
+                }
+            }
+            // face-confirmed body-append: identity is certain, record the outfit
+            for (tid, (i, _)) in &face_anchored {
+                let Some(t) = tracks.iter().find(|t| t.track_id == *tid) else { continue };
+                let Some(f) = t.face.as_ref() else { continue };
+                if f.emb.is_empty() { continue; }
+                let m = &members[*i];
+                let diverse = m.all_embeddings()
+                    .all(|s| l2_dist(&f.emb, s) >= ctx.identity.append_min_dist);
+                if diverse && m.extra_embeddings.len() + 1
+                    < crate::config::MAX_EMBEDDINGS_PER_MEMBER
+                    && now - ctx.db.last_embedding_append_kind(&m.id, "body")
+                       >= ctx.identity.append_cooldown_sec
+                {
+                    if ctx.db.append_member_embedding(&m.id, &f.emb).unwrap_or(false) {
+                        tracing::info!(member = %m.id,
+                            "outfit recorded (face-confirmed identity)");
+                        members[*i].extra_embeddings.push(f.emb.clone());
+                    }
+                }
+            }
             // (free fns, not closures: the borrow checker otherwise pins
             // `members` immutable while the auto-enroll loop pushes to it)
             // Nearest member = min L2 over ALL of that member's samples
@@ -121,7 +197,6 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             // day 1 red shirt (auto-enrolled), day 2 blue shirt → new
             // visitor → renamed/confirmed → the blue-shirt embedding
             // accumulates once identity is certain.
-            let now = chrono::Utc::now().timestamp();
             for t in &tracks {
                 let Some(f) = t.face.as_ref() else { continue };
                 if f.emb.is_empty() {
@@ -167,12 +242,20 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 "tracks": tracks.iter().map(|t| {
                     // emb is large (512 f32) — expose the matched member, not
                     // the raw vector; register_member reads it from state.
-                    let member = t.face.as_ref()
-                        .and_then(|f| match_one(&members, &f.emb))
-                        .map(|(id, name, dist)| json!({
-                            "id": id, "name": name,
-                            "dist": (dist * 1000.0).round() / 1000.0,
-                        }));
+                    // Face anchor wins over the body match; `via` tells the UI
+                    // which modality identified the person.
+                    let member = face_anchored.get(&t.track_id)
+                        .map(|(i, d)| json!({
+                            "id": members[*i].id, "name": members[*i].name,
+                            "dist": (d * 1000.0).round() / 1000.0, "via": "face",
+                        }))
+                        .or_else(|| t.face.as_ref()
+                            .and_then(|f| match_one(&members, &f.emb))
+                            .map(|(id, name, dist)| json!({
+                                "id": id, "name": name,
+                                "dist": (dist * 1000.0).round() / 1000.0,
+                                "via": "body",
+                            })));
                     json!({
                         "track_id": t.track_id,
                         "bbox": t.bbox,
@@ -271,7 +354,23 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 .ok_or("track has no embedding yet — wait a few seconds and retry")?;
             let id = format!("member_{}", uuid::Uuid::new_v4().simple());
             ctx.db.insert_member(&id, name, &emb.emb).map_err(|e| e.to_string())?;
-            Ok(json!({ "member": { "id": id, "name": name, "dim": emb.emb.len() } }))
+            // seed the FACE library too: a frame-level face emb whose box
+            // center falls inside this track's bbox is this person's face.
+            let b = &track.bbox;
+            let face_emb = ctx.state.snapshot_faces().unwrap_or_default()
+                .into_iter()
+                .find(|fe| {
+                    let (fx, fy) = (fe.bbox.x + fe.bbox.w / 2.0, fe.bbox.y + fe.bbox.h / 2.0);
+                    fx >= b.x && fx <= b.x + b.w && fy >= b.y && fy <= b.y + b.h
+                        && fe.emb.as_ref().map_or(false, |e| !e.is_empty())
+                })
+                .and_then(|fe| fe.emb);
+            if let Some(femb) = &face_emb {
+                ctx.db.append_member_embedding_kind(&id, femb, "face")
+                    .map_err(|e| e.to_string())?;
+            }
+            Ok(json!({ "member": { "id": id, "name": name, "dim": emb.emb.len(),
+                                   "face": face_emb.is_some() } }))
         }
         "list_members" => {
             let members = ctx.db.list_members().map_err(|e| e.to_string())?;
@@ -512,6 +611,58 @@ mod tests {
         }
         let list = handle(&ctx, "list_members", &json!({})).unwrap();
         assert_eq!(list["members"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn face_anchor_records_new_outfit() {
+        // face threshold 0.3, body match 0.1, auto-capture off; appends
+        // gated by append_min_dist 0.15 / cooldown 60
+        let ctx = make_ctx_identity(30,
+            r#"{ "match_threshold": 0.1, "auto_capture_unknown": false, "unknown_prefix": "U", "auto_capture_distance": 0.5, "append_confidence": 0.1, "append_min_dist": 0.15, "append_cooldown_sec": 60, "face_match_threshold": 0.3 }"#);
+
+        // register 小红 with a body emb AND a face emb (frame-level face
+        // box centered inside her track bbox)
+        let mut t1 = track(1);
+        t1.bbox = Bbox { x: 0.4, y: 0.3, w: 0.2, h: 0.5 };
+        t1.face = Some(crate::types::Face { emb: vec![1.0, 0.0, 0.0], det: 0.8 });
+        let mut f1 = crate::types::TrackFrame {
+            device_id: "d".into(), frame_seq: 1, ts_ns: 0,
+            tracks: vec![t1], faces: vec![crate::types::FaceBox {
+                bbox: Bbox { x: 0.45, y: 0.32, w: 0.1, h: 0.1 },
+                det: 0.9, emb: Some(vec![9.0, 9.0, 9.0]),
+            }],
+        };
+        ctx.state.apply_frame(&f1);
+        let r = handle(&ctx, "register_member",
+                       &json!({ "track_id": 1, "name": "小红" })).unwrap();
+        assert_eq!(r["member"]["face"], true, "face sample seeded at register");
+
+        // next day: COMPLETELY different body (orthogonal emb — no body
+        // match possible) but the SAME face → face anchors identity and
+        // records the new outfit into her body library
+        let mut t2 = track(2);
+        // slightly tighter than t1's lingering bbox so the tightest-fit
+        // anchor picks the live track deterministically
+        t2.bbox = Bbox { x: 0.41, y: 0.3, w: 0.18, h: 0.5 };
+        t2.face = Some(crate::types::Face { emb: vec![0.0, 1.0, 0.0], det: 0.7 });
+        f1.tracks = vec![t2];
+        f1.faces = vec![crate::types::FaceBox {
+            bbox: Bbox { x: 0.45, y: 0.32, w: 0.1, h: 0.1 },
+            det: 0.88, emb: Some(vec![8.9, 9.0, 9.05]),   // d≈0.15 face drift
+        }];
+        ctx.state.apply_frame(&f1);
+        let out = handle(&ctx, "get_live_state", &json!({})).unwrap();
+        let t2s = out["tracks"].as_array().unwrap().iter()
+            .find(|t| t["track_id"] == 2).unwrap();
+        assert_eq!(t2s["member"]["name"], "小红", "face overrides body");
+        assert_eq!(t2s["member"]["via"], "face");
+
+        let list = handle(&ctx, "list_members", &json!({})).unwrap();
+        let m = &list["members"][0];
+        assert_eq!(m["samples"], 2, "new outfit auto-recorded (face-confirmed)");
+        assert_eq!(m["samples"], 2); // body: primary + new outfit
+        // the second face sample (0.15 drift) is below append_min_dist →
+        // face library stays at 1
     }
 
     #[test]

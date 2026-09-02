@@ -53,7 +53,12 @@ pub struct IdentityCfg {
     /// Seconds between auto-appends to the same member.
     #[serde(default = "default_append_cooldown_sec")]
     pub append_cooldown_sec: i64,
+    /// Max L2 distance for a FACE (arcface) match — the identity anchor.
+    /// Scale differs from osnet; calibrate live (see member dist readout).
+    #[serde(default = "default_face_match_threshold")]
+    pub face_match_threshold: f32,
 }
+fn default_face_match_threshold() -> f32 { 60.0 }
 fn default_auto_capture_distance() -> f32 { 600.0 }
 fn default_append_confidence() -> f32 { 250.0 }
 fn default_append_min_dist() -> f32 { 150.0 }
@@ -62,6 +67,9 @@ fn default_append_cooldown_sec() -> i64 { 60 }
 /// Hard cap on samples per member (primary + extras). Bounded library =
 /// bounded matching cost and bounded damage from a poisoned sample.
 pub const MAX_EMBEDDINGS_PER_MEMBER: usize = 20;
+/// Cap on FACE samples per member (arcface). Faces are far more stable than
+/// outfits — a handful of good samples saturates recognition.
+pub const MAX_FACE_EMBEDDINGS_PER_MEMBER: usize = 8;
 #[derive(Debug, Clone, Deserialize)]
 pub struct RoiCfg { pub dwell_debounce_sec: u32, pub hysteresis: bool }
 
@@ -79,6 +87,7 @@ impl Default for IdentityCfg {
             append_confidence: 250.0,
             append_min_dist: 150.0,
             append_cooldown_sec: 60,
+            face_match_threshold: 60.0,
         }
     }
 }

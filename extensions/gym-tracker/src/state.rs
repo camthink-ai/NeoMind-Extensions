@@ -148,6 +148,7 @@ mod tests {
         f.faces = vec![FaceBox {
             bbox: Bbox { x: 0.1, y: 0.1, w: 0.2, h: 0.2 },
             det: 0.9,
+            emb: None,
         }];
         s.apply_frame(&f);
         assert_eq!(s.snapshot_faces().unwrap().len(), 1);

@@ -20,6 +20,11 @@ impl Db {
         let conn = if path == ":memory:" { Connection::open_in_memory()? } else { Connection::open(path)? };
         let db = Self { conn: Mutex::new(conn) };
         db.migrate()?;
+        // v2 of member_embeddings: tag samples body|face (pre-existing
+        // installs got the table without the column)
+        let _ = db.conn.lock().execute(
+            "ALTER TABLE member_embeddings ADD COLUMN kind TEXT NOT NULL DEFAULT 'body'",
+            []);
         Ok(db)
     }
     fn migrate(&self) -> Result<(), rusqlite::Error> {
@@ -57,6 +62,7 @@ impl Db {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 member_id TEXT NOT NULL,
                 embedding TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'body',
                 created_at INTEGER,
                 FOREIGN KEY(member_id) REFERENCES members(id));
         "#)?;
@@ -177,7 +183,7 @@ impl Db {
              VALUES(?1, ?2, 0, 'auto', ?3, ?4, ?4, ?4)",
             params![id, name, raw, now],
         )?;
-        Ok(Member { id, name, source: "auto".into(), embedding: embedding.to_vec(), extra_embeddings: Vec::new(), created_at: Some(now) })
+        Ok(Member { id, name, source: "auto".into(), embedding: embedding.to_vec(), extra_embeddings: Vec::new(), face_embeddings: Vec::new(), created_at: Some(now) })
     }
 
     /// Rename a member (fills in / corrects the display name later).
@@ -207,34 +213,40 @@ impl Db {
                     source: r.get(2)?,
                     embedding,
                     extra_embeddings: Vec::new(),
+                    face_embeddings: Vec::new(),
                     created_at: r.get(4)?,
                 })
             })?;
             rows.collect::<Result<Vec<_>, _>>()?
         };
         drop(stmt);
-        // attach the accumulated extra samples (usually empty — one query)
-        let mut extras: HashMap<String, Vec<Vec<f32>>> = HashMap::new();
+        // attach the accumulated samples, split body|face (one query)
+        let mut extras: HashMap<String, (Vec<Vec<f32>>, Vec<Vec<f32>>)> = HashMap::new();
         {
             let mut stmt = conn.prepare(
-                "SELECT member_id, embedding FROM member_embeddings ORDER BY id")?;
+                "SELECT member_id, embedding, kind FROM member_embeddings ORDER BY id")?;
             let rows = stmt.query_map([], |r| {
                 let mid: String = r.get(0)?;
                 let raw: String = r.get(1)?;
+                let kind: String = r.get(2)?;
                 let emb: Vec<f32> = serde_json::from_str(&raw).unwrap_or_default();
-                Ok((mid, emb))
+                Ok((mid, kind, emb))
             })?;
             for row in rows {
-                let (mid, emb) = row?;
-                if !emb.is_empty() {
-                    extras.entry(mid).or_default().push(emb);
+                let (mid, kind, emb) = row?;
+                if emb.is_empty() {
+                    continue;
                 }
+                let e = extras.entry(mid).or_default();
+                if kind == "face" { e.1.push(emb) } else { e.0.push(emb) }
             }
         }
         Ok(members
             .into_iter()
             .map(|mut m| {
-                m.extra_embeddings = extras.remove(&m.id).unwrap_or_default();
+                let (body, face) = extras.remove(&m.id).unwrap_or_default();
+                m.extra_embeddings = body;
+                m.face_embeddings = face;
                 m
             })
             .collect())
@@ -247,27 +259,44 @@ impl Db {
     /// cap. Returns true when the sample was stored.
     pub fn append_member_embedding(&self, member_id: &str, embedding: &[f32])
         -> Result<bool, rusqlite::Error> {
+        self.append_member_embedding_kind(member_id, embedding, "body")
+    }
+
+    /// kind = body (osnet) | face (arcface). The per-kind cap reserves the
+    /// library for both modalities independently.
+    pub fn append_member_embedding_kind(&self, member_id: &str, embedding: &[f32],
+                                        kind: &str)
+        -> Result<bool, rusqlite::Error> {
         let conn = self.conn.lock();
         let n: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM member_embeddings WHERE member_id=?1",
-            params![member_id], |r| r.get(0))?;
-        // +1: members.embedding is sample #0, extras cap at max_samples-1
-        if n >= crate::config::MAX_EMBEDDINGS_PER_MEMBER as i64 - 1 {
+            "SELECT COUNT(*) FROM member_embeddings WHERE member_id=?1 AND kind=?2",
+            params![member_id, kind], |r| r.get(0))?;
+        // +1: members.embedding is body sample #0 (face has no primary)
+        let cap = if kind == "face" {
+            crate::config::MAX_FACE_EMBEDDINGS_PER_MEMBER
+        } else {
+            crate::config::MAX_EMBEDDINGS_PER_MEMBER - 1
+        } as i64;
+        if n >= cap {
             return Ok(false);
         }
         let raw = serde_json::to_string(embedding).unwrap();
         conn.execute(
-            "INSERT INTO member_embeddings(member_id, embedding, created_at) VALUES(?1, ?2, ?3)",
-            params![member_id, raw, now_secs()],
+            "INSERT INTO member_embeddings(member_id, embedding, kind, created_at) VALUES(?1, ?2, ?3, ?4)",
+            params![member_id, raw, kind, now_secs()],
         )?;
         Ok(true)
     }
 
     /// Timestamp of the member's most recent sample append (0 when none).
     pub fn last_embedding_append_at(&self, member_id: &str) -> i64 {
+        self.last_embedding_append_kind(member_id, "body")
+    }
+
+    pub fn last_embedding_append_kind(&self, member_id: &str, kind: &str) -> i64 {
         self.conn.lock().query_row(
-            "SELECT COALESCE(MAX(created_at), 0) FROM member_embeddings WHERE member_id=?1",
-            params![member_id], |r| r.get(0))
+            "SELECT COALESCE(MAX(created_at), 0) FROM member_embeddings WHERE member_id=?1 AND kind=?2",
+            params![member_id, kind], |r| r.get(0))
             .unwrap_or(0)
     }
 
@@ -292,13 +321,16 @@ impl Db {
             "UPDATE member_embeddings SET member_id=?2 WHERE member_id=?1",
             params![src_id, dst_id],
         )?;
-        // respect the hard cap: keep the newest samples if over
-        conn.execute(
-            "DELETE FROM member_embeddings WHERE member_id=?1 AND id NOT IN (
-                 SELECT id FROM member_embeddings WHERE member_id=?1
-                 ORDER BY id DESC LIMIT ?2)",
-            params![dst_id, crate::config::MAX_EMBEDDINGS_PER_MEMBER as i64 - 1],
-        )?;
+        // respect the per-kind caps: keep the newest samples if over
+        for (kind, cap) in [("body", crate::config::MAX_EMBEDDINGS_PER_MEMBER as i64 - 1),
+                            ("face", crate::config::MAX_FACE_EMBEDDINGS_PER_MEMBER as i64)] {
+            conn.execute(
+                "DELETE FROM member_embeddings WHERE member_id=?1 AND kind=?3 AND id NOT IN (
+                     SELECT id FROM member_embeddings WHERE member_id=?1 AND kind=?3
+                     ORDER BY id DESC LIMIT ?2)",
+                params![dst_id, cap, kind],
+            )?;
+        }
         conn.execute("DELETE FROM members WHERE id=?1", params![src_id])?;
         Ok(())
     }
@@ -322,9 +354,13 @@ pub struct Member {
     pub source: String,
     /// Primary (first) sample — members.embedding column.
     pub embedding: Vec<f32>,
-    /// Additional accumulated samples (member_embeddings table).
+    /// Additional accumulated BODY samples (member_embeddings, kind=body).
     #[serde(default)]
     pub extra_embeddings: Vec<Vec<f32>>,
+    /// FACE identity samples (arcface; kind=face). The identity ANCHOR:
+    /// a face match confirms who the person is regardless of clothing.
+    #[serde(default)]
+    pub face_embeddings: Vec<Vec<f32>>,
     pub created_at: Option<i64>,
 }
 
