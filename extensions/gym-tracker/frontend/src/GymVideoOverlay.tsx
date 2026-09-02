@@ -867,7 +867,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       const visibleKpts = (kpts?: [number, number, number][]) =>
         (kpts ?? []).filter(k => k[2] > KPT_MIN_SCORE).length
       const alignedTracks = tracks.filter((tr) =>
-        !tr.pose || visibleKpts(tr.pose.kpts) >= 3 || tr.member
+        !tr.pose || visibleKpts(tr.pose.kpts) >= 2 || tr.member
       ).map((tr) => {
         const hist = trackHistRef.current.get(tr.track_id)
         if (!tr.bbox || !hist || hist.length === 0) return tr
