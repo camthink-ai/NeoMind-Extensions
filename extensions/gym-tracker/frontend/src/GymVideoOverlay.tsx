@@ -74,8 +74,8 @@ const MOSAIC_PAD = 0.12
 // misplaces boxes. Render at (now − OVERLAY_DELAY_MS) instead, interpolating
 // between history samples (smooth motion) and extrapolating at most
 // EXTRAP_MAX_MS when data is momentarily behind the picture.
-const OVERLAY_DELAY_MS = 350
-const EXTRAP_MAX_MS = 400
+const OVERLAY_DELAY_MS = 150
+const EXTRAP_MAX_MS = 450
 
 interface HistEntry { t: number; bbox: Bbox; foot?: Point | null }
 
