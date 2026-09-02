@@ -444,6 +444,7 @@ pub struct WorkoutTracker {
     pub sets: u32,
     counter: crate::exercise::RepCounter,
     counter_inited: bool,
+    timeline: crate::exercise::PoseTimeline,
     dirty: bool,
 }
 
@@ -475,6 +476,7 @@ impl Inner {
                 sets: 0,
                 counter: crate::exercise::RepCounter::new("unknown", false, now),
                 counter_inited: false,
+                timeline: crate::exercise::PoseTimeline::default(),
                 dirty: true,
             });
             w.last_seen = now;
@@ -516,14 +518,26 @@ impl Inner {
                 (None, None) => {}
             }
 
-            // exercise classification + reps
+            // exercise classification + reps. Tier 1: zone equipment map.
+            // Tier 2: temporal oscillation analysis (which joint moves,
+            // how far, how fast — separates crunch vs bench, run vs walk,
+            // squat vs lunge…). The single-frame classifier remains as the
+            // seed while the ~2 s history window fills ("pending").
             if let Some(pose) = t.pose.as_ref() {
+                w.timeline.push(pose, now);
                 let zone_ex = w.zone_enter.as_ref()
                     .and_then(|(zid, _)| zones.iter().find(|z| &z.id == zid))
                     .and_then(|z| crate::exercise::zone_exercise(&z.equipment_type));
                 let (ex, cardio) = match zone_ex {
                     Some((e, c)) => (e, c),
-                    None => (crate::exercise::classify_from_pose(pose), false),
+                    None => {
+                        let hist = crate::exercise::classify_with_history(&w.timeline);
+                        if hist == "pending" {
+                            (crate::exercise::classify_from_pose(pose), false)
+                        } else {
+                            (hist, false)
+                        }
+                    }
                 };
                 if !w.counter_inited || w.exercise != ex {
                     let total = w.reps + w.counter.reps;
