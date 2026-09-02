@@ -255,7 +255,15 @@ export interface Member {
   source?: string
   /** Total embeddings in the member's library (primary + accumulated). */
   samples?: number
+  /** Avatar thumbnail — data URL or raw base64 JPEG; absent until captured. */
+  photo?: string | null
   created_at?: number | null
+}
+
+/** Normalize a photo value (raw base64 or data URL) into an <img> src. */
+export function memberPhotoSrc(photo?: string | null): string | null {
+  if (!photo) return null
+  return photo.startsWith('data:') ? photo : `data:image/jpeg;base64,${photo}`
 }
 
 export async function registerMember(
@@ -286,6 +294,17 @@ export async function renameMember(
   name: string
 ): Promise<{ success: boolean; error?: string }> {
   return runExtensionCommand(extensionId, 'rename_member', { id, name })
+}
+
+export async function setMemberPhoto(
+  extensionId: string,
+  id: string,
+  /** raw base64 JPEG (no data: prefix) or null to clear */
+  photoBase64: string | null
+): Promise<{ success: boolean; error?: string }> {
+  return runExtensionCommand(extensionId, 'set_member_photo', {
+    id, photo_base64: photoBase64 ?? '',
+  })
 }
 
 export async function deleteMember(

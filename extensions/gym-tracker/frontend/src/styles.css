@@ -908,3 +908,15 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+/* ---- member avatar (Monitor members tab) ---- */
+
+.gym-ov-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1.5px solid var(--gl-border, var(--border, #888));
+  background: #111;
+}

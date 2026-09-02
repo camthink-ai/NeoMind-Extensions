@@ -386,7 +386,26 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 "source": m.source, "created_at": m.created_at,
                 // total samples in the member's embedding library
                 "samples": m.extra_embeddings.len() + 1,
+                // avatar thumbnail (base64 JPEG) — absent until captured
+                "photo": m.photo,
             })).collect::<Vec<_>>() }))
+        }
+        // Store / clear a member avatar photo (base64 JPEG). The Monitor
+        // captures it from the raw video frame via its own canvas.
+        "set_member_photo" => {
+            let id = args["id"].as_str()
+                .ok_or("set_member_photo: missing id")?;
+            let photo = args["photo_base64"].as_str().filter(|s| !s.is_empty());
+            if let Some(p) = photo {
+                if p.len() > 400_000 {
+                    return Err("set_member_photo: photo too large (>300KB base64)".into());
+                }
+            }
+            let ok = ctx.db.set_member_photo(id, photo).map_err(|e| e.to_string())?;
+            if !ok {
+                return Err(format!("member {id} not found"));
+            }
+            Ok(json!({ "id": id, "photo_set": photo.is_some() }))
         }
         // Fill in / correct a member's display name (auto-enrolled entries
         // are created unnamed — prefix-numbered — precisely so this can

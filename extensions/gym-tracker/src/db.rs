@@ -25,6 +25,11 @@ impl Db {
         let _ = db.conn.lock().execute(
             "ALTER TABLE member_embeddings ADD COLUMN kind TEXT NOT NULL DEFAULT 'body'",
             []);
+        // v3: member avatar photo (base64 JPEG thumbnail, captured by the
+        // Monitor from the live video — mosaic-free source frame)
+        let _ = db.conn.lock().execute(
+            "ALTER TABLE members ADD COLUMN photo TEXT",
+            []);
         Ok(db)
     }
     fn migrate(&self) -> Result<(), rusqlite::Error> {
@@ -285,7 +290,18 @@ impl Db {
              VALUES(?1, ?2, 0, 'auto', ?3, ?4, ?4, ?4)",
             params![id, name, raw, now],
         )?;
-        Ok(Member { id, name, source: "auto".into(), embedding: embedding.to_vec(), extra_embeddings: Vec::new(), face_embeddings: Vec::new(), created_at: Some(now) })
+        Ok(Member { id, name, source: "auto".into(), embedding: embedding.to_vec(), extra_embeddings: Vec::new(), face_embeddings: Vec::new(), photo: None, created_at: Some(now) })
+    }
+
+    /// Store / clear a member's avatar photo (base64 JPEG thumbnail).
+    /// Pass `None` to remove. Returns false when the member id is unknown.
+    pub fn set_member_photo(&self, id: &str, photo: Option<&str>)
+        -> Result<bool, rusqlite::Error> {
+        let n = self.conn.lock().execute(
+            "UPDATE members SET photo=?2, updated_at=?3 WHERE id=?1",
+            params![id, photo, now_secs()],
+        )?;
+        Ok(n > 0)
     }
 
     /// Rename a member (fills in / corrects the display name later).
@@ -301,7 +317,7 @@ impl Db {
     pub fn list_members(&self) -> Result<Vec<Member>, rusqlite::Error> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, display_name, source, embedding, created_at FROM members ORDER BY created_at")?;
+            "SELECT id, display_name, source, embedding, created_at, photo FROM members ORDER BY created_at")?;
         let members: Vec<Member> = {
             let rows = stmt.query_map([], |r| {
                 let raw: Option<String> = r.get(3)?;
@@ -316,6 +332,7 @@ impl Db {
                     embedding,
                     extra_embeddings: Vec::new(),
                     face_embeddings: Vec::new(),
+                    photo: r.get(5)?,
                     created_at: r.get(4)?,
                 })
             })?;
@@ -463,6 +480,10 @@ pub struct Member {
     /// a face match confirms who the person is regardless of clothing.
     #[serde(default)]
     pub face_embeddings: Vec<Vec<f32>>,
+    /// Avatar thumbnail — base64 JPEG captured by the Monitor from the
+    /// raw video frame (before mosaic). None until a photo is captured.
+    #[serde(default)]
+    pub photo: Option<String>,
     pub created_at: Option<i64>,
 }
 

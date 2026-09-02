@@ -113,6 +113,7 @@ mod tests {
             embedding: body,
             extra_embeddings: Vec::new(),
             face_embeddings: faces,
+            photo: None,
             created_at: None,
         }
     }

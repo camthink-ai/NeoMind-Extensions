@@ -43,10 +43,12 @@ import {
   getToken,
   injectStyles,
   mergeMembers,
+  memberPhotoSrc,
   pointInPolygon,
   registerMember,
   renameMember,
   runExtensionCommand,
+  setMemberPhoto,
 } from './common'
 import STYLES from './styles.css?raw'
 
@@ -193,6 +195,72 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       const r = await fetchMembers(extensionId)
       if (mountedRef.current && r.success && r.data) setMembers(r.data.members ?? [])
     }, [extensionId])
+
+    // ---- member avatar capture ----
+    // Crop a normalized bbox from the RAW video frame (imgRef — never the
+    // canvas, whose face regions are mosaic-pixelated) into a square JPEG
+    // thumbnail. Returns raw base64 (no data: prefix) or null.
+    const cropAvatar = useCallback((bbox: { x: number; y: number; w: number; h: number }): string | null => {
+      const img = imgRef.current
+      if (!img || img.naturalWidth === 0) return null
+      // normalized coords are frame-relative → scale directly to natural px
+      const cx = bbox.x * img.naturalWidth
+      const cy = bbox.y * img.naturalHeight
+      const cw = bbox.w * img.naturalWidth
+      const ch = bbox.h * img.naturalHeight
+      if (cw < 16 || ch < 16) return null
+      // head-and-shoulders crop: top ~45% of the body box, slightly widened
+      const hw = Math.min(img.naturalWidth, cw * 1.15)
+      const hh = ch * 0.45
+      const sx = Math.max(0, cx + cw / 2 - hw / 2)
+      const sy = Math.max(0, cy)
+      const S = 128
+      const off = document.createElement('canvas')
+      off.width = S; off.height = S
+      const octx = off.getContext('2d')
+      if (!octx) return null
+      octx.fillStyle = '#111'
+      octx.fillRect(0, 0, S, S)
+      // square-fill: crop the smaller dimension centered
+      const side = Math.min(hw, hh)
+      const ox = sx + (hw - side) / 2
+      const oy = sy + (hh - side) / 2
+      try {
+        octx.drawImage(img, ox, oy, side, side, 0, 0, S, S)
+      } catch { return null }
+      const url = off.toDataURL('image/jpeg', 0.82)
+      return url.startsWith('data:image/jpeg;base64,') ? url.slice(23) : null
+    }, [])
+
+    // Track ids that already had a photo-capture attempt this session —
+    // prevents re-cropping the same person on every poll tick.
+    const photoTriedRef = useRef<Set<number>>(new Set())
+
+    // Auto-capture: when a known member (matched by the extension) appears
+    // with no avatar yet, grab a head crop from the current frame.
+    const maybeAutoPhoto = useCallback(async () => {
+      if (editKindRef.current === 'members') return // panel is open; user may register
+      const state = stateRef.current
+      if (!state) return
+      const noPhoto = new Set(members.filter((m) => !m.photo).map((m) => m.id))
+      if (noPhoto.size === 0) return
+      const target = (state.tracks ?? []).find(
+        (t) =>
+          t.member?.id &&
+          noPhoto.has(t.member.id) &&
+          t.bbox &&
+          !photoTriedRef.current.has(t.track_id)
+      )
+      if (!target || !target.bbox) return
+      photoTriedRef.current.add(target.track_id)
+      const b64 = cropAvatar(target.bbox)
+      if (!b64) return
+      const r = await setMemberPhoto(extensionId, target.member!.id, b64)
+      if (r.success && mountedRef.current) loadMembers()
+    }, [members, cropAvatar, extensionId, loadMembers])
+
+    // Piggyback on the members poll: after each refresh, try one capture.
+    useEffect(() => { maybeAutoPhoto() }, [members, maybeAutoPhoto])
 
     useEffect(() => {
       const t = setTimeout(() => {
@@ -603,16 +671,22 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     const submitRegister = useCallback(async () => {
       setRegister((r) => (r ? { ...r, busy: true, msg: null } : r))
       if (!register) return
+      // capture the head crop BEFORE the panel closes / track moves on
+      const track = (stateRef.current?.tracks ?? []).find((t) => t.track_id === register.trackId)
+      const headCrop = track?.bbox ? cropAvatar(track.bbox) : null
       const r = await registerMember(extensionId, register.trackId, register.name.trim())
       if (!mountedRef.current) return
       if (r.success) {
+        if (headCrop && r.data?.member?.id) {
+          await setMemberPhoto(extensionId, r.data.member.id, headCrop)
+        }
         setRegister(null)
         setSavedFlash(Date.now())
         loadMembers()
       } else {
         setRegister((s) => (s ? { ...s, busy: false, msg: r.error || '注册失败' } : s))
       }
-    }, [register, extensionId, loadMembers])
+    }, [register, extensionId, loadMembers, cropAvatar])
 
     const removeMember = useCallback(async (id: string) => {
       await deleteMember(extensionId, id)
@@ -947,7 +1021,12 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                         ? [<span key="e" className="gym-ov-zonelist-empty">会员库为空——新人入画会自动录入特征；也可在查看模式点击人物注册</span>]
                         : members.map((m, i) => (
                             <div key={m.id} className="gym-ov-zonerow">
-                              <span className="gym-ov-zoneidx member">{i + 1}</span>
+                              {memberPhotoSrc(m.photo) ? (
+                                <img className="gym-ov-avatar" src={memberPhotoSrc(m.photo)!}
+                                  alt={m.name} title={m.name} />
+                              ) : (
+                                <span className="gym-ov-zoneidx member">{i + 1}</span>
+                              )}
                               <input className="gym-ov-input name" defaultValue={m.name}
                                 placeholder={m.source === 'auto' ? '补填姓名' : '会员姓名'}
                                 onKeyDown={(e) => {
