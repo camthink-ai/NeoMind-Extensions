@@ -1,6 +1,6 @@
 {
   "id": "gym-tracker",
-  "version": "2.7.8",
+  "version": "2.7.9",
   "entrypoint": "gym-tracker-components.umd.cjs",
   "components": [
     {
@@ -79,6 +79,29 @@
           "maximum": 24
         }
       }
+    },
+    {
+      "name": "GymWorkoutSummary",
+      "type": "gym-workout-summary",
+      "displayName": "Gym · 运动概况",
+      "description": "Daily workout analytics: total training time, visits, equipment usage ranking, session list",
+      "icon": "clock",
+      "defaultSize": {
+        "width": 420,
+        "height": 360
+      },
+      "minSize": {
+        "width": 300,
+        "height": 240
+      },
+      "refreshable": true,
+      "refreshInterval": 10000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {}
     },
     {
       "name": "GymVideoOverlay",

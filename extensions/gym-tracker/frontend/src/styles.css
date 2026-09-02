@@ -570,3 +570,213 @@
   color: #4ade80;
   border: 1px solid rgba(34, 197, 94, 0.4);
 }
+
+/* ==========================================================================
+   GymWorkoutSummary — scoped styles
+   Prefix: gym-sum- · colors via NeoMind CSS variables
+   ========================================================================== */
+
+.gym-sum {
+  --gs-fg: var(--foreground);
+  --gs-muted: var(--muted-foreground);
+  --gs-accent: var(--primary);
+  --gs-card: var(--card);
+  --gs-border: var(--border);
+  --gs-muted-bg: var(--muted);
+  width: 100%;
+  height: 100%;
+  font-size: 13px;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+.gym-sum *,
+.gym-sum *::before,
+.gym-sum *::after { box-sizing: border-box; }
+
+.gym-sum-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 14px;
+  background: var(--gs-card);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--gs-border);
+  border-radius: var(--radius-xl, 12px);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.gym-sum-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  margin-bottom: 10px;
+}
+
+.gym-sum-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--gs-fg);
+}
+.gym-sum-title svg { width: 16px; height: 16px; color: var(--gs-accent); }
+
+.gym-sum-daynav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gym-sum-navbtn {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--gs-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gs-fg);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+.gym-sum-navbtn:hover:not(:disabled) { background: var(--gs-muted-bg); }
+.gym-sum-navbtn:disabled { opacity: 0.35; cursor: default; }
+
+.gym-sum-day {
+  min-width: 42px;
+  text-align: center;
+  color: var(--gs-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.gym-sum-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.gym-sum-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  background: var(--gs-muted-bg);
+  border-radius: 8px;
+}
+
+.gym-sum-stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--gs-fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.gym-sum-stat-label {
+  font-size: 11px;
+  color: var(--gs-muted);
+}
+
+.gym-sum-section { flex-shrink: 0; margin-bottom: 10px; }
+.gym-sum-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gs-muted);
+  margin-bottom: 6px;
+}
+
+.gym-sum-eqlist { display: flex; flex-direction: column; gap: 5px; }
+
+.gym-sum-eqrow {
+  display: grid;
+  grid-template-columns: minmax(64px, 96px) 1fr 48px;
+  align-items: center;
+  gap: 8px;
+}
+
+.gym-sum-eqname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--gs-fg);
+}
+
+.gym-sum-eqbar {
+  height: 8px;
+  background: var(--gs-muted-bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.gym-sum-eqfill {
+  height: 100%;
+  background: var(--gs-accent);
+  border-radius: 4px;
+  opacity: 0.85;
+}
+
+.gym-sum-eqsec {
+  text-align: right;
+  color: var(--gs-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.gym-sum-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.gym-sum-session {
+  display: grid;
+  grid-template-columns: 8px 1fr 44px 52px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+}
+
+.gym-sum-session-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gs-accent);
+}
+
+.gym-sum-session-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--gs-fg);
+}
+
+.gym-sum-session-time,
+.gym-sum-session-dur {
+  text-align: right;
+  color: var(--gs-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.gym-sum-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--gs-muted);
+}
+.gym-sum-state svg { width: 24px; height: 24px; opacity: 0.5; }
+.gym-sum-state-text { font-size: 12px; }
