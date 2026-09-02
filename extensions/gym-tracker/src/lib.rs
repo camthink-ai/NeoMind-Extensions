@@ -313,22 +313,25 @@ impl Extension for GymTrackerExtension {
         let sid = session_id.to_string();
         std::thread::spawn(move || {
             let mut seq: u64 = 0;
-            let mut last_img = String::new();
             while flag.load(std::sync::atomic::Ordering::SeqCst) {
-                std::thread::sleep(std::time::Duration::from_millis(120));
-                let Some((img, tracks, faces)) = state.snapshot_frame() else {
-                    continue;
-                };
-                if img == last_img {
-                    continue; // producer hasn't published a new frame yet
-                }
-                last_img = img.clone();
+                // wake on every incoming preview frame (display rate);
+                // 120 ms timeout keeps a heartbeat when idle
+                let Some((ts_ns, img)) =
+                    state.wait_preview(std::time::Duration::from_millis(120))
+                else { continue };
+                let hist = state.tracks_near(ts_ns);
+                let faces = state.snapshot_faces().unwrap_or_default();
+                let tracks = hist.last().map(|(_, t)| t.clone()).unwrap_or_default();
                 seq += 1;
                 let msg = PushOutputMessage::json(
                     &sid,
                     seq,
                     serde_json::json!({
                         "img_b64": img,
+                        "ts_ns": ts_ns,
+                        // ts-keyed track keyframes: the client interpolates
+                        // positions to ts_ns (device clock on BOTH streams)
+                        "tracks_hist": hist,
                         "tracks": tracks,
                         "faces": faces,
                         "present_count": tracks.len(),

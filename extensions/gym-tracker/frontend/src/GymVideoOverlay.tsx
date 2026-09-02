@@ -76,8 +76,8 @@ const MOSAIC_PAD = 0.12
 // misplaces boxes. Render at (now − OVERLAY_DELAY_MS) instead, interpolating
 // between history samples (smooth motion) and extrapolating at most
 // EXTRAP_MAX_MS when data is momentarily behind the picture.
-const OVERLAY_DELAY_MS = 150
-const EXTRAP_MAX_MS = 450
+const OVERLAY_DELAY_MS = 0.15 // sec
+const EXTRAP_MAX_MS = 0.45 // sec (kept name for history)
 
 interface HistEntry { t: number; bbox: Bbox; foot?: Point | null }
 
@@ -263,7 +263,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             setPresent(r.data.present_count)
           }
           // bbox history for time-aligned interpolation (stream-player mode)
-          const now = performance.now()
+          const now = performance.now() / 1000
           const hist = trackHistRef.current
           const seen = new Set<number>()
           for (const t of r.data.tracks ?? []) {
@@ -272,7 +272,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             let arr = hist.get(t.track_id)
             if (!arr) { arr = []; hist.set(t.track_id, arr) }
             arr.push({ t: now, bbox: t.bbox, foot: t.foot })
-            while (arr.length > 0 && now - arr[0].t > 3000) arr.shift()
+            while (arr.length > 0 && now - arr[0].t > 3) arr.shift()
           }
           for (const k of [...hist.keys()]) if (!seen.has(k)) hist.delete(k)
         }
@@ -293,6 +293,8 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     // Falls back to a response-chained REST poll when WS is unavailable.
     const deviceFramesRef = useRef(false)
     const lastImgRef = useRef<string>('')
+    // ts_ns (seconds) of the currently displayed device frame, when present
+    const lastTsRef = useRef<number | null>(null)
     const applyFrameBundle = useCallback((data: FrameBundle) => {
       if (!data.img_b64 || data.img_b64 === lastImgRef.current) return
       lastImgRef.current = data.img_b64
@@ -320,21 +322,39 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         drawRef.current?.()
       }
       im.src = `data:image/jpeg;base64,${data.img_b64}`
-      // tracks/faces OF the same frame; also feed the bbox history so the
-      // renderer can interpolate BETWEEN device frames — data arrives at
-      // ~5 Hz but drawing runs at display rate, keeping motion smooth.
-      const nowH = performance.now()
+      // ts-keyed track keyframes from the device: both streams share the
+      // device clock, so interpolation to the displayed frame's ts_ns is
+      // exact. Falls back to receive-time keys when ts is absent (poll mode).
+      const tsNs = (data as any).ts_ns as number | undefined
+      const histData = (data as any).tracks_hist as Array<[number, any[]]> | undefined
       const hist = trackHistRef.current
-      const seen = new Set<number>()
-      for (const t of data.tracks ?? []) {
-        if (!t.bbox) continue
-        seen.add(t.track_id)
-        let arr = hist.get(t.track_id)
-        if (!arr) { arr = []; hist.set(t.track_id, arr) }
-        arr.push({ t: nowH, bbox: t.bbox, foot: t.foot })
-        while (arr.length > 0 && nowH - arr[0].t > 2000) arr.shift()
+      if (tsNs && Array.isArray(histData)) {
+        lastTsRef.current = tsNs / 1e6
+        const seen = new Set<number>()
+        for (const [ts, trks] of histData) {
+          for (const t of trks) {
+            if (!t?.bbox) continue
+            seen.add(t.track_id)
+            let arr = hist.get(t.track_id)
+            if (!arr) { arr = []; hist.set(t.track_id, arr) }
+            arr.push({ t: ts / 1e6, bbox: t.bbox, foot: t.foot }) // seconds key
+            while (arr.length > 0 && ts / 1e6 - arr[0].t > 3) arr.shift()
+          }
+        }
+        for (const k of [...hist.keys()]) if (!seen.has(k)) hist.delete(k)
+      } else {
+        const nowH = performance.now() / 1000
+        const seen = new Set<number>()
+        for (const t of data.tracks ?? []) {
+          if (!t.bbox) continue
+          seen.add(t.track_id)
+          let arr = hist.get(t.track_id)
+          if (!arr) { arr = []; hist.set(t.track_id, arr) }
+          arr.push({ t: nowH, bbox: t.bbox, foot: t.foot })
+          while (arr.length > 0 && nowH - arr[0].t > 3) arr.shift()
+        }
+        for (const k of [...hist.keys()]) if (!seen.has(k)) hist.delete(k)
       }
-      for (const k of [...hist.keys()]) if (!seen.has(k)) hist.delete(k)
       stateRef.current = {
         present_count: data.present_count ?? data.tracks?.length ?? 0,
         tracks: data.tracks ?? [],
@@ -725,7 +745,9 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       // Both modes interpolate along the bbox history: stream-player mode
       // aligns to the displayed video time; device-frame mode targets "now"
       // so boxes keep moving smoothly between ~5 Hz device updates.
-      const drawNow = performance.now() - (deviceFramesRef.current ? 0 : OVERLAY_DELAY_MS)
+      const drawNow = deviceFramesRef.current && lastTsRef.current != null
+        ? lastTsRef.current
+        : performance.now() / 1000 - OVERLAY_DELAY_MS
       const alignedTracks = tracks.map((tr) => {
         const hist = trackHistRef.current.get(tr.track_id)
         if (!tr.bbox || !hist || hist.length === 0) return tr

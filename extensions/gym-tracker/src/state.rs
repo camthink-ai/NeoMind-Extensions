@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use parking_lot::RwLock;
+use parking_lot::{Condvar, Mutex, RwLock};
 
 use crate::types::{FaceBox, Track, TrackFrame};
 
@@ -35,6 +35,13 @@ pub struct LiveState {
     /// SAME FRAME — the Monitor renders both from one source, so image and
     /// overlay can never desync (two-clock problem eliminated by design).
     frame_img: RwLock<Option<(String, Vec<Track>, Vec<FaceBox>)>>,
+    /// Display-rate preview stream (`gym/preview`): latest (ts_ns, img).
+    preview: RwLock<Option<(u64, String)>>,
+    /// Wakes the push thread when a new preview frame lands.
+    preview_wait: Mutex<()>,
+    preview_cv: Condvar,
+    /// ts_ns-keyed track history (~3 s) for timestamp-exact interpolation.
+    track_hist: RwLock<std::collections::VecDeque<(u64, Vec<Track>)>>,
 }
 
 impl LiveState {
@@ -44,6 +51,10 @@ impl LiveState {
             inner: Default::default(),
             faces: Default::default(),
             frame_img: Default::default(),
+            preview: Default::default(),
+            preview_wait: Mutex::new(()),
+            preview_cv: Condvar::new(),
+            track_hist: Default::default(),
             faces_seen: RwLock::new(
                 Instant::now() - Duration::from_secs(3600),
             ),
@@ -71,6 +82,34 @@ impl LiveState {
             *self.frame_img.write() =
                 Some((img.clone(), tracks_now, f.faces.clone()));
         }
+        // ts-keyed history for timestamp-exact overlay interpolation
+        {
+            let mut h = self.track_hist.write();
+            h.push_back((f.ts_ns, f.tracks.clone()));
+            while h.len() > 1 && f.ts_ns - h.front().map(|(t, _)| *t).unwrap_or(0) > 3_000_000_000 {
+                h.pop_front();
+            }
+        }
+    }
+
+    /// Latest display preview (ts_ns, img_b64) from `gym/preview`.
+    pub fn set_preview(&self, ts_ns: u64, img: String) {
+        *self.preview.write() = Some((ts_ns, img));
+        let _guard = self.preview_wait.lock();
+        self.preview_cv.notify_all();
+    }
+
+    /// Block until a new preview arrives or `timeout` elapses; returns the
+    /// latest (ts, img) at wake time.
+    pub fn wait_preview(&self, timeout: Duration) -> Option<(u64, String)> {
+        let mut guard = self.preview_wait.lock();
+        let _ = self.preview_cv.wait_for(&mut guard, timeout);
+        self.preview.read().clone()
+    }
+
+    /// Tracks interpolated keyframes around `ts_ns` (for frontend or push).
+    pub fn tracks_near(&self, ts_ns: u64) -> Vec<(u64, Vec<Track>)> {
+        self.track_hist.read().iter().cloned().collect()
     }
 
     /// Latest preview bundle: (img_b64, tracks at that frame, faces).

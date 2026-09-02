@@ -64,6 +64,21 @@ pub fn parse_event(raw: &str) -> Option<TrackFrame> {
     serde_json::from_value::<TrackFrame>(frame_val).ok()
 }
 
+/// Parse a `gym/preview` envelope → (ts_ns, img_b64). None for other topics.
+pub fn parse_preview(raw: &str) -> Option<(u64, String)> {
+    let ev: serde_json::Value = serde_json::from_str(raw).ok()?;
+    if ev["topic"].as_str()? != "gym/preview" {
+        return None;
+    }
+    let payload = &ev["payload"];
+    let p = match payload {
+        serde_json::Value::String(s) =>
+            serde_json::from_str::<serde_json::Value>(s).ok()?,
+        other => other.clone(),
+    };
+    Some((p["ts_ns"].as_u64()?, p["img_b64"].as_str()?.to_string()))
+}
+
 /// Handle returned by `spawn` — call `stop()` to request a graceful shutdown
 /// of the ingest thread (honored within ~200ms via the runtime's `select!`).
 pub struct IngestHandle {
@@ -237,6 +252,9 @@ async fn connect_and_drain(
             msg = ws_stream.next() => match msg {
                 Some(Ok(Message::Text(txt))) => {
                     tracing::debug!(target: "gym_tracker::ingest::frame", len = txt.len(), "ws text frame");
+                    if let Some((pts, pimg)) = parse_preview(&txt) {
+                        state.set_preview(pts, pimg);
+                    }
                     if let Some(frame) = parse_event(&txt) {
                         state.apply_frame(&frame);
                         analytics.on_frame(&frame);
