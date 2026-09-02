@@ -400,8 +400,14 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
               if (msg.type === 'session_created') {
                 ws?.send(JSON.stringify({ type: 'start_push', session_id: msg.session_id }))
               } else if (msg.type === 'push_output' && msg.data_type === 'application/json') {
-                const bundle = typeof msg.data === 'string' ? JSON.parse(msg.data) : msg.data
-                applyFrameBundle(bundle)
+                // the wire format base64-encodes even JSON payloads
+                let bundle = null
+                try {
+                  bundle = typeof msg.data === 'string'
+                    ? JSON.parse(atob(msg.data))
+                    : msg.data
+                } catch { /* skip malformed frame */ }
+                if (bundle) applyFrameBundle(bundle)
               }
             } catch { /* malformed frame — skip */ }
           }
