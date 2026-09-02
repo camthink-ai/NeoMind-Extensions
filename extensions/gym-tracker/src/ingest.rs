@@ -103,7 +103,7 @@ enum Disconnect {
 /// primary WS URL uses the token verbatim; if that handshake is rejected we
 /// also try once with the `Bearer ` prefix stripped, in case the device's WS
 /// auth wants the bare secret (decided empirically by the live test).
-pub fn spawn(cfg: Config, state: Arc<LiveState>, analytics: Arc<crate::analytics::Analytics>, token: String) -> IngestHandle {
+pub fn spawn(cfg: Config, state: Arc<LiveState>, analytics: Arc<crate::analytics::Analytics>, db: Arc<crate::db::Db>, token: String) -> IngestHandle {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_c = stop.clone();
     // Build the primary URL up front (task contract). The raw token is passed
@@ -112,7 +112,7 @@ pub fn spawn(cfg: Config, state: Arc<LiveState>, analytics: Arc<crate::analytics
     std::thread::Builder::new()
         .name("gym-ingest".into())
         .spawn(move || {
-            run_loop(&primary_url, &token, &cfg, &state, &analytics, &stop_c);
+            run_loop(&primary_url, &token, &cfg, &state, &analytics, &db, &stop_c);
         })
         .ok();
     IngestHandle { stop }
@@ -126,6 +126,7 @@ fn run_loop(
     cfg: &Config,
     state: &Arc<LiveState>,
     analytics: &Arc<crate::analytics::Analytics>,
+    db: &Arc<crate::db::Db>,
     stop: &Arc<AtomicBool>,
 ) {
     let rt = match tokio::runtime::Builder::new_current_thread()
@@ -151,7 +152,7 @@ fn run_loop(
         let backoff = &cfg.ingest.reconnect_backoff_sec;
         let mut attempt: usize = 0;
         while !stop.load(Ordering::Relaxed) {
-            match connect_and_drain(&analytics, &urls, cfg, state, stop).await {
+            match connect_and_drain(&analytics, &db, &urls, cfg, state, stop).await {
                 Disconnect::Stop => break,
                 Disconnect::Error(e) => {
                     tracing::warn!("ingest: wss cycle ended ({e})");
@@ -179,6 +180,7 @@ fn run_loop(
 /// connection drops or `stop` is requested.
 async fn connect_and_drain(
     analytics: &Arc<crate::analytics::Analytics>,
+    db: &Arc<crate::db::Db>,
     urls: &[String],
     cfg: &Config,
     state: &Arc<LiveState>,
@@ -238,6 +240,14 @@ async fn connect_and_drain(
                     if let Some(frame) = parse_event(&txt) {
                         state.apply_frame(&frame);
                         analytics.on_frame(&frame);
+                        // workout pipeline: zones + members fresh per frame
+                        // (small tables; keeps set_roi_zones / member edits
+                        // live without a cache-invalidation dance)
+                        let zones = db.list_zones().unwrap_or_default();
+                        let members = db.list_members().unwrap_or_default();
+                        analytics.on_workout_frame(
+                            &frame, &zones, &members, &cfg.identity,
+                            cfg.roi.dwell_debounce_sec);
                     }
                 }
                 Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {
@@ -387,9 +397,9 @@ mod tests {
 
         // Fresh live-state mirror + spawn the ingest subscriber.
         let state = Arc::new(LiveState::new(30));
-        let db = crate::db::Db::open(":memory:").expect("in-memory db");
+        let db = Arc::new(crate::db::Db::open(":memory:").expect("in-memory db"));
         let analytics = Arc::new(crate::analytics::Analytics::new(&db));
-        let handle = spawn(cfg.clone(), state.clone(), analytics, token.clone());
+        let handle = spawn(cfg.clone(), state.clone(), analytics, db.clone(), token.clone());
 
         // Give the WS subscriber a moment to connect + run its backoff cycle.
         std::thread::sleep(Duration::from_secs(2));

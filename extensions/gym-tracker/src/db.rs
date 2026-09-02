@@ -125,6 +125,108 @@ impl Db {
         Ok(())
     }
 
+    // ---- workout records (P4: sessions + equipment usage) ----
+
+    pub fn upsert_session(&self, id: &str, member_id: Option<&str>,
+                          device_id: &str, started: i64, ended: i64,
+                          duration_sec: i64, status: &str,
+                          member_name: Option<&str>)
+        -> Result<(), rusqlite::Error> {
+        let summary = serde_json::to_string(&serde_json::json!({
+            "member_name": member_name.unwrap_or(""),
+        })).unwrap();
+        self.conn.lock().execute(
+            "INSERT INTO sessions(id, member_id, device_id, started_at, ended_at, duration_sec, status, summary)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+             ON CONFLICT(id) DO UPDATE SET member_id=excluded.member_id, ended_at=excluded.ended_at,
+               duration_sec=excluded.duration_sec, status=excluded.status, summary=excluded.summary",
+            params![id, member_id, device_id, started, ended, duration_sec, status, summary],
+        )?;
+        Ok(())
+    }
+
+    pub fn upsert_equipment_usage(&self, id: &str, session_id: &str,
+                                  member_id: Option<&str>, zone_id: &str,
+                                  duration_sec: i64, exercise: &str, reps: i64)
+        -> Result<(), rusqlite::Error> {
+        self.conn.lock().execute(
+            "INSERT INTO equipment_usage(id, session_id, member_id, zone_id, zone_name, started_at, ended_at, duration_sec, primary_action, reps)
+             VALUES(?1,?2,?3,?4,?5,?6,?6,?7,?8,?9)
+             ON CONFLICT(id) DO UPDATE SET duration_sec=excluded.duration_sec,
+               primary_action=excluded.primary_action, reps=excluded.reps, ended_at=excluded.ended_at",
+            params![id, session_id, member_id, zone_id, zone_id, chrono::Utc::now().timestamp(),
+                    duration_sec, exercise, reps],
+        )?;
+        Ok(())
+    }
+
+    /// Per-equipment usage totals since `day_from`, optionally one member.
+    /// Returns (zone_id, total_sec, reps, primary exercise).
+    pub fn equipment_stats(&self, member_id: Option<&str>, day_from: i64)
+        -> Result<Vec<(String, i64, i64, String)>, rusqlite::Error> {
+        let conn = self.conn.lock();
+        let mut stmt = if member_id.is_some() {
+            conn.prepare(
+                "SELECT zone_id, SUM(duration_sec), MAX(reps), MAX(primary_action)
+                 FROM equipment_usage WHERE member_id=?1 AND ended_at>=?2
+                 GROUP BY zone_id ORDER BY 2 DESC")?
+        } else {
+            conn.prepare(
+                "SELECT zone_id, SUM(duration_sec), MAX(reps), MAX(primary_action)
+                 FROM equipment_usage WHERE ended_at>=?1
+                 GROUP BY zone_id ORDER BY 2 DESC")?
+        };
+        let mut map = |p: &[&dyn rusqlite::ToSql]| -> Result<Vec<_>, _> {
+            stmt.query_map(p, |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                    r.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                    r.get::<_, Option<String>>(3)?.unwrap_or_default()))
+            })?.collect()
+        };
+        match member_id {
+            Some(mid) => map(&[&mid, &day_from]),
+            None => map(&[&day_from]),
+        }
+    }
+
+    /// Sessions since `day_from`, newest first, optionally one member.
+    pub fn list_sessions(&self, member_id: Option<&str>, day_from: i64, limit: i64)
+        -> Result<Vec<serde_json::Value>, rusqlite::Error> {
+        let conn = self.conn.lock();
+        let mut stmt = if member_id.is_some() {
+            conn.prepare(
+                "SELECT s.id, s.member_id, s.started_at, s.ended_at, s.duration_sec, s.summary
+                 FROM sessions s WHERE s.member_id=?1 AND s.started_at>=?2
+                 ORDER BY s.started_at DESC LIMIT ?3")?
+        } else {
+            conn.prepare(
+                "SELECT s.id, s.member_id, s.started_at, s.ended_at, s.duration_sec, s.summary
+                 FROM sessions s WHERE s.started_at>=?1
+                 ORDER BY s.started_at DESC LIMIT ?2")?
+        };
+        let mut map = |p: &[&dyn rusqlite::ToSql]| -> Result<Vec<_>, _> {
+            stmt.query_map(p, |r| {
+                let summary: Option<String> = r.get(5)?;
+                let name = serde_json::from_str::<serde_json::Value>(
+                    summary.as_deref().unwrap_or("{}"))
+                    .ok().and_then(|v| v.get("member_name")
+                        .and_then(|n| n.as_str()).map(String::from));
+                Ok(serde_json::json!({
+                    "id": r.get::<_, String>(0)?,
+                    "member_id": r.get::<_, Option<String>>(1)?,
+                    "member_name": name,
+                    "started_at": r.get::<_, Option<i64>>(2)?,
+                    "ended_at": r.get::<_, Option<i64>>(3)?,
+                    "duration_sec": r.get::<_, Option<i64>>(4)?.unwrap_or(0),
+                }))
+            })?.collect()
+        };
+        match member_id {
+            Some(mid) => map(&[&mid, &day_from, &limit]),
+            None => map(&[&day_from, &limit]),
+        }
+    }
+
     // ---- heatmap persistence (P1) ----
 
     /// Returns (grid, day) for `day`; empty grid when absent.

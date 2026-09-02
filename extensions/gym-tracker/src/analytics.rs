@@ -82,6 +82,7 @@ struct Inner {
     trails: HashMap<i64, TrackTrail>,
     heat: Vec<u32>,
     heat_day: i64,
+    workouts: HashMap<i64, WorkoutTracker>,
 }
 
 pub struct Analytics {
@@ -112,6 +113,7 @@ impl Analytics {
                 trails: Default::default(),
                 heat,
                 heat_day,
+                workouts: Default::default(),
             }),
             dirty_frames: AtomicU64::new(0),
         }
@@ -416,5 +418,198 @@ mod tests {
         let hm2 = a2.get_heatmap();
         let total2: u64 = hm2["grid"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap_or(0)).sum();
         assert_eq!(total2, 10, "heatmap round-trips through SQLite");
+    }
+}
+
+// ---- workout tracking (P4): sessions, zone dwell, exercise, reps ----
+
+/// One tracked person's workout state, from first appearance to TTL
+/// expiry. The session + equipment-usage rows are persisted when the
+/// track closes (or opportunistically on save).
+#[derive(Debug, Clone)]
+pub struct WorkoutTracker {
+    pub session_id: String,
+    pub started_at: f64,
+    pub last_seen: f64,
+    /// Sticky member association: the LAST confident identity seen while
+    /// the person was in frame (face or body — face overwrites body).
+    pub member_id: Option<String>,
+    pub member_name: Option<String>,
+    /// zone → accumulated seconds (debounced by dwell_debounce_sec)
+    pub zone_secs: HashMap<String, f64>,
+    pub zone_enter: Option<(String, f64)>,
+    pub last_flush: Option<f64>,
+    pub exercise: String,
+    pub reps: u32,
+    pub sets: u32,
+    counter: crate::exercise::RepCounter,
+    counter_inited: bool,
+    dirty: bool,
+}
+
+impl Inner {
+    /// Workout pipeline for one frame: zone dwell, exercise
+    /// classification, rep counting, sticky member identity.
+    pub fn on_workout_frame(
+        &mut self,
+        f: &TrackFrame,
+        zones: &[crate::db::Zone],
+        members: &[crate::db::Member],
+        idcfg: &crate::config::IdentityCfg,
+        dwell_debounce_sec: u32,
+    ) {
+        let now = f.ts_ns as f64 / 1e9;
+        let matches = crate::identity::match_tracks(idcfg, members, &f.tracks, &f.faces);
+        for t in &f.tracks {
+            let w = self.workouts.entry(t.track_id).or_insert_with(|| WorkoutTracker {
+                session_id: format!("sess_{}", uuid::Uuid::new_v4().simple()),
+                started_at: now,
+                last_seen: now,
+                member_id: None,
+                member_name: None,
+                zone_secs: HashMap::new(),
+                zone_enter: None,
+                last_flush: None,
+                exercise: "unknown".into(),
+                reps: 0,
+                sets: 0,
+                counter: crate::exercise::RepCounter::new("unknown", false, now),
+                counter_inited: false,
+                dirty: true,
+            });
+            w.last_seen = now;
+
+            // sticky member identity
+            if let Some(m) = matches.get(&t.track_id) {
+                let mem = &members[m.member_idx];
+                if w.member_id.as_deref() != Some(mem.id.as_str()) || m.via == "face" {
+                    w.member_id = Some(mem.id.clone());
+                    w.member_name = Some(mem.name.clone());
+                    w.dirty = true;
+                }
+            }
+
+            // zone dwell with debounce: only zones held ≥ dwell_debounce
+            // seconds accumulate usage time.
+            let (zx, zy) = (t.foot.x, t.foot.y);
+            let in_zone = zones.iter().find(|z| {
+                z.enabled && crate::geo::point_in_polygon(zx, zy, &z.polygon)
+            });
+            match (in_zone, &w.zone_enter) {
+                (Some(z), Some((zid, since))) if z.id == *zid => {
+                    // still inside: accumulate once we pass the debounce
+                    if now - since >= dwell_debounce_sec as f64 {
+                        *w.zone_secs.entry(z.id.clone()).or_insert(0.0) +=
+                            (now - w.last_flush.unwrap_or(*since)).min(now - since);
+                        w.last_flush = Some(now);
+                        w.dirty = true;
+                    }
+                }
+                (Some(z), _) => {
+                    w.zone_enter = Some((z.id.clone(), now));
+                    w.last_flush = None;
+                }
+                (None, Some(_)) => {
+                    w.zone_enter = None;
+                    w.last_flush = None;
+                }
+                (None, None) => {}
+            }
+
+            // exercise classification + reps
+            if let Some(pose) = t.pose.as_ref() {
+                let zone_ex = w.zone_enter.as_ref()
+                    .and_then(|(zid, _)| zones.iter().find(|z| &z.id == zid))
+                    .and_then(|z| crate::exercise::zone_exercise(&z.equipment_type));
+                let (ex, cardio) = match zone_ex {
+                    Some((e, c)) => (e, c),
+                    None => (crate::exercise::classify_from_pose(pose), false),
+                };
+                if !w.counter_inited || w.exercise != ex {
+                    let total = w.reps + w.counter.reps;
+                    w.reps = if w.counter_inited { total } else { 0 };
+                    w.counter = crate::exercise::RepCounter::new(ex, cardio, now);
+                    w.counter_inited = true;
+                    w.exercise = ex.into();
+                    w.dirty = true;
+                }
+                let _ = w.counter.update(pose, now);
+                if w.counter.reps > 0 || w.counter.sets > 0 {
+                    w.dirty = true;
+                }
+            }
+        }
+    }
+
+    /// Close workouts whose track expired; persist them. Called from
+    /// maybe_save (poll frequency bounds data loss to one poll).
+    pub fn close_expired_workouts(&mut self, db: &Db, ttl_sec: u32) {
+        let now_ts = chrono::Utc::now().timestamp() as f64;
+        let expired: Vec<i64> = self.workouts.iter()
+            .filter(|(_, w)| now_ts - w.last_seen > ttl_sec as f64)
+            .map(|(k, _)| *k)
+            .collect();
+        for tid in expired {
+            if let Some(w) = self.workouts.remove(&tid) {
+                Self::persist_workout(db, &w);
+            }
+        }
+        // opportunistic flush of live ones too
+        for w in self.workouts.values_mut() {
+            if w.dirty {
+                Self::persist_workout(db, w);
+                w.dirty = false;
+            }
+        }
+    }
+
+    fn persist_workout(db: &Db, w: &WorkoutTracker) {
+        let ended = chrono::Utc::now().timestamp();
+        let dur = (ended as f64 - w.started_at).max(0.0) as i64;
+        let _ = db.upsert_session(&w.session_id, w.member_id.as_deref(),
+                                  "ne503-001", w.started_at as i64, ended,
+                                  dur, "closed", w.member_name.as_deref());
+        for (zone_id, secs) in &w.zone_secs {
+            if *secs < 1.0 {
+                continue;
+            }
+            let _ = db.upsert_equipment_usage(
+                &format!("{}_{}", w.session_id, zone_id),
+                &w.session_id, w.member_id.as_deref(), zone_id,
+                *secs as i64, &w.exercise,
+                (w.reps + w.counter.reps) as i64);
+        }
+    }
+
+    /// Live workout snapshot for get_live_state.
+    pub fn workout_snapshot(&self) -> HashMap<i64, (String, u32, u32, Option<String>)> {
+        self.workouts.iter().map(|(tid, w)| {
+            (*tid, (w.exercise.clone(), w.reps + w.counter.reps,
+                    w.sets + w.counter.sets,
+                    w.zone_enter.as_ref().map(|(z, _)| z.clone())))
+        }).collect()
+    }
+}
+
+impl Analytics {
+    pub fn on_workout_frame(
+        &self,
+        f: &TrackFrame,
+        zones: &[crate::db::Zone],
+        members: &[crate::db::Member],
+        idcfg: &crate::config::IdentityCfg,
+        dwell_debounce_sec: u32,
+    ) {
+        self.inner.lock().on_workout_frame(f, zones, members, idcfg, dwell_debounce_sec);
+    }
+
+    pub fn close_expired_workouts(&self, db: &Db, ttl_sec: u32) {
+        self.inner.lock().close_expired_workouts(db, ttl_sec);
+    }
+
+    pub fn workout_snapshot(
+        &self,
+    ) -> HashMap<i64, (String, u32, u32, Option<String>)> {
+        self.inner.lock().workout_snapshot()
     }
 }

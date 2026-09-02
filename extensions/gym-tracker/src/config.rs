@@ -108,6 +108,20 @@ impl Config {
 }
 
 #[cfg(test)]
+pub fn default_identity_for_tests() -> IdentityCfg {
+    IdentityCfg {
+        match_threshold: 0.1,
+        auto_capture_unknown: false,
+        unknown_prefix: "U".into(),
+        auto_capture_distance: 0.5,
+        append_confidence: 0.1,
+        append_min_dist: 0.15,
+        append_cooldown_sec: 60,
+        face_match_threshold: 0.3,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     #[test]

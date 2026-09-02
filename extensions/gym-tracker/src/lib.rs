@@ -23,7 +23,9 @@ pub mod commands;
 pub mod config;
 pub mod db;
 pub mod geo;
-pub mod ingest;
+pub mod exercise;
+mod identity;
+mod ingest;
 pub mod metrics;
 pub mod ne503;
 pub mod state;
@@ -107,6 +109,7 @@ impl Extension for GymTrackerExtension {
             cmd("set_lines", "Replace crossing lines (full set)"),
             cmd("get_crossings", "Per-line in/out counters (today)"),
             cmd("get_heatmap", "Foot-position heatmap grid (today)"),
+            cmd("get_workout_summary", "Sessions + equipment usage + reps (today or per member)"),
             cmd("register_member", "Register a live track's embedding as a named member"),
             cmd("list_members", "List registered members"),
             cmd("rename_member", "Fill in / correct a member's name"),
@@ -236,7 +239,7 @@ impl Extension for GymTrackerExtension {
         metrics.sync_zones(&db.list_zones().unwrap_or_default());
 
         let ingest_handle =
-            ingest::spawn(cfg.clone(), state.clone(), analytics.clone(), token);
+            ingest::spawn(cfg.clone(), state.clone(), analytics.clone(), db.clone(), token);
 
         // Replacing a previous Inner drops the old IngestHandle → its Drop stops
         // the old ingest thread. Single write-lock acquisition.

@@ -421,10 +421,17 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           ctx.strokeStyle = 'rgba(250, 250, 250, 0.9)'
           ctx.lineWidth = 2
           ctx.strokeRect(X(x), Y(y), w * dw, h * dh)
-          // member name when the embedding matched (P3), else the raw id
+          // member name when matched (P3) + live exercise/reps (P4)
+          const ex = track.exercise
+            ? track.exercise.reps > 0
+              ? ` ${track.exercise.name}×${track.exercise.reps}`
+              : track.exercise.name !== 'unknown'
+                ? ` ${track.exercise.name}`
+                : ''
+            : ''
           const label = track.member?.name
-            ? `${track.member.name} · #${track.track_id}`
-            : `#${track.track_id}`
+            ? `${track.member.name} · #${track.track_id}${ex}`
+            : `#${track.track_id}${ex}`
           ctx.font = 'bold 13px system-ui, sans-serif'
           const tw = ctx.measureText(label).width + 10
           ctx.fillStyle = track.member

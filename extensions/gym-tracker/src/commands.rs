@@ -43,6 +43,7 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
     match cmd {
         // Live mirror of tracks currently tracked by the device-app.
         "get_live_state" => {
+            let workouts = ctx.analytics.workout_snapshot();
             // Evict departed tracks (last_seen past TTL) before reading, so the
             // count / list reflect who's actually in-frame. The device-app owns
             // track_id assignment; we only mirror, so a person who leaves stops
@@ -234,9 +235,11 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                     Err(e) => tracing::warn!(member_err = %e, "append failed"),
                 }
             }
-            // Opportunistic heatmap persistence — polls are frequent enough
-            // that this bounds dirty-frame loss to one poll interval.
+            // Opportunistic heatmap persistence + workout record flush /
+            // session close — polls are frequent enough that this bounds
+            // dirty-frame loss to one poll interval.
             ctx.analytics.maybe_save(&ctx.db);
+            ctx.analytics.close_expired_workouts(&ctx.db, 15);
             Ok(json!({
                 "present_count": ctx.state.present_count(),
                 "tracks": tracks.iter().map(|t| {
@@ -260,6 +263,10 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                         "track_id": t.track_id,
                         "bbox": t.bbox,
                         "foot": t.foot,
+                        // live workout: exercise, reps/sets, current zone
+                        "exercise": workouts.get(&t.track_id).map(|w| json!({
+                            "name": w.0, "reps": w.1, "sets": w.2, "zone": w.3,
+                        })),
                         // Pose/face round-trip the producer's optional fields so
                         // debug tooling (and P2 rep counting) can see them without
                         // reading the ingest stream directly. Null when the
@@ -415,6 +422,36 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             Ok(json!({ "merged": src, "into": dst,
                        "name": target.name,
                        "samples": target.extra_embeddings.len() + 1 }))
+        }
+        // ---- P4: workout records ----
+        // Aggregated workout data: sessions + per-equipment usage,
+        // optionally scoped to one member. day_from = epoch seconds.
+        "get_workout_summary" => {
+            let member_id = args["member_id"].as_str();
+            let day = args["day_from"].as_i64().unwrap_or_else(|| {
+                // midnight local time today
+                use chrono::{Local, Timelike};
+                let n = Local::now();
+                (n - chrono::Duration::seconds(
+                    n.hour() as i64 * 3600 + n.minute() as i64 * 60 + n.second() as i64))
+                    .timestamp()
+            });
+            let sessions = ctx.db.list_sessions(member_id, day, 50)
+                .map_err(|e| e.to_string())?;
+            let equipment = ctx.db.equipment_stats(member_id, day)
+                .map_err(|e| e.to_string())?;
+            let total: i64 = sessions.iter()
+                .map(|s| s["duration_sec"].as_i64().unwrap_or(0)).sum();
+            Ok(json!({
+                "since": day,
+                "sessions": sessions,
+                "equipment": equipment.iter().map(|(z, sec, reps, ex)| json!({
+                    "zone_id": z, "duration_sec": sec, "reps": reps,
+                    "exercise": ex,
+                })).collect::<Vec<_>>(),
+                "total_duration_sec": total,
+                "visit_count": sessions.len(),
+            }))
         }
         "delete_member" => {
             let id = args["id"].as_str()
@@ -663,6 +700,56 @@ mod tests {
         assert_eq!(m["samples"], 2); // body: primary + new outfit
         // the second face sample (0.15 drift) is below append_min_dist →
         // face library stays at 1
+    }
+
+    #[test]
+    fn workout_tracking_flow() {
+        // zone: treadmill at left half; person on it 5 s (frames at 1 Hz),
+        // then zone removed person walks out; session should record usage.
+        let ctx = make_ctx_identity(30,
+            r#"{ "match_threshold": 0.1, "auto_capture_unknown": false, "unknown_prefix": "U", "auto_capture_distance": 0.5, "roi": { "dwell_debounce_sec": 0, "hysteresis": true } }"#);
+        handle(&ctx, "set_roi_zones", &json!({ "zones": [{
+            "id": "z1", "name": "跑步机1", "equipment_type": "treadmill",
+            "polygon": [[0.0,0.3],[0.3,0.3],[0.3,1.0],[0.0,1.0]], "enabled": true,
+        }]})).expect("zones");
+
+        // feed 6 frames @1Hz: person standing in the zone with body emb
+        for i in 0..6 {
+            let mut t = track(1);
+            t.foot = Point { x: 0.15, y: 0.8 };
+            t.face = Some(crate::types::Face { emb: vec![1.0, 0.0, 0.0], det: 0.8 });
+            // standing pose (all major joints visible) — the classifier
+            // runs only when the producer supplied keypoints
+            t.pose = Some(crate::types::Pose {
+                kpts: vec![[0.5, 0.1, 0.9]; 17], score: 0.85,
+            });
+            let f = TrackFrame {
+                device_id: "d".into(), frame_seq: i, ts_ns: (i as u64) * 1_000_000_000,
+                tracks: vec![t], faces: vec![],
+            };
+            ctx.state.apply_frame(&f);
+            let zones = ctx.db.list_zones().unwrap();
+            let members = ctx.db.list_members().unwrap();
+            ctx.analytics.on_workout_frame(&f, &zones, &members, &ctx.identity, 0);
+        }
+        let out = handle(&ctx, "get_live_state", &json!({})).unwrap();
+        let t1 = out["tracks"].as_array().unwrap().iter()
+            .find(|t| t["track_id"] == 1).unwrap();
+        let ex = &t1["exercise"];
+        assert_eq!(ex["name"], "treadmill_run", "zone maps to cardio exercise");
+        assert_eq!(ex["zone"], "z1");
+
+        // summary after the person departs (close via TTL)
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        ctx.analytics.close_expired_workouts(&ctx.db, 0);
+        let sum = handle(&ctx, "get_workout_summary", &json!({ "day_from": 0 }))
+            .unwrap();
+        assert!(sum["visit_count"].as_i64().unwrap() >= 1, "session recorded");
+        let eq = sum["equipment"].as_array().unwrap();
+        assert_eq!(eq.len(), 1);
+        assert_eq!(eq[0]["zone_id"], "z1");
+        assert!(eq[0]["duration_sec"].as_i64().unwrap() >= 1,
+            "treadmill time accumulated: {:?}", eq[0]);
     }
 
     #[test]
