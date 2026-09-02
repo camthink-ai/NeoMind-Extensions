@@ -32,6 +32,8 @@ import {
   Member,
   SKELETON_EDGES,
   VIDEO_EXTENSION_ID,
+  Bbox,
+  Point,
   Zone,
   deleteMember,
   fetchCrossings,
@@ -65,6 +67,55 @@ const MOSAIC_CELL = 14
 // Face boxes arrive at the detect cadence (every Nth frame); pad each box
 // so a head moving between detections stays covered.
 const MOSAIC_PAD = 0.12
+
+// ---- overlay/video time alignment ----
+// The video path (RTSP/file → decode → JPEG → WS) lags the analytics path by
+// a variable 0.3–1.5 s, so drawing the NEWEST sample on the NEWEST frame
+// misplaces boxes. Render at (now − OVERLAY_DELAY_MS) instead, interpolating
+// between history samples (smooth motion) and extrapolating at most
+// EXTRAP_MAX_MS when data is momentarily behind the picture.
+const OVERLAY_DELAY_MS = 350
+const EXTRAP_MAX_MS = 400
+
+interface HistEntry { t: number; bbox: Bbox; foot?: Point | null }
+
+/** Interpolated bbox at wall-time `target` from a sample history. */
+function bboxAt(hist: HistEntry[], target: number): Bbox | null {
+  if (hist.length === 0) return null
+  const first = hist[0]
+  const last = hist[hist.length - 1]
+  let a: HistEntry, b: HistEntry, f: number
+  if (target <= first.t) {
+    a = first
+    b = hist[Math.min(1, hist.length - 1)]
+    f = 0
+  } else if (target >= last.t) {
+    const p = hist.length >= 2 ? hist[hist.length - 2] : last
+    const span = Math.max(1, last.t - p.t)
+    const over = Math.min(target - last.t, EXTRAP_MAX_MS)
+    a = p
+    b = last
+    f = 1 + over / span
+  } else {
+    a = first
+    b = last
+    f = 0
+    for (let i = 1; i < hist.length; i++) {
+      if (hist[i].t >= target) {
+        a = hist[i - 1]
+        b = hist[i]
+        f = (target - a.t) / Math.max(1, b.t - a.t)
+        break
+      }
+    }
+  }
+  return {
+    x: a.bbox.x + (b.bbox.x - a.bbox.x) * f,
+    y: a.bbox.y + (b.bbox.y - a.bbox.y) * f,
+    w: a.bbox.w + (b.bbox.w - a.bbox.w) * f,
+    h: a.bbox.h + (b.bbox.h - a.bbox.h) * f,
+  }
+}
 
 interface DraftZone extends Zone {
   isNew?: boolean
@@ -144,6 +195,12 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     const layoutRef = useRef({ dx: 0, dy: 0, dw: 1, dh: 1 })
     const fpsCounterRef = useRef({ frames: 0, last: Date.now() })
     const mountedRef = useRef(true)
+    // ---- overlay/video time alignment ----
+    // Video (RTSP→decode→JPEG→WS) lags the analytics pipeline by a variable
+    // 0.3–1.5 s, so drawing "the newest sample" misplaces boxes. Instead each
+    // track keeps a short bbox history and the renderer interpolates to
+    // (now − overlayDelayMs), extrapolating up to 0.4 s when data is behind.
+    const trackHistRef = useRef<Map<number, Array<{ t: number; bbox: Bbox; foot?: Point | null }>>>(new Map())
 
     useEffect(() => { zonesRef.current = zones }, [zones])
     useEffect(() => { linesRef.current = lines }, [lines])
@@ -169,6 +226,19 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         if (r.success && r.data) {
           stateRef.current = r.data
           setPresent(r.data.present_count)
+          // bbox history for time-aligned interpolation
+          const now = performance.now()
+          const hist = trackHistRef.current
+          const seen = new Set<number>()
+          for (const t of r.data.tracks ?? []) {
+            if (!t.bbox) continue
+            seen.add(t.track_id)
+            let arr = hist.get(t.track_id)
+            if (!arr) { arr = []; hist.set(t.track_id, arr) }
+            arr.push({ t: now, bbox: t.bbox, foot: t.foot })
+            while (arr.length > 0 && now - arr[0].t > 3000) arr.shift()
+          }
+          for (const k of [...hist.keys()]) if (!seen.has(k)) hist.delete(k)
         }
       }
       poll()
@@ -482,8 +552,36 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         }
       }
 
-      // ---- AI overlay (people) ----
-      for (const track of tracks) {
+      // ---- AI overlay (people, time-aligned to the displayed frame) ----
+      const drawNow = performance.now() - OVERLAY_DELAY_MS
+      const alignedTracks = tracks.map((tr) => {
+        const hist = trackHistRef.current.get(tr.track_id)
+        if (!tr.bbox || !hist || hist.length === 0) return tr
+        const ib = bboxAt(hist, drawNow)
+        if (!ib) return tr
+        // affine (translate+scale around bbox center) mapping raw→interp so
+        // skeleton points and feet ride along the interpolated box
+        const cx = tr.bbox.x + tr.bbox.w / 2
+        const cy = tr.bbox.y + tr.bbox.h / 2
+        const sx = tr.bbox.w > 1e-6 ? ib.w / tr.bbox.w : 1
+        const sy = tr.bbox.h > 1e-6 ? ib.h / tr.bbox.h : 1
+        const map = (px: number, py: number) => ({
+          x: cx + (px - cx) * sx + (ib.x + ib.w / 2 - cx),
+          y: cy + (py - cy) * sy + (ib.y + ib.h / 2 - cy),
+        })
+        const kpts = tr.pose?.kpts?.map((k) => {
+          const p = map(k[0], k[1])
+          return [p.x, p.y, k[2]] as [number, number, number]
+        })
+        const foot = tr.foot ? map(tr.foot.x, tr.foot.y) : tr.foot
+        return {
+          ...tr,
+          bbox: ib,
+          pose: tr.pose && kpts ? { kpts, score: tr.pose.score } : tr.pose,
+          foot,
+        }
+      })
+      for (const track of alignedTracks) {
         if (track.bbox) {
           const { x, y, w, h } = track.bbox
           ctx.strokeStyle = 'rgba(250, 250, 250, 0.9)'
