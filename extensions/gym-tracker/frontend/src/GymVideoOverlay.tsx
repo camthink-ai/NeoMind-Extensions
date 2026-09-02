@@ -217,6 +217,31 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       return () => { mountedRef.current = false }
     }, [])
 
+    // Backing store follows the DISPLAYED size (× DPR): the buffer aspect
+    // then always equals the widget aspect, so the letterboxed video is
+    // never stretched and the overlay tracks it exactly.
+    useEffect(() => {
+      const canvas = canvasRef.current
+      if (!canvas || typeof ResizeObserver === 'undefined') return
+      const fit = () => {
+        const cw = canvas.clientWidth
+        const ch = canvas.clientHeight
+        if (cw < 2 || ch < 2) return
+        const dpr = Math.min(2, window.devicePixelRatio || 1)
+        let w = Math.round(cw * dpr)
+        if (w > 1920) w = 1920
+        const h = Math.round((w / cw) * ch)
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w
+          canvas.height = h
+        }
+      }
+      fit()
+      const ro = new ResizeObserver(fit)
+      ro.observe(canvas)
+      return () => ro.disconnect()
+    }, [])
+
     // ---- data polling ----
     useEffect(() => {
       let stopped = false
@@ -359,17 +384,28 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       const ctx = canvas?.getContext('2d')
       if (!canvas || !ctx) return
 
+      // Virtual coordinate space: everything below draws in a 960-wide
+      // viewport so fonts/line widths stay proportional regardless of the
+      // backing-store resolution (which tracks the widget size × DPR via
+      // ResizeObserver — the buffer aspect always equals the display aspect,
+      // so the image is letterboxed, never stretched).
+      const K = canvas.width / 960
+      if (!Number.isFinite(K) || K <= 0) return
+      ctx.setTransform(K, 0, 0, K, 0, 0)
+      const VW = canvas.width / K
+      const VH = canvas.height / K
+
       ctx.fillStyle = '#050505'
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.fillRect(0, 0, VW, VH)
       const img = imgRef.current
       if (img && img.naturalWidth > 0) {
         const scale = Math.min(
-          canvas.width / img.naturalWidth,
-          canvas.height / img.naturalHeight
+          VW / img.naturalWidth,
+          VH / img.naturalHeight
         )
         const l = {
-          dx: (canvas.width - img.naturalWidth * scale) / 2,
-          dy: (canvas.height - img.naturalHeight * scale) / 2,
+          dx: (VW - img.naturalWidth * scale) / 2,
+          dy: (VH - img.naturalHeight * scale) / 2,
           dw: img.naturalWidth * scale,
           dh: img.naturalHeight * scale,
         }
@@ -407,7 +443,9 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           const octx = off.getContext('2d')
           if (!octx) continue
           octx.imageSmoothingEnabled = true
-          octx.drawImage(canvas, fx, fy, fw, fh, 0, 0, sw, sh)
+          // source rect is in REAL backing-store pixels (virtual × K); the
+          // transform scales only the destination rect
+          octx.drawImage(canvas, fx * K, fy * K, fw * K, fh * K, 0, 0, sw, sh)
           ctx.imageSmoothingEnabled = false
           ctx.drawImage(off, 0, 0, sw, sh, fx, fy, fw, fh)
           ctx.imageSmoothingEnabled = true
@@ -705,8 +743,9 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       const rect = canvas.getBoundingClientRect()
       const scaleX = canvas.width / rect.width
       const scaleY = canvas.height / rect.height
-      const cx = (e.clientX - rect.left) * scaleX
-      const cy = (e.clientY - rect.top) * scaleY
+      const K = canvas.width / 960 // virtual-space scale (draw uses setTransform)
+      const cx = ((e.clientX - rect.left) * scaleX) / K
+      const cy = ((e.clientY - rect.top) * scaleY) / K
       const { dx, dy, dw, dh } = layoutRef.current
       const nx = (cx - dx) / dw
       const ny = (cy - dy) / dh
@@ -1017,8 +1056,6 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           <div className="gym-ov-body">
             <canvas
               ref={canvasRef}
-              width={960}
-              height={540}
               className={`gym-ov-canvas ${editing ? 'editing' : ''}`}
               onClick={onCanvasClick}
             />
