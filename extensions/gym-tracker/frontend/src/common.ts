@@ -123,6 +123,9 @@ export async function runExtensionCommand<T>(
         body: JSON.stringify({ command, args }),
       }
     )
+    if (res.status === 401) {
+      return { success: false, error: '登录已过期，请重新登录（401）' }
+    }
     if (!res.ok) return { success: false, error: `HTTP ${res.status}` }
     return res.json()
   } catch (e) {
