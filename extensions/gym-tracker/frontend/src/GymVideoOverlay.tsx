@@ -333,6 +333,9 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           c.last = now
         }
         dirtyRef.current = true
+        // rAF is PAUSED in non-composited webviews (Electron IAB) — kick the
+        // draw directly; the dirty flag makes this a no-op when rAF is alive
+        drawRef.current?.()
       }
       im.src = `data:image/jpeg;base64,${data.img_b64}`
       // ts-keyed from the device clock: each preview frame carries the
