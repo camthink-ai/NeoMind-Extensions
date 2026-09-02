@@ -36,9 +36,12 @@ use std::sync::{Arc, OnceLock};
 
 use neomind_extension_sdk::{
     async_trait, Extension, ExtensionCommand, ExtensionError, ExtensionMetadata,
-    ExtensionMetricValue, MetricDescriptor, Result,
+    ExtensionMetricValue, MetricDescriptor, PushOutputMessage, Result, send_push_output,
 };
-use parking_lot::RwLock;
+use neomind_extension_sdk::prelude::{
+    FlowControl, StreamCapability, StreamDataType, StreamDirection, StreamMode, StreamSession,
+};
+use parking_lot::{Mutex, RwLock};
 
 use analytics::Analytics;
 use commands::Ctx;
@@ -85,6 +88,13 @@ fn cmd(name: &str, desc: &str) -> ExtensionCommand {
     // `&str: Into<String>` holds, so we pass the slices directly (avoiding the
     // ambiguous `.into()` that E0283 flags on `impl Into<String>` bounds).
     ExtensionCommand::new(name).with_description(desc)
+}
+
+/// Live push sessions (session_id → stop flag) for the frame stream.
+static PUSH_SESSIONS: OnceLock<Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>> =
+    OnceLock::new();
+fn push_sessions() -> &'static Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>> {
+    PUSH_SESSIONS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
 #[async_trait]
@@ -260,6 +270,88 @@ impl Extension for GymTrackerExtension {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self // required by the trait, no default
+    }
+
+    fn stream_capability(&self) -> Option<StreamCapability> {
+        Some(StreamCapability {
+            direction: StreamDirection::Download,
+            mode: StreamMode::Push,
+            supported_data_types: vec![
+                StreamDataType::Json,
+            ],
+            max_chunk_size: 1 << 20,
+            preferred_chunk_size: 48 * 1024,
+            max_concurrent_sessions: 4,
+            flow_control: FlowControl::default_stream(),
+            config_schema: None,
+        })
+    }
+
+    async fn init_session(&self, _session: &StreamSession) -> Result<()> {
+        Ok(()) // stateless push of the shared latest-frame cache
+    }
+
+    /// Push mode: stream the cached device frames (preview + tracks of that
+    /// frame) to a dashboard WS client. WS messages are the one channel that
+    /// browser timer-throttling cannot slow down — the Monitor gets full
+    /// frame rate even in occluded/energy-saving tabs where polling would
+    /// clamp to ~1 Hz.
+    async fn start_push(&self, session_id: &str) -> Result<()> {
+        let state = self.inner.read().as_ref().map(|i| i.state.clone());
+        let Some(state) = state else {
+            return Err(ExtensionError::ExecutionFailed(
+                "start_push: extension not configured".into(),
+            ));
+        };
+        let flag = {
+            let mut g = push_sessions().lock();
+            let f = g.entry(session_id.to_string())
+                .or_insert_with(|| Arc::new(std::sync::atomic::AtomicBool::new(true)));
+            f.store(true, std::sync::atomic::Ordering::SeqCst);
+            f.clone()
+        };
+        let sid = session_id.to_string();
+        std::thread::spawn(move || {
+            let mut seq: u64 = 0;
+            let mut last_img = String::new();
+            while flag.load(std::sync::atomic::Ordering::SeqCst) {
+                std::thread::sleep(std::time::Duration::from_millis(120));
+                let Some((img, tracks, faces)) = state.snapshot_frame() else {
+                    continue;
+                };
+                if img == last_img {
+                    continue; // producer hasn't published a new frame yet
+                }
+                last_img = img.clone();
+                seq += 1;
+                let msg = PushOutputMessage::json(
+                    &sid,
+                    seq,
+                    serde_json::json!({
+                        "img_b64": img,
+                        "tracks": tracks,
+                        "faces": faces,
+                        "present_count": tracks.len(),
+                    }),
+                );
+                match msg {
+                    Ok(m) => {
+                        if send_push_output(&m).is_err() {
+                            break; // channel gone — session ended
+                        }
+                    }
+                    Err(_) => continue, // serde json of plain data — unreachable
+                }
+            }
+        });
+        Ok(())
+    }
+
+    async fn stop_push(&self, session_id: &str) -> Result<()> {
+        if let Some(f) = push_sessions().lock().get(session_id) {
+            f.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        Ok(())
     }
 
     fn stop(&mut self) -> Result<()> {

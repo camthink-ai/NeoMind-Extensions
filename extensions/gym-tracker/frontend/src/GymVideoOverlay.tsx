@@ -38,6 +38,7 @@ import {
   deleteMember,
   fetchCrossings,
   fetchFrame,
+  FrameBundle,
   fetchHeatmap,
   fetchLines,
   fetchLiveState,
@@ -177,6 +178,9 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
 
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const wsRef = useRef<WebSocket | null>(null)
+    // dedicated WS for the device-frame push stream (distinct from wsRef,
+    // which belongs to the stream-player video path)
+    const frameWsRef = useRef<WebSocket | null>(null)
     // scratch canvas for the face mosaic downsample (reused every frame)
     const mosaicCanvasRef = useRef<HTMLCanvasElement>(
       typeof document !== 'undefined' ? document.createElement('canvas') : null as unknown as HTMLCanvasElement
@@ -195,6 +199,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     const rafRef = useRef<number>(0)
     const layoutRef = useRef({ dx: 0, dy: 0, dw: 1, dh: 1 })
     const fpsCounterRef = useRef({ frames: 0, last: Date.now() })
+    const fallbackRef = useRef<number | null>(null)
     const mountedRef = useRef(true)
     // ---- overlay/video time alignment ----
     // Video (RTSP→decode→JPEG→WS) lags the analytics pipeline by a variable
@@ -278,55 +283,124 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     }, [extensionId, pollMs])
 
     // ---- device-frame mode: image + tracks from ONE source ----
-    // When the producer attaches frame previews (PREVIEW=1), poll get_frame
-    // and render the preview JPEG with the tracks of that exact frame — the
+    // When the producer attaches frame previews (PREVIEW=1), the Monitor
+    // renders the preview JPEG with the tracks of that exact frame — the
     // separate video pipeline (stream-player) is bypassed entirely, so video
     // and overlay can never desync, in live AND replay modes.
+    // Transport: the extension's own WS push channel (push mode). WS
+    // messages are the one path browser timer-throttling cannot slow —
+    // occluded tabs clamp timers/rAF to ~1 Hz but deliver WS at full rate.
+    // Falls back to a response-chained REST poll when WS is unavailable.
     const deviceFramesRef = useRef(false)
-    const lastFrameSeqRef = useRef(0)
+    const lastImgRef = useRef<string>('')
+    const applyFrameBundle = useCallback((data: FrameBundle) => {
+      if (!data.img_b64 || data.img_b64 === lastImgRef.current) return
+      lastImgRef.current = data.img_b64
+      if (!deviceFramesRef.current) {
+        deviceFramesRef.current = true
+        // stream-player video is superseded by the device frames
+        if (wsRef.current) { try { wsRef.current.close() } catch { /* already closed */ } wsRef.current = null }
+      }
+      // every device frame proves the display pipeline is alive — also
+      // overrides any stale error status from the superseded video path
+      setStatus('streaming')
+      const im = new Image()
+      im.onload = () => {
+        if (!mountedRef.current) return
+        imgRef.current = im
+        const c = fpsCounterRef.current
+        c.frames++
+        const now = Date.now()
+        if (now - c.last >= 1000) {
+          setVideoFps(Math.round((c.frames * 1000) / (now - c.last)))
+          c.frames = 0
+          c.last = now
+        }
+        // rAF may be paused entirely in occluded tabs — draw NOW
+        drawRef.current?.()
+      }
+      im.src = `data:image/jpeg;base64,${data.img_b64}`
+      // tracks/faces OF the same frame; also feed the bbox history so the
+      // renderer can interpolate BETWEEN device frames — data arrives at
+      // ~5 Hz but drawing runs at display rate, keeping motion smooth.
+      const nowH = performance.now()
+      const hist = trackHistRef.current
+      const seen = new Set<number>()
+      for (const t of data.tracks ?? []) {
+        if (!t.bbox) continue
+        seen.add(t.track_id)
+        let arr = hist.get(t.track_id)
+        if (!arr) { arr = []; hist.set(t.track_id, arr) }
+        arr.push({ t: nowH, bbox: t.bbox, foot: t.foot })
+        while (arr.length > 0 && nowH - arr[0].t > 2000) arr.shift()
+      }
+      for (const k of [...hist.keys()]) if (!seen.has(k)) hist.delete(k)
+      stateRef.current = {
+        present_count: data.present_count ?? data.tracks?.length ?? 0,
+        tracks: data.tracks ?? [],
+        faces: data.faces ?? [],
+      } as LiveState
+      setPresent(data.present_count ?? data.tracks?.length ?? 0)
+    }, [])
+
     useEffect(() => {
       let stopped = false
-      const poll = async () => {
-        const r = await fetchFrame(extensionId)
-        if (stopped || !mountedRef.current) return
-        if (r.success && r.data && r.data.img_b64) {
-          if (!deviceFramesRef.current) {
-            deviceFramesRef.current = true
-            // stream-player video is superseded by the device frames
-            if (wsRef.current) { try { wsRef.current.close() } catch { /* already closed */ } wsRef.current = null }
-            setStatus('streaming')
+      let timer: number | undefined
+      let ws: WebSocket | null = null
+
+      const startPolling = () => {
+        const poll = async () => {
+          const r = await fetchFrame(extensionId)
+          if (stopped || !mountedRef.current) return
+          if (r.success && r.data) applyFrameBundle(r.data)
+          // chain from the response (not setInterval) — throttling then only
+          // delays the schedule instead of stacking missed intervals
+          timer = window.setTimeout(poll, 120)
+        }
+        poll()
+      }
+
+      const startPush = () => {
+        try {
+          const isTauri = !!(window as any).__TAURI_INTERNALS__
+          const proto = (isTauri ? false : window.location.protocol === 'https:') ? 'wss:' : 'ws:'
+          const host = isTauri ? 'localhost:9375' : window.location.host
+          let url = `${proto}//${host}/api/extensions/${extensionId}/stream`
+          const token = getToken()
+          if (token) url += `?token=${encodeURIComponent(token)}`
+          ws = new WebSocket(url)
+          frameWsRef.current = ws
+          ws.onopen = () => {
+            ws?.send(JSON.stringify({ type: 'init', config: {} }))
           }
-          const im = new Image()
-          im.onload = () => {
-            if (stopped || !mountedRef.current) return
-            imgRef.current = im
-            const c = fpsCounterRef.current
-            c.frames++
-            const now = Date.now()
-            if (now - c.last >= 1000) {
-              setVideoFps(Math.round((c.frames * 1000) / (now - c.last)))
-              c.frames = 0
-              c.last = now
-            }
+          ws.onmessage = (event) => {
+            if (typeof event.data !== 'string' || !mountedRef.current) return
+            try {
+              const msg = JSON.parse(event.data)
+              if (msg.type === 'session_created') {
+                ws?.send(JSON.stringify({ type: 'start_push', session_id: msg.session_id }))
+              } else if (msg.type === 'push_output' && msg.data_type === 'application/json') {
+                const bundle = typeof msg.data === 'string' ? JSON.parse(msg.data) : msg.data
+                applyFrameBundle(bundle)
+              }
+            } catch { /* malformed frame — skip */ }
           }
-          im.src = `data:image/jpeg;base64,${r.data.img_b64}`
-          // tracks/faces OF the same frame — no interpolation needed
-          stateRef.current = {
-            present_count: r.data.present_count ?? r.data.tracks?.length ?? 0,
-            tracks: r.data.tracks ?? [],
-            faces: r.data.faces ?? [],
-          } as LiveState
-          setPresent(r.data.present_count ?? r.data.tracks?.length ?? 0)
-          lastFrameSeqRef.current++
-        } else if (r.success && !r.data?.img_b64) {
-          // producer has no preview yet — leave mode decision unchanged
-          // (fallback stays on stream-player if that's what's running)
+          ws.onerror = () => { if (!stopped) startPolling() }
+          ws.onclose = () => {
+            if (frameWsRef.current === ws) frameWsRef.current = null
+            if (!stopped) startPolling() // WS lost — degrade to polling
+          }
+        } catch {
+          startPolling()
         }
       }
-      poll()
-      const id = setInterval(poll, 250)
-      return () => { stopped = true; clearInterval(id) }
-    }, [extensionId])
+      startPush()
+      return () => {
+        stopped = true
+        if (timer) clearTimeout(timer)
+        if (ws) { try { ws.close() } catch { /* already closed */ } }
+      }
+    }, [extensionId, applyFrameBundle])
 
     const loadZones = useCallback(async () => {
       const r = await fetchZones(extensionId)
@@ -648,10 +722,11 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       }
 
       // ---- AI overlay (people) ----
-      // device-frame mode: tracks arrive WITH the displayed image — use them
-      // as-is. stream-player mode: interpolate to the displayed video time.
-      const drawNow = performance.now() - OVERLAY_DELAY_MS
-      const alignedTracks = deviceFramesRef.current ? tracks : tracks.map((tr) => {
+      // Both modes interpolate along the bbox history: stream-player mode
+      // aligns to the displayed video time; device-frame mode targets "now"
+      // so boxes keep moving smoothly between ~5 Hz device updates.
+      const drawNow = performance.now() - (deviceFramesRef.current ? 0 : OVERLAY_DELAY_MS)
+      const alignedTracks = tracks.map((tr) => {
         const hist = trackHistRef.current.get(tr.track_id)
         if (!tr.bbox || !hist || hist.length === 0) return tr
         const ib = bboxAt(hist, drawNow)
@@ -787,12 +862,24 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         }
       }
 
+      // Redraw loop: rAF when the page composites; when rAF is throttled
+      // (occluded/energy-saving tabs pause it entirely), a 250 ms interval
+      // fallback keeps the canvas alive, and every arrived device frame
+      // kicks an immediate draw (see device-frame poll).
       rafRef.current = requestAnimationFrame(draw)
+      fallbackRef.current = window.setInterval(() => draw(), 250)
     }, [])
+
+    // latest draw closure for external kicks (image onload)
+    const drawRef = useRef<(() => void) | null>(null)
 
     useEffect(() => {
       rafRef.current = requestAnimationFrame(draw)
-      return () => cancelAnimationFrame(rafRef.current)
+      drawRef.current = draw
+      return () => {
+        cancelAnimationFrame(rafRef.current)
+        if (fallbackRef.current) { clearInterval(fallbackRef.current); fallbackRef.current = null }
+      }
     }, [draw])
 
     // ---- canvas click routing ----
