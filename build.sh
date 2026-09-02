@@ -1621,6 +1621,13 @@ if [ "$AUTO_INSTALL" = true ]; then
                     }
                 } | if $env_hints != null then . + {"env_hints": $env_hints} else . end' > "$EXT_INSTALL_DIR/manifest.json"
 
+            # Boot-time discovery requires the manifest as a sidecar next to
+            # the dylib (data/extensions/<id>/binaries/<platform>/extension.json);
+            # without it a server restart fails to load the extension
+            # ("Native extensions must have a sidecar JSON file").
+            cp "$EXT_INSTALL_DIR/manifest.json" \
+               "$EXT_INSTALL_DIR/binaries/$PLATFORM/extension.json"
+
             echo -e "  ${GREEN}✓${NC} Installed $ext"
         done
     elif [ -d "dist" ] && ls dist/*.nep 1> /dev/null 2>&1; then

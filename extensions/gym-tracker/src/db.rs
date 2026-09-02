@@ -146,12 +146,45 @@ impl Db {
         Ok(())
     }
 
+    /// Auto-enrollment variant (source='auto'): an unnamed library entry
+    /// created when an unknown person's embedding first appears. The name
+    /// is `{prefix}-{n}` with n past the highest existing auto index —
+    /// stable across deletions (no reuse of freed numbers).
+    pub fn insert_auto_member(&self, prefix: &str, embedding: &[f32])
+        -> Result<Member, rusqlite::Error> {
+        let conn = self.conn.lock();
+        let hi: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(CAST(SUBSTR(display_name, LENGTH(?1)+2) AS INTEGER)), 0)
+             FROM members WHERE source='auto' AND display_name LIKE ?1 || '-%'",
+            params![prefix], |r| r.get(0))?;
+        let name = format!("{prefix}-{}", hi + 1);
+        let id = format!("member_{}", uuid::Uuid::new_v4().simple());
+        let raw = serde_json::to_string(embedding).unwrap();
+        let now = now_secs();
+        conn.execute(
+            "INSERT INTO members(id, display_name, is_enrolled, source, embedding, first_seen_at, created_at, updated_at)
+             VALUES(?1, ?2, 0, 'auto', ?3, ?4, ?4, ?4)",
+            params![id, name, raw, now],
+        )?;
+        Ok(Member { id, name, source: "auto".into(), embedding: embedding.to_vec(), created_at: Some(now) })
+    }
+
+    /// Rename a member (fills in / corrects the display name later).
+    pub fn rename_member(&self, id: &str, name: &str)
+        -> Result<usize, rusqlite::Error> {
+        let n = self.conn.lock().execute(
+            "UPDATE members SET display_name=?2, is_enrolled=1, updated_at=?3 WHERE id=?1",
+            params![id, name, now_secs()],
+        )?;
+        Ok(n)
+    }
+
     pub fn list_members(&self) -> Result<Vec<Member>, rusqlite::Error> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, display_name, embedding, created_at FROM members ORDER BY created_at")?;
+            "SELECT id, display_name, source, embedding, created_at FROM members ORDER BY created_at")?;
         let rows = stmt.query_map([], |r| {
-            let raw: Option<String> = r.get(2)?;
+            let raw: Option<String> = r.get(3)?;
             let embedding: Vec<f32> = raw
                 .as_deref()
                 .and_then(|s| serde_json::from_str(s).ok())
@@ -159,8 +192,9 @@ impl Db {
             Ok(Member {
                 id: r.get(0)?,
                 name: r.get(1)?,
+                source: r.get(2)?,
                 embedding,
-                created_at: r.get(3)?,
+                created_at: r.get(4)?,
             })
         })?;
         rows.collect()
@@ -173,10 +207,14 @@ impl Db {
 }
 
 /// A registered gym member with their body-ReID embedding (osnet, 512-d).
+/// `source` is "manual" (registered from the Monitor) or "auto"
+/// (auto-enrolled unknown, name filled in later via rename).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Member {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub source: String,
     pub embedding: Vec<f32>,
     pub created_at: Option<i64>,
 }

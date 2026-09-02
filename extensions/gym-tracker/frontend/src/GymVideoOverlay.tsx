@@ -44,6 +44,7 @@ import {
   injectStyles,
   pointInPolygon,
   registerMember,
+  renameMember,
   runExtensionCommand,
 } from './common'
 import STYLES from './styles.css?raw'
@@ -850,7 +851,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                   ? '点击画面添加分区顶点（任意多边形，≥3 点）→「闭合」→ 下方命名 → 保存'
                   : editKind === 'lines'
                     ? '点击两点画计数线：第一点 a → 第二点 b（a→b 为方向基准，↑=向左穿入）'
-                    : `会员库（${members.length} 人）——在查看模式点击画面中的人物即可注册新会员`}
+                    : `会员库（${members.length} 人）——新人自动录入编号，选中姓名即可补填真名；回车保存`}
               </div>
             )}
             {!editing && register && (
@@ -924,12 +925,25 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                             )
                           }))
                     : (members.length === 0
-                        ? [<span key="e" className="gym-ov-zonelist-empty">会员库为空——切回查看模式，点击画面中的人物注册</span>]
+                        ? [<span key="e" className="gym-ov-zonelist-empty">会员库为空——新人入画会自动录入特征；也可在查看模式点击人物注册</span>]
                         : members.map((m, i) => (
                             <div key={m.id} className="gym-ov-zonerow">
                               <span className="gym-ov-zoneidx member">{i + 1}</span>
-                              <input className="gym-ov-input name" value={m.name} readOnly />
-                              <span className="gym-ov-linecount">{m.dim}d</span>
+                              <input className="gym-ov-input name" defaultValue={m.name}
+                                placeholder={m.source === 'auto' ? '补填姓名' : '会员姓名'}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                                }}
+                                onBlur={async (e) => {
+                                  const v = e.target.value.trim()
+                                  if (v && v !== m.name) {
+                                    await renameMember(extensionId, m.id, v)
+                                    if (mountedRef.current) loadMembers()
+                                  }
+                                }} />
+                              <span className="gym-ov-linecount">
+                                {m.source === 'auto' ? '自动' : '手动'}
+                              </span>
                               <button className="gym-ov-btn danger"
                                 onClick={() => removeMember(m.id)}>删除</button>
                             </div>

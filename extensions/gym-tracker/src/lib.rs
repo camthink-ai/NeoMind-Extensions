@@ -109,6 +109,7 @@ impl Extension for GymTrackerExtension {
             cmd("get_heatmap", "Foot-position heatmap grid (today)"),
             cmd("register_member", "Register a live track's embedding as a named member"),
             cmd("list_members", "List registered members"),
+            cmd("rename_member", "Fill in / correct a member's name"),
             cmd("delete_member", "Delete a member by id"),
         ]
     }

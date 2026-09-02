@@ -32,7 +32,18 @@ pub struct DeviceCfg { pub host: String, #[serde(default)] pub port: Option<u16>
 #[derive(Debug, Clone, Deserialize)]
 pub struct IngestCfg { pub topic: String, pub publish_hz: u32, pub track_ttl_sec: u32, pub reconnect_backoff_sec: Vec<u64> }
 #[derive(Debug, Clone, Deserialize)]
-pub struct IdentityCfg { pub match_threshold: f32, pub auto_capture_unknown: bool, pub unknown_prefix: String }
+pub struct IdentityCfg {
+    pub match_threshold: f32,
+    pub auto_capture_unknown: bool,
+    pub unknown_prefix: String,
+    /// A track whose nearest member is FARTHER than this auto-enrolls as a
+    /// new (unnamed) member. Deliberately above match_threshold: the gap
+    /// between the two absorbs embedding drift for already-known people
+    /// (same-person re-embeds were measured 0-352, unknown persons 684+).
+    #[serde(default = "default_auto_capture_distance")]
+    pub auto_capture_distance: f32,
+}
+fn default_auto_capture_distance() -> f32 { 600.0 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct RoiCfg { pub dwell_debounce_sec: u32, pub hysteresis: bool }
 
@@ -46,6 +57,7 @@ impl Default for IdentityCfg {
             match_threshold: 40.0,
             auto_capture_unknown: true,
             unknown_prefix: "未知会员".into(),
+            auto_capture_distance: 600.0,
         }
     }
 }

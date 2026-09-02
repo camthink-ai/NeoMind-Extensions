@@ -249,6 +249,8 @@ export interface Member {
   id: string
   name: string
   dim: number
+  /** "manual" (registered from the Monitor) | "auto" (auto-enrolled unknown) */
+  source?: string
   created_at?: number | null
 }
 
@@ -264,6 +266,14 @@ export async function fetchMembers(
   extensionId: string
 ): Promise<{ success: boolean; data?: { members: Member[] }; error?: string }> {
   return runExtensionCommand<{ members: Member[] }>(extensionId, 'list_members')
+}
+
+export async function renameMember(
+  extensionId: string,
+  id: string,
+  name: string
+): Promise<{ success: boolean; error?: string }> {
+  return runExtensionCommand(extensionId, 'rename_member', { id, name })
 }
 
 export async function deleteMember(

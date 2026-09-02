@@ -59,18 +59,53 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             // bias pins unrelated inputs at ~0.999), matched when the
             // distance is within identity.match_threshold. Members load per
             // poll — tiny (a gym's worth of rows) and always fresh.
-            let members = ctx.db.list_members().map_err(|e| e.to_string())?;
-            let match_one = |emb: &[f32]| -> Option<(String, String, f32)> {
+            let mut members = ctx.db.list_members().map_err(|e| e.to_string())?;
+            // (free fns, not closures: the borrow checker otherwise pins
+            // `members` immutable while the auto-enroll loop pushes to it)
+            let nearest_member = |ems: &[crate::db::Member], emb: &[f32]| -> Option<(usize, f32)> {
                 let mut best: Option<(usize, f32)> = None;
-                for (i, m) in members.iter().enumerate() {
+                for (i, m) in ems.iter().enumerate() {
                     let d = l2_dist(emb, &m.embedding);
                     if d.is_finite() && best.map_or(true, |(_, b)| d < b) {
                         best = Some((i, d));
                     }
                 }
-                best.filter(|(_, d)| *d <= ctx.identity.match_threshold)
-                    .map(|(i, d)| (members[i].id.clone(), members[i].name.clone(), d))
+                best
             };
+            let match_one = |ems: &[crate::db::Member], emb: &[f32]| -> Option<(String, String, f32)> {
+                nearest_member(ems, emb)
+                    .filter(|(_, d)| *d <= ctx.identity.match_threshold)
+                    .map(|(i, d)| (ems[i].id.clone(), ems[i].name.clone(), d))
+            };
+            // ---- auto-enrollment (identity.auto_capture_unknown) ----
+            // A track with an embedding whose nearest member sits BEYOND
+            // auto_capture_distance is a first-time visitor: enroll their
+            // embedding now as `{prefix}-{n}` (source=auto, unnamed) so the
+            // identity is captured on first sight; the display name is
+            // filled in later via rename_member. The wide gap between
+            // match_threshold (450) and auto_capture_distance (600) absorbs
+            // embedding drift for people already in the library — an
+            // enrolled person whose re-embed lands at 500 is "unknown but
+            // not enrollable", not a duplicate entry.
+            if ctx.identity.auto_capture_unknown {
+                for t in &tracks {
+                    let Some(f) = t.face.as_ref() else { continue };
+                    if f.emb.is_empty() {
+                        continue;
+                    }
+                    let enrollable = nearest_member(&members, &f.emb)
+                        .map_or(true, |(_, d)| d > ctx.identity.auto_capture_distance);
+                    if !enrollable {
+                        continue;
+                    }
+                    match ctx.db.insert_auto_member(
+                        &ctx.identity.unknown_prefix, &f.emb) {
+                        Ok(m) => members.push(m),
+                        Err(e) => tracing::warn!(
+                            member_err = %e, "auto member insert failed"),
+                    }
+                }
+            }
             // Opportunistic heatmap persistence — polls are frequent enough
             // that this bounds dirty-frame loss to one poll interval.
             ctx.analytics.maybe_save(&ctx.db);
@@ -80,7 +115,7 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                     // emb is large (512 f32) — expose the matched member, not
                     // the raw vector; register_member reads it from state.
                     let member = t.face.as_ref()
-                        .and_then(|f| match_one(&f.emb))
+                        .and_then(|f| match_one(&members, &f.emb))
                         .map(|(id, name, dist)| json!({
                             "id": id, "name": name,
                             "dist": (dist * 1000.0).round() / 1000.0,
@@ -189,8 +224,25 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             let members = ctx.db.list_members().map_err(|e| e.to_string())?;
             Ok(json!({ "members": members.iter().map(|m| json!({
                 "id": m.id, "name": m.name, "dim": m.embedding.len(),
-                "created_at": m.created_at,
+                "source": m.source, "created_at": m.created_at,
             })).collect::<Vec<_>>() }))
+        }
+        // Fill in / correct a member's display name (auto-enrolled entries
+        // are created unnamed — prefix-numbered — precisely so this can
+        // attach the real name later).
+        "rename_member" => {
+            let id = args["id"].as_str()
+                .ok_or("rename_member: missing id")?;
+            let name = args["name"].as_str().map(str::trim)
+                .ok_or("rename_member: missing name")?;
+            if name.is_empty() {
+                return Err("rename_member: name is empty".into());
+            }
+            let n = ctx.db.rename_member(id, name).map_err(|e| e.to_string())?;
+            if n == 0 {
+                return Err(format!("member {id} not found"));
+            }
+            Ok(json!({ "renamed": id, "name": name }))
         }
         "delete_member" => {
             let id = args["id"].as_str()
@@ -235,8 +287,19 @@ mod tests {
     /// I/O (it only constructs the agent + empty token), and the no-network
     /// commands below never call into it, so the host is irrelevant.
     fn make_ctx_with_ttl(ttl_sec: u32) -> Ctx {
-        let raw = r#"{"device":{"host":"127.0.0.1","username":"x","password":"x","tls_insecure":false},"device_id":"test","ingest":{"topic":"gym/track","publish_hz":8,"track_ttl_sec":30,"reconnect_backoff_sec":[1,2,5]},"identity":{"match_threshold":0.55,"auto_capture_unknown":true,"unknown_prefix":"U"},"roi":{"dwell_debounce_sec":3,"hysteresis":true},"data_dir":"/tmp/gym-test"}"#;
-        let cfg = Config::parse(raw).expect("config parse");
+        make_ctx_identity(ttl_sec, r#"{ "match_threshold": 0.1, "auto_capture_unknown": false, "unknown_prefix": "U", "auto_capture_distance": 0.5 }"#)
+    }
+
+    fn make_ctx() -> Ctx {
+        make_ctx_with_ttl(30)
+    }
+
+    /// Ctx with a custom identity block — auto-capture tests flip the
+    /// switch and tune thresholds to unit-scale test embeddings.
+    fn make_ctx_identity(ttl_sec: u32, identity_json: &str) -> Ctx {
+        let raw = format!(
+            r#"{{"device":{{"host":"127.0.0.1","username":"x","password":"x","tls_insecure":false}},"device_id":"test","ingest":{{"topic":"gym/track","publish_hz":8,"track_ttl_sec":30,"reconnect_backoff_sec":[1,2,5]}},"identity":{identity_json},"roi":{{"dwell_debounce_sec":3,"hysteresis":true}},"data_dir":"/tmp/gym-test"}}"#);
+        let cfg = Config::parse(&raw).expect("config parse");
         let db = Arc::new(Db::open(":memory:").expect("db open"));
         let identity = cfg.identity.clone();
         Ctx {
@@ -247,10 +310,6 @@ mod tests {
             metrics: Arc::new(Metrics::new()),
             identity,
         }
-    }
-
-    fn make_ctx() -> Ctx {
-        make_ctx_with_ttl(30)
     }
 
     fn track(tid: i64) -> Track {
@@ -265,6 +324,76 @@ mod tests {
 
     fn frame(tracks: Vec<Track>) -> TrackFrame {
         TrackFrame { device_id: "d".into(), frame_seq: 1, ts_ns: 0, tracks, faces: vec![] }
+    }
+
+    #[test]
+    fn auto_enroll_capture_and_rename_flow() {
+        // match 0.1 / auto-capture on beyond 0.5 / prefix U (unit scale)
+        let ctx = make_ctx_identity(30,
+            r#"{ "match_threshold": 0.1, "auto_capture_unknown": true, "unknown_prefix": "U", "auto_capture_distance": 0.5 }"#);
+        let emb = |v: Vec<f32>| Some(crate::types::Face { emb: v, det: 0.8 });
+
+        // first visitor: empty library → auto-enrolled as U-1 on first poll
+        let mut t = track(1);
+        t.face = emb(vec![1.0, 0.0, 0.0]);
+        ctx.state.apply_frame(&frame(vec![t]));
+        let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+        assert_eq!(out["members_count"], 1);
+        let by = |out: &Value, tid: i64| out["tracks"].as_array().unwrap().iter()
+            .find(|t| t["track_id"] == tid).unwrap().clone();
+        assert_eq!(by(&out, 1)["member"]["name"], "U-1",
+            "auto entry immediately matches its own person");
+
+        // same person re-detected (new track id, near embedding): matches
+        // U-1, no duplicate entry
+        let mut t2 = track(2);
+        t2.face = emb(vec![0.99, 0.01, 0.0]);
+        ctx.state.apply_frame(&frame(vec![t2]));
+        let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+        assert_eq!(out["members_count"], 1);
+        let by = |out: &Value, tid: i64| out["tracks"].as_array().unwrap().iter()
+            .find(|t| t["track_id"] == tid).unwrap().clone();
+        assert_eq!(by(&out, 2)["member"]["name"], "U-1");
+
+        // drift band (distance ~0.35, between 0.1 and 0.5): neither matched
+        // nor re-enrolled — the gap absorbs embedding drift
+        let mut t3 = track(3);
+        t3.face = emb(vec![0.95, 0.35, 0.0]);
+        ctx.state.apply_frame(&frame(vec![t3]));
+        let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+        assert_eq!(out["members_count"], 1, "drift band must not enroll");
+        let by = |out: &Value, tid: i64| out["tracks"].as_array().unwrap().iter()
+            .find(|t| t["track_id"] == tid).unwrap().clone();
+        assert!(by(&out, 3)["member"].is_null());
+
+        // second visitor (orthogonal embedding, distance ~1.19 > 0.5):
+        // enrolled as U-2
+        let mut t4 = track(4);
+        t4.face = emb(vec![0.0, 1.0, 0.0]);
+        ctx.state.apply_frame(&frame(vec![t4]));
+        let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+        assert_eq!(out["members_count"], 2);
+        let names: Vec<&str> = out["tracks"].as_array().unwrap().iter()
+            .map(|t| t["member"]["name"].as_str().unwrap_or(""))
+            .collect();
+        assert!(names.contains(&"U-2"), "second visitor enrolled: {names:?}");
+
+        // fill in the real name afterwards
+        let list = handle(&ctx, "list_members", &json!({})).unwrap();
+        let u1 = list["members"].as_array().unwrap().iter()
+            .find(|m| m["name"] == "U-1").unwrap();
+        let id = u1["id"].as_str().unwrap().to_string();
+        assert_eq!(u1["source"], "auto");
+        handle(&ctx, "rename_member", &json!({ "id": id, "name": "张三" }))
+            .expect("rename ok");
+        let mut t5 = track(5);
+        t5.face = emb(vec![1.0, 0.0, 0.0]);
+        ctx.state.apply_frame(&frame(vec![t5]));
+        let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+        let by = |out: &Value, tid: i64| out["tracks"].as_array().unwrap().iter()
+            .find(|t| t["track_id"] == tid).unwrap().clone();
+        assert_eq!(by(&out, 5)["member"]["name"], "张三",
+            "renamed member matches under the new name");
     }
 
     #[test]
