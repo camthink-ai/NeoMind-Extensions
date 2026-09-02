@@ -31,6 +31,10 @@ pub struct LiveState {
     /// plain last-value cache matches the producer's own semantics.
     faces: RwLock<Vec<FaceBox>>,
     faces_seen: RwLock<Instant>,
+    /// Latest producer frame preview (base64 JPEG) + the tracks OF THAT
+    /// SAME FRAME — the Monitor renders both from one source, so image and
+    /// overlay can never desync (two-clock problem eliminated by design).
+    frame_img: RwLock<Option<(String, Vec<Track>, Vec<FaceBox>)>>,
 }
 
 impl LiveState {
@@ -39,6 +43,7 @@ impl LiveState {
             ttl: Duration::from_secs(ttl_sec as u64),
             inner: Default::default(),
             faces: Default::default(),
+            frame_img: Default::default(),
             faces_seen: RwLock::new(
                 Instant::now() - Duration::from_secs(3600),
             ),
@@ -58,9 +63,19 @@ impl LiveState {
                 },
             );
         }
+        let tracks_now: Vec<Track> = f.tracks.clone();
         drop(g);
         *self.faces.write() = f.faces.clone();
         *self.faces_seen.write() = now;
+        if let Some(img) = f.img_b64.as_ref() {
+            *self.frame_img.write() =
+                Some((img.clone(), tracks_now, f.faces.clone()));
+        }
+    }
+
+    /// Latest preview bundle: (img_b64, tracks at that frame, faces).
+    pub fn snapshot_frame(&self) -> Option<(String, Vec<Track>, Vec<FaceBox>)> {
+        self.frame_img.read().clone()
     }
 
     /// Evict tracks not seen within `ttl`. Returns the expired `track_id`s
@@ -122,6 +137,7 @@ mod tests {
                 face: None,
             }],
             faces: vec![],
+            img_b64: None,
         }
     }
 

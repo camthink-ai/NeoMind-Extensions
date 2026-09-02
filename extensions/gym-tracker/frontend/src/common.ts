@@ -68,6 +68,15 @@ export interface FaceBox {
   det: number
 }
 
+/** get_frame payload — img_b64 is null until a PREVIEW-enabled producer connects. */
+export interface FrameBundle {
+  img_b64?: string | null
+  faces?: FaceBox[]
+  tracks?: Track[]
+  present_count?: number
+  members_count?: number
+}
+
 export interface Zone {
   id: string
   name: string
@@ -129,6 +138,13 @@ export async function fetchLiveState(
   extensionId: string
 ): Promise<{ success: boolean; data?: LiveState; error?: string }> {
   return runExtensionCommand<LiveState>(extensionId, 'get_live_state')
+}
+
+/** Single-source frame bundle: preview JPEG + the tracks OF THAT frame. */
+export async function fetchFrame(
+  extensionId: string
+): Promise<{ success: boolean; data?: FrameBundle | null; error?: string }> {
+  return runExtensionCommand<FrameBundle | null>(extensionId, 'get_frame')
 }
 
 export async function fetchZones(

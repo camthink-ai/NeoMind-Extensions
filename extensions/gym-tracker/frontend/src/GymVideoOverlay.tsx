@@ -37,6 +37,7 @@ import {
   Zone,
   deleteMember,
   fetchCrossings,
+  fetchFrame,
   fetchHeatmap,
   fetchLines,
   fetchLiveState,
@@ -249,9 +250,14 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         const r = await fetchLiveState(extensionId)
         if (stopped || !mountedRef.current) return
         if (r.success && r.data) {
-          stateRef.current = r.data
-          setPresent(r.data.present_count)
-          // bbox history for time-aligned interpolation
+          // device-frame mode owns the display (image+tracks single-source);
+          // this poll only feeds auxiliary state when stream-player mode is
+          // active or as a fallback.
+          if (!deviceFramesRef.current) {
+            stateRef.current = r.data
+            setPresent(r.data.present_count)
+          }
+          // bbox history for time-aligned interpolation (stream-player mode)
           const now = performance.now()
           const hist = trackHistRef.current
           const seen = new Set<number>()
@@ -270,6 +276,57 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       const id = setInterval(poll, pollMs)
       return () => { stopped = true; clearInterval(id) }
     }, [extensionId, pollMs])
+
+    // ---- device-frame mode: image + tracks from ONE source ----
+    // When the producer attaches frame previews (PREVIEW=1), poll get_frame
+    // and render the preview JPEG with the tracks of that exact frame — the
+    // separate video pipeline (stream-player) is bypassed entirely, so video
+    // and overlay can never desync, in live AND replay modes.
+    const deviceFramesRef = useRef(false)
+    const lastFrameSeqRef = useRef(0)
+    useEffect(() => {
+      let stopped = false
+      const poll = async () => {
+        const r = await fetchFrame(extensionId)
+        if (stopped || !mountedRef.current) return
+        if (r.success && r.data && r.data.img_b64) {
+          if (!deviceFramesRef.current) {
+            deviceFramesRef.current = true
+            // stream-player video is superseded by the device frames
+            if (wsRef.current) { try { wsRef.current.close() } catch { /* already closed */ } wsRef.current = null }
+            setStatus('streaming')
+          }
+          const im = new Image()
+          im.onload = () => {
+            if (stopped || !mountedRef.current) return
+            imgRef.current = im
+            const c = fpsCounterRef.current
+            c.frames++
+            const now = Date.now()
+            if (now - c.last >= 1000) {
+              setVideoFps(Math.round((c.frames * 1000) / (now - c.last)))
+              c.frames = 0
+              c.last = now
+            }
+          }
+          im.src = `data:image/jpeg;base64,${r.data.img_b64}`
+          // tracks/faces OF the same frame — no interpolation needed
+          stateRef.current = {
+            present_count: r.data.present_count ?? r.data.tracks?.length ?? 0,
+            tracks: r.data.tracks ?? [],
+            faces: r.data.faces ?? [],
+          } as LiveState
+          setPresent(r.data.present_count ?? r.data.tracks?.length ?? 0)
+          lastFrameSeqRef.current++
+        } else if (r.success && !r.data?.img_b64) {
+          // producer has no preview yet — leave mode decision unchanged
+          // (fallback stays on stream-player if that's what's running)
+        }
+      }
+      poll()
+      const id = setInterval(poll, 250)
+      return () => { stopped = true; clearInterval(id) }
+    }, [extensionId])
 
     const loadZones = useCallback(async () => {
       const r = await fetchZones(extensionId)
@@ -590,9 +647,11 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         }
       }
 
-      // ---- AI overlay (people, time-aligned to the displayed frame) ----
+      // ---- AI overlay (people) ----
+      // device-frame mode: tracks arrive WITH the displayed image — use them
+      // as-is. stream-player mode: interpolate to the displayed video time.
       const drawNow = performance.now() - OVERLAY_DELAY_MS
-      const alignedTracks = tracks.map((tr) => {
+      const alignedTracks = deviceFramesRef.current ? tracks : tracks.map((tr) => {
         const hist = trackHistRef.current.get(tr.track_id)
         if (!tr.bbox || !hist || hist.length === 0) return tr
         const ib = bboxAt(hist, drawNow)

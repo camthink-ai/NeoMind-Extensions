@@ -100,6 +100,7 @@ impl Extension for GymTrackerExtension {
 
     fn commands(&self) -> Vec<ExtensionCommand> {
         vec![
+            cmd("get_frame", "Latest producer frame (JPEG preview) + its tracks — single-source Monitor rendering"),
             cmd("get_live_state", "Current in-gym tracks (incl. trails)"),
             cmd("get_roi_zones", "List ROI equipment zones"),
             cmd("set_roi_zones", "Replace ROI zones (full set)"),

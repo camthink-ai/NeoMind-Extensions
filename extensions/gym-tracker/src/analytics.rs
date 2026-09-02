@@ -328,6 +328,7 @@ mod tests {
                 })
                 .collect(),
             faces: vec![],
+            img_b64: None,
         }
     }
 

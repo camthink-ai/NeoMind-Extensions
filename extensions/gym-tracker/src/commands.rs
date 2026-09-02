@@ -283,6 +283,44 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 "members_count": members.len(),
             }))
         }
+        // Latest producer frame preview + the tracks OF THAT SAME FRAME —
+        // the Monitor draws image and overlay from one source, so the
+        // separate video/data pipelines (and their clock desync) are gone.
+        // Null img_b64 when the producer doesn't attach previews (PREVIEW=0).
+        "get_frame" => {
+            let Some((img, tracks, faces)) = ctx.state.snapshot_frame() else {
+                return Ok(json!({ "img_b64": serde_json::Value::Null }));
+            };
+            let members = ctx.db.list_members().map_err(|e| e.to_string())?;
+            let workouts = ctx.analytics.workout_snapshot();
+            let matched = crate::identity::match_tracks(
+                &ctx.identity, &members, &tracks, &faces);
+            let tracks_json = tracks.iter().map(|t| {
+                let member = matched.get(&t.track_id).map(|m| json!({
+                    "id": members[m.member_idx].id,
+                    "name": members[m.member_idx].name,
+                    "dist": (m.dist * 1000.0).round() / 1000.0,
+                    "via": m.via,
+                }));
+                json!({
+                    "track_id": t.track_id,
+                    "bbox": t.bbox,
+                    "foot": t.foot,
+                    "pose": t.pose,
+                    "member": member,
+                    "exercise": workouts.get(&t.track_id).map(|w| json!({
+                        "name": w.0, "reps": w.1, "sets": w.2, "zone": w.3,
+                    })),
+                })
+            }).collect::<Vec<_>>();
+            Ok(json!({
+                "img_b64": img,
+                "faces": faces,
+                "tracks": tracks_json,
+                "present_count": tracks.len(),
+                "members_count": members.len(),
+            }))
+        }
         // List all ROI zones (round-trips the full Zone struct incl. polygon).
         "get_roi_zones" => {
             let zones = ctx.db.list_zones().map_err(|e| e.to_string())?;
@@ -551,7 +589,7 @@ mod tests {
     }
 
     fn frame(tracks: Vec<Track>) -> TrackFrame {
-        TrackFrame { device_id: "d".into(), frame_seq: 1, ts_ns: 0, tracks, faces: vec![] }
+        TrackFrame { device_id: "d".into(), frame_seq: 1, ts_ns: 0, tracks, faces: vec![], img_b64: None }
     }
 
     #[test]
@@ -687,6 +725,7 @@ mod tests {
                 bbox: Bbox { x: 0.45, y: 0.32, w: 0.1, h: 0.1 },
                 det: 0.9, emb: Some(vec![9.0, 9.0, 9.0]),
             }],
+            img_b64: None,
         };
         ctx.state.apply_frame(&f1);
         let r = handle(&ctx, "register_member",
@@ -745,6 +784,7 @@ mod tests {
             let f = TrackFrame {
                 device_id: "d".into(), frame_seq: i, ts_ns: (i as u64) * 1_000_000_000,
                 tracks: vec![t], faces: vec![],
+            img_b64: None,
             };
             ctx.state.apply_frame(&f);
             let zones = ctx.db.list_zones().unwrap();
@@ -769,6 +809,32 @@ mod tests {
         assert_eq!(eq[0]["zone_id"], "z1");
         assert!(eq[0]["duration_sec"].as_i64().unwrap() >= 1,
             "treadmill time accumulated: {:?}", eq[0]);
+    }
+
+    #[test]
+    fn get_frame_returns_img_and_its_tracks() {
+        let ctx = make_ctx();
+        let mut t = track(7);
+        t.face = None;
+        let f = TrackFrame {
+            device_id: "d".into(), frame_seq: 1, ts_ns: 0,
+            tracks: vec![t], faces: vec![], img_b64: Some("QUJD".into()),
+        };
+        ctx.state.apply_frame(&f);
+        let out = handle(&ctx, "get_frame", &json!({})).unwrap();
+        assert_eq!(out["img_b64"], "QUJD");
+        let tracks = out["tracks"].as_array().unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0]["track_id"], 7);
+        // frames without a preview (PREVIEW=0 producers) yield null img
+        let f2 = TrackFrame {
+            device_id: "d".into(), frame_seq: 2, ts_ns: 1,
+            tracks: vec![], faces: vec![], img_b64: None,
+        };
+        ctx.state.apply_frame(&f2);
+        let out2 = handle(&ctx, "get_frame", &json!({})).unwrap();
+        // last preview persists until a new one arrives — stale-but-consistent
+        assert_eq!(out2["img_b64"], "QUJD");
     }
 
     #[test]

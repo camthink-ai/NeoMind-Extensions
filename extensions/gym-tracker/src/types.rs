@@ -72,6 +72,10 @@ pub struct TrackFrame {
     /// payloads parsing).
     #[serde(default)]
     pub faces: Vec<FaceBox>,
+    /// Downscaled JPEG preview (base64) of the exact frame — set by newer
+    /// producers (PREVIEW=1). Old payloads parse without it.
+    #[serde(default)]
+    pub img_b64: Option<String>,
 }
 
 #[cfg(test)]
