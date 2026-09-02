@@ -79,6 +79,14 @@ pub fn parse_preview(raw: &str) -> Option<(u64, String)> {
     Some((p["ts_ns"].as_u64()?, p["img_b64"].as_str()?.to_string()))
 }
 
+/// Debug counters for GYM_INGEST_DBG diagnostics.
+pub static INGEST_COUNTS: std::sync::OnceLock<parking_lot::Mutex<IngestDbg>> = std::sync::OnceLock::new();
+#[derive(Default, Clone)]
+pub struct IngestDbg { pub total: u64, pub topic_counts: std::collections::HashMap<String, u64>, pub parsed_ok: u64, pub parse_fail: u64 }
+pub fn ingest_dbg() -> &'static parking_lot::Mutex<IngestDbg> {
+    INGEST_COUNTS.get_or_init(|| parking_lot::Mutex::new(IngestDbg::default()))
+}
+
 /// Handle returned by `spawn` — call `stop()` to request a graceful shutdown
 /// of the ingest thread (honored within ~200ms via the runtime's `select!`).
 pub struct IngestHandle {
@@ -252,20 +260,41 @@ async fn connect_and_drain(
             msg = ws_stream.next() => match msg {
                 Some(Ok(Message::Text(txt))) => {
                     tracing::debug!(target: "gym_tracker::ingest::frame", len = txt.len(), "ws text frame");
+                    if true { // temp diagnostics: always count topics
+                        let topic = serde_json::from_str::<serde_json::Value>(&txt)
+                            .ok()
+                            .and_then(|v| v["topic"].as_str().map(|t| t.chars().take(24).collect::<String>()))
+                            .unwrap_or_else(|| "?".into());
+                        ingest_dbg().lock().topic_counts.entry(topic).and_modify(|c| *c += 1).or_insert(1);
+                        let n = { let mut g = ingest_dbg().lock(); g.total += 1; g.total };
+                        if n % 200 == 0 {
+                            let c = ingest_dbg().lock().topic_counts.clone();
+                            tracing::info!(target: "gym_tracker::ingest", counts = ?c, "ingest dbg");
+                        }
+                    }
                     if let Some((pts, pimg)) = parse_preview(&txt) {
                         state.set_preview(pts, pimg);
                     }
-                    if let Some(frame) = parse_event(&txt) {
-                        state.apply_frame(&frame);
-                        analytics.on_frame(&frame);
-                        // workout pipeline: zones + members fresh per frame
-                        // (small tables; keeps set_roi_zones / member edits
-                        // live without a cache-invalidation dance)
-                        let zones = db.list_zones().unwrap_or_default();
-                        let members = db.list_members().unwrap_or_default();
-                        analytics.on_workout_frame(
-                            &frame, &zones, &members, &cfg.identity,
-                            cfg.roi.dwell_debounce_sec);
+                    match parse_event(&txt) {
+                        Some(frame) => {
+                            ingest_dbg().lock().parsed_ok += 1;
+                            state.apply_frame(&frame);
+                            analytics.on_frame(&frame);
+                            // workout pipeline: zones + members fresh per frame
+                            // (small tables; keeps set_roi_zones / member edits
+                            // live without a cache-invalidation dance)
+                            let zones = db.list_zones().unwrap_or_default();
+                            let members = db.list_members().unwrap_or_default();
+                            analytics.on_workout_frame(
+                                &frame, &zones, &members, &cfg.identity,
+                                cfg.roi.dwell_debounce_sec);
+                        }
+                        None => {
+                            let topic_is_gym = serde_json::from_str::<serde_json::Value>(&txt)
+                                .ok().and_then(|v| v["topic"].as_str().map(|t| t.starts_with("gym/")))
+                                .unwrap_or(false);
+                            if topic_is_gym { ingest_dbg().lock().parse_fail += 1; }
+                        }
                     }
                 }
                 Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {
@@ -480,5 +509,12 @@ mod tests {
              publish succeeded"
         );
         eprintln!("[live] SUCCESS — gym/test probe landed in LiveState");
+    }
+
+    #[test]
+    fn captured_g200_track_parses() {
+        let raw = include_str!("../tests/g200-track-sample.json");
+        let f = parse_event(raw).expect("captured .200 gym/track must parse");
+        assert!(!f.tracks.is_empty());
     }
 }

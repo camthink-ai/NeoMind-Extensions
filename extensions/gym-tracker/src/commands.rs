@@ -398,6 +398,11 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             ctx.analytics.set_lines(&ctx.db, lines)?;
             Ok(json!({ "saved": n }))
         }
+        "get_ingest_dbg" => {
+            let g = crate::ingest::ingest_dbg().lock();
+            Ok(json!({ "total": g.total, "parsed_ok": g.parsed_ok, "parse_fail": g.parse_fail,
+                       "topics": g.topic_counts }))
+        }
         "get_crossings" => Ok(json!({ "lines": ctx.analytics.get_crossings() })),
         // ---- P1: heatmap ----
         "get_heatmap" => Ok(ctx.analytics.get_heatmap()),
