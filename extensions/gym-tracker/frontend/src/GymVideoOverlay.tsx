@@ -93,20 +93,16 @@ const EQUIPMENT_PRESETS: Array<[string, string]> = [
 
 // ---- overlay/video time alignment ----
 // The video path (RTSP/file → decode → JPEG → WS) lags the analytics path by
-// a variable 0.3–1.5 s, so drawing the NEWEST sample on the NEWEST frame
-// misplaces boxes. Render at (now − OVERLAY_DELAY_MS) instead, interpolating
-// between history samples (smooth motion) and extrapolating at most
-// EXTRAP_MAX_MS when data is momentarily behind the picture.
-const OVERLAY_DELAY_MS = 0.15 // sec
-// Jitter-buffer depth: the renderer plays the preview stream at
-// (newest_ts - PLAY_DELAY), so both the video frame AND the track
-// keyframes have samples on EITHER side of the playhead — interpolation
-// instead of extrapolation, i.e. true A/V sync at a fixed ~300 ms latency.
-const PLAY_DELAY = 0.12 // sec
-// playhead sits this far BEHIND the newest track keyframe: pure interpolation
-// (exact) instead of 2-point extrapolation (drifts behind accelerating people)
-const STRADDLE_MARGIN = 0.06 // sec
-const EXTRAP_MAX_MS = 0.45 // sec (kept name for history)
+// Video arrives at ~4-5 Hz (~200 ms between frames) while the pose loop
+// runs a touch faster, so track history USUALLY straddles any shown frame.
+// The rule that keeps boxes glued to the picture: interpolate at the shown
+// frame's own timestamp (see draw()). PLAY_DELAY is only an out-of-order
+// guard — the smallest value that keeps frame order stable without
+// deliberately ageing the video (a large fixed delay is perceived as lag).
+const PLAY_DELAY = 0.03 // sec
+// Beyond the newest track sample the box extrapolates along the last
+// velocity; capped short so fast direction changes don't overshoot wildly.
+const EXTRAP_MAX_MS = 0.3 // sec
 
 interface HistEntry { t: number; bbox: Bbox; foot?: Point | null; kpts?: [number, number, number][] | null }
 
@@ -377,10 +373,6 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     const lastTsRef = useRef<number | null>(null)
     // jitter buffer: decoded frames (ts sec, Image) in arrival order
     const frameBufRef = useRef<Array<{ t: number; img: HTMLImageElement }>>([])
-    // TRUE ts (sec) of the latest track data — drives the adaptive playhead
-    const lastTracksTsRef = useRef(0)
-    // EMA of (frame_ts − tracks_ts): smoothed inference lag for the delay
-    const emaLagRef = useRef<number | null>(null)
     const applyFrameBundle = useCallback((data: FrameBundle) => {
       if (!data.img_b64 || data.img_b64 === lastImgRef.current) return
       lastImgRef.current = data.img_b64
@@ -432,7 +424,6 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         // inference-latency ahead of when these positions were real
         const tracksTs = ((data as any).tracks_ts as number) / 1e6
         const tSec = tracksTs > 0 ? tracksTs : tsNs / 1e6
-        if (tracksTs > 0) lastTracksTsRef.current = tracksTs
         const seen = new Set<number>()
         for (const t of data.tracks ?? []) {
           if (!t.bbox) continue
@@ -698,34 +689,29 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
 
       ctx.fillStyle = '#050505'
       ctx.fillRect(0, 0, VW, VH)
-      // jitter buffer playhead. The delay is driven by the SMOOTHED data lag
-      // (EMA, ~1 s): the per-frame lag jitters ±80 ms with scene load and a
-      // playhead that follows it frame-by-frame wobbles through the newest
-      // keyframe into noisy 2-point extrapolation — the classic "overlay
-      // trails the person" artifact. With the EMA plus STRADDLE_MARGIN the
-      // playhead sits a fixed ~60 ms BEHIND the newest track keyframe, so
-      // alignment is true interpolation between two real samples.
+      // Frame pick + alignment target. The critical invariant: the overlay
+      // must be drawn for the EXACT moment the shown frame was captured
+      // (img.t), not for an independently chosen "playhead". Frame gaps are
+      // ~200 ms here — a playhead that floats a frame-interval away from the
+      // shown frame puts the box a half-to-one frame ahead/behind the
+      // person, which reads as lag on motion. So: play the newest frame
+      // minus a small fixed delay (out-of-order guard), and align the
+      // interpolation to that frame's own timestamp. Track data usually
+      // straddles it (true interpolation); when inference is a beat behind,
+      // sampleAt extrapolates ≤ EXTRAP_MAX_MS along the last velocity, which
+      // keeps the box ON the person instead of trailing.
       const buf = frameBufRef.current
       let img: HTMLImageElement | null = null
       if (buf.length > 0) {
         const newest = buf[buf.length - 1].t
-        const dataLag = Math.max(0, newest - lastTracksTsRef.current)
-        const ema = emaLagRef.current
-        emaLagRef.current = ema == null ? dataLag : ema + (dataLag - ema) * 0.12
-        const delay = Math.min(
-          Math.max(PLAY_DELAY, emaLagRef.current + STRADDLE_MARGIN),
-          0.9
-        )
-        let playhead = newest - delay
-        // a lag spike raising `delay` must not rewind the clock visibly —
-        // let it drift back at most 40 ms per rendered frame
-        const prev = lastTsRef.current
-        if (prev != null && playhead < prev - 0.04) playhead = prev - 0.04
+        let want = newest - PLAY_DELAY
+        // don't visibly rewind when a burst of old frames lands late
+        const prevShown = lastTsRef.current
+        if (prevShown != null && want < prevShown - 0.05) want = prevShown - 0.05
         for (let i = buf.length - 1; i >= 0; i--) {
-          if (buf[i].t <= playhead + 0.004) { img = buf[i].img; break }
+          if (buf[i].t <= want + 0.004) { img = buf[i].img; lastTsRef.current = buf[i].t; break }
         }
-        if (!img) img = buf[0].img
-        lastTsRef.current = playhead
+        if (!img) { img = buf[0].img; lastTsRef.current = buf[0].t }
       }
       if (!img) img = imgRef.current
       if (img && img.naturalWidth > 0) {
@@ -995,9 +981,11 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       // Both modes interpolate along the bbox history: stream-player mode
       // aligns to the displayed video time; device-frame mode targets "now"
       // so boxes keep moving smoothly between ~5 Hz device updates.
+      // device-frame mode: lastTsRef is the SHOWN frame's own ts (set where
+      // the frame is picked) — boxes interpolate at exactly that moment
       const drawNow = deviceFramesRef.current && lastTsRef.current != null
-        ? lastTsRef.current // = jitter-buffer playhead (set above)
-        : performance.now() / 1000 - OVERLAY_DELAY_MS
+        ? lastTsRef.current
+        : performance.now() / 1000 - 0.15
       // far-field false positives: a bbox with <3 visible keypoints is an
       // "empty box" — skip it (defensive; the device also gates at publish)
       const visibleKpts = (kpts?: [number, number, number][]) =>
