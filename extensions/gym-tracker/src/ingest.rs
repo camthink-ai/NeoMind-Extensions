@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::config::Config;
@@ -246,19 +246,36 @@ async fn connect_and_drain(
         }
     }
 
-    let mut ws_stream = match ws_stream {
+    let ws_stream = match ws_stream {
         Some(s) => s,
         None => return Disconnect::Error("all connect attempts failed".into()),
     };
+    let (mut ws_sink, mut ws_stream) = ws_stream.split();
 
     // Read loop: select between the next WS frame and a stop ticker so a
     // shutdown request is honored even while no frames are arriving.
+    // KEEPALIVE: a device restart leaves the TCP half-open — without pings
+    // the client never notices and the ingest freezes forever (observed:
+    // 49 min of zero traffic with the socket "open"). Ping every 5 s and
+    // force-reconnect after 20 s of silence.
+    let mut last_alive = std::time::Instant::now();
+    let mut ping = tokio::time::interval(std::time::Duration::from_secs(5));
+    ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
             biased;
             _ = await_stop(stop) => return Disconnect::Stop,
+            _ = ping.tick() => {
+                if last_alive.elapsed() > std::time::Duration::from_secs(20) {
+                    return Disconnect::Error("keepalive timeout (20s silence)".into());
+                }
+                if ws_sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    return Disconnect::Error("ping send failed".into());
+                }
+            }
             msg = ws_stream.next() => match msg {
                 Some(Ok(Message::Text(txt))) => {
+                    last_alive = std::time::Instant::now();
                     tracing::debug!(target: "gym_tracker::ingest::frame", len = txt.len(), "ws text frame");
                     if true { // temp diagnostics: always count topics
                         let topic = serde_json::from_str::<serde_json::Value>(&txt)
@@ -298,7 +315,7 @@ async fn connect_and_drain(
                     }
                 }
                 Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {
-                    // tungstenite auto-responds to pings; nothing to do.
+                    last_alive = std::time::Instant::now();
                 }
                 Some(Ok(Message::Close(_))) => {
                     return Disconnect::Error("server closed connection".into());
