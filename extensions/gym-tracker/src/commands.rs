@@ -688,6 +688,7 @@ mod tests {
             foot: Point { x: 0.25, y: 0.6 },
             pose: None,
             face: None,
+            vel: None,
         }
     }
 

@@ -56,6 +56,11 @@ pub struct Track {
     pub foot: Point,
     pub pose: Option<Pose>,
     pub face: Option<Face>,
+    /// Tracker-smoothed velocity, normalized units per SECOND (absent on
+    /// pre-vel producers). The Monitor extrapolates positions with it when
+    /// the picture runs ahead of the track stream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vel: Option<[f32; 2]>,
 }
 
 /// One frame of `gym/track` events published by the NE503 device-app.

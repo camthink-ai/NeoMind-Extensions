@@ -145,6 +145,7 @@ mod tests {
             },
             pose: None,
             face: emb.map(|e| Face { emb: e, det: 0.8 }),
+            vel: None,
         }
     }
 

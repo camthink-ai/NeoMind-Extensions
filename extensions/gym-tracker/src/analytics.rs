@@ -363,6 +363,7 @@ mod tests {
                     foot: Point { x, y },
                     pose: None,
                     face: None,
+                    vel: None,
                 })
                 .collect(),
             faces: vec![],

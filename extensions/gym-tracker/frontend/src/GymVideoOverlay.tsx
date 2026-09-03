@@ -106,7 +106,7 @@ const PLAY_DELAY = 0.03 // sec
 // visibly trails the person.
 const EXTRAP_MAX_MS = 0.5 // sec
 
-interface HistEntry { t: number; bbox: Bbox; foot?: Point | null; kpts?: [number, number, number][] | null }
+interface HistEntry { t: number; bbox: Bbox; foot?: Point | null; kpts?: [number, number, number][] | null; vel?: [number, number] | null }
 
 /** Interpolated bbox + keypoints + foot at device-time `target` from the
  *  per-track history. Beyond the newest sample the bbox extrapolates
@@ -132,6 +132,50 @@ function sampleAt(hist: HistEntry[], target: number, kptMin: number):
     a = p
     b = last
     f = 1 + beyond / span
+    // device-supplied velocity (normalized/sec, EMA over many frames)
+    // beats the noisy two-point span slope when available; blend 70/30
+    // toward it (the span slope still carries the newest acceleration)
+    if (b.vel) {
+      const s = Math.max(1e-6, span)
+      const [vx, vy] = b.vel
+      // express the device velocity as an equivalent factor: where the
+      // last span's slope would land vs. vel*span — blend 70/30 toward
+      // the device value (span slope carries the newest acceleration)
+      const slopeX = (b.bbox.x - a.bbox.x) / s
+      const slopeY = (b.bbox.y - a.bbox.y) / s
+      const bx = 0.3 * slopeX + 0.7 * vx
+      const by = 0.3 * slopeY + 0.7 * vy
+      const cx0 = b.bbox.x + b.bbox.w / 2
+      const cy0 = b.bbox.y + b.bbox.h / 2
+      const ex = Math.min(0.15, Math.max(-0.15, bx * beyond))
+      const ey = Math.min(0.15, Math.max(-0.15, by * beyond))
+      const bbox = {
+        x: b.bbox.x + ex,
+        y: b.bbox.y + ey,
+        w: b.bbox.w,
+        h: b.bbox.h,
+      }
+      const dxBody = ex
+      const dyBody = ey
+      const MAX_KPT_ADV = 0.12
+      const kb = b.kpts
+      let kpts: [number, number, number][] | undefined
+      if (kb && kb.length) {
+        const clamp01v = (v: number) => Math.min(1, Math.max(0, v))
+        kpts = kb.map((k2) => [
+          clamp01v(k2[0] + dxBody),
+          clamp01v(k2[1] + dyBody),
+          k2[2],
+        ] as [number, number, number])
+      }
+      const foot = b.foot
+        ? {
+            x: Math.min(1, Math.max(0, b.foot.x + ex)),
+            y: Math.min(1, Math.max(0, b.foot.y + ey)),
+          }
+        : b.foot
+      return { bbox, kpts, foot }
+    }
   } else {
     a = first
     b = last
@@ -410,6 +454,10 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     const imgUrlRef = useRef<string | null>(null)
     // ts_ns (seconds) of the currently displayed device frame, when present
     const lastTsRef = useRef<number | null>(null)
+    // TRUE ts (sec) of the latest track keyframe — drives the adaptive video
+    // delay so the shown frame lands behind it (interpolation, not extrapolation)
+    const lastTracksTsRef = useRef(0)
+    const emaGapRef = useRef<number | null>(null)
     // jitter buffer: decoded frames (ts sec, Image) in arrival order
     const frameBufRef = useRef<Array<{ t: number; img: HTMLImageElement }>>([])
     const applyFrameBundle = useCallback((data: FrameBundle) => {
@@ -476,6 +524,8 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         // inference-latency ahead of when these positions were real
         const tracksTs = ((data as any).tracks_ts as number) / 1e6
         const tSec = tracksTs > 0 ? tracksTs : tsNs / 1e6
+        if (tracksTs > 0 && tracksTs > lastTracksTsRef.current)
+          lastTracksTsRef.current = tracksTs
         const seen = new Set<number>()
         for (const t of data.tracks ?? []) {
           if (!t.bbox) continue
@@ -489,7 +539,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             || Math.abs(last.bbox.w - t.bbox.w) > 1e-4
             || Math.abs(last.bbox.h - t.bbox.h) > 1e-4
           if (moved || tSec - last.t > 0.5) {
-            arr.push({ t: tSec, bbox: t.bbox, foot: t.foot, kpts: (t as any).pose?.kpts ?? null })
+            arr.push({ t: tSec, bbox: t.bbox, foot: t.foot, kpts: (t as any).pose?.kpts ?? null, vel: (t as any).vel ?? null })
           }
           while (arr.length > 0 && tSec - arr[0].t > 3) arr.shift()
         }
@@ -741,22 +791,25 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
 
       ctx.fillStyle = '#050505'
       ctx.fillRect(0, 0, VW, VH)
-      // Frame pick + alignment target. The critical invariant: the overlay
-      // must be drawn for the EXACT moment the shown frame was captured
-      // (img.t), not for an independently chosen "playhead". Frame gaps are
-      // ~200 ms here — a playhead that floats a frame-interval away from the
-      // shown frame puts the box a half-to-one frame ahead/behind the
-      // person, which reads as lag on motion. So: play the newest frame
-      // minus a small fixed delay (out-of-order guard), and align the
-      // interpolation to that frame's own timestamp. Track data usually
-      // straddles it (true interpolation); when inference is a beat behind,
-      // sampleAt extrapolates ≤ EXTRAP_MAX_MS along the last velocity, which
-      // keeps the box ON the person instead of trailing.
+      // Frame pick + alignment target. The overlay is drawn for the EXACT
+      // moment the shown frame was captured (img.t) — that invariant is what
+      // makes box-vs-picture alignment exact. The catch: the track stream
+      // runs 35-250 ms (jittery) behind the preview stream, so playing the
+      // NEWEST frame means the overlay must extrapolate that whole gap with
+      // noisy velocities — visible trailing on motion. Instead the video is
+      // held back by the SMOOTHED data gap minus a small margin, so the
+      // shown frame's ts lands just BEHIND the newest track keyframe and the
+      // overlay INTERPOLATES between two real samples (exact) almost always;
+      // spikes fall into bounded extrapolation along the device velocity.
       const buf = frameBufRef.current
       let img: HTMLImageElement | null = null
       if (buf.length > 0) {
         const newest = buf[buf.length - 1].t
-        let want = newest - PLAY_DELAY
+        const gap = Math.max(0, newest - lastTracksTsRef.current)
+        const ema = emaGapRef.current
+        emaGapRef.current = ema == null ? gap : ema + (gap - ema) * 0.1
+        const delay = Math.min(0.45, Math.max(0.05, emaGapRef.current - 0.04))
+        let want = newest - delay
         // don't visibly rewind when a burst of old frames lands late
         const prevShown = lastTsRef.current
         if (prevShown != null && want < prevShown - 0.05) want = prevShown - 0.05

@@ -226,6 +226,7 @@ mod tests {
                 foot: Point { x: 0., y: 0. },
                 pose: None,
                 face: None,
+                vel: None,
             }],
             faces: vec![],
             img_b64: None,
