@@ -100,9 +100,11 @@ const EQUIPMENT_PRESETS: Array<[string, string]> = [
 // guard — the smallest value that keeps frame order stable without
 // deliberately ageing the video (a large fixed delay is perceived as lag).
 const PLAY_DELAY = 0.03 // sec
-// Beyond the newest track sample the box extrapolates along the last
-// velocity; capped short so fast direction changes don't overshoot wildly.
-const EXTRAP_MAX_MS = 0.3 // sec
+// Beyond the newest track sample the rig extrapolates along its last
+// velocities. The cap must cover the real inference-to-preview gap
+// (~150-350 ms with the m tile model); below it the overlay clamps and
+// visibly trails the person.
+const EXTRAP_MAX_MS = 0.5 // sec
 
 interface HistEntry { t: number; bbox: Bbox; foot?: Point | null; kpts?: [number, number, number][] | null }
 
@@ -116,6 +118,9 @@ function sampleAt(hist: HistEntry[], target: number, kptMin: number):
   const first = hist[0]
   const last = hist[hist.length - 1]
   let a: HistEntry, b: HistEntry, f: number
+  // extrapolating: target is newer than the newest sample (the inference
+  // chain runs ~150-350 ms behind the preview stream)
+  let beyond = 0
   if (target <= first.t) {
     a = first
     b = hist[Math.min(1, hist.length - 1)]
@@ -123,10 +128,10 @@ function sampleAt(hist: HistEntry[], target: number, kptMin: number):
   } else if (target >= last.t) {
     const p = hist.length >= 2 ? hist[hist.length - 2] : last
     const span = Math.max(1, last.t - p.t)
-    const over = Math.min(target - last.t, EXTRAP_MAX_MS)
+    beyond = Math.min(target - last.t, EXTRAP_MAX_MS)
     a = p
     b = last
-    f = 1 + over / span
+    f = 1 + beyond / span
   } else {
     a = first
     b = last
@@ -147,22 +152,55 @@ function sampleAt(hist: HistEntry[], target: number, kptMin: number):
     w: lerp(a.bbox.w, b.bbox.w),
     h: lerp(a.bbox.h, b.bbox.h),
   }
-  // limbs: per-point lerp when both sides are visible, else the visible one
+  const clamp01v = (v: number) => Math.min(1, Math.max(0, v))
+  // bbox-center advance over `beyond` — the fallback translation for any
+  // held point so the whole rig rides the extrapolation instead of the
+  // skeleton standing still while the box walks ahead
+  const dxBody = beyond > 0 ? bbox.x + bbox.w / 2 - (b.bbox.x + b.bbox.w / 2) : 0
+  const dyBody = beyond > 0 ? bbox.y + bbox.h / 2 - (b.bbox.y + b.bbox.h / 2) : 0
+  const MAX_KPT_ADV = 0.12 // normalized clamp per extrapolated point
   let kpts: [number, number, number][] | undefined
   const ka = a.kpts
   const kb = b.kpts
   if (kb && kb.length) {
+    const span = Math.max(1, b.t - a.t)
     kpts = kb.map((k2, i) => {
       const k1 = ka && ka[i]
-      if (k1 && k1[2] > kptMin && k2[2] > kptMin)
+      if (k1 && k1[2] > kptMin && k2[2] > kptMin) {
+        if (beyond > 0) {
+          // true per-point extrapolation: own velocity over the last span,
+          // clamped — limbs that were moving keep moving
+          const vx = (k2[0] - k1[0]) / span
+          const vy = (k2[1] - k1[1]) / span
+          return [
+            clamp01v(k2[0] + Math.max(-MAX_KPT_ADV, Math.min(MAX_KPT_ADV, vx * beyond))),
+            clamp01v(k2[1] + Math.max(-MAX_KPT_ADV, Math.min(MAX_KPT_ADV, vy * beyond))),
+            k2[2],
+          ] as [number, number, number]
+        }
         return [lerp(k1[0], k2[0]), lerp(k1[1], k2[1]), k2[2]] as [number, number, number]
-      return k2
+      }
+      // held point (invisible on one side): translate with the body
+      return [clamp01v(k2[0] + dxBody), clamp01v(k2[1] + dyBody), k2[2]] as [number, number, number]
     })
   }
-  const foot =
-    a.foot && b.foot
-      ? { x: lerp(a.foot.x, b.foot.x), y: lerp(a.foot.y, b.foot.y) }
-      : b.foot ?? a.foot
+  let foot: Point | null | undefined
+  if (a.foot && b.foot) {
+    if (beyond > 0) {
+      const fx = (b.foot.x - a.foot.x) / Math.max(1, b.t - a.t)
+      const fy = (b.foot.y - a.foot.y) / Math.max(1, b.t - a.t)
+      foot = {
+        x: clamp01v(b.foot.x + Math.max(-0.1, Math.min(0.1, fx * beyond))),
+        y: clamp01v(b.foot.y + Math.max(-0.1, Math.min(0.1, fy * beyond))),
+      }
+    } else {
+      foot = { x: lerp(a.foot.x, b.foot.x), y: lerp(a.foot.y, b.foot.y) }
+    }
+  } else {
+    foot = b.foot
+      ? { x: clamp01v(b.foot.x + dxBody), y: clamp01v(b.foot.y + dyBody) }
+      : a.foot
+  }
   return { bbox, kpts, foot }
 }
 
