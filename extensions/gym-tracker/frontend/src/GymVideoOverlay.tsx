@@ -369,6 +369,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     // Falls back to a response-chained REST poll when WS is unavailable.
     const deviceFramesRef = useRef(false)
     const lastImgRef = useRef<string>('')
+    const imgUrlRef = useRef<string | null>(null)
     // ts_ns (seconds) of the currently displayed device frame, when present
     const lastTsRef = useRef<number | null>(null)
     // jitter buffer: decoded frames (ts sec, Image) in arrival order
@@ -406,7 +407,20 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         // draw directly; the dirty flag makes this a no-op when rAF is alive
         drawRef.current?.()
       }
-      im.src = `data:image/jpeg;base64,${data.img_b64}`
+      // Blob object URL instead of a base64 data URL: skips building a
+      // ~130 KB string copy per frame and the browser's data-URL base64
+      // decode; the previous URL is revoked so blobs don't pile up.
+      try {
+        const bin = atob(data.img_b64)
+        const bytes = new Uint8Array(bin.length)
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+        const url = URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }))
+        if (imgUrlRef.current) URL.revokeObjectURL(imgUrlRef.current)
+        imgUrlRef.current = url
+        im.src = url
+      } catch {
+        im.src = `data:image/jpeg;base64,${data.img_b64}`
+      }
       // ts-keyed from the device clock: each preview frame carries the
       // latest tracks + its own ts — the local history built from these is
       // the interpolation source (exact, and no server-side hist needed).
