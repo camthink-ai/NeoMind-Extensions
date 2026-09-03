@@ -63,7 +63,10 @@ export const GymTrafficChart = forwardRef<HTMLDivElement, ExtensionComponentProp
     }, [refresh])
 
     useEffect(() => {
-      const id = setInterval(() => { if (mountedRef.current) refresh() }, 30000)
+      // 5 s cadence: the "now" counter comes from get_live_state, so a
+      // short poll keeps it near-live; the metric history is still
+      // platform-sampled (≈1 pt/min) and just rides along.
+      const id = setInterval(() => { if (mountedRef.current) refresh() }, 5000)
       return () => clearInterval(id)
     }, [refresh])
 
