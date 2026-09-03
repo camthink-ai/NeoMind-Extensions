@@ -564,6 +564,12 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       if (cr.success && cr.data) setCrossings(cr.data.lines ?? [])
     }, [extensionId])
 
+    // counters only — safe to poll while the editor owns the local geometry
+    const loadCrossings = useCallback(async () => {
+      const cr = await fetchCrossings(extensionId)
+      if (mountedRef.current && cr.success && cr.data) setCrossings(cr.data.lines ?? [])
+    }, [extensionId])
+
     const loadMembers = useCallback(async () => {
       const r = await fetchMembers(extensionId)
       if (mountedRef.current && r.success && r.data) setMembers(r.data.members ?? [])
@@ -644,17 +650,24 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
 
     useEffect(() => {
       const id = setInterval(() => {
-        if (mountedRef.current) {
-          loadLines()
-          if (showHeatmap) {
-            fetchHeatmap(extensionId).then((r) => {
-              if (mountedRef.current && r.success && r.data) setHeat(r.data)
-            })
-          }
+        if (!mountedRef.current) return
+        // In edit mode the local state IS the working copy — refreshing the
+        // line definitions here resurrected a just-deleted line within 2.5 s
+        // and made 删除 look like a no-op. Counters stay live; definitions
+        // reload only outside the editor.
+        if (modeRef.current === 'edit') {
+          loadCrossings()
+          return
+        }
+        loadLines()
+        if (showHeatmap) {
+          fetchHeatmap(extensionId).then((r) => {
+            if (mountedRef.current && r.success && r.data) setHeat(r.data)
+          })
         }
       }, 2500)
       return () => clearInterval(id)
-    }, [loadLines, showHeatmap, extensionId])
+    }, [loadLines, loadCrossings, showHeatmap, extensionId])
 
     // ---- render loop ----
     const draw = useCallback(() => {
@@ -1659,6 +1672,9 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                   </button>
                   <button className="gym-ov-tg" onClick={() => {
                     setMode('view'); setDraft([]); setDraftLine([]); setSelZoneId(null)
+                    // 完成 without 保存 discards: reload the persisted set so
+                    // unsaved edits visibly revert
+                    loadZones(); loadLines()
                   }}>完成</button>
                 </>
               )}
