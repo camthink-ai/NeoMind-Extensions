@@ -1106,6 +1106,12 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         },
       ])
       setDraft([])
+      // the editor list sits below the tall canvas — bring it into view so
+      // naming/saving is reachable without hunting for it
+      requestAnimationFrame(() => {
+        document.querySelector('.gym-ov-zonelist')
+          ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      })
     }, [draft])
 
     const undo = useCallback(() => {

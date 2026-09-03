@@ -1075,6 +1075,9 @@
 /* ---- Monitor header: single compact strip (~34px) ---- */
 
 .gym-ov-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
   display: block;
   padding: 5px 8px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
