@@ -641,6 +641,8 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           dh: img.naturalHeight * scale,
         }
         layoutRef.current = l
+        ctx.imageSmoothingEnabled = true
+        ctx.imageSmoothingQuality = 'high'
         ctx.drawImage(img, l.dx, l.dy, l.dw, l.dh)
       }
       const { dx, dy, dw, dh } = layoutRef.current
