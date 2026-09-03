@@ -24,7 +24,8 @@
         "extension",
         "extension-command"
       ],
-      "configSchema": {}
+      "configSchema": {},
+      "category": "custom"
     },
     {
       "name": "GymEquipmentGrid",
@@ -47,7 +48,8 @@
         "extension",
         "extension-command"
       ],
-      "configSchema": {}
+      "configSchema": {},
+      "category": "custom"
     },
     {
       "name": "GymTrafficChart",
@@ -78,7 +80,8 @@
           "minimum": 1,
           "maximum": 24
         }
-      }
+      },
+      "category": "custom"
     },
     {
       "name": "GymWorkoutSummary",
@@ -101,7 +104,8 @@
         "extension",
         "extension-command"
       ],
-      "configSchema": {}
+      "configSchema": {},
+      "category": "custom"
     },
     {
       "name": "GymVideoOverlay",
@@ -147,7 +151,8 @@
           "default": 600,
           "description": "Track-state poll interval ms (250-5000)"
         }
-      }
+      },
+      "category": "custom"
     }
   ],
   "i18n": {
