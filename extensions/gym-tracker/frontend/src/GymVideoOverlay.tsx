@@ -239,6 +239,11 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     const [selZoneId, setSelZoneId] = useState<string | null>(null)
 
     const [saving, setSaving] = useState(false)
+    // wipe guard: set_roi_zones/set_lines are full-replace, so a save with
+    // an EMPTY list erases everything. If the local list is empty but the
+    // user deleted nothing this session, the emptiness is a load failure /
+    // remount artifact — skip that write instead of wiping the library.
+    const deletedRef = useRef({ zone: false, line: false })
     const [savedFlash, setSavedFlash] = useState(0)
 
     const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -1500,13 +1505,23 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           a: l.a,
           b: l.b,
         }))
+        // wipe guard: an empty list with no delete action this session is a
+        // load artifact (extension reload / remount race), not intent —
+        // writing it would erase the persisted set
+        const zoneOk = zonePayload.length > 0 || deletedRef.current.zone
+        const lineOk = linePayload.length > 0 || deletedRef.current.line
         const [zr, lr] = await Promise.all([
-          runExtensionCommand(extensionId, 'set_roi_zones', { zones: zonePayload }),
-          runExtensionCommand(extensionId, 'set_lines', { lines: linePayload }),
+          zoneOk
+            ? runExtensionCommand(extensionId, 'set_roi_zones', { zones: zonePayload })
+            : Promise.resolve({ success: true } as const),
+          lineOk
+            ? runExtensionCommand(extensionId, 'set_lines', { lines: linePayload })
+            : Promise.resolve({ success: true } as const),
         ])
         if (!mountedRef.current) return
         if (zr.success && lr.success) {
           setSavedFlash(Date.now())
+          deletedRef.current = { zone: false, line: false }
           loadZones()
           loadLines()
         }
@@ -1645,7 +1660,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                         onClick={() => set((v: boolean) => !v)}>{label}</button>
                     )
                   )}
-                  <button className="gym-ov-tg gym-ov-tg-edit" onClick={() => setMode('edit')}>编辑</button>
+                  <button className="gym-ov-tg gym-ov-tg-edit" onClick={() => { deletedRef.current = { zone: false, line: false }; setMode('edit') }}>编辑</button>
                 </>
               )}
               {editing && (
@@ -1770,7 +1785,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                             ))}
                           </select>
                           <button className="gym-ov-btn danger"
-                            onClick={() => setZones((zs) => zs.filter((x) => x.id !== z.id))}>删除</button>
+                            onClick={() => { deletedRef.current.zone = true; setZones((zs) => zs.filter((x) => x.id !== z.id)) }}>删除</button>
                         </div>
                       )))
                 : (editKind === 'lines'
@@ -1789,7 +1804,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                                   ↑{st?.in_count ?? 0} ↓{st?.out_count ?? 0}
                                 </span>
                                 <button className="gym-ov-btn danger"
-                                  onClick={() => setLines((ls) => ls.filter((x) => x.id !== l.id))}>删除</button>
+                                  onClick={() => { deletedRef.current.line = true; setLines((ls) => ls.filter((x) => x.id !== l.id)) }}>删除</button>
                               </div>
                             )
                           }))
