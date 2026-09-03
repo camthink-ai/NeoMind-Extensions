@@ -55,6 +55,7 @@ import {
   setMemberPhoto,
 } from './common'
 import STYLES from './styles.css?raw'
+import { GymSelect } from './GymSelect'
 
 const STYLE_ID = 'gym-monitor-styles-v1'
 
@@ -1773,17 +1774,18 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                             onChange={(e) =>
                               setZones((zs) => zs.map((x) => (x.id === z.id ? { ...x, name: e.target.value } : x)))
                             } />
-                          <select className="gym-ov-input type" value={z.equipment_type}
-                            onChange={(e) =>
-                              setZones((zs) => zs.map((x) => (x.id === z.id ? { ...x, equipment_type: e.target.value } : x)))
-                            }>
-                            {!EQUIPMENT_PRESETS.some(([, v]) => v === z.equipment_type) && (
-                              <option value={z.equipment_type}>{z.equipment_type}</option>
-                            )}
-                            {EQUIPMENT_PRESETS.map(([label, value]) => (
-                              <option key={value} value={value}>{label}</option>
-                            ))}
-                          </select>
+                          <GymSelect
+                            value={z.equipment_type}
+                            onChange={(v) =>
+                              setZones((zs) => zs.map((x) => (x.id === z.id ? { ...x, equipment_type: v } : x)))
+                            }
+                            options={[
+                              ...(!EQUIPMENT_PRESETS.some(([, v]) => v === z.equipment_type)
+                                ? [{ value: z.equipment_type, label: z.equipment_type }]
+                                : []),
+                              ...EQUIPMENT_PRESETS.map(([label, value]) => ({ value, label })),
+                            ]}
+                          />
                           <button className="gym-ov-btn danger"
                             onClick={() => { deletedRef.current.zone = true; setZones((zs) => zs.filter((x) => x.id !== z.id)) }}>删除</button>
                         </div>
@@ -1834,18 +1836,16 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                                 {m.source === 'auto' ? '自动' : '手动'} · {m.samples ?? 1}样本
                               </span>
                               {merging === m.id ? (
-                                <select
-                                  className="gym-ov-input type"
-                                  autoFocus
+                                <GymSelect
                                   value=""
-                                  onChange={(e) => { if (e.target.value) doMerge(e.target.value) }}
-                                  onBlur={() => setMerging(null)}
-                                >
-                                  <option value="">并入哪位会员？</option>
-                                  {members.filter((x) => x.id !== m.id).map((x) => (
-                                    <option key={x.id} value={x.id}>{x.name}</option>
-                                  ))}
-                                </select>
+                                  autoOpen
+                                  placeholder="并入哪位会员？"
+                                  onClose={() => setMerging(null)}
+                                  onChange={(v) => { if (v) doMerge(v) }}
+                                  options={members
+                                    .filter((x) => x.id !== m.id)
+                                    .map((x) => ({ value: x.id, label: x.name }))}
+                                />
                               ) : (
                                 <button className="gym-ov-btn" title="把此人的特征并入另一位会员（换装确认）"
                                   onClick={() => { setMerging(m.id); setSavedFlash(0) }}>并入</button>
