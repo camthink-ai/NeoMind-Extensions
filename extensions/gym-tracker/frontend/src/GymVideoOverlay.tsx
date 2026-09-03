@@ -874,14 +874,16 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
 
           const cx0 = poly.reduce((s, p) => s + p[0], 0) / poly.length
           const cy0 = poly.reduce((s, p) => s + p[1], 0) / poly.length
-          const label = `${z.name} ${count > 0 ? `· ${count}` : ''}`
-          ctx.font = 'bold 14px system-ui, sans-serif'
-          const tw = ctx.measureText(label).width + 16
-          ctx.fillStyle = occupied ? 'rgba(34, 197, 94, 0.9)' : 'rgba(15, 23, 42, 0.75)'
-          ctx.fillRect(X(cx0) - tw / 2, Y(cy0) - 12, tw, 24)
-          ctx.fillStyle = occupied ? '#04250f' : '#e2e8f0'
+          const label = `${z.name}${count > 0 ? `·${count}` : ''}`
+          // compact plate: zones cluster with bbox labels + line badges and
+          // a 14 px plate drowned the scene; keep it a quiet tag
+          ctx.font = '600 11px system-ui, sans-serif'
+          const tw = ctx.measureText(label).width + 10
+          ctx.fillStyle = occupied ? 'rgba(34, 197, 94, 0.88)' : 'rgba(15, 23, 42, 0.68)'
+          ctx.fillRect(X(cx0) - tw / 2, Y(cy0) - 9, tw, 18)
+          ctx.fillStyle = occupied ? '#04250f' : '#d1d5db'
           ctx.textAlign = 'center'
-          ctx.fillText(label, X(cx0), Y(cy0) + 5)
+          ctx.fillText(label, X(cx0), Y(cy0) + 3.5)
           ctx.textAlign = 'left'
         }
       }
@@ -925,16 +927,16 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         }
         // count badge above midpoint
         const label = `${ln.name}  ↑${st?.in_count ?? 0} ↓${st?.out_count ?? 0}`
-        ctx.font = 'bold 14px system-ui, sans-serif'
-        const tw = ctx.measureText(label).width + 16
-        const off = 34
+        ctx.font = '600 11px system-ui, sans-serif'
+        const tw = ctx.measureText(label).width + 10
+        const off = 26
         const nx = Math.sin(ang), ny = -Math.cos(ang) // normal
         const bxPos = mx + nx * off, byPos = my + ny * off
         ctx.fillStyle = 'rgba(120, 53, 15, 0.85)'
-        ctx.fillRect(bxPos - tw / 2, byPos - 12, tw, 24)
+        ctx.fillRect(bxPos - tw / 2, byPos - 9, tw, 18)
         ctx.fillStyle = '#fef3c7'
         ctx.textAlign = 'center'
-        ctx.fillText(label, bxPos, byPos + 5)
+        ctx.fillText(label, bxPos, byPos + 3.5)
         ctx.textAlign = 'left'
       }
 
@@ -1030,16 +1032,16 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           const label = track.member?.name
             ? `${track.member.name} · #${track.track_id}${ex}`
             : `#${track.track_id}${ex}`
-          ctx.font = 'bold 13px system-ui, sans-serif'
+          ctx.font = '600 12px system-ui, sans-serif'
           const tw = ctx.measureText(label).width + 10
           // label plate: black base + colored edge, white text — readable
           // on any background
           ctx.fillStyle = 'rgba(0, 0, 0, 0.82)'
-          ctx.fillRect(X(x) - 1, Math.max(0, Y(y) - 19), tw + 2, 18)
+          ctx.fillRect(X(x) - 1, Math.max(0, Y(y) - 17), tw + 2, 16)
           ctx.fillStyle = track.member ? HC.member : HC.unknown
-          ctx.fillRect(X(x) - 1, Math.max(0, Y(y) - 19), 3, 18)
+          ctx.fillRect(X(x) - 1, Math.max(0, Y(y) - 17), 3, 16)
           ctx.fillStyle = '#ffffff'
-          ctx.fillText(label, X(x) + 6, Math.max(12, Y(y) - 6))
+          ctx.fillText(label, X(x) + 6, Math.max(11, Y(y) - 5.5))
         }
 
         const kpts = track.pose?.kpts
@@ -1490,7 +1492,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       }
     }, [merging, extensionId, loadMembers])
 
-    const save = useCallback(async () => {
+    const save = useCallback(async (): Promise<boolean> => {
       setSaving(true)
       try {
         const zonePayload = zones.map((z) => ({
@@ -1519,13 +1521,15 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             ? runExtensionCommand(extensionId, 'set_lines', { lines: linePayload })
             : Promise.resolve({ success: true } as const),
         ])
-        if (!mountedRef.current) return
+        if (!mountedRef.current) return false
         if (zr.success && lr.success) {
           setSavedFlash(Date.now())
           deletedRef.current = { zone: false, line: false }
           loadZones()
           loadLines()
+          return true
         }
+        return false
       } finally {
         if (mountedRef.current) setSaving(false)
       }
@@ -1686,12 +1690,13 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                   <button className="gym-ov-tg gym-ov-tg-save" onClick={save} disabled={saving}>
                     {saving ? '…' : dirty ? '保存*' : '保存'}
                   </button>
-                  <button className="gym-ov-tg" onClick={() => {
+                  <button className="gym-ov-tg" onClick={async () => {
+                    // 完成 = save & exit; on failure stay in the editor so
+                    // the edit isn't silently lost
+                    const ok = await save()
+                    if (!ok) return
                     setMode('view'); setDraft([]); setDraftLine([]); setSelZoneId(null)
-                    // 完成 without 保存 discards: reload the persisted set so
-                    // unsaved edits visibly revert
-                    loadZones(); loadLines()
-                  }}>完成</button>
+                  }}>{saving ? '保存中…' : '完成'}</button>
                 </>
               )}
             </div>
