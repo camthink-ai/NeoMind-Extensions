@@ -39,6 +39,7 @@ import {
   fetchCrossings,
   fetchFrame,
   FrameBundle,
+  FRAME_DATA_TYPE,
   fetchHeatmap,
   fetchLines,
   fetchLiveState,
@@ -79,11 +80,14 @@ const EQUIPMENT_PRESETS: Array<[string, string]> = [
   ['椭圆机', 'elliptical'],
   ['动感单车', 'spin_bike'],
   ['划船机', 'rowing'],
+  ['爬楼机', 'stair_climber'],
   ['深蹲架', 'squat_rack'],
   ['卧推凳', 'bench'],
   ['硬拉台', 'deadlift_platform'],
   ['单杠', 'pullup_bar'],
   ['龙门架', 'cable_machine'],
+  ['夹胸机', 'chest_fly_machine'],
+  ['练腿架', 'leg_press'],
   ['瑜伽垫', 'mat'],
   ['壶铃区', 'kettlebell'],
   ['哑铃区', 'dumbbell'],
@@ -105,6 +109,60 @@ const PLAY_DELAY = 0.03 // sec
 // (~150-350 ms with the m tile model); below it the overlay clamps and
 // visibly trails the person.
 const EXTRAP_MAX_MS = 0.5 // sec
+
+// ---- binary push frames (double-base64 killer) ----
+// Platform wire format, opt-in via init config `{"binary":true}`:
+//   [kind u8=1][ver u8=1][seq u64 BE][meta_len u32 BE][meta JSON][payload]
+// For gym-tracker the payload is the app container:
+//   [meta_len u32 BE][meta JSON (the FrameBundle minus img_b64)][JPEG bytes]
+// Text sessions (legacy servers) carry the same container base64-wrapped in
+// push_output.data — parseFrameContainer serves both legs unchanged.
+const BIN_KIND_PUSH = 1
+const BIN_VERSION = 1
+const BIN_HEADER_LEN = 14
+
+const textDecoder = new TextDecoder()
+
+function bytesFromB64(b64: string): Uint8Array | null {
+  try {
+    const bin = atob(b64)
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+    return bytes
+  } catch {
+    return null
+  }
+}
+
+/** Split an `application/x-neomind-frame` container into bundle + JPEG. */
+function parseFrameContainer(bytes: Uint8Array): { bundle: FrameBundle; jpeg: Uint8Array } | null {
+  if (bytes.length < 4) return null
+  const metaLen = ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>> 0
+  if (4 + metaLen > bytes.length) return null
+  try {
+    const bundle = JSON.parse(textDecoder.decode(bytes.subarray(4, 4 + metaLen))) as FrameBundle
+    return { bundle, jpeg: bytes.subarray(4 + metaLen) }
+  } catch {
+    return null
+  }
+}
+
+/** Decode a server→client binary push frame → (platform meta, payload). */
+function parseBinaryPushFrame(buf: ArrayBuffer): { meta: Record<string, any>; payload: Uint8Array } | null {
+  if (buf.byteLength < BIN_HEADER_LEN) return null
+  const v = new DataView(buf)
+  const kind = v.getUint8(0)
+  const version = v.getUint8(1)
+  if (kind !== BIN_KIND_PUSH || version !== BIN_VERSION) return null
+  const metaLen = v.getUint32(10)
+  if (BIN_HEADER_LEN + metaLen > buf.byteLength) return null
+  try {
+    const meta = JSON.parse(textDecoder.decode(new Uint8Array(buf, BIN_HEADER_LEN, metaLen)))
+    return { meta, payload: new Uint8Array(buf, BIN_HEADER_LEN + metaLen) }
+  } catch {
+    return null
+  }
+}
 
 interface HistEntry { t: number; bbox: Bbox; foot?: Point | null; kpts?: [number, number, number][] | null; vel?: [number, number] | null }
 
@@ -451,18 +509,72 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     // Falls back to a response-chained REST poll when WS is unavailable.
     const deviceFramesRef = useRef(false)
     const lastImgRef = useRef<string>('')
-    const imgUrlRef = useRef<string | null>(null)
+    // device ts_ns of the last applied frame — the dedup key for binary
+    // frames (no img_b64 string to compare against)
+    const lastFrameTsNsRef = useRef<number | null>(null)
     // ts_ns (seconds) of the currently displayed device frame, when present
     const lastTsRef = useRef<number | null>(null)
     // TRUE ts (sec) of the latest track keyframe — drives the adaptive video
     // delay so the shown frame lands behind it (interpolation, not extrapolation)
     const lastTracksTsRef = useRef(0)
     const emaGapRef = useRef<number | null>(null)
-    // jitter buffer: decoded frames (ts sec, Image) in arrival order
-    const frameBufRef = useRef<Array<{ t: number; img: HTMLImageElement }>>([])
-    const applyFrameBundle = useCallback((data: FrameBundle) => {
-      if (!data.img_b64 || data.img_b64 === lastImgRef.current) return
-      lastImgRef.current = data.img_b64
+    // jitter buffer: decoded frames (ts sec, ImageBitmap | HTMLImageElement)
+    // in arrival order; bitmaps are closed on eviction (GPU-backed memory)
+    const frameBufRef = useRef<Array<{ t: number; img: HTMLImageElement | ImageBitmap }>>([])
+
+    /** Push one decoded frame into the jitter buffer (called async after
+     * bitmap/Image decode resolves — ordering tolerance matches the old
+     * Image.onload behavior; the draw loop picks by ts, not index). */
+    const pushDecodedFrame = useCallback((frameTs: number, img: HTMLImageElement | ImageBitmap) => {
+      if (!mountedRef.current) return
+      const buf = frameBufRef.current
+      buf.push({ t: frameTs, img })
+      while (buf.length > 0 && frameTs - buf[0].t > 1.5) {
+        const evicted = buf.shift()
+        if (evicted && evicted.img instanceof ImageBitmap) evicted.img.close()
+      }
+      const c = fpsCounterRef.current
+      c.frames++
+      const now = Date.now()
+      if (now - c.last >= 1000) {
+        setVideoFps(Math.round((c.frames * 1000) / (now - c.last)))
+        c.frames = 0
+        c.last = now
+      }
+      dirtyRef.current = true
+      // rAF is PAUSED in non-composited webviews (Electron IAB) — kick the
+      // draw directly; the dirty flag makes this a no-op when rAF is alive
+      drawRef.current?.()
+    }, [])
+
+    /** Decode JPEG bytes off the main thread when the engine supports it
+     * (every modern WKWebView/Chromium does); fall back to a data-URL
+     * <img> otherwise. createImageBitmap replaces the objectURL+Image dance:
+     * no revoke bookkeeping, decode never blocks the main thread. */
+    const decodeJpeg = useCallback((bytes: Uint8Array, frameTs: number, b64Fallback?: string) => {
+      if (typeof createImageBitmap === 'function') {
+        createImageBitmap(new Blob([bytes as unknown as BlobPart], { type: 'image/jpeg' }))
+          .then((bmp) => pushDecodedFrame(frameTs, bmp))
+          .catch(() => { /* decode failure — drop the frame */ })
+        return
+      }
+      if (!b64Fallback) return
+      const im = new Image()
+      im.onload = () => pushDecodedFrame(frameTs, im)
+      im.src = `data:image/jpeg;base64,${b64Fallback}`
+    }, [pushDecodedFrame])
+
+    const applyFrameBundle = useCallback((data: FrameBundle, jpegBytes?: Uint8Array) => {
+      // Dedup: device ts_ns is unique per frame and present on both the WS
+      // and REST legs; fall back to img_b64 equality for ts-less producers.
+      const tsNs = data.ts_ns
+      if (tsNs != null) {
+        if (tsNs === lastFrameTsNsRef.current) return
+        lastFrameTsNsRef.current = tsNs
+      } else {
+        if (!data.img_b64 || data.img_b64 === lastImgRef.current) return
+        lastImgRef.current = data.img_b64
+      }
       if (!deviceFramesRef.current) {
         deviceFramesRef.current = true
         // stream-player video is superseded by the device frames
@@ -471,48 +583,19 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       // every device frame proves the display pipeline is alive — also
       // overrides any stale error status from the superseded video path
       setStatus('streaming')
-      const frameTs = ((data as any).ts_ns as number) / 1e6
-      const im = new Image()
-      im.onload = () => {
-        if (!mountedRef.current) return
-        // jitter buffer, not direct display: the draw loop picks the frame
-        // at the playhead (newest - PLAY_DELAY)
-        const buf = frameBufRef.current
-        buf.push({ t: frameTs, img: im })
-        while (buf.length > 0 && frameTs - buf[0].t > 1.5) buf.shift()
-        const c = fpsCounterRef.current
-        c.frames++
-        const now = Date.now()
-        if (now - c.last >= 1000) {
-          setVideoFps(Math.round((c.frames * 1000) / (now - c.last)))
-          c.frames = 0
-          c.last = now
-        }
-        dirtyRef.current = true
-        // rAF is PAUSED in non-composited webviews (Electron IAB) — kick the
-        // draw directly; the dirty flag makes this a no-op when rAF is alive
-        drawRef.current?.()
+      const frameTs = tsNs != null ? tsNs / 1e6 : Date.now() / 1000
+      if (jpegBytes) {
+        decodeJpeg(jpegBytes, frameTs)
+      } else if (data.img_b64) {
+        // legacy string leg (REST fallback / old-core Text sessions)
+        const bytes = bytesFromB64(data.img_b64)
+        if (bytes) decodeJpeg(bytes, frameTs, data.img_b64)
       }
-      // Blob object URL instead of a base64 data URL: skips building a
-      // ~130 KB string copy per frame and the browser's data-URL base64
-      // decode; the previous URL is revoked so blobs don't pile up.
-      try {
-        const bin = atob(data.img_b64)
-        const bytes = new Uint8Array(bin.length)
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-        const url = URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }))
-        if (imgUrlRef.current) URL.revokeObjectURL(imgUrlRef.current)
-        imgUrlRef.current = url
-        im.src = url
-      } catch {
-        im.src = `data:image/jpeg;base64,${data.img_b64}`
-      }
+      const hist = trackHistRef.current
       // ts-keyed from the device clock: each preview frame carries the
       // latest tracks + its own ts — the local history built from these is
       // the interpolation source (exact, and no server-side hist needed).
       // Falls back to receive-time keys when ts is absent (old producers).
-      const tsNs = (data as any).ts_ns as number | undefined
-      const hist = trackHistRef.current
       if (tsNs) {
         // device-clock keyframes: tracks only change at inference rate
         // (~5 Hz) while preview frames arrive at ~20 Hz — append a history
@@ -522,7 +605,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         // velocity and the overlay visibly trails the video.
         // TRUE capture time of the positions — the preview ts is one
         // inference-latency ahead of when these positions were real
-        const tracksTs = ((data as any).tracks_ts as number) / 1e6
+        const tracksTs = (data.tracks_ts ?? 0) / 1e6
         const tSec = tracksTs > 0 ? tracksTs : tsNs / 1e6
         if (tracksTs > 0 && tracksTs > lastTracksTsRef.current)
           lastTracksTsRef.current = tracksTs
@@ -539,7 +622,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             || Math.abs(last.bbox.w - t.bbox.w) > 1e-4
             || Math.abs(last.bbox.h - t.bbox.h) > 1e-4
           if (moved || tSec - last.t > 0.5) {
-            arr.push({ t: tSec, bbox: t.bbox, foot: t.foot, kpts: (t as any).pose?.kpts ?? null, vel: (t as any).vel ?? null })
+            arr.push({ t: tSec, bbox: t.bbox, foot: t.foot, kpts: t.pose?.kpts ?? null, vel: t.vel ?? null })
           }
           while (arr.length > 0 && tSec - arr[0].t > 3) arr.shift()
         }
@@ -563,7 +646,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         faces: data.faces ?? [],
       } as LiveState
       setPresent(data.present_count ?? data.tracks?.length ?? 0)
-    }, [])
+    }, [decodeJpeg])
 
     useEffect(() => {
       let stopped = false
@@ -606,25 +689,53 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           const token = getToken()
           if (token) url += `?token=${encodeURIComponent(token)}`
           ws = new WebSocket(url)
+          // binary push frames arrive as ArrayBuffers when negotiated
+          ws.binaryType = 'arraybuffer'
           frameWsRef.current = ws
           ws.onopen = () => {
-            ws?.send(JSON.stringify({ type: 'init', config: {} }))
+            // `binary: true` opts into raw-byte push frames. Old servers
+            // treat config as free JSON and ignore the unknown key — they
+            // keep sending Text+base64, which the handler below still parses.
+            ws?.send(JSON.stringify({ type: 'init', config: { binary: true } }))
           }
           ws.onmessage = (event) => {
-            if (typeof event.data !== 'string' || !mountedRef.current) return
+            if (!mountedRef.current) return
+            // Binary leg: [14B header][meta][container] — JPEG arrives as
+            // raw bytes, zero base64 on the wire.
+            if (event.data instanceof ArrayBuffer) {
+              const parsed = parseBinaryPushFrame(event.data)
+              if (parsed && parsed.meta?.data_type === FRAME_DATA_TYPE) {
+                const frame = parseFrameContainer(parsed.payload)
+                if (frame) applyFrameBundle(frame.bundle, frame.jpeg)
+              }
+              return
+            }
+            if (typeof event.data !== 'string') return
             try {
               const msg = JSON.parse(event.data)
               if (msg.type === 'session_created') {
-                ws?.send(JSON.stringify({ type: 'start_push', session_id: msg.session_id }))
-              } else if (msg.type === 'push_output' && msg.data_type === 'application/json') {
-                // the wire format base64-encodes even JSON payloads
-                let bundle = null
-                try {
-                  bundle = typeof msg.data === 'string'
-                    ? JSON.parse(atob(msg.data))
-                    : msg.data
-                } catch { /* skip malformed frame */ }
-                if (bundle) applyFrameBundle(bundle)
+                // push starts at init server-side; nothing to send here
+                // (a former `start_push` message never existed in the
+                // server enum and was silently dropped)
+              } else if (msg.type === 'push_output') {
+                if (msg.data_type === FRAME_DATA_TYPE) {
+                  // legacy Text leg from a new extension: the container is
+                  // base64-wrapped inside the JSON envelope
+                  const bytes = typeof msg.data === 'string' ? bytesFromB64(msg.data) : null
+                  if (bytes) {
+                    const frame = parseFrameContainer(bytes)
+                    if (frame) applyFrameBundle(frame.bundle, frame.jpeg)
+                  }
+                } else if (msg.data_type === 'application/json') {
+                  // old extension build: img_b64 embedded in the bundle
+                  let bundle = null
+                  try {
+                    bundle = typeof msg.data === 'string'
+                      ? JSON.parse(atob(msg.data))
+                      : msg.data
+                  } catch { /* skip malformed frame */ }
+                  if (bundle) applyFrameBundle(bundle)
+                }
               }
             } catch { /* malformed frame — skip */ }
           }
@@ -802,7 +913,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       // overlay INTERPOLATES between two real samples (exact) almost always;
       // spikes fall into bounded extrapolation along the device velocity.
       const buf = frameBufRef.current
-      let img: HTMLImageElement | null = null
+      let img: HTMLImageElement | ImageBitmap | null = null
       if (buf.length > 0) {
         const newest = buf[buf.length - 1].t
         const gap = Math.max(0, newest - lastTracksTsRef.current)
@@ -819,16 +930,16 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         if (!img) { img = buf[0].img; lastTsRef.current = buf[0].t }
       }
       if (!img) img = imgRef.current
-      if (img && img.naturalWidth > 0) {
-        const scale = Math.min(
-          VW / img.naturalWidth,
-          VH / img.naturalHeight
-        )
+      // ImageBitmap exposes width/height; HTMLImageElement naturalWidth/Height
+      const iw = img ? (img instanceof HTMLImageElement ? img.naturalWidth : img.width) : 0
+      const ih = img ? (img instanceof HTMLImageElement ? img.naturalHeight : img.height) : 0
+      if (img && iw > 0) {
+        const scale = Math.min(VW / iw, VH / ih)
         const l = {
-          dx: (VW - img.naturalWidth * scale) / 2,
-          dy: (VH - img.naturalHeight * scale) / 2,
-          dw: img.naturalWidth * scale,
-          dh: img.naturalHeight * scale,
+          dx: (VW - iw * scale) / 2,
+          dy: (VH - ih * scale) / 2,
+          dw: iw * scale,
+          dh: ih * scale,
         }
         layoutRef.current = l
         ctx.imageSmoothingEnabled = true

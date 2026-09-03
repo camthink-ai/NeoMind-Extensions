@@ -345,7 +345,9 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                     let tracks = hist.last().map(|(_, t)| t.clone()).unwrap_or_default();
                     let faces = ctx.state.snapshot_faces().unwrap_or_default();
                     return Ok(json!({
-                        "img_b64": i,
+                        // REST stays string-shaped for the polling fallback
+                        // (and old frontends); only the WS push leg is binary.
+                        "img_b64": crate::frame::encode_b64(&i),
                         "ts_ns": ts,
                         "tracks_hist": hist,
                         "tracks_ts": ctx.state.snapshot_tracks_ts(),

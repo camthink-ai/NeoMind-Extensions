@@ -64,8 +64,11 @@ pub fn parse_event(raw: &str) -> Option<TrackFrame> {
     serde_json::from_value::<TrackFrame>(frame_val).ok()
 }
 
-/// Parse a `gym/preview` envelope → (ts_ns, img_b64). None for other topics.
-pub fn parse_preview(raw: &str) -> Option<(u64, String)> {
+/// Parse a `gym/preview` envelope → (ts_ns, JPEG bytes). None for other
+/// topics or payloads that don't decode into a JPEG. The device publishes
+/// `img_b64`; decoding HERE — once, at the edge — is what lets the whole
+/// downstream push path stay binary (no re-encode anywhere).
+pub fn parse_preview(raw: &str) -> Option<(u64, Vec<u8>)> {
     let ev: serde_json::Value = serde_json::from_str(raw).ok()?;
     if ev["topic"].as_str()? != "gym/preview" {
         return None;
@@ -75,7 +78,9 @@ pub fn parse_preview(raw: &str) -> Option<(u64, String)> {
         serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s).ok()?,
         other => other.clone(),
     };
-    Some((p["ts_ns"].as_u64()?, p["img_b64"].as_str()?.to_string()))
+    let ts_ns = p["ts_ns"].as_u64()?;
+    let img = crate::frame::decode_b64_jpeg(p["img_b64"].as_str()?)?;
+    Some((ts_ns, img))
 }
 
 /// Debug counters for GYM_INGEST_DBG diagnostics.
@@ -306,7 +311,15 @@ async fn connect_and_drain(
                         }
                     }
                     if let Some((pts, pimg)) = parse_preview(&txt) {
-                        state.set_preview(pts, pimg);
+                        state.set_preview(pts, Arc::new(pimg));
+                    } else if serde_json::from_str::<serde_json::Value>(&txt)
+                        .ok()
+                        .and_then(|v| v["topic"].as_str().map(|t| t == "gym/preview"))
+                        .unwrap_or(false)
+                    {
+                        // A gym/preview that didn't decode (bad base64 / not a
+                        // JPEG) is corruption, not a filter miss — count it.
+                        ingest_dbg().lock().parse_fail += 1;
                     }
                     match parse_event(&txt) {
                         Some(frame) => {
@@ -439,6 +452,41 @@ mod tests {
         assert_eq!(f.frame_seq, 4242);
         assert_eq!(f.tracks.len(), 1);
         assert_eq!(f.tracks[0].track_id, 4242);
+    }
+
+    #[test]
+    fn parse_preview_decodes_b64_and_returns_jpeg_bytes() {
+        let jpeg = [0xFFu8, 0xD8, 0xE0, 0x11];
+        let b64 = crate::frame::encode_b64(&jpeg);
+        let env = serde_json::json!({
+            "topic": "gym/preview",
+            "payload": {"ts_ns": 42u64, "img_b64": b64}
+        })
+        .to_string();
+        let (ts, img) = parse_preview(&env).expect("valid preview must decode");
+        assert_eq!(ts, 42);
+        assert_eq!(img, jpeg.to_vec());
+    }
+
+    #[test]
+    fn parse_preview_rejects_bad_payloads() {
+        // Not a gym/preview topic
+        assert!(parse_preview(r#"{"topic":"gym/track","payload":{}}"#).is_none());
+        // Preview topic but img_b64 is not a JPEG (SOI gate)
+        let not_jpeg = crate::frame::encode_b64(b"plain text");
+        let env = serde_json::json!({
+            "topic": "gym/preview",
+            "payload": {"ts_ns": 1u64, "img_b64": not_jpeg}
+        })
+        .to_string();
+        assert!(parse_preview(&env).is_none());
+        // Missing ts_ns
+        let env = serde_json::json!({
+            "topic": "gym/preview",
+            "payload": {"img_b64": crate::frame::encode_b64(&[0xFF, 0xD8, 0x00])}
+        })
+        .to_string();
+        assert!(parse_preview(&env).is_none());
     }
 
     #[test]

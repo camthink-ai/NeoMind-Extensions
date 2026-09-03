@@ -11,6 +11,7 @@
 //! thread and the metric-poll thread.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::{Condvar, Mutex, RwLock};
@@ -39,8 +40,10 @@ pub struct LiveState {
     /// SAME FRAME — the Monitor renders both from one source, so image and
     /// overlay can never desync (two-clock problem eliminated by design).
     frame_img: RwLock<Option<(String, Vec<Track>, Vec<FaceBox>)>>,
-    /// Display-rate preview stream (`gym/preview`): latest (ts_ns, img).
-    preview: RwLock<Option<(u64, String)>>,
+    /// Display-rate preview stream (`gym/preview`): latest (ts_ns, JPEG
+    /// bytes) behind an `Arc` — the push thread wakes per frame and must
+    /// never copy ~100 KB under the lock.
+    preview: RwLock<Option<(u64, Arc<Vec<u8>>)>>,
     /// Per-track consecutive-unknown counters gating auto-enrollment
     /// (see commands.rs persistence gate).
     unknown_streaks: RwLock<HashMap<i64, u32>>,
@@ -120,16 +123,16 @@ impl LiveState {
         }
     }
 
-    /// Latest display preview (ts_ns, img_b64) from `gym/preview`.
-    pub fn set_preview(&self, ts_ns: u64, img: String) {
+    /// Latest display preview (ts_ns, JPEG bytes) from `gym/preview`.
+    pub fn set_preview(&self, ts_ns: u64, img: Arc<Vec<u8>>) {
         *self.preview.write() = Some((ts_ns, img));
         let _guard = self.preview_wait.lock();
         self.preview_cv.notify_all();
     }
 
     /// Block until a new preview arrives or `timeout` elapses; returns the
-    /// latest (ts, img) at wake time.
-    pub fn wait_preview(&self, timeout: Duration) -> Option<(u64, String)> {
+    /// latest (ts, JPEG bytes) at wake time (Arc clone — no image copy).
+    pub fn wait_preview(&self, timeout: Duration) -> Option<(u64, Arc<Vec<u8>>)> {
         let mut guard = self.preview_wait.lock();
         let _ = self.preview_cv.wait_for(&mut guard, timeout);
         self.preview.read().clone()
@@ -150,8 +153,8 @@ impl LiveState {
         *self.tracks_ts.read()
     }
 
-    /// Latest display preview from `gym/preview`.
-    pub fn snapshot_preview(&self) -> Option<(u64, String)> {
+    /// Latest display preview from `gym/preview` (JPEG bytes).
+    pub fn snapshot_preview(&self) -> Option<(u64, Arc<Vec<u8>>)> {
         self.preview.read().clone()
     }
 

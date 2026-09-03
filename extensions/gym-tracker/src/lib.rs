@@ -23,6 +23,7 @@ pub mod commands;
 pub mod config;
 pub mod db;
 pub mod exercise;
+pub mod frame;
 pub mod geo;
 mod identity;
 mod ingest;
@@ -88,6 +89,14 @@ fn cmd(name: &str, desc: &str) -> ExtensionCommand {
     // `&str: Into<String>` holds, so we pass the slices directly (avoiding the
     // ambiguous `.into()` that E0283 flags on `impl Into<String>` bounds).
     ExtensionCommand::new(name).with_description(desc)
+}
+
+/// Unix epoch milliseconds for `PushOutputMessage::timestamp`.
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 /// Live push sessions (session_id → stop flag) for the frame stream.
@@ -331,32 +340,36 @@ impl Extension for GymTrackerExtension {
                 let tracks = state.snapshot_tracks();
                 let tracks_ts = state.snapshot_tracks_ts();
                 seq += 1;
-                let msg = PushOutputMessage::json(
-                    &sid,
-                    seq,
-                    serde_json::json!({
-                        "img_b64": img,
-                        "ts_ns": ts_ns,
-                        // latest tracks at the device clock — the client
-                        // builds its own ts-keyed history from the stream
-                        // (sending the full hist per frame doubled the
-                        // parse cost and stalled the browser at 23 fps)
-                        "tracks": tracks,
-                        // TRUE capture time of those track positions — the
-                        // client keys its overlay history by this, not by
-                        // the preview ts (which is one inference-latency ahead)
-                        "tracks_ts": tracks_ts,
-                        "faces": faces,
-                        "present_count": tracks.len(),
-                    }),
-                );
-                match msg {
-                    Ok(m) => {
-                        if send_push_output(&m).is_err() {
-                            break; // channel gone — session ended
-                        }
-                    }
-                    Err(_) => continue, // serde json of plain data — unreachable
+                // Binary container `[u32 meta_len BE][meta JSON][JPEG bytes]`
+                // (data_type `application/x-neomind-frame`). On binary-
+                // negotiated sessions the JPEG reaches the browser as raw
+                // bytes — no base64 on either leg. Legacy Text sessions get
+                // this same payload base64-wrapped by the platform; the
+                // Monitor's parser handles both shapes.
+                let meta = serde_json::json!({
+                    // latest tracks at the device clock — the client
+                    // builds its own ts-keyed history from the stream
+                    // (sending the full hist per frame doubled the
+                    // parse cost and stalled the browser at 23 fps)
+                    "tracks": tracks,
+                    "ts_ns": ts_ns,
+                    // TRUE capture time of those track positions — the
+                    // client keys its overlay history by this, not by
+                    // the preview ts (which is one inference-latency ahead)
+                    "tracks_ts": tracks_ts,
+                    "faces": faces,
+                    "present_count": tracks.len(),
+                });
+                let m = PushOutputMessage {
+                    session_id: sid.clone(),
+                    sequence: seq,
+                    data: frame::build_frame_payload(&meta, &img),
+                    data_type: frame::FRAME_DATA_TYPE.to_string(),
+                    timestamp: now_ms(),
+                    metadata: None,
+                };
+                if send_push_output(&m).is_err() {
+                    break; // channel gone — session ended
                 }
             }
         });

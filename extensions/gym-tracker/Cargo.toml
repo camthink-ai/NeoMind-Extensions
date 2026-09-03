@@ -1,6 +1,6 @@
 [package]
 name = "gym-tracker"
-version = "2.7.8"
+version = "2.10.0"
 edition = "2021"
 authors = ["NeoMind Team"]
 license = "Apache-2.0"
@@ -18,6 +18,7 @@ thiserror = { workspace = true }
 async-trait = { workspace = true }
 urlencoding = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
 parking_lot = "0.12"
 futures-util = "0.3"
 tracing = "0.1"

@@ -83,6 +83,9 @@ pub fn zone_exercise(equipment_type: &str) -> Option<(&'static str, bool)> {
         "deadlift_platform" => Some(("deadlift", false)),
         "pullup_bar" => Some(("pullup", false)),
         "cable_machine" => Some(("lat_pulldown", false)),
+        "chest_fly_machine" | "chest_fly" => Some(("chest_fly", false)),
+        "leg_press" => Some(("leg_press", false)),
+        "stair_climber" | "stairmaster" => Some(("stair_climber", true)),
         "mat" | "yoga_mat" | "crunch_mat" => Some(("crunch", false)),
         "kettlebell" => Some(("kettlebell_swing", false)),
         // NOTE: dumbbell / free_weights zones are deliberately NOT mapped —
@@ -152,17 +155,17 @@ pub fn classify_from_pose(pose: &Pose) -> &'static str {
 fn thresholds(exercise: &str) -> Option<(f32, f32)> {
     // (up_angle, down_angle) on the exercise's primary joint
     Some(match exercise {
-        "squat" | "lunge" => (160.0, 110.0),                // knee angle
-        "deadlift" => (160.0, 130.0),                       // hip angle
-        "bench_press" | "pushup" => (160.0, 100.0),         // elbow
-        "lat_pulldown" => (160.0, 110.0),                   // elbow
+        "squat" | "lunge" | "leg_press" => (160.0, 110.0), // knee angle
+        "deadlift" => (160.0, 130.0),                      // hip angle
+        "bench_press" | "pushup" => (160.0, 100.0),        // elbow
+        "lat_pulldown" => (160.0, 110.0),                  // elbow
         "bicep_curl" | "crunch" | "situp" => (150.0, 60.0), // elbow / torso-hip
-        "shoulder_press" => (150.0, 80.0),                  // elbow
-        "pullup" => (160.0, 90.0),                          // elbow
-        "lateral_raise" => (85.0, 20.0),                    // wrist elevation
-        "chest_fly" => (150.0, 110.0),                      // elbow (shallow arc)
-        "dumbbell_row" => (160.0, 90.0),                    // elbow
-        "kettlebell_swing" => (170.0, 120.0),               // hip angle
+        "shoulder_press" => (150.0, 80.0),                 // elbow
+        "pullup" => (160.0, 90.0),                         // elbow
+        "lateral_raise" => (85.0, 20.0),                   // wrist elevation
+        "chest_fly" => (150.0, 110.0),                     // elbow (shallow arc)
+        "dumbbell_row" => (160.0, 90.0),                   // elbow
+        "kettlebell_swing" => (170.0, 120.0),              // hip angle
         _ => return None, // cardio / plank / standing: duration only
     })
 }
@@ -181,7 +184,7 @@ fn primary_angle(pose: &Pose, exercise: &str) -> Option<f32> {
         }
     };
     match exercise {
-        "squat" | "lunge" => best((L_HIP, L_KNEE, L_ANKLE)),
+        "squat" | "lunge" | "leg_press" => best((L_HIP, L_KNEE, L_ANKLE)),
         "deadlift" | "kettlebell_swing" => best((L_SHOULDER, L_HIP, L_KNEE)),
         "crunch" | "situp" => best((L_SHOULDER, L_HIP, L_KNEE)),
         // raises count on wrist ELEVATION (straight arm), not a joint.

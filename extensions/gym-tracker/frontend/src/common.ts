@@ -47,6 +47,8 @@ export interface Track {
   foot?: Point | null
   pose?: Pose | null
   face?: unknown
+  /** Device-tracker EMA velocity, normalized units/sec (absent pre-2.9 producers). */
+  vel?: [number, number] | null
   /** True when the device attached a body-ReID embedding (P3). */
   has_emb?: boolean
   /** Matched member via nearest-L2 over the member library (P3); null = unknown. */
@@ -68,14 +70,23 @@ export interface FaceBox {
   det: number
 }
 
-/** get_frame payload — img_b64 is null until a PREVIEW-enabled producer connects. */
+/** get_frame / WS-push bundle — img_b64 is null until a PREVIEW-enabled
+ * producer connects (binary push sessions deliver the JPEG separately, so
+ * img_b64 is absent there). */
 export interface FrameBundle {
   img_b64?: string | null
+  /** Device capture time of the preview JPEG (ns since epoch). */
+  ts_ns?: number
+  /** TRUE capture time of the carried track positions (ns since epoch). */
+  tracks_ts?: number
   faces?: FaceBox[]
   tracks?: Track[]
   present_count?: number
   members_count?: number
 }
+
+/** data_type of the binary frame container pushed by the extension. */
+export const FRAME_DATA_TYPE = 'application/x-neomind-frame'
 
 export interface Zone {
   id: string

@@ -665,6 +665,10 @@ impl Inner {
                 if !w.counter_inited || w.exercise != ex {
                     let total = w.reps + w.counter.reps;
                     w.reps = if w.counter_inited { total } else { 0 };
+                    // bank completed sets too — the label legitimately
+                    // flutters during rest (squat → standing → squat) and
+                    // losing the set count each flip understated training
+                    w.sets += w.counter.sets;
                     w.counter = crate::exercise::RepCounter::new(ex, cardio, now);
                     w.counter_inited = true;
                     w.exercise = ex.into();

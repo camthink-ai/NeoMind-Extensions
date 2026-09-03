@@ -1,6 +1,6 @@
 {
   "name": "@neomind/gym-tracker-frontend",
-  "version": "2.9.0",
+  "version": "2.10.0",
   "description": "Gym Tracker frontend components for the NeoMind extension runtime",
   "type": "module",
   "scripts": {
