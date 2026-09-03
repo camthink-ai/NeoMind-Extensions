@@ -151,6 +151,17 @@ interface DraftLine extends LineDef {
   isNew?: boolean
 }
 
+/** One in-progress edit drag. `orig` holds the pre-drag geometry so moves
+ *  are recomputed from it (no compounding drift), and `snap` the full zones
+ *  array for 撤销. */
+type DragState =
+  | { kind: 'vertex'; zoneId: string; idx: number; snap: DraftZone[] }
+  | { kind: 'mid-insert'; zoneId: string; after: number; snap: DraftZone[] }
+  | { kind: 'poly'; zoneId: string; orig: number[][]; nx0: number; ny0: number; snap: DraftZone[] }
+  | { kind: 'draft-pt'; idx: number }
+  | { kind: 'line-end'; lineId: string; end: 'a' | 'b'; snap: DraftLine[] }
+  | { kind: 'line-move'; lineId: string; orig: [number[], number[]]; nx0: number; ny0: number; snap: DraftLine[] }
+
 interface HeatmapData {
   cols: number
   rows: number
@@ -193,10 +204,14 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
   const [merging, setMerging] = useState<string | null>(null)
 
     const [showTrails, setShowTrails] = useState(true)
+    const [showBoxes, setShowBoxes] = useState(true)
+    const [showPose, setShowPose] = useState(true)
     const [showZones, setShowZones] = useState(true)
     const [showHeatmap, setShowHeatmap] = useState(false)
     const [mosaic, setMosaic] = useState(true)
     const [heat, setHeat] = useState<HeatmapData | null>(null)
+    // zone/line selected from the edit list — gets a highlight on canvas
+    const [selZoneId, setSelZoneId] = useState<string | null>(null)
 
     const [saving, setSaving] = useState(false)
     const [savedFlash, setSavedFlash] = useState(0)
@@ -218,7 +233,15 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     const draftLineRef = useRef<number[][]>([])
     const modeRef = useRef<'view' | 'edit'>('view')
     const editKindRef = useRef<EditKind>('zones')
-    const showRef = useRef({ trails: true, zones: true, heat: false, mosaic: true })
+    const selZoneRef = useRef<string | null>(null)
+    // live polygon/line drag (edit mode): see onPointerDown
+    const dragRef = useRef<{ st: DragState; moved: boolean; sx: number; sy: number } | null>(null)
+    // a completed drag sets this; the next click must not add a draft point
+    const suppressClickRef = useRef(false)
+    // geometry snapshot taken when a drag/vertex-delete starts — 撤销 restores
+    // it once the draft stacks are empty
+    const lastDragSnapRef = useRef<{ zones?: DraftZone[]; lines?: DraftLine[] } | null>(null)
+    const showRef = useRef({ trails: true, boxes: true, pose: true, zones: true, heat: false, mosaic: true })
     const heatRef = useRef<HeatmapData | null>(null)
     const imgRef = useRef<HTMLImageElement | null>(null)
     const rafRef = useRef<number>(0)
@@ -240,7 +263,8 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     useEffect(() => { draftLineRef.current = draftLine }, [draftLine])
     useEffect(() => { modeRef.current = mode }, [mode])
     useEffect(() => { editKindRef.current = editKind }, [editKind])
-    useEffect(() => { showRef.current = { trails: showTrails, zones: showZones, heat: showHeatmap, mosaic } }, [showTrails, showZones, showHeatmap, mosaic])
+    useEffect(() => { showRef.current = { trails: showTrails, boxes: showBoxes, pose: showPose, zones: showZones, heat: showHeatmap, mosaic } }, [showTrails, showBoxes, showPose, showZones, showHeatmap, mosaic])
+    useEffect(() => { selZoneRef.current = selZoneId }, [selZoneId])
     useEffect(() => { heatRef.current = heat }, [heat])
 
     useEffect(() => {
@@ -753,17 +777,43 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
               : 'rgba(148, 163, 184, 0.07)'
           ctx.fill()
           ctx.lineWidth = editing ? 2.5 : 2
-          ctx.strokeStyle = occupied ? 'rgba(34, 197, 94, 0.95)' : 'rgba(148, 163, 184, 0.7)'
+          const sel = editing && selZoneRef.current === z.id
+          ctx.strokeStyle = occupied
+            ? 'rgba(34, 197, 94, 0.95)'
+            : sel
+              ? '#3b82f6'
+              : 'rgba(148, 163, 184, 0.7)'
           if (z.enabled === false || z.enabled === 0) ctx.setLineDash([6, 5])
           ctx.stroke()
           ctx.setLineDash([])
 
           if (editing) {
-            ctx.fillStyle = 'rgba(148, 163, 184, 0.95)'
+            // draggable vertex handles: dark ring + light core (grab affordance)
             for (const p of poly) {
               ctx.beginPath()
-              ctx.arc(X(p[0]), Y(p[1]), 4, 0, Math.PI * 2)
+              ctx.arc(X(p[0]), Y(p[1]), 7, 0, Math.PI * 2)
+              ctx.fillStyle = 'rgba(15, 23, 42, 0.85)'
               ctx.fill()
+              ctx.beginPath()
+              ctx.arc(X(p[0]), Y(p[1]), sel ? 4.5 : 3.5, 0, Math.PI * 2)
+              ctx.fillStyle = sel ? '#3b82f6' : 'rgba(226, 232, 240, 0.95)'
+              ctx.fill()
+            }
+            // edge midpoints: hollow — drag one to insert a vertex there
+            for (let i = 0; i < poly.length; i++) {
+              const a = poly[i]
+              const b = poly[(i + 1) % poly.length]
+              const mx = (a[0] + b[0]) / 2
+              const my = (a[1] + b[1]) / 2
+              ctx.beginPath()
+              ctx.arc(X(mx), Y(my), 5, 0, Math.PI * 2)
+              ctx.fillStyle = 'rgba(15, 23, 42, 0.7)'
+              ctx.fill()
+              ctx.beginPath()
+              ctx.arc(X(mx), Y(my), 3.2, 0, Math.PI * 2)
+              ctx.strokeStyle = sel ? '#93c5fd' : 'rgba(148, 163, 184, 0.9)'
+              ctx.lineWidth = 1.5
+              ctx.stroke()
             }
           }
 
@@ -805,10 +855,17 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         ctx.lineTo(mx + Math.cos(ang - 2.5) * 7, my + Math.sin(ang - 2.5) * 7)
         ctx.closePath()
         ctx.fill()
-        // endpoints
+        // endpoints — in edit mode: draggable handles (ring + core)
         for (const [px, py] of [[ax, ay], [bx, by]]) {
+          if (editing) {
+            ctx.beginPath()
+            ctx.arc(px, py, 8, 0, Math.PI * 2)
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.85)'
+            ctx.fill()
+          }
           ctx.beginPath()
-          ctx.arc(px, py, editing ? 5 : 4, 0, Math.PI * 2)
+          ctx.arc(px, py, editing ? 4.5 : 4, 0, Math.PI * 2)
+          ctx.fillStyle = 'rgba(245, 158, 11, 0.95)'
           ctx.fill()
         }
         // count badge above midpoint
@@ -918,7 +975,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         }
       })
       for (const track of alignedTracks) {
-        if (track.bbox) {
+        if (show.boxes && track.bbox) {
           const { x, y, w, h } = track.bbox
           drawCorners(X(x), Y(y), w * dw, h * dh,
                       track.member ? HC.member : HC.unknown)
@@ -946,7 +1003,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         }
 
         const kpts = track.pose?.kpts
-        if (kpts && kpts.length > 0) {
+        if (show.pose && kpts && kpts.length > 0) {
           const pt = (i: number) => {
             const k = kpts[i]
             return k && k[2] > KPT_MIN_SCORE ? { x: X(k[0]), y: Y(k[1]) } : null
@@ -981,7 +1038,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           }
         }
 
-        if (track.foot) {
+        if (show.pose && track.foot) {
           const fx = X(track.foot.x)
           const fy = Y(track.foot.y)
           ctx.beginPath()
@@ -1064,6 +1121,202 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       }
     }, [draw])
 
+    // ---- edit-mode geometry dragging ----
+    // Grab radius in virtual px (the draw space is 960-wide, so this stays
+    // proportional on any widget size).
+    const HIT = 11
+    const clamp01 = (v: number) => Math.min(1, Math.max(0, v))
+    // keep a whole-polygon drag inside the frame: shift may need clamping per
+    // axis when the shape reaches an edge
+    const clampShift = (v: number) => Math.max(-1, Math.min(1, v))
+    const cloneZones = (zs: DraftZone[]) => zs.map((z) => ({ ...z, polygon: z.polygon.map((p) => [...p]) }))
+    const cloneLines = (ls: DraftLine[]) => ls.map((l) => ({ ...l, a: [...l.a] as number[], b: [...l.b] as number[] }))
+
+    const pointerPos = (e: { clientX: number; clientY: number }) => {
+      const canvas = canvasRef.current!
+      const rect = canvas.getBoundingClientRect()
+      const scaleX = canvas.width / rect.width
+      const scaleY = canvas.height / rect.height
+      const K = canvas.width / 960
+      const cx = ((e.clientX - rect.left) * scaleX) / K
+      const cy = ((e.clientY - rect.top) * scaleY) / K
+      const { dx, dy, dw, dh } = layoutRef.current
+      return { cx, cy, nx: (cx - dx) / dw, ny: (cy - dy) / dh }
+    }
+    const vX = (nx: number) => layoutRef.current.dx + nx * layoutRef.current.dw
+    const vY = (ny: number) => layoutRef.current.dy + ny * layoutRef.current.dh
+
+    /** Nearest zone vertex / edge-midpoint under the pointer, if any. */
+    const hitZoneHandle = (cx: number, cy: number) => {
+      for (const z of zonesRef.current) {
+        const poly = z.polygon
+        if (!poly) continue
+        for (let i = 0; i < poly.length; i++) {
+          if (Math.hypot(cx - vX(poly[i][0]), cy - vY(poly[i][1])) <= HIT)
+            return { zone: z, kind: 'vertex' as const, idx: i }
+        }
+        for (let i = 0; i < poly.length; i++) {
+          const a = poly[i], b = poly[(i + 1) % poly.length]
+          if (Math.hypot(cx - vX((a[0] + b[0]) / 2), cy - vY((a[1] + b[1]) / 2)) <= HIT)
+            return { zone: z, kind: 'mid' as const, idx: i }
+        }
+      }
+      return null
+    }
+    const hitLineHandle = (cx: number, cy: number) => {
+      for (const ln of linesRef.current) {
+        if (Math.hypot(cx - vX(ln.a[0]), cy - vY(ln.a[1])) <= HIT) return { line: ln, end: 'a' as const }
+        if (Math.hypot(cx - vX(ln.b[0]), cy - vY(ln.b[1])) <= HIT) return { line: ln, end: 'b' as const }
+        // line body (segment distance) → whole-line move
+        const ax = vX(ln.a[0]), ay = vY(ln.a[1]), bx = vX(ln.b[0]), by = vY(ln.b[1])
+        const L2 = (bx - ax) ** 2 + (by - ay) ** 2
+        const t = L2 > 0 ? Math.max(0, Math.min(1, ((cx - ax) * (bx - ax) + (cy - ay) * (by - ay)) / L2)) : 0
+        if (Math.hypot(cx - (ax + t * (bx - ax)), cy - (ay + t * (by - ay))) <= HIT)
+          return { line: ln, end: null }
+      }
+      return null
+    }
+
+    // live drag: zones/lines refs are written in lockstep with state so the
+    // canvas (which reads refs) never lags a frame behind the drag
+    const applyZones = (next: DraftZone[]) => { zonesRef.current = next; setZones(next) }
+    const applyLines = (next: DraftLine[]) => { linesRef.current = next; setLines(next) }
+
+    const onPointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (modeRef.current !== 'edit') return
+      const { cx, cy, nx, ny } = pointerPos(e)
+
+      const start = (st: DragState) => {
+        e.currentTarget.setPointerCapture(e.pointerId)
+        dragRef.current = { st, moved: false, sx: e.clientX, sy: e.clientY }
+      }
+
+      if (editKindRef.current === 'lines') {
+        const hit = hitLineHandle(cx, cy)
+        if (!hit) return
+        if (hit.end) start({ kind: 'line-end', lineId: hit.line.id, end: hit.end, snap: cloneLines(linesRef.current) })
+        else start({ kind: 'line-move', lineId: hit.line.id, orig: [[...hit.line.a], [...hit.line.b]] as [number[], number[]], nx0: nx, ny0: ny, snap: cloneLines(linesRef.current) })
+        return
+      }
+      if (editKindRef.current !== 'zones') return
+
+      // draft point handles first (they sit on top while drawing)
+      const d = draftRef.current
+      for (let i = d.length - 1; i >= 0; i--) {
+        if (Math.hypot(cx - vX(d[i][0]), cy - vY(d[i][1])) <= HIT) {
+          start({ kind: 'draft-pt', idx: i })
+          return
+        }
+      }
+      const hit = hitZoneHandle(cx, cy)
+      if (hit?.kind === 'vertex') {
+        start({ kind: 'vertex', zoneId: hit.zone.id, idx: hit.idx, snap: cloneZones(zonesRef.current) })
+        return
+      }
+      if (hit?.kind === 'mid') {
+        // the vertex is materialized only once the pointer actually moves —
+        // a plain click on a midpoint must not add stray vertices
+        start({ kind: 'mid-insert', zoneId: hit.zone.id, after: hit.idx, snap: cloneZones(zonesRef.current) })
+        return
+      }
+      // inside a zone → whole-polygon move (topmost wins)
+      for (let i = zonesRef.current.length - 1; i >= 0; i--) {
+        const z = zonesRef.current[i]
+        if (z.polygon && pointInPolygon(nx, ny, z.polygon)) {
+          start({ kind: 'poly', zoneId: z.id, orig: z.polygon.map((p) => [...p]), nx0: nx, ny0: ny, snap: cloneZones(zonesRef.current) })
+          return
+        }
+      }
+    }, [])
+
+    const onPointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      const drag = dragRef.current
+      const { cx, cy, nx, ny } = pointerPos(e)
+      if (!drag) {
+        if (modeRef.current === 'edit') {
+          const grab =
+            editKindRef.current === 'lines'
+              ? !!hitLineHandle(cx, cy)
+              : !!hitZoneHandle(cx, cy) ||
+                draftRef.current.some((p) => Math.hypot(cx - vX(p[0]), cy - vY(p[1])) <= HIT)
+          const inside =
+            editKindRef.current === 'zones' &&
+            zonesRef.current.some((z) => z.polygon && pointInPolygon(nx, ny, z.polygon))
+          canvas.style.cursor = grab ? 'grab' : inside ? 'move' : 'crosshair'
+        } else if (canvas.style.cursor) canvas.style.cursor = ''
+        return
+      }
+      if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 4) drag.moved = true
+      if (!drag.moved) return
+      const st = drag.st
+      if (st.kind === 'mid-insert') {
+        // first movement materializes the vertex under the pointer, then the
+        // drag continues as a normal vertex drag
+        const idx = st.after + 1
+        applyZones(zonesRef.current.map((z) =>
+          z.id === st.zoneId
+            ? { ...z, polygon: [...z.polygon.slice(0, idx), [clamp01(nx), clamp01(ny)], ...z.polygon.slice(idx)] }
+            : z))
+        drag.st = { kind: 'vertex', zoneId: st.zoneId, idx, snap: st.snap }
+      } else if (st.kind === 'vertex') {
+        applyZones(zonesRef.current.map((z) =>
+          z.id === st.zoneId
+            ? { ...z, polygon: z.polygon.map((p, i) => (i === st.idx ? [clamp01(nx), clamp01(ny)] : p)) }
+            : z))
+      } else if (st.kind === 'poly') {
+        const dnx = clampShift(nx - st.nx0), dny = clampShift(ny - st.ny0)
+        applyZones(zonesRef.current.map((z) =>
+          z.id === st.zoneId
+            ? { ...z, polygon: st.orig.map((p) => [clamp01(p[0] + dnx), clamp01(p[1] + dny)]) }
+            : z))
+      } else if (st.kind === 'draft-pt') {
+        const next = draftRef.current.map((p, i) => (i === st.idx ? [clamp01(nx), clamp01(ny)] : p))
+        draftRef.current = next
+        setDraft(next)
+      } else if (st.kind === 'line-end') {
+        applyLines(linesRef.current.map((l) =>
+          l.id === st.lineId ? { ...l, [st.end]: [clamp01(nx), clamp01(ny)] } : l))
+      } else if (st.kind === 'line-move') {
+        const dnx = nx - st.nx0, dny = ny - st.ny0
+        applyLines(linesRef.current.map((l) =>
+          l.id === st.lineId
+            ? { ...l, a: [clamp01(st.orig[0][0] + dnx), clamp01(st.orig[0][1] + dny)], b: [clamp01(st.orig[1][0] + dnx), clamp01(st.orig[1][1] + dny)] }
+            : l))
+      }
+      dirtyRef.current = true
+    }, [])
+
+    const onPointerUp = useCallback(() => {
+      const drag = dragRef.current
+      dragRef.current = null
+      const canvas = canvasRef.current
+      if (canvas && modeRef.current !== 'edit') canvas.style.cursor = ''
+      if (!drag || !drag.moved) return
+      suppressClickRef.current = true
+      const st = drag.st
+      if (st.kind === 'line-end' || st.kind === 'line-move')
+        lastDragSnapRef.current = { lines: st.snap }
+      else if (st.kind !== 'draft-pt')
+        lastDragSnapRef.current = { zones: st.snap }
+      dirtyRef.current = true
+    }, [])
+
+    const onCanvasDblClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (modeRef.current !== 'edit' || editKindRef.current !== 'zones') return
+      const { cx, cy } = pointerPos(e)
+      const hit = hitZoneHandle(cx, cy)
+      if (hit?.kind !== 'vertex') return
+      const z = hit.zone
+      if (z.polygon.length <= 3) return // would degenerate — delete via the list instead
+      suppressClickRef.current = true
+      lastDragSnapRef.current = { zones: cloneZones(zonesRef.current) }
+      applyZones(zonesRef.current.map((x) =>
+        x.id === z.id ? { ...x, polygon: x.polygon.filter((_, i) => i !== hit.idx) } : x))
+      dirtyRef.current = true
+    }, [])
+
     // ---- canvas click routing ----
     const onCanvasClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current
@@ -1092,8 +1345,16 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         }
         return
       }
+      // the click that ended a drag (or a dblclick's second click) must not
+      // add geometry
+      if (suppressClickRef.current) {
+        suppressClickRef.current = false
+        return
+      }
 
       if (editKindRef.current === 'lines') {
+        // clicks on an existing line's handles are for dragging, not drawing
+        if (hitLineHandle(cx, cy)) return
         // two clicks complete a line: first = a, second = b
         setDraftLine((d) => {
           if (d.length === 0) return [p]
@@ -1108,6 +1369,8 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           return []
         })
       } else {
+        // clicks on vertex/midpoint handles are for dragging, not new points
+        if (hitZoneHandle(cx, cy)) return
         setDraft((d) => [...d, p])
       }
     }, [])
@@ -1135,9 +1398,23 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     }, [draft])
 
     const undo = useCallback(() => {
-      if (editKind === 'lines') setDraftLine((d) => d.slice(0, -1))
-      else setDraft((d) => d.slice(0, -1))
-    }, [editKind])
+      if (editKind === 'lines' && draftLine.length > 0) {
+        setDraftLine((d) => d.slice(0, -1))
+        return
+      }
+      if (editKind === 'zones' && draft.length > 0) {
+        setDraft((d) => d.slice(0, -1))
+        return
+      }
+      // no draft points left → undo the last drag / vertex delete
+      const snap = lastDragSnapRef.current
+      if (snap) {
+        if (snap.zones) applyZones(snap.zones)
+        if (snap.lines) applyLines(snap.lines)
+        lastDragSnapRef.current = null
+        dirtyRef.current = true
+      }
+    }, [editKind, draft.length, draftLine.length])
 
     const submitRegister = useCallback(async () => {
       setRegister((r) => (r ? { ...r, busy: true, msg: null } : r))
@@ -1324,6 +1601,8 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
               {!editing && (
                 <>
                   {([[ 'trails', showTrails, setShowTrails, '轨迹'],
+                     ['boxes', showBoxes, setShowBoxes, '框'],
+                     ['pose', showPose, setShowPose, '骨架'],
                      ['zones', showZones, setShowZones, '分区'],
                      ['heat', showHeatmap, setShowHeatmap, '热力'],
                      ['mosaic', mosaic, setMosaic, '打码']] as const).map(
@@ -1358,7 +1637,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                     {saving ? '…' : dirty ? '保存*' : '保存'}
                   </button>
                   <button className="gym-ov-tg" onClick={() => {
-                    setMode('view'); setDraft([]); setDraftLine([])
+                    setMode('view'); setDraft([]); setDraftLine([]); setSelZoneId(null)
                   }}>完成</button>
                 </>
               )}
@@ -1370,6 +1649,11 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
               ref={canvasRef}
               className={`gym-ov-canvas ${editing ? 'editing' : ''}`}
               onClick={onCanvasClick}
+              onDoubleClick={onCanvasDblClick}
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerUp}
             />
             {status !== 'streaming' && (
               <div className="gym-ov-veil">
@@ -1388,9 +1672,9 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             {editing && (
               <div className="gym-ov-edit-tip">
                 {editKind === 'zones'
-                  ? '点击画面添加分区顶点（任意多边形，≥3 点）→「闭合」→ 下方命名 → 保存'
+                  ? '拖顶点调形状 · 拖空心中点加点 · 区内拖动整体移动 · 双击顶点删除 · 点击空白画新分区'
                   : editKind === 'lines'
-                    ? '点击两点画计数线：第一点 a → 第二点 b（a→b 为方向基准，↑=向左穿入）'
+                    ? '拖端点/线身调整 · 点击两点画计数线（a→b 为方向基准，↑=向左穿入）'
                     : `会员库（${members.length} 人）——新人自动录入编号，选中姓名即可补填真名；回车保存`}
               </div>
             )}
@@ -1429,7 +1713,9 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                 ? (zones.length === 0
                     ? [<span key="e" className="gym-ov-zonelist-empty">还没有分区——在画面上点出第一块器械区</span>]
                     : zones.map((z, i) => (
-                        <div key={z.id} className="gym-ov-zonerow">
+                        <div key={z.id}
+                          className={`gym-ov-zonerow ${selZoneId === z.id ? 'sel' : ''}`}
+                          onClick={() => setSelZoneId(selZoneId === z.id ? null : z.id)}>
                           <span className="gym-ov-zoneidx">{i + 1}</span>
                           <input className="gym-ov-input name" value={z.name}
                             onChange={(e) =>
