@@ -606,11 +606,25 @@ impl Inner {
             }
 
             // zone dwell with debounce: only zones held ≥ dwell_debounce
-            // seconds accumulate usage time.
-            let (zx, zy) = (t.foot.x, t.foot.y);
-            let in_zone = zones
-                .iter()
-                .find(|z| z.enabled && crate::geo::point_in_polygon(zx, zy, &z.polygon));
+            // seconds accumulate usage time. Attribution prefers the foot
+            // (ground contact); when the camera angle hides the floor (gear
+            // blocks the ankles) the body's bbox center stands in for the
+            // person — a torso inside the zone is occupancy too.
+            let body_in = |x: f32, y: f32| -> bool {
+                zones
+                    .iter()
+                    .any(|z| z.enabled && crate::geo::point_in_polygon(x, y, &z.polygon))
+            };
+            let in_zone = if body_in(t.foot.x, t.foot.y) {
+                zones.iter().find(|z| {
+                    z.enabled && crate::geo::point_in_polygon(t.foot.x, t.foot.y, &z.polygon)
+                })
+            } else {
+                let (cx, cy) = (t.bbox.x + t.bbox.w / 2.0, t.bbox.y + t.bbox.h / 2.0);
+                zones
+                    .iter()
+                    .find(|z| z.enabled && crate::geo::point_in_polygon(cx, cy, &z.polygon))
+            };
             match (in_zone, &w.zone_enter) {
                 (Some(z), Some((zid, since))) if z.id == *zid => {
                     // still inside: accumulate once we pass the debounce

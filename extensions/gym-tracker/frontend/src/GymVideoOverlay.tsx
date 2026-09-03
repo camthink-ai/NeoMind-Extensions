@@ -797,12 +797,18 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
 
       // ---- zones layer ----
       if (show.zones) {
+        // occupancy: foot first (ground contact); when the camera hides the
+        // floor the body's bbox center stands in — a torso inside the zone
+        // is occupancy too (gear blocks the ankles on this fisheye view)
+        const inZone = (tr: any, poly: number[][]): boolean => {
+          if (tr.foot && pointInPolygon(tr.foot.x, tr.foot.y, poly)) return true
+          const b = tr.bbox
+          return !!b && pointInPolygon(b.x + b.w / 2, b.y + b.h / 2, poly)
+        }
         for (const z of zonesRef.current) {
           const poly = z.polygon
           if (!poly || poly.length < 3) continue
-          const count = tracks.filter(
-            (t) => t.foot && pointInPolygon(t.foot.x, t.foot.y, poly)
-          ).length
+          const count = tracks.filter((t) => inZone(t, poly)).length
           const occupied = count > 0
           const editing = modeRef.current === 'edit' && editKindRef.current === 'zones'
 
