@@ -1086,7 +1086,8 @@ mod tests {
         );
         let eq = sum["equipment"].as_array().unwrap();
         assert_eq!(eq.len(), 1);
-        assert_eq!(eq[0]["zone_id"], "z1");
+        // the label is the zone NAME (denormalized; survives zone deletion)
+        assert_eq!(eq[0]["zone_id"], "跑步机1");
         assert!(
             eq[0]["duration_sec"].as_i64().unwrap() >= 1,
             "treadmill time accumulated: {:?}",

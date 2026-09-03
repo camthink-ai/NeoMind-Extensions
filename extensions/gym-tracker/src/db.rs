@@ -246,17 +246,19 @@ impl Db {
     ) -> Result<(), rusqlite::Error> {
         self.conn.lock().execute(
             "INSERT INTO equipment_usage(id, session_id, member_id, zone_id, zone_name, started_at, ended_at, duration_sec, primary_action, reps)
-             VALUES(?1,?2,?3,?4,?5,?6,?6,?7,?8,?9)
+             VALUES(?1,?2,?3,?4, COALESCE((SELECT name FROM zones WHERE id=?4), ?4), ?5,?5,?6,?7,?8)
              ON CONFLICT(id) DO UPDATE SET duration_sec=excluded.duration_sec,
                primary_action=excluded.primary_action, reps=excluded.reps, ended_at=excluded.ended_at",
-            params![id, session_id, member_id, zone_id, zone_id, chrono::Utc::now().timestamp(),
+            params![id, session_id, member_id, zone_id, chrono::Utc::now().timestamp(),
                     duration_sec, exercise, reps],
         )?;
         Ok(())
     }
 
     /// Per-equipment usage totals since `day_from`, optionally one member.
-    /// Returns (zone_id, total_sec, reps, primary exercise).
+    /// Returns (zone label, total_sec, reps, primary exercise). The label
+    /// prefers the denormalized zone_name, then zone_id, then a placeholder —
+    /// rows survive their zone being deleted (zone_id detached to NULL).
     pub fn equipment_stats(
         &self,
         member_id: Option<&str>,
@@ -265,13 +267,13 @@ impl Db {
         let conn = self.conn.lock();
         let mut stmt = if member_id.is_some() {
             conn.prepare(
-                "SELECT zone_id, SUM(duration_sec), MAX(reps), MAX(primary_action)
+                "SELECT COALESCE(zone_name, zone_id, '已删除区域'), SUM(duration_sec), MAX(reps), MAX(primary_action)
                  FROM equipment_usage WHERE member_id=?1 AND ended_at>=?2
                  GROUP BY zone_id ORDER BY 2 DESC",
             )?
         } else {
             conn.prepare(
-                "SELECT zone_id, SUM(duration_sec), MAX(reps), MAX(primary_action)
+                "SELECT COALESCE(zone_name, zone_id, '已删除区域'), SUM(duration_sec), MAX(reps), MAX(primary_action)
                  FROM equipment_usage WHERE ended_at>=?1
                  GROUP BY zone_id ORDER BY 2 DESC",
             )?
@@ -735,6 +737,25 @@ mod tests {
             .unwrap();
         assert_eq!(zone_id, None, "usage row detached, not deleted");
         assert_eq!(dur, 30);
+        // zone_name resolves to the real name while the zone exists
+        let name: String = db
+            .conn
+            .lock()
+            .query_row(
+                "SELECT zone_name FROM equipment_usage WHERE id='u1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "力量区", "upsert stores the zone NAME, not the id");
+        // stats must survive the detached row (zone_id NULL) — this read
+        // crashed with "Invalid column type Null" before the COALESCE fix
+        let stats = db.equipment_stats(None, 0).unwrap();
+        assert_eq!(stats.len(), 1);
+        assert_eq!(
+            stats[0].0, "力量区",
+            "detached row keeps its label via zone_name"
+        );
     }
 
     #[test]
