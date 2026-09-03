@@ -26,11 +26,24 @@ fn default_data_dir() -> String {
     std::env::var("NEOMIND_EXTENSION_DATA_DIR").unwrap_or_else(|_| ".".into())
 }
 #[derive(Debug, Clone, Default, Deserialize)]
-pub struct DeviceCfg { pub host: String, #[serde(default)] pub port: Option<u16>, pub username: String, pub password: String, #[serde(default)] pub tls_insecure: bool }
+pub struct DeviceCfg {
+    pub host: String,
+    #[serde(default)]
+    pub port: Option<u16>,
+    pub username: String,
+    pub password: String,
+    #[serde(default)]
+    pub tls_insecure: bool,
+}
 // TLS verification defaults to ON; self-signed deployments
 // opt in explicitly via tls_insecure: true in config.json
 #[derive(Debug, Clone, Deserialize)]
-pub struct IngestCfg { pub topic: String, pub publish_hz: u32, pub track_ttl_sec: u32, pub reconnect_backoff_sec: Vec<u64> }
+pub struct IngestCfg {
+    pub topic: String,
+    pub publish_hz: u32,
+    pub track_ttl_sec: u32,
+    pub reconnect_backoff_sec: Vec<u64>,
+}
 #[derive(Debug, Clone, Deserialize)]
 pub struct IdentityCfg {
     pub match_threshold: f32,
@@ -58,11 +71,21 @@ pub struct IdentityCfg {
     #[serde(default = "default_face_match_threshold")]
     pub face_match_threshold: f32,
 }
-fn default_face_match_threshold() -> f32 { 60.0 }
-fn default_auto_capture_distance() -> f32 { 600.0 }
-fn default_append_confidence() -> f32 { 250.0 }
-fn default_append_min_dist() -> f32 { 150.0 }
-fn default_append_cooldown_sec() -> i64 { 60 }
+fn default_face_match_threshold() -> f32 {
+    60.0
+}
+fn default_auto_capture_distance() -> f32 {
+    600.0
+}
+fn default_append_confidence() -> f32 {
+    250.0
+}
+fn default_append_min_dist() -> f32 {
+    150.0
+}
+fn default_append_cooldown_sec() -> i64 {
+    60
+}
 
 /// Hard cap on samples per member (primary + extras). Bounded library =
 /// bounded matching cost and bounded damage from a poisoned sample.
@@ -71,9 +94,21 @@ pub const MAX_EMBEDDINGS_PER_MEMBER: usize = 20;
 /// outfits — a handful of good samples saturates recognition.
 pub const MAX_FACE_EMBEDDINGS_PER_MEMBER: usize = 8;
 #[derive(Debug, Clone, Deserialize)]
-pub struct RoiCfg { pub dwell_debounce_sec: u32, pub hysteresis: bool }
+pub struct RoiCfg {
+    pub dwell_debounce_sec: u32,
+    pub hysteresis: bool,
+}
 
-impl Default for IngestCfg { fn default() -> Self { Self { topic: "gym/track".into(), publish_hz: 8, track_ttl_sec: 30, reconnect_backoff_sec: vec![1,2,5,10,30] } } }
+impl Default for IngestCfg {
+    fn default() -> Self {
+        Self {
+            topic: "gym/track".into(),
+            publish_hz: 8,
+            track_ttl_sec: 30,
+            reconnect_backoff_sec: vec![1, 2, 5, 10, 30],
+        }
+    }
+}
 impl Default for IdentityCfg {
     fn default() -> Self {
         Self {
@@ -91,20 +126,37 @@ impl Default for IdentityCfg {
         }
     }
 }
-impl Default for RoiCfg { fn default() -> Self { Self { dwell_debounce_sec: 3, hysteresis: true } } }
+impl Default for RoiCfg {
+    fn default() -> Self {
+        Self {
+            dwell_debounce_sec: 3,
+            hysteresis: true,
+        }
+    }
+}
 
 impl Config {
     pub fn parse(raw: &str) -> Result<Self, serde_json::Error> {
-        if raw.trim().is_empty() { return Err(serde::de::Error::custom("empty config")); }
+        if raw.trim().is_empty() {
+            return Err(serde::de::Error::custom("empty config"));
+        }
         serde_json::from_str(raw)
     }
     /// True once a device host has been supplied — gates the ingest thread and
     /// device login so an unprovisioned cold load stays inert.
-    pub fn provisioned(&self) -> bool { !self.device.host.trim().is_empty() }
+    pub fn provisioned(&self) -> bool {
+        !self.device.host.trim().is_empty()
+    }
     // NE503 this firmware: HTTPS 443 (self-signed), WS wss, RTSP on :8554. See "NE503 device reality" in the plan.
-    pub fn ws_url(&self) -> String { format!("wss://{}/api/v1/events/stream", self.device.host) }
-    pub fn rest_base(&self) -> String { format!("https://{}", self.device.host) }
-    pub fn rtsp_url(&self, stream: &str) -> String { format!("rtsp://{}:8554/{}", self.device.host, stream) }
+    pub fn ws_url(&self) -> String {
+        format!("wss://{}/api/v1/events/stream", self.device.host)
+    }
+    pub fn rest_base(&self) -> String {
+        format!("https://{}", self.device.host)
+    }
+    pub fn rtsp_url(&self, stream: &str) -> String {
+        format!("rtsp://{}:8554/{}", self.device.host, stream)
+    }
 }
 
 #[cfg(test)]
@@ -135,7 +187,9 @@ mod tests {
         assert!(c.device.tls_insecure);
     }
     #[test]
-    fn rejects_empty() { assert!(Config::parse("").is_err()); }
+    fn rejects_empty() {
+        assert!(Config::parse("").is_err());
+    }
     #[test]
     fn cold_load_empty_config() {
         // The host's Init handshake: `configure({})` must not fail.

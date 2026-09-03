@@ -18,14 +18,12 @@ use std::sync::Arc;
 /// Hand the result to `ureq::AgentBuilder::tls_config(Arc::new(cfg))` (REST) or
 /// `tokio_tungstenite::Connector::Rustls(Arc::new(cfg))` (WS).
 pub fn insecure_client_config() -> rustls::ClientConfig {
-    rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .expect("ring provider supports safe default protocol versions")
-    .dangerous()
-    .with_custom_certificate_verifier(Arc::new(NoVerify))
-    .with_no_client_auth()
+    rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .expect("ring provider supports safe default protocol versions")
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoVerify))
+        .with_no_client_auth()
 }
 
 /// A `ServerCertVerifier` that accepts any certificate — for the NE503

@@ -1,11 +1,11 @@
 // metrics.rs
-use neomind_extension_sdk::{
-    ExtensionMetricValue, MetricDataType, MetricDescriptor, MetricValue,
-    dynamic_metrics::{DynamicMetricsRegistry, MetricTemplate},
-};
 use crate::db::Zone;
 use crate::geo;
 use crate::types::Track;
+use neomind_extension_sdk::{
+    dynamic_metrics::{DynamicMetricsRegistry, MetricTemplate},
+    ExtensionMetricValue, MetricDataType, MetricDescriptor, MetricValue,
+};
 
 const BASE_EQUIP: &str = "gym.equipment_occupied";
 
@@ -18,12 +18,16 @@ impl Metrics {
         // 1=occupied / 0=idle gauge. base_name carries the `gym.` prefix so the
         // derived per-instance name (`gym.equipment_occupied.<zone>`) groups with
         // the static aggregates `gym.present_count` / `gym.visits_today`.
-        let templates = vec![
-            MetricTemplate::new(BASE_EQUIP, "Equipment Occupied · {}", MetricDataType::Integer)
-                .with_min(0.0)
-                .with_max(1.0),
-        ];
-        Self { reg: DynamicMetricsRegistry::new(templates) }
+        let templates = vec![MetricTemplate::new(
+            BASE_EQUIP,
+            "Equipment Occupied · {}",
+            MetricDataType::Integer,
+        )
+        .with_min(0.0)
+        .with_max(1.0)];
+        Self {
+            reg: DynamicMetricsRegistry::new(templates),
+        }
     }
 
     /// Sync registry to the current zone set. Call after any zone change.
@@ -145,14 +149,19 @@ mod tests {
     fn descriptors_grow_with_zones() {
         let m = Metrics::new();
         // Static aggregates present with no zones.
-        assert!(m.descriptors().iter().any(|d| d.name == "gym.present_count"));
+        assert!(m
+            .descriptors()
+            .iter()
+            .any(|d| d.name == "gym.present_count"));
         assert!(m.descriptors().iter().any(|d| d.name == "gym.visits_today"));
 
         let z = zone("u1", "跑步机区", true);
         m.sync_zones(std::slice::from_ref(&z));
         let names: Vec<_> = m.descriptors().iter().map(|d| d.name.clone()).collect();
         assert!(
-            names.iter().any(|n| n.starts_with("gym.equipment_occupied.")),
+            names
+                .iter()
+                .any(|n| n.starts_with("gym.equipment_occupied.")),
             "got {:?}",
             names
         );
@@ -163,7 +172,8 @@ mod tests {
         assert!(vals.iter().any(|v| v.name == "gym.visits_today"));
         // Dynamic per-zone value emitted with the occupied flag.
         assert!(
-            vals.iter().any(|v| v.name.starts_with("gym.equipment_occupied.")),
+            vals.iter()
+                .any(|v| v.name.starts_with("gym.equipment_occupied.")),
             "got {:?}",
             vals.iter().map(|v| &v.name).collect::<Vec<_>>()
         );
@@ -182,7 +192,9 @@ mod tests {
         );
         // values() also empty of dynamic entries.
         let vals = m.produce(0, 0, 0);
-        assert!(vals.iter().all(|v| !v.name.starts_with("gym.equipment_occupied.")));
+        assert!(vals
+            .iter()
+            .all(|v| !v.name.starts_with("gym.equipment_occupied.")));
     }
 
     #[test]
@@ -191,7 +203,9 @@ mod tests {
         let m = Metrics::new();
         m.set_occupied("ghost", true);
         let vals = m.produce(0, 0, 0);
-        assert!(vals.iter().all(|v| !v.name.starts_with("gym.equipment_occupied.")));
+        assert!(vals
+            .iter()
+            .all(|v| !v.name.starts_with("gym.equipment_occupied.")));
     }
 
     #[test]
@@ -225,10 +239,7 @@ mod tests {
     fn sync_zones_is_idempotent_full_resync() {
         // Full-resync clears stale zones: a removed zone disappears from descriptors.
         let m = Metrics::new();
-        m.sync_zones(&[
-            zone("u1", "zone-a", true),
-            zone("u2", "zone-b", true),
-        ]);
+        m.sync_zones(&[zone("u1", "zone-a", true), zone("u2", "zone-b", true)]);
         assert_eq!(
             m.descriptors()
                 .iter()
@@ -260,7 +271,12 @@ mod tests {
     fn track_foot(tid: i64, x: f32, y: f32) -> Track {
         Track {
             track_id: tid,
-            bbox: Bbox { x, y, w: 0.0, h: 0.0 },
+            bbox: Bbox {
+                x,
+                y,
+                w: 0.0,
+                h: 0.0,
+            },
             foot: Point { x, y },
             pose: None,
             face: None,
@@ -283,8 +299,16 @@ mod tests {
     #[test]
     fn apply_occupation_marks_only_zones_with_a_foot_inside() {
         let m = Metrics::new();
-        let z1 = zone_poly("z1", "Treadmill", vec![(0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)]);
-        let z2 = zone_poly("z2", "Bench", vec![(0.0, 0.0), (0.1, 0.0), (0.1, 0.1), (0.0, 0.1)]);
+        let z1 = zone_poly(
+            "z1",
+            "Treadmill",
+            vec![(0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)],
+        );
+        let z2 = zone_poly(
+            "z2",
+            "Bench",
+            vec![(0.0, 0.0), (0.1, 0.0), (0.1, 0.1), (0.0, 0.1)],
+        );
         m.sync_zones(&[z1.clone(), z2.clone()]);
 
         // Track A's foot is inside z1; track B's foot is inside neither zone.
@@ -292,29 +316,51 @@ mod tests {
         m.apply_occupation(&tracks, &[z1, z2]);
 
         let vals = m.produce(2, 0, 0);
-        assert_eq!(int_val(&vals, "gym.equipment_occupied.Treadmill"), 1, "foot inside z1");
-        assert_eq!(int_val(&vals, "gym.equipment_occupied.Bench"), 0, "no foot inside z2");
+        assert_eq!(
+            int_val(&vals, "gym.equipment_occupied.Treadmill"),
+            1,
+            "foot inside z1"
+        );
+        assert_eq!(
+            int_val(&vals, "gym.equipment_occupied.Bench"),
+            0,
+            "no foot inside z2"
+        );
     }
 
     #[test]
     fn apply_occupation_goes_idle_when_tracks_leave() {
         let m = Metrics::new();
-        let z1 = zone_poly("z1", "Treadmill", vec![(0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)]);
+        let z1 = zone_poly(
+            "z1",
+            "Treadmill",
+            vec![(0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)],
+        );
         m.sync_zones(std::slice::from_ref(&z1));
 
         // Occupied while a foot is inside...
         m.apply_occupation(&[track_foot(1, 0.5, 0.5)], std::slice::from_ref(&z1));
-        assert_eq!(int_val(&m.produce(1, 0, 0), "gym.equipment_occupied.Treadmill"), 1);
+        assert_eq!(
+            int_val(&m.produce(1, 0, 0), "gym.equipment_occupied.Treadmill"),
+            1
+        );
 
         // ...then the person leaves (no tracks) → must flip back to idle.
         m.apply_occupation(&[], &[z1]);
-        assert_eq!(int_val(&m.produce(0, 0, 0), "gym.equipment_occupied.Treadmill"), 0);
+        assert_eq!(
+            int_val(&m.produce(0, 0, 0), "gym.equipment_occupied.Treadmill"),
+            0
+        );
     }
 
     #[test]
     fn apply_occupation_skips_disabled_zones() {
         let m = Metrics::new();
-        let mut z1 = zone_poly("z1", "Treadmill", vec![(0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)]);
+        let mut z1 = zone_poly(
+            "z1",
+            "Treadmill",
+            vec![(0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)],
+        );
         z1.enabled = false;
         // sync_zones already skips disabled zones, so z1 is never registered;
         // apply_occupation must skip it too (no phantom metric, no panic).
@@ -322,7 +368,8 @@ mod tests {
         m.apply_occupation(&[track_foot(1, 0.5, 0.5)], &[z1]);
         let vals = m.produce(0, 0, 0);
         assert!(
-            vals.iter().all(|v| !v.name.starts_with("gym.equipment_occupied.")),
+            vals.iter()
+                .all(|v| !v.name.starts_with("gym.equipment_occupied.")),
             "disabled zone must produce no per-zone metric"
         );
     }

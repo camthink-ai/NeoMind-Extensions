@@ -143,14 +143,11 @@ impl Analytics {
             // trail — scoped borrow: read out `prev` so `g.lines` can be
             // mutably borrowed below without overlapping the entry borrow.
             let prev = {
-                let trail = g
-                    .trails
-                    .entry(t.track_id)
-                    .or_insert_with(|| TrackTrail {
-                        pts: VecDeque::with_capacity(TRAIL_MAX_POINTS),
-                        last_ts_ns: f.ts_ns,
-                        prev: None,
-                    });
+                let trail = g.trails.entry(t.track_id).or_insert_with(|| TrackTrail {
+                    pts: VecDeque::with_capacity(TRAIL_MAX_POINTS),
+                    last_ts_ns: f.ts_ns,
+                    prev: None,
+                });
                 trail.last_ts_ns = f.ts_ns;
                 match trail.pts.back() {
                     Some(last) if (last.x - fx).abs() <= 1e-3 && (last.y - fy).abs() <= 1e-3 => {}
@@ -238,7 +235,12 @@ impl Analytics {
     }
 
     pub fn get_lines(&self) -> Vec<CrossLine> {
-        self.inner.lock().lines.iter().map(|ls| ls.line.clone()).collect()
+        self.inner
+            .lock()
+            .lines
+            .iter()
+            .map(|ls| ls.line.clone())
+            .collect()
     }
 
     pub fn get_crossings(&self) -> Vec<LineStats> {
@@ -352,7 +354,12 @@ mod tests {
                 .into_iter()
                 .map(|(id, x, y)| Track {
                     track_id: id,
-                    bbox: Bbox { x, y: 0.2, w: 0.1, h: 0.5 },
+                    bbox: Bbox {
+                        x,
+                        y: 0.2,
+                        w: 0.1,
+                        h: 0.5,
+                    },
                     foot: Point { x, y },
                     pose: None,
                     face: None,
@@ -363,16 +370,19 @@ mod tests {
         }
     }
 
-
     #[test]
     fn arbitrate_zone_prior_rules() {
         use super::arbitrate;
         // cardio zone: zone wins outright, no arbitration
-        assert_eq!(arbitrate(Some(("treadmill_run", true)), "squat", None, 100.0),
-            ("treadmill_run", true, None));
+        assert_eq!(
+            arbitrate(Some(("treadmill_run", true)), "squat", None, 100.0),
+            ("treadmill_run", true, None)
+        );
         // strength zone agreeing with temporal → zone, timer reset
-        assert_eq!(arbitrate(Some(("squat", false)), "squat", None, 100.0),
-            ("squat", false, None));
+        assert_eq!(
+            arbitrate(Some(("squat", false)), "squat", None, 100.0),
+            ("squat", false, None)
+        );
         // disagreement < 5 s → zone still wins, timer running
         let (ex, _, ds) = arbitrate(Some(("squat", false)), "bicep_curl", None, 100.0);
         assert_eq!(ex, "squat");
@@ -385,14 +395,20 @@ mod tests {
         assert_eq!(ex, "bicep_curl");
         assert_eq!(ds, Some(100.0));
         // agreement again resets the streak
-        assert_eq!(arbitrate(Some(("squat", false)), "squat", Some(100.0), 107.0),
-            ("squat", false, None));
+        assert_eq!(
+            arbitrate(Some(("squat", false)), "squat", Some(100.0), 107.0),
+            ("squat", false, None)
+        );
         // pending temporal in a strength zone → zone holds
-        assert_eq!(arbitrate(Some(("squat", false)), "pending", Some(100.0), 107.0),
-            ("squat", false, None));
+        assert_eq!(
+            arbitrate(Some(("squat", false)), "pending", Some(100.0), 107.0),
+            ("squat", false, None)
+        );
         // unmapped zone → temporal
-        assert_eq!(arbitrate(None, "lunge", None, 100.0),
-            ("lunge", false, None));
+        assert_eq!(
+            arbitrate(None, "lunge", None, 100.0),
+            ("lunge", false, None)
+        );
     }
 
     #[test]
@@ -400,10 +416,15 @@ mod tests {
         let db = Db::open(":memory:").unwrap();
         let a = Analytics::new(&db);
         // vertical line x=0.5, a=(0.5,0) b=(0.5,1): moving right-to-left across it
-        a.set_lines(&db, vec![CrossLine {
-            id: "l1".into(), name: "入口".into(),
-            a: (0.5, 0.0), b: (0.5, 1.0),
-        }])
+        a.set_lines(
+            &db,
+            vec![CrossLine {
+                id: "l1".into(),
+                name: "入口".into(),
+                a: (0.5, 0.0),
+                b: (0.5, 1.0),
+            }],
+        )
         .unwrap();
 
         // left→right crossing: movement (+x), line dir (+y): cross = +dx*dy > 0 → in
@@ -418,7 +439,11 @@ mod tests {
         a.on_frame(&frame(5_000_000_000, vec![(1, 0.49, 0.5)]));
         a.on_frame(&frame(6_000_000_000, vec![(1, 0.51, 0.5)])); // ends right of line
         let s = &a.get_crossings()[0];
-        assert_eq!((s.in_count, s.out_count), (1, 0), "hysteresis blocks band loiter");
+        assert_eq!(
+            (s.in_count, s.out_count),
+            (1, 0),
+            "hysteresis blocks band loiter"
+        );
 
         // stepping out through the line (right→left) is a real traversal → out
         a.on_frame(&frame(7_000_000_000, vec![(1, 0.30, 0.5)]));
@@ -441,15 +466,23 @@ mod tests {
     fn no_crossing_when_parallel_or_away() {
         let db = Db::open(":memory:").unwrap();
         let a = Analytics::new(&db);
-        a.set_lines(&db, vec![CrossLine {
-            id: "l1".into(), name: "l".into(),
-            a: (0.5, 0.0), b: (0.5, 1.0),
-        }])
+        a.set_lines(
+            &db,
+            vec![CrossLine {
+                id: "l1".into(),
+                name: "l".into(),
+                a: (0.5, 0.0),
+                b: (0.5, 1.0),
+            }],
+        )
         .unwrap();
         // movement entirely on one side
         a.on_frame(&frame(1_000_000_000, vec![(1, 0.10, 0.3)]));
         a.on_frame(&frame(2_000_000_000, vec![(1, 0.20, 0.4)]));
-        assert_eq!(a.get_crossings()[0].in_count + a.get_crossings()[0].out_count, 0);
+        assert_eq!(
+            a.get_crossings()[0].in_count + a.get_crossings()[0].out_count,
+            0
+        );
     }
 
     #[test]
@@ -458,7 +491,10 @@ mod tests {
         let a = Analytics::new(&db);
         let t0: u64 = 1_700_000_000_000_000_000;
         for i in 0..200 {
-            a.on_frame(&frame(t0 + i * 100_000_000, vec![(1, 0.01 * (i % 100) as f32, 0.5)]));
+            a.on_frame(&frame(
+                t0 + i * 100_000_000,
+                vec![(1, 0.01 * (i % 100) as f32, 0.5)],
+            ));
         }
         assert_eq!(a.get_trails(999)[&1].len(), TRAIL_MAX_POINTS);
         // 200 frames * 0.1s = 20s << 180s so still alive; advance far beyond
@@ -480,7 +516,12 @@ mod tests {
         a.save_heatmap(&db);
         let a2 = Analytics::new(&db);
         let hm2 = a2.get_heatmap();
-        let total2: u64 = hm2["grid"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap_or(0)).sum();
+        let total2: u64 = hm2["grid"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap_or(0))
+            .sum();
         assert_eq!(total2, 10, "heatmap round-trips through SQLite");
     }
 }
@@ -531,24 +572,27 @@ impl Inner {
         let now = f.ts_ns as f64 / 1e9;
         let matches = crate::identity::match_tracks(idcfg, members, &f.tracks, &f.faces);
         for t in &f.tracks {
-            let w = self.workouts.entry(t.track_id).or_insert_with(|| WorkoutTracker {
-                session_id: format!("sess_{}", uuid::Uuid::new_v4().simple()),
-                started_at: now,
-                last_seen: now,
-                member_id: None,
-                member_name: None,
-                zone_secs: HashMap::new(),
-                zone_enter: None,
-                last_flush: None,
-                exercise: "unknown".into(),
-                reps: 0,
-                sets: 0,
-                counter: crate::exercise::RepCounter::new("unknown", false, now),
-                counter_inited: false,
-                timeline: crate::exercise::PoseTimeline::default(),
-                disagree_since: None,
-                dirty: true,
-            });
+            let w = self
+                .workouts
+                .entry(t.track_id)
+                .or_insert_with(|| WorkoutTracker {
+                    session_id: format!("sess_{}", uuid::Uuid::new_v4().simple()),
+                    started_at: now,
+                    last_seen: now,
+                    member_id: None,
+                    member_name: None,
+                    zone_secs: HashMap::new(),
+                    zone_enter: None,
+                    last_flush: None,
+                    exercise: "unknown".into(),
+                    reps: 0,
+                    sets: 0,
+                    counter: crate::exercise::RepCounter::new("unknown", false, now),
+                    counter_inited: false,
+                    timeline: crate::exercise::PoseTimeline::default(),
+                    disagree_since: None,
+                    dirty: true,
+                });
             w.last_seen = now;
 
             // sticky member identity
@@ -564,9 +608,9 @@ impl Inner {
             // zone dwell with debounce: only zones held ≥ dwell_debounce
             // seconds accumulate usage time.
             let (zx, zy) = (t.foot.x, t.foot.y);
-            let in_zone = zones.iter().find(|z| {
-                z.enabled && crate::geo::point_in_polygon(zx, zy, &z.polygon)
-            });
+            let in_zone = zones
+                .iter()
+                .find(|z| z.enabled && crate::geo::point_in_polygon(zx, zy, &z.polygon));
             match (in_zone, &w.zone_enter) {
                 (Some(z), Some((zid, since))) if z.id == *zid => {
                     // still inside: accumulate once we pass the debounce
@@ -595,12 +639,13 @@ impl Inner {
             // seed while the ~2 s history window fills ("pending").
             if let Some(pose) = t.pose.as_ref() {
                 w.timeline.push(pose, now);
-                let zone_ex = w.zone_enter.as_ref()
+                let zone_ex = w
+                    .zone_enter
+                    .as_ref()
                     .and_then(|(zid, _)| zones.iter().find(|z| &z.id == zid))
                     .and_then(|z| crate::exercise::zone_exercise(&z.equipment_type));
                 let temporal = crate::exercise::classify_with_history(&w.timeline);
-                let (ex, cardio, dsince) = arbitrate(
-                    zone_ex, temporal, w.disagree_since, now);
+                let (ex, cardio, dsince) = arbitrate(zone_ex, temporal, w.disagree_since, now);
                 w.disagree_since = dsince;
                 if !w.counter_inited || w.exercise != ex {
                     let total = w.reps + w.counter.reps;
@@ -622,7 +667,9 @@ impl Inner {
     /// maybe_save (poll frequency bounds data loss to one poll).
     pub fn close_expired_workouts(&mut self, db: &Db, ttl_sec: u32) {
         let now_ts = chrono::Utc::now().timestamp() as f64;
-        let expired: Vec<i64> = self.workouts.iter()
+        let expired: Vec<i64> = self
+            .workouts
+            .iter()
             .filter(|(_, w)| now_ts - w.last_seen > ttl_sec as f64)
             .map(|(k, _)| *k)
             .collect();
@@ -643,28 +690,48 @@ impl Inner {
     fn persist_workout(db: &Db, w: &WorkoutTracker) {
         let ended = chrono::Utc::now().timestamp();
         let dur = (ended as f64 - w.started_at).max(0.0) as i64;
-        let _ = db.upsert_session(&w.session_id, w.member_id.as_deref(),
-                                  "ne503-001", w.started_at as i64, ended,
-                                  dur, "closed", w.member_name.as_deref());
+        let _ = db.upsert_session(
+            &w.session_id,
+            w.member_id.as_deref(),
+            "ne503-001",
+            w.started_at as i64,
+            ended,
+            dur,
+            "closed",
+            w.member_name.as_deref(),
+        );
         for (zone_id, secs) in &w.zone_secs {
             if *secs < 1.0 {
                 continue;
             }
             let _ = db.upsert_equipment_usage(
                 &format!("{}_{}", w.session_id, zone_id),
-                &w.session_id, w.member_id.as_deref(), zone_id,
-                *secs as i64, &w.exercise,
-                (w.reps + w.counter.reps) as i64);
+                &w.session_id,
+                w.member_id.as_deref(),
+                zone_id,
+                *secs as i64,
+                &w.exercise,
+                (w.reps + w.counter.reps) as i64,
+            );
         }
     }
 
     /// Live workout snapshot for get_live_state.
     pub fn workout_snapshot(&self) -> HashMap<i64, (String, u32, u32, Option<String>)> {
-        self.workouts.iter().map(|(tid, w)| {
-            (*tid, (w.exercise.clone(), w.reps + w.counter.reps,
-                    w.sets + w.counter.sets,
-                    w.zone_enter.as_ref().map(|(z, _)| z.clone())))
-        }).collect()
+        self.workouts
+            .iter()
+            .map(|(tid, w)| {
+                (
+                    *tid,
+                    (
+                        w.exercise.clone(),
+                        w.reps + w.counter.reps,
+                        w.sets + w.counter.sets,
+                        w.zone_enter.as_ref().map(|(z, _)| z.clone()),
+                    ),
+                )
+            })
+            .collect()
     }
 }
 
@@ -677,16 +744,16 @@ impl Analytics {
         idcfg: &crate::config::IdentityCfg,
         dwell_debounce_sec: u32,
     ) {
-        self.inner.lock().on_workout_frame(f, zones, members, idcfg, dwell_debounce_sec);
+        self.inner
+            .lock()
+            .on_workout_frame(f, zones, members, idcfg, dwell_debounce_sec);
     }
 
     pub fn close_expired_workouts(&self, db: &Db, ttl_sec: u32) {
         self.inner.lock().close_expired_workouts(db, ttl_sec);
     }
 
-    pub fn workout_snapshot(
-        &self,
-    ) -> HashMap<i64, (String, u32, u32, Option<String>)> {
+    pub fn workout_snapshot(&self) -> HashMap<i64, (String, u32, u32, Option<String>)> {
         self.inner.lock().workout_snapshot()
     }
 }

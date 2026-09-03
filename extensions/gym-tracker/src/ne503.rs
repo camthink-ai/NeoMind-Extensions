@@ -178,13 +178,17 @@ mod tests {
         let client = Ne503Client::new(&cfg);
 
         client.login().expect("login should succeed");
-        let tok = client.token_string().expect("token should be set after login");
+        let tok = client
+            .token_string()
+            .expect("token should be set after login");
         assert!(
             tok.starts_with("Bearer "),
             "token should start with 'Bearer ', was: {tok}"
         );
 
-        let status = client.get_device_status().expect("device status should succeed");
+        let status = client
+            .get_device_status()
+            .expect("device status should succeed");
         assert_eq!(
             status["code"].as_i64(),
             Some(0),

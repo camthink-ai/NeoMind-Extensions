@@ -10,7 +10,7 @@
 //! `get_device_status`, `get_snapshot`.
 
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::analytics::Analytics;
@@ -75,7 +75,9 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             let mut face_anchored: HashMap<i64, (usize, f32)> = HashMap::new();
             for fe in &faces {
                 let Some(emb) = fe.emb.as_ref() else { continue };
-                if emb.is_empty() { continue; }
+                if emb.is_empty() {
+                    continue;
+                }
                 let mut best: Option<(usize, f32)> = None;
                 for (i, m) in members.iter().enumerate() {
                     for sample in &m.face_embeddings {
@@ -86,15 +88,21 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                     }
                 }
                 let Some((i, d)) = best.filter(|(_, d)| *d <= ctx.identity.face_match_threshold)
-                    else { continue; };
+                else {
+                    continue;
+                };
                 let m = &members[i];
                 // grow the face library: diverse + cooldown gated
-                if m.face_embeddings.iter().all(|s| l2_dist(emb, s) >= ctx.identity.append_min_dist)
+                if m.face_embeddings
+                    .iter()
+                    .all(|s| l2_dist(emb, s) >= ctx.identity.append_min_dist)
                     && (m.face_embeddings.is_empty()
                         || now - ctx.db.last_embedding_append_kind(&m.id, "face")
-                           >= ctx.identity.append_cooldown_sec)
+                            >= ctx.identity.append_cooldown_sec)
                 {
-                    if ctx.db.append_member_embedding_kind(&m.id, emb, "face")
+                    if ctx
+                        .db
+                        .append_member_embedding_kind(&m.id, emb, "face")
                         .unwrap_or(false)
                     {
                         members[i].face_embeddings.push(emb.clone());
@@ -105,32 +113,40 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 // linger inside the TTL with an overlapping bbox, and the
                 // smallest containing box is the one actually on the face.
                 let (fx, fy) = (fe.bbox.x + fe.bbox.w / 2.0, fe.bbox.y + fe.bbox.h / 2.0);
-                let tightest = tracks.iter()
+                let tightest = tracks
+                    .iter()
                     .filter(|t| {
                         let b = &t.bbox;
                         fx >= b.x && fx <= b.x + b.w && fy >= b.y && fy <= b.y + b.h
                     })
-                    .min_by(|a, b| {
-                        (a.bbox.w * a.bbox.h).total_cmp(&(b.bbox.w * b.bbox.h))
-                    });
+                    .min_by(|a, b| (a.bbox.w * a.bbox.h).total_cmp(&(b.bbox.w * b.bbox.h)));
                 if let Some(t) = tightest {
                     face_anchored.insert(t.track_id, (i, d));
                 }
             }
             // face-confirmed body-append: identity is certain, record the outfit
             for (tid, (i, _)) in &face_anchored {
-                let Some(t) = tracks.iter().find(|t| t.track_id == *tid) else { continue };
+                let Some(t) = tracks.iter().find(|t| t.track_id == *tid) else {
+                    continue;
+                };
                 let Some(f) = t.face.as_ref() else { continue };
-                if f.emb.is_empty() { continue; }
+                if f.emb.is_empty() {
+                    continue;
+                }
                 let m = &members[*i];
-                let diverse = m.all_embeddings()
+                let diverse = m
+                    .all_embeddings()
                     .all(|s| l2_dist(&f.emb, s) >= ctx.identity.append_min_dist);
-                if diverse && m.extra_embeddings.len() + 1
-                    < crate::config::MAX_EMBEDDINGS_PER_MEMBER
+                if diverse
+                    && m.extra_embeddings.len() + 1 < crate::config::MAX_EMBEDDINGS_PER_MEMBER
                     && now - ctx.db.last_embedding_append_kind(&m.id, "body")
-                       >= ctx.identity.append_cooldown_sec
+                        >= ctx.identity.append_cooldown_sec
                 {
-                    if ctx.db.append_member_embedding(&m.id, &f.emb).unwrap_or(false) {
+                    if ctx
+                        .db
+                        .append_member_embedding(&m.id, &f.emb)
+                        .unwrap_or(false)
+                    {
                         tracing::info!(member = %m.id,
                             "outfit recorded (face-confirmed identity)");
                         members[*i].extra_embeddings.push(f.emb.clone());
@@ -154,11 +170,12 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 }
                 best
             };
-            let match_one = |ems: &[crate::db::Member], emb: &[f32]| -> Option<(String, String, f32)> {
-                nearest_member(ems, emb)
-                    .filter(|(_, d)| *d <= ctx.identity.match_threshold)
-                    .map(|(i, d)| (ems[i].id.clone(), ems[i].name.clone(), d))
-            };
+            let match_one =
+                |ems: &[crate::db::Member], emb: &[f32]| -> Option<(String, String, f32)> {
+                    nearest_member(ems, emb)
+                        .filter(|(_, d)| *d <= ctx.identity.match_threshold)
+                        .map(|(i, d)| (ems[i].id.clone(), ems[i].name.clone(), d))
+                };
             // ---- auto-enrollment (identity.auto_capture_unknown) ----
             // A track with an embedding whose nearest member sits BEYOND
             // auto_capture_distance is a first-time visitor: enroll their
@@ -199,8 +216,10 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                     if t.bbox.h < 0.10 {
                         continue;
                     }
-                    match ctx.db.insert_auto_member(
-                        &ctx.identity.unknown_prefix, &f.emb) {
+                    match ctx
+                        .db
+                        .insert_auto_member(&ctx.identity.unknown_prefix, &f.emb)
+                    {
                         Ok(m) => {
                             ctx.state.unknown_streaks_write().insert(t.track_id, 0);
                             members.push(m)
@@ -225,12 +244,15 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 if f.emb.is_empty() {
                     continue;
                 }
-                let Some((i, d)) = nearest_member(&members, &f.emb) else { continue };
+                let Some((i, d)) = nearest_member(&members, &f.emb) else {
+                    continue;
+                };
                 if d > ctx.identity.append_confidence {
                     continue; // matched but not certain enough to write
                 }
                 let m = &members[i];
-                let diverse = m.all_embeddings()
+                let diverse = m
+                    .all_embeddings()
                     .all(|s| l2_dist(&f.emb, s) >= ctx.identity.append_min_dist);
                 if !diverse {
                     continue;
@@ -240,9 +262,7 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 {
                     continue; // library full
                 }
-                if now - ctx.db.last_embedding_append_at(&m.id)
-                    < ctx.identity.append_cooldown_sec
-                {
+                if now - ctx.db.last_embedding_append_at(&m.id) < ctx.identity.append_cooldown_sec {
                     continue; // cooldown — one sample per minute max
                 }
                 match ctx.db.append_member_embedding(&m.id, &f.emb) {
@@ -317,10 +337,8 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             let (img, tracks, faces) = match ctx.state.snapshot_preview() {
                 Some((ts, i)) => {
                     let hist = ctx.state.tracks_near(ts);
-                    let tracks =
-                        hist.last().map(|(_, t)| t.clone()).unwrap_or_default();
-                    let faces =
-                        ctx.state.snapshot_faces().unwrap_or_default();
+                    let tracks = hist.last().map(|(_, t)| t.clone()).unwrap_or_default();
+                    let faces = ctx.state.snapshot_faces().unwrap_or_default();
                     return Ok(json!({
                         "img_b64": i,
                         "ts_ns": ts,
@@ -338,26 +356,30 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             };
             let members = ctx.db.list_members().map_err(|e| e.to_string())?;
             let workouts = ctx.analytics.workout_snapshot();
-            let matched = crate::identity::match_tracks(
-                &ctx.identity, &members, &tracks, &faces);
-            let tracks_json = tracks.iter().map(|t| {
-                let member = matched.get(&t.track_id).map(|m| json!({
-                    "id": members[m.member_idx].id,
-                    "name": members[m.member_idx].name,
-                    "dist": (m.dist * 1000.0).round() / 1000.0,
-                    "via": m.via,
-                }));
-                json!({
-                    "track_id": t.track_id,
-                    "bbox": t.bbox,
-                    "foot": t.foot,
-                    "pose": t.pose,
-                    "member": member,
-                    "exercise": workouts.get(&t.track_id).map(|w| json!({
-                        "name": w.0, "reps": w.1, "sets": w.2, "zone": w.3,
-                    })),
+            let matched = crate::identity::match_tracks(&ctx.identity, &members, &tracks, &faces);
+            let tracks_json = tracks
+                .iter()
+                .map(|t| {
+                    let member = matched.get(&t.track_id).map(|m| {
+                        json!({
+                            "id": members[m.member_idx].id,
+                            "name": members[m.member_idx].name,
+                            "dist": (m.dist * 1000.0).round() / 1000.0,
+                            "via": m.via,
+                        })
+                    });
+                    json!({
+                        "track_id": t.track_id,
+                        "bbox": t.bbox,
+                        "foot": t.foot,
+                        "pose": t.pose,
+                        "member": member,
+                        "exercise": workouts.get(&t.track_id).map(|w| json!({
+                            "name": w.0, "reps": w.1, "sets": w.2, "zone": w.3,
+                        })),
+                    })
                 })
-            }).collect::<Vec<_>>();
+                .collect::<Vec<_>>();
             Ok(json!({
                 "img_b64": img,
                 "faces": faces,
@@ -377,25 +399,10 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
         "set_roi_zones" => {
             let zones_in: Vec<Zone> = serde_json::from_value(args["zones"].clone())
                 .map_err(|e| format!("invalid zones: {e}"))?;
-            let current: HashMap<String, Zone> = ctx
-                .db
-                .list_zones()
-                .map_err(|e| e.to_string())?
-                .into_iter()
-                .map(|z| (z.id.clone(), z))
-                .collect();
-            let keep: HashSet<&str> = zones_in.iter().map(|z| z.id.as_str()).collect();
-            // Delete zones no longer in the set BEFORE upserting, so a kept id
-            // can safely reuse a name freed by a removed zone (zones.name is
-            // UNIQUE — delete-first avoids transient collisions).
-            for id in current.keys() {
-                if !keep.contains(id.as_str()) {
-                    ctx.db.delete_zone(id).map_err(|e| e.to_string())?;
-                }
-            }
-            for z in &zones_in {
-                ctx.db.upsert_zone(z).map_err(|e| e.to_string())?;
-            }
+            // Atomic replace: absent-zone deletes + upserts commit together;
+            // deletes run first inside the tx so a kept id can reuse a name
+            // freed by a removed zone (zones.name is UNIQUE).
+            ctx.db.replace_zones(&zones_in).map_err(|e| e.to_string())?;
             // Re-sync the per-zone metric registry to the persisted zone set so a
             // runtime add / remove / rename lands in the descriptors + produced
             // values immediately. Without this the registry stayed frozen at the
@@ -422,8 +429,10 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
         }
         "get_ingest_dbg" => {
             let g = crate::ingest::ingest_dbg().lock();
-            Ok(json!({ "total": g.total, "parsed_ok": g.parsed_ok, "parse_fail": g.parse_fail,
-                       "topics": g.topic_counts }))
+            Ok(
+                json!({ "total": g.total, "parsed_ok": g.parsed_ok, "parse_fail": g.parse_fail,
+                       "topics": g.topic_counts }),
+            )
         }
         "get_crossings" => Ok(json!({ "lines": ctx.analytics.get_crossings() })),
         // ---- P1: heatmap ----
@@ -434,38 +443,58 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
         // refreshes it every reid_interval (2 s), so a person standing in
         // view for a few seconds has a fresh embedding.
         "register_member" => {
-            let track_id: i64 = args["track_id"].as_i64()
+            let track_id: i64 = args["track_id"]
+                .as_i64()
                 .ok_or("register_member: missing track_id")?;
-            let name = args["name"].as_str().map(str::trim)
+            let name = args["name"]
+                .as_str()
+                .map(str::trim)
                 .ok_or("register_member: missing name")?;
             if name.is_empty() {
                 return Err("register_member: name is empty".into());
             }
             let _ = ctx.state.evict_expired();
-            let track = ctx.state.snapshot().into_iter()
+            let track = ctx
+                .state
+                .snapshot()
+                .into_iter()
                 .find(|t| t.track_id == track_id)
                 .ok_or_else(|| format!("track {track_id} not in frame"))?;
-            let emb = track.face.as_ref().filter(|f| !f.emb.is_empty())
+            let emb = track
+                .face
+                .as_ref()
+                .filter(|f| !f.emb.is_empty())
                 .ok_or("track has no embedding yet — wait a few seconds and retry")?;
             let id = format!("member_{}", uuid::Uuid::new_v4().simple());
-            ctx.db.insert_member(&id, name, &emb.emb).map_err(|e| e.to_string())?;
+            ctx.db
+                .insert_member(&id, name, &emb.emb)
+                .map_err(|e| e.to_string())?;
             // seed the FACE library too: a frame-level face emb whose box
             // center falls inside this track's bbox is this person's face.
             let b = &track.bbox;
-            let face_emb = ctx.state.snapshot_faces().unwrap_or_default()
+            let face_emb = ctx
+                .state
+                .snapshot_faces()
+                .unwrap_or_default()
                 .into_iter()
                 .find(|fe| {
                     let (fx, fy) = (fe.bbox.x + fe.bbox.w / 2.0, fe.bbox.y + fe.bbox.h / 2.0);
-                    fx >= b.x && fx <= b.x + b.w && fy >= b.y && fy <= b.y + b.h
+                    fx >= b.x
+                        && fx <= b.x + b.w
+                        && fy >= b.y
+                        && fy <= b.y + b.h
                         && fe.emb.as_ref().map_or(false, |e| !e.is_empty())
                 })
                 .and_then(|fe| fe.emb);
             if let Some(femb) = &face_emb {
-                ctx.db.append_member_embedding_kind(&id, femb, "face")
+                ctx.db
+                    .append_member_embedding_kind(&id, femb, "face")
                     .map_err(|e| e.to_string())?;
             }
-            Ok(json!({ "member": { "id": id, "name": name, "dim": emb.emb.len(),
-                                   "face": face_emb.is_some() } }))
+            Ok(
+                json!({ "member": { "id": id, "name": name, "dim": emb.emb.len(),
+                                   "face": face_emb.is_some() } }),
+            )
         }
         "list_members" => {
             let members = ctx.db.list_members().map_err(|e| e.to_string())?;
@@ -481,15 +510,17 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
         // Store / clear a member avatar photo (base64 JPEG). The Monitor
         // captures it from the raw video frame via its own canvas.
         "set_member_photo" => {
-            let id = args["id"].as_str()
-                .ok_or("set_member_photo: missing id")?;
+            let id = args["id"].as_str().ok_or("set_member_photo: missing id")?;
             let photo = args["photo_base64"].as_str().filter(|s| !s.is_empty());
             if let Some(p) = photo {
                 if p.len() > 400_000 {
                     return Err("set_member_photo: photo too large (>300KB base64)".into());
                 }
             }
-            let ok = ctx.db.set_member_photo(id, photo).map_err(|e| e.to_string())?;
+            let ok = ctx
+                .db
+                .set_member_photo(id, photo)
+                .map_err(|e| e.to_string())?;
             if !ok {
                 return Err(format!("member {id} not found"));
             }
@@ -499,9 +530,10 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
         // are created unnamed — prefix-numbered — precisely so this can
         // attach the real name later).
         "rename_member" => {
-            let id = args["id"].as_str()
-                .ok_or("rename_member: missing id")?;
-            let name = args["name"].as_str().map(str::trim)
+            let id = args["id"].as_str().ok_or("rename_member: missing id")?;
+            let name = args["name"]
+                .as_str()
+                .map(str::trim)
                 .ok_or("rename_member: missing name")?;
             if name.is_empty() {
                 return Err("rename_member: name is empty".into());
@@ -515,16 +547,20 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
         // Merge src into dst (outfit-change confirmation): src's samples
         // join dst's library and src disappears. Name always stays dst's.
         "merge_members" => {
-            let src = args["src_id"].as_str()
+            let src = args["src_id"]
+                .as_str()
                 .ok_or("merge_members: missing src_id")?;
-            let dst = args["dst_id"].as_str()
+            let dst = args["dst_id"]
+                .as_str()
                 .ok_or("merge_members: missing dst_id")?;
             if src == dst {
                 return Err("merge_members: src and dst are the same member".into());
             }
             ctx.db.merge_members(src, dst).map_err(|e| e.to_string())?;
             let out = ctx.db.list_members().map_err(|e| e.to_string())?;
-            let target = out.iter().find(|m| m.id == dst)
+            let target = out
+                .iter()
+                .find(|m| m.id == dst)
                 .ok_or("mergeMembers: dst vanished")?;
             Ok(json!({ "merged": src, "into": dst,
                        "name": target.name,
@@ -540,15 +576,22 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 use chrono::{Local, Timelike};
                 let n = Local::now();
                 (n - chrono::Duration::seconds(
-                    n.hour() as i64 * 3600 + n.minute() as i64 * 60 + n.second() as i64))
-                    .timestamp()
+                    n.hour() as i64 * 3600 + n.minute() as i64 * 60 + n.second() as i64,
+                ))
+                .timestamp()
             });
-            let sessions = ctx.db.list_sessions(member_id, day, 50)
+            let sessions = ctx
+                .db
+                .list_sessions(member_id, day, 50)
                 .map_err(|e| e.to_string())?;
-            let equipment = ctx.db.equipment_stats(member_id, day)
+            let equipment = ctx
+                .db
+                .equipment_stats(member_id, day)
                 .map_err(|e| e.to_string())?;
-            let total: i64 = sessions.iter()
-                .map(|s| s["duration_sec"].as_i64().unwrap_or(0)).sum();
+            let total: i64 = sessions
+                .iter()
+                .map(|s| s["duration_sec"].as_i64().unwrap_or(0))
+                .sum();
             Ok(json!({
                 "since": day,
                 "sessions": sessions,
@@ -561,8 +604,7 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             }))
         }
         "delete_member" => {
-            let id = args["id"].as_str()
-                .ok_or("delete_member: missing id")?;
+            let id = args["id"].as_str().ok_or("delete_member: missing id")?;
             let n = ctx.db.delete_member(id).map_err(|e| e.to_string())?;
             if n == 0 {
                 return Err(format!("member {id} not found"));
@@ -573,10 +615,7 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
         // fatal — the dispatch maps the client error to an error object so the
         // frontend can render a placeholder. P2 will grab a frame via RTSP.
         "get_snapshot" => {
-            let stream = args
-                .get("stream")
-                .and_then(|s| s.as_str())
-                .unwrap_or("sub");
+            let stream = args.get("stream").and_then(|s| s.as_str()).unwrap_or("sub");
             match ctx.ne.get_snapshot(stream) {
                 Ok(b64) => Ok(json!({ "image_base64": b64 })),
                 Err(e) => Ok(json!({ "error": e.to_string() })),
@@ -603,7 +642,10 @@ mod tests {
     /// I/O (it only constructs the agent + empty token), and the no-network
     /// commands below never call into it, so the host is irrelevant.
     fn make_ctx_with_ttl(ttl_sec: u32) -> Ctx {
-        make_ctx_identity(ttl_sec, r#"{ "match_threshold": 0.1, "auto_capture_unknown": false, "unknown_prefix": "U", "auto_capture_distance": 0.5 }"#)
+        make_ctx_identity(
+            ttl_sec,
+            r#"{ "match_threshold": 0.1, "auto_capture_unknown": false, "unknown_prefix": "U", "auto_capture_distance": 0.5 }"#,
+        )
     }
 
     fn make_ctx() -> Ctx {
@@ -614,7 +656,8 @@ mod tests {
     /// switch and tune thresholds to unit-scale test embeddings.
     fn make_ctx_identity(ttl_sec: u32, identity_json: &str) -> Ctx {
         let raw = format!(
-            r#"{{"device":{{"host":"127.0.0.1","username":"x","password":"x","tls_insecure":false}},"device_id":"test","ingest":{{"topic":"gym/track","publish_hz":8,"track_ttl_sec":30,"reconnect_backoff_sec":[1,2,5]}},"identity":{identity_json},"roi":{{"dwell_debounce_sec":3,"hysteresis":true}},"data_dir":"/tmp/gym-test"}}"#);
+            r#"{{"device":{{"host":"127.0.0.1","username":"x","password":"x","tls_insecure":false}},"device_id":"test","ingest":{{"topic":"gym/track","publish_hz":8,"track_ttl_sec":30,"reconnect_backoff_sec":[1,2,5]}},"identity":{identity_json},"roi":{{"dwell_debounce_sec":3,"hysteresis":true}},"data_dir":"/tmp/gym-test"}}"#
+        );
         let cfg = Config::parse(&raw).expect("config parse");
         let db = Arc::new(Db::open(":memory:").expect("db open"));
         let identity = cfg.identity.clone();
@@ -631,7 +674,12 @@ mod tests {
     fn track(tid: i64) -> Track {
         Track {
             track_id: tid,
-            bbox: Bbox { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+            bbox: Bbox {
+                x: 0.1,
+                y: 0.2,
+                w: 0.3,
+                h: 0.4,
+            },
             foot: Point { x: 0.25, y: 0.6 },
             pose: None,
             face: None,
@@ -639,14 +687,23 @@ mod tests {
     }
 
     fn frame(tracks: Vec<Track>) -> TrackFrame {
-        TrackFrame { device_id: "d".into(), frame_seq: 1, ts_ns: 0, tracks, faces: vec![], img_b64: None }
+        TrackFrame {
+            device_id: "d".into(),
+            frame_seq: 1,
+            ts_ns: 0,
+            tracks,
+            faces: vec![],
+            img_b64: None,
+        }
     }
 
     #[test]
     fn auto_enroll_capture_and_rename_flow() {
         // match 0.1 / auto-capture on beyond 0.5 / prefix U (unit scale)
-        let ctx = make_ctx_identity(30,
-            r#"{ "match_threshold": 0.1, "auto_capture_unknown": true, "unknown_prefix": "U", "auto_capture_distance": 0.5 }"#);
+        let ctx = make_ctx_identity(
+            30,
+            r#"{ "match_threshold": 0.1, "auto_capture_unknown": true, "unknown_prefix": "U", "auto_capture_distance": 0.5 }"#,
+        );
         let emb = |v: Vec<f32>| Some(crate::types::Face { emb: v, det: 0.8 });
 
         // first visitor: empty library → auto-enrolled as U-1 on first poll
@@ -655,16 +712,29 @@ mod tests {
         ctx.state.apply_frame(&frame(vec![t.clone()]));
         // persistence gate: enrollment needs 3 consecutive unknown polls
         let mut out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
-        assert_eq!(out["members_count"], 0, "first unknown reading does not enroll");
+        assert_eq!(
+            out["members_count"], 0,
+            "first unknown reading does not enroll"
+        );
         for _ in 0..2 {
             ctx.state.apply_frame(&frame(vec![t.clone()]));
             out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
         }
         assert_eq!(out["members_count"], 1);
-        let by = |out: &Value, tid: i64| out["tracks"].as_array().unwrap().iter()
-            .find(|t| t["track_id"] == tid).unwrap().clone();
-        assert_eq!(by(&out, 1)["member"]["name"], "U-1",
-            "auto entry immediately matches its own person");
+        let by = |out: &Value, tid: i64| {
+            out["tracks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["track_id"] == tid)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(
+            by(&out, 1)["member"]["name"],
+            "U-1",
+            "auto entry immediately matches its own person"
+        );
 
         // same person re-detected (new track id, near embedding): matches
         // U-1, no duplicate entry
@@ -673,8 +743,15 @@ mod tests {
         ctx.state.apply_frame(&frame(vec![t2]));
         let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
         assert_eq!(out["members_count"], 1);
-        let by = |out: &Value, tid: i64| out["tracks"].as_array().unwrap().iter()
-            .find(|t| t["track_id"] == tid).unwrap().clone();
+        let by = |out: &Value, tid: i64| {
+            out["tracks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["track_id"] == tid)
+                .unwrap()
+                .clone()
+        };
         assert_eq!(by(&out, 2)["member"]["name"], "U-1");
 
         // drift band (distance ~0.35, between 0.1 and 0.5): neither matched
@@ -684,8 +761,15 @@ mod tests {
         ctx.state.apply_frame(&frame(vec![t3]));
         let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
         assert_eq!(out["members_count"], 1, "drift band must not enroll");
-        let by = |out: &Value, tid: i64| out["tracks"].as_array().unwrap().iter()
-            .find(|t| t["track_id"] == tid).unwrap().clone();
+        let by = |out: &Value, tid: i64| {
+            out["tracks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["track_id"] == tid)
+                .unwrap()
+                .clone()
+        };
         assert!(by(&out, 3)["member"].is_null());
 
         // second visitor (orthogonal embedding, distance ~1.19 > 0.5):
@@ -694,59 +778,90 @@ mod tests {
         t4.face = emb(vec![0.0, 1.0, 0.0]);
         ctx.state.apply_frame(&frame(vec![t4.clone()]));
         let mut out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
-        for _ in 0..2 { // persistence gate again
+        for _ in 0..2 {
+            // persistence gate again
             ctx.state.apply_frame(&frame(vec![t4.clone()]));
             out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
         }
         assert_eq!(out["members_count"], 2);
-        let names: Vec<&str> = out["tracks"].as_array().unwrap().iter()
+        let names: Vec<&str> = out["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
             .map(|t| t["member"]["name"].as_str().unwrap_or(""))
             .collect();
         assert!(names.contains(&"U-2"), "second visitor enrolled: {names:?}");
 
         // fill in the real name afterwards
         let list = handle(&ctx, "list_members", &json!({})).unwrap();
-        let u1 = list["members"].as_array().unwrap().iter()
-            .find(|m| m["name"] == "U-1").unwrap();
+        let u1 = list["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["name"] == "U-1")
+            .unwrap();
         let id = u1["id"].as_str().unwrap().to_string();
         assert_eq!(u1["source"], "auto");
-        handle(&ctx, "rename_member", &json!({ "id": id, "name": "张三" }))
-            .expect("rename ok");
+        handle(&ctx, "rename_member", &json!({ "id": id, "name": "张三" })).expect("rename ok");
         let mut t5 = track(5);
         t5.face = emb(vec![1.0, 0.0, 0.0]);
         ctx.state.apply_frame(&frame(vec![t5]));
         let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
-        let by = |out: &Value, tid: i64| out["tracks"].as_array().unwrap().iter()
-            .find(|t| t["track_id"] == tid).unwrap().clone();
-        assert_eq!(by(&out, 5)["member"]["name"], "张三",
-            "renamed member matches under the new name");
+        let by = |out: &Value, tid: i64| {
+            out["tracks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["track_id"] == tid)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(
+            by(&out, 5)["member"]["name"],
+            "张三",
+            "renamed member matches under the new name"
+        );
     }
 
     #[test]
     fn merge_members_unifies_outfit_identities() {
-        let ctx = make_ctx_identity(30,
-            r#"{ "match_threshold": 0.1, "auto_capture_unknown": false, "unknown_prefix": "U", "auto_capture_distance": 0.5 }"#);
+        let ctx = make_ctx_identity(
+            30,
+            r#"{ "match_threshold": 0.1, "auto_capture_unknown": false, "unknown_prefix": "U", "auto_capture_distance": 0.5 }"#,
+        );
         let emb = |v: Vec<f32>| Some(crate::types::Face { emb: v, det: 0.8 });
 
         // day 1 outfit: 小王 registered manually
         let mut t = track(1);
         t.face = emb(vec![1.0, 0.0, 0.0]);
         ctx.state.apply_frame(&frame(vec![t]));
-        let r1 = handle(&ctx, "register_member",
-                        &json!({ "track_id": 1, "name": "小王" })).unwrap();
+        let r1 = handle(
+            &ctx,
+            "register_member",
+            &json!({ "track_id": 1, "name": "小王" }),
+        )
+        .unwrap();
         let wang = r1["member"]["id"].as_str().unwrap().to_string();
 
         // day 2 outfit: auto-enrolled as a separate 访客 entry
         let mut t2 = track(2);
         t2.face = emb(vec![0.0, 1.0, 0.0]);
         ctx.state.apply_frame(&frame(vec![t2]));
-        let r2 = handle(&ctx, "register_member",
-                        &json!({ "track_id": 2, "name": "访客X" })).unwrap();
+        let r2 = handle(
+            &ctx,
+            "register_member",
+            &json!({ "track_id": 2, "name": "访客X" }),
+        )
+        .unwrap();
         let guest = r2["member"]["id"].as_str().unwrap().to_string();
 
         // human confirms: 访客X is 小王 in different clothes → merge
-        let out = handle(&ctx, "merge_members",
-                         &json!({ "src_id": guest, "dst_id": wang })).unwrap();
+        let out = handle(
+            &ctx,
+            "merge_members",
+            &json!({ "src_id": guest, "dst_id": wang }),
+        )
+        .unwrap();
         assert_eq!(out["name"], "小王");
         assert_eq!(out["samples"], 2);
 
@@ -758,10 +873,18 @@ mod tests {
         }
         let st = handle(&ctx, "get_live_state", &json!({})).unwrap();
         for tid in [3, 4] {
-            let t = st["tracks"].as_array().unwrap().iter()
-                .find(|t| t["track_id"] == tid).unwrap();
-            assert_eq!(t["member"]["name"], "小王",
-                "outfit {} resolves after merge", tid - 2);
+            let t = st["tracks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["track_id"] == tid)
+                .unwrap();
+            assert_eq!(
+                t["member"]["name"],
+                "小王",
+                "outfit {} resolves after merge",
+                tid - 2
+            );
         }
         let list = handle(&ctx, "list_members", &json!({})).unwrap();
         assert_eq!(list["members"].as_array().unwrap().len(), 1);
@@ -771,25 +894,48 @@ mod tests {
     fn face_anchor_records_new_outfit() {
         // face threshold 0.3, body match 0.1, auto-capture off; appends
         // gated by append_min_dist 0.15 / cooldown 60
-        let ctx = make_ctx_identity(30,
-            r#"{ "match_threshold": 0.1, "auto_capture_unknown": false, "unknown_prefix": "U", "auto_capture_distance": 0.5, "append_confidence": 0.1, "append_min_dist": 0.15, "append_cooldown_sec": 60, "face_match_threshold": 0.3 }"#);
+        let ctx = make_ctx_identity(
+            30,
+            r#"{ "match_threshold": 0.1, "auto_capture_unknown": false, "unknown_prefix": "U", "auto_capture_distance": 0.5, "append_confidence": 0.1, "append_min_dist": 0.15, "append_cooldown_sec": 60, "face_match_threshold": 0.3 }"#,
+        );
 
         // register 小红 with a body emb AND a face emb (frame-level face
         // box centered inside her track bbox)
         let mut t1 = track(1);
-        t1.bbox = Bbox { x: 0.4, y: 0.3, w: 0.2, h: 0.5 };
-        t1.face = Some(crate::types::Face { emb: vec![1.0, 0.0, 0.0], det: 0.8 });
+        t1.bbox = Bbox {
+            x: 0.4,
+            y: 0.3,
+            w: 0.2,
+            h: 0.5,
+        };
+        t1.face = Some(crate::types::Face {
+            emb: vec![1.0, 0.0, 0.0],
+            det: 0.8,
+        });
         let mut f1 = crate::types::TrackFrame {
-            device_id: "d".into(), frame_seq: 1, ts_ns: 0,
-            tracks: vec![t1], faces: vec![crate::types::FaceBox {
-                bbox: Bbox { x: 0.45, y: 0.32, w: 0.1, h: 0.1 },
-                det: 0.9, emb: Some(vec![9.0, 9.0, 9.0]),
+            device_id: "d".into(),
+            frame_seq: 1,
+            ts_ns: 0,
+            tracks: vec![t1],
+            faces: vec![crate::types::FaceBox {
+                bbox: Bbox {
+                    x: 0.45,
+                    y: 0.32,
+                    w: 0.1,
+                    h: 0.1,
+                },
+                det: 0.9,
+                emb: Some(vec![9.0, 9.0, 9.0]),
             }],
             img_b64: None,
         };
         ctx.state.apply_frame(&f1);
-        let r = handle(&ctx, "register_member",
-                       &json!({ "track_id": 1, "name": "小红" })).unwrap();
+        let r = handle(
+            &ctx,
+            "register_member",
+            &json!({ "track_id": 1, "name": "小红" }),
+        )
+        .unwrap();
         assert_eq!(r["member"]["face"], true, "face sample seeded at register");
 
         // next day: COMPLETELY different body (orthogonal emb — no body
@@ -798,17 +944,35 @@ mod tests {
         let mut t2 = track(2);
         // slightly tighter than t1's lingering bbox so the tightest-fit
         // anchor picks the live track deterministically
-        t2.bbox = Bbox { x: 0.41, y: 0.3, w: 0.18, h: 0.5 };
-        t2.face = Some(crate::types::Face { emb: vec![0.0, 1.0, 0.0], det: 0.7 });
+        t2.bbox = Bbox {
+            x: 0.41,
+            y: 0.3,
+            w: 0.18,
+            h: 0.5,
+        };
+        t2.face = Some(crate::types::Face {
+            emb: vec![0.0, 1.0, 0.0],
+            det: 0.7,
+        });
         f1.tracks = vec![t2];
         f1.faces = vec![crate::types::FaceBox {
-            bbox: Bbox { x: 0.45, y: 0.32, w: 0.1, h: 0.1 },
-            det: 0.88, emb: Some(vec![8.9, 9.0, 9.05]),   // d≈0.15 face drift
+            bbox: Bbox {
+                x: 0.45,
+                y: 0.32,
+                w: 0.1,
+                h: 0.1,
+            },
+            det: 0.88,
+            emb: Some(vec![8.9, 9.0, 9.05]), // d≈0.15 face drift
         }];
         ctx.state.apply_frame(&f1);
         let out = handle(&ctx, "get_live_state", &json!({})).unwrap();
-        let t2s = out["tracks"].as_array().unwrap().iter()
-            .find(|t| t["track_id"] == 2).unwrap();
+        let t2s = out["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["track_id"] == 2)
+            .unwrap();
         assert_eq!(t2s["member"]["name"], "小红", "face overrides body");
         assert_eq!(t2s["member"]["via"], "face");
 
@@ -816,44 +980,63 @@ mod tests {
         let m = &list["members"][0];
         assert_eq!(m["samples"], 2, "new outfit auto-recorded (face-confirmed)");
         assert_eq!(m["samples"], 2); // body: primary + new outfit
-        // the second face sample (0.15 drift) is below append_min_dist →
-        // face library stays at 1
+                                     // the second face sample (0.15 drift) is below append_min_dist →
+                                     // face library stays at 1
     }
 
     #[test]
     fn workout_tracking_flow() {
         // zone: treadmill at left half; person on it 5 s (frames at 1 Hz),
         // then zone removed person walks out; session should record usage.
-        let ctx = make_ctx_identity(30,
-            r#"{ "match_threshold": 0.1, "auto_capture_unknown": false, "unknown_prefix": "U", "auto_capture_distance": 0.5, "roi": { "dwell_debounce_sec": 0, "hysteresis": true } }"#);
-        handle(&ctx, "set_roi_zones", &json!({ "zones": [{
-            "id": "z1", "name": "跑步机1", "equipment_type": "treadmill",
-            "polygon": [[0.0,0.3],[0.3,0.3],[0.3,1.0],[0.0,1.0]], "enabled": true,
-        }]})).expect("zones");
+        let ctx = make_ctx_identity(
+            30,
+            r#"{ "match_threshold": 0.1, "auto_capture_unknown": false, "unknown_prefix": "U", "auto_capture_distance": 0.5, "roi": { "dwell_debounce_sec": 0, "hysteresis": true } }"#,
+        );
+        handle(
+            &ctx,
+            "set_roi_zones",
+            &json!({ "zones": [{
+                "id": "z1", "name": "跑步机1", "equipment_type": "treadmill",
+                "polygon": [[0.0,0.3],[0.3,0.3],[0.3,1.0],[0.0,1.0]], "enabled": true,
+            }]}),
+        )
+        .expect("zones");
 
         // feed 6 frames @1Hz: person standing in the zone with body emb
         for i in 0..6 {
             let mut t = track(1);
             t.foot = Point { x: 0.15, y: 0.8 };
-            t.face = Some(crate::types::Face { emb: vec![1.0, 0.0, 0.0], det: 0.8 });
+            t.face = Some(crate::types::Face {
+                emb: vec![1.0, 0.0, 0.0],
+                det: 0.8,
+            });
             // standing pose (all major joints visible) — the classifier
             // runs only when the producer supplied keypoints
             t.pose = Some(crate::types::Pose {
-                kpts: vec![[0.5, 0.1, 0.9]; 17], score: 0.85,
+                kpts: vec![[0.5, 0.1, 0.9]; 17],
+                score: 0.85,
             });
             let f = TrackFrame {
-                device_id: "d".into(), frame_seq: i, ts_ns: (i as u64) * 1_000_000_000,
-                tracks: vec![t], faces: vec![],
-            img_b64: None,
+                device_id: "d".into(),
+                frame_seq: i,
+                ts_ns: (i as u64) * 1_000_000_000,
+                tracks: vec![t],
+                faces: vec![],
+                img_b64: None,
             };
             ctx.state.apply_frame(&f);
             let zones = ctx.db.list_zones().unwrap();
             let members = ctx.db.list_members().unwrap();
-            ctx.analytics.on_workout_frame(&f, &zones, &members, &ctx.identity, 0);
+            ctx.analytics
+                .on_workout_frame(&f, &zones, &members, &ctx.identity, 0);
         }
         let out = handle(&ctx, "get_live_state", &json!({})).unwrap();
-        let t1 = out["tracks"].as_array().unwrap().iter()
-            .find(|t| t["track_id"] == 1).unwrap();
+        let t1 = out["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["track_id"] == 1)
+            .unwrap();
         let ex = &t1["exercise"];
         assert_eq!(ex["name"], "treadmill_run", "zone maps to cardio exercise");
         assert_eq!(ex["zone"], "z1");
@@ -861,14 +1044,19 @@ mod tests {
         // summary after the person departs (close via TTL)
         std::thread::sleep(std::time::Duration::from_millis(20));
         ctx.analytics.close_expired_workouts(&ctx.db, 0);
-        let sum = handle(&ctx, "get_workout_summary", &json!({ "day_from": 0 }))
-            .unwrap();
-        assert!(sum["visit_count"].as_i64().unwrap() >= 1, "session recorded");
+        let sum = handle(&ctx, "get_workout_summary", &json!({ "day_from": 0 })).unwrap();
+        assert!(
+            sum["visit_count"].as_i64().unwrap() >= 1,
+            "session recorded"
+        );
         let eq = sum["equipment"].as_array().unwrap();
         assert_eq!(eq.len(), 1);
         assert_eq!(eq[0]["zone_id"], "z1");
-        assert!(eq[0]["duration_sec"].as_i64().unwrap() >= 1,
-            "treadmill time accumulated: {:?}", eq[0]);
+        assert!(
+            eq[0]["duration_sec"].as_i64().unwrap() >= 1,
+            "treadmill time accumulated: {:?}",
+            eq[0]
+        );
     }
 
     #[test]
@@ -877,8 +1065,12 @@ mod tests {
         let mut t = track(7);
         t.face = None;
         let f = TrackFrame {
-            device_id: "d".into(), frame_seq: 1, ts_ns: 0,
-            tracks: vec![t], faces: vec![], img_b64: Some("QUJD".into()),
+            device_id: "d".into(),
+            frame_seq: 1,
+            ts_ns: 0,
+            tracks: vec![t],
+            faces: vec![],
+            img_b64: Some("QUJD".into()),
         };
         ctx.state.apply_frame(&f);
         let out = handle(&ctx, "get_frame", &json!({})).unwrap();
@@ -888,8 +1080,12 @@ mod tests {
         assert_eq!(tracks[0]["track_id"], 7);
         // frames without a preview (PREVIEW=0 producers) yield null img
         let f2 = TrackFrame {
-            device_id: "d".into(), frame_seq: 2, ts_ns: 1,
-            tracks: vec![], faces: vec![], img_b64: None,
+            device_id: "d".into(),
+            frame_seq: 2,
+            ts_ns: 1,
+            tracks: vec![],
+            faces: vec![],
+            img_b64: None,
         };
         ctx.state.apply_frame(&f2);
         let out2 = handle(&ctx, "get_frame", &json!({})).unwrap();
@@ -911,7 +1107,10 @@ mod tests {
             .iter()
             .map(|t| (t["track_id"].as_i64().unwrap(), t))
             .collect();
-        assert!(by_id.contains_key(&7) && by_id.contains_key(&9), "tids={by_id:?}");
+        assert!(
+            by_id.contains_key(&7) && by_id.contains_key(&9),
+            "tids={by_id:?}"
+        );
 
         // shape: each track carries bbox + foot (f32 → f64, so compare approx).
         let t7 = by_id[&7];
@@ -942,8 +1141,12 @@ mod tests {
         ctx.state.apply_frame(&frame(vec![t3, track(4)]));
 
         // register track 3's embedding as 张三
-        let out = handle(&ctx, "register_member",
-                         &json!({ "track_id": 3, "name": "张三" })).expect("ok");
+        let out = handle(
+            &ctx,
+            "register_member",
+            &json!({ "track_id": 3, "name": "张三" }),
+        )
+        .expect("ok");
         let mid = out["member"]["id"].as_str().unwrap().to_string();
         assert_eq!(out["member"]["name"], "张三");
         assert_eq!(out["member"]["dim"], 4);
@@ -961,8 +1164,12 @@ mod tests {
         });
         ctx.state.apply_frame(&frame(vec![t3b]));
         let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
-        let t3s = out["tracks"].as_array().unwrap().iter()
-            .find(|t| t["track_id"] == 3).unwrap();
+        let t3s = out["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["track_id"] == 3)
+            .unwrap();
         assert_eq!(t3s["member"]["name"], "张三", "re-embedding still matches");
         assert_eq!(t3s["member"]["id"], mid.as_str());
         assert_eq!(t3s["has_emb"], true);
@@ -974,20 +1181,31 @@ mod tests {
         });
         ctx.state.apply_frame(&frame(vec![t3c]));
         let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
-        let t3s = out["tracks"].as_array().unwrap().iter()
-            .find(|t| t["track_id"] == 3).unwrap();
+        let t3s = out["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["track_id"] == 3)
+            .unwrap();
         assert!(t3s["member"].is_null(), "far embedding must not match");
 
         // register without an embedding is a clean error
-        let err = handle(&ctx, "register_member",
-                         &json!({ "track_id": 4, "name": "李四" }));
+        let err = handle(
+            &ctx,
+            "register_member",
+            &json!({ "track_id": 4, "name": "李四" }),
+        );
         assert!(err.is_err());
 
         // delete → matching gone
         handle(&ctx, "delete_member", &json!({ "id": mid })).expect("ok");
         let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
-        let t3s = out["tracks"].as_array().unwrap().iter()
-            .find(|t| t["track_id"] == 3).unwrap();
+        let t3s = out["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["track_id"] == 3)
+            .unwrap();
         assert!(t3s["member"].is_null(), "no member after delete");
         assert_eq!(out["members_count"], 0);
     }
@@ -1075,7 +1293,10 @@ mod tests {
         assert_eq!(zones.len(), 1, "only the kept zone remains");
         assert_eq!(zones[0]["id"], "c");
         let ids: Vec<&str> = zones.iter().map(|z| z["id"].as_str().unwrap()).collect();
-        assert!(!ids.contains(&"a") && !ids.contains(&"b"), "removed ids gone, ids={ids:?}");
+        assert!(
+            !ids.contains(&"a") && !ids.contains(&"b"),
+            "removed ids gone, ids={ids:?}"
+        );
     }
 
     #[test]
@@ -1164,7 +1385,10 @@ mod tests {
         // is exactly the shape the frontend relies on for the placeholder UI.
         let ctx = make_ctx();
         let out = handle(&ctx, "get_snapshot", &json!({"stream":"sub"})).expect("ok");
-        assert!(out.get("error").is_some(), "expected error field, got {out}");
+        assert!(
+            out.get("error").is_some(),
+            "expected error field, got {out}"
+        );
         assert!(out.get("image_base64").is_none());
     }
 
@@ -1191,16 +1415,22 @@ mod tests {
     fn embedding_library_grows_on_strong_confident_match() {
         // unit-scale: match 0.3, append confidence 0.3, diversity 0.15,
         // cooldown 60 s, auto-capture off (library growth under test)
-        let ctx = make_ctx_identity(30,
-            r#"{ "match_threshold": 0.3, "auto_capture_unknown": false, "unknown_prefix": "U", "auto_capture_distance": 0.5, "append_confidence": 0.3, "append_min_dist": 0.15, "append_cooldown_sec": 60 }"#);
+        let ctx = make_ctx_identity(
+            30,
+            r#"{ "match_threshold": 0.3, "auto_capture_unknown": false, "unknown_prefix": "U", "auto_capture_distance": 0.5, "append_confidence": 0.3, "append_min_dist": 0.15, "append_cooldown_sec": 60 }"#,
+        );
         let emb = |v: Vec<f32>| Some(crate::types::Face { emb: v, det: 0.8 });
 
         // day 1: red shirt — enrolled as the primary sample
         let mut t1 = track(1);
         t1.face = emb(vec![1.0, 0.0, 0.0]);
         ctx.state.apply_frame(&frame(vec![t1]));
-        handle(&ctx, "register_member", &json!({ "track_id": 1, "name": "小王" }))
-            .expect("register");
+        handle(
+            &ctx,
+            "register_member",
+            &json!({ "track_id": 1, "name": "小王" }),
+        )
+        .expect("register");
 
         // day 2: blue shirt — same person, new look. Distance 0.2 sits in
         // the [diversity 0.15, confidence 0.3] band → appended
@@ -1208,8 +1438,12 @@ mod tests {
         t2.face = emb(vec![1.0, 0.2, 0.0]);
         ctx.state.apply_frame(&frame(vec![t2]));
         let out = handle(&ctx, "get_live_state", &json!({})).unwrap();
-        let t2s = out["tracks"].as_array().unwrap().iter()
-            .find(|t| t["track_id"] == 2).unwrap();
+        let t2s = out["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["track_id"] == 2)
+            .unwrap();
         assert_eq!(t2s["member"]["name"], "小王");
         let list = handle(&ctx, "list_members", &json!({})).unwrap();
         assert_eq!(list["members"][0]["samples"], 2, "blue shirt appended");
@@ -1220,8 +1454,12 @@ mod tests {
         t3.face = emb(vec![1.0, 0.2, 0.0]);
         ctx.state.apply_frame(&frame(vec![t3]));
         let out = handle(&ctx, "get_live_state", &json!({})).unwrap();
-        let t3s = out["tracks"].as_array().unwrap().iter()
-            .find(|t| t["track_id"] == 3).unwrap();
+        let t3s = out["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["track_id"] == 3)
+            .unwrap();
         assert_eq!(t3s["member"]["name"], "小王");
 
         // redundant sample (0.1 from both stored) does NOT append
@@ -1239,6 +1477,9 @@ mod tests {
         ctx.state.apply_frame(&frame(vec![t5]));
         handle(&ctx, "get_live_state", &json!({})).unwrap();
         let list = handle(&ctx, "list_members", &json!({})).unwrap();
-        assert_eq!(list["members"][0]["samples"], 2, "cooldown blocks rapid append");
+        assert_eq!(
+            list["members"][0]["samples"], 2,
+            "cooldown blocks rapid append"
+        );
     }
 }

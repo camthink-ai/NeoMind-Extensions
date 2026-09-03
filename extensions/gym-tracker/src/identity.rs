@@ -52,7 +52,14 @@ pub fn match_tracks(
             }
         }
         if let Some((i, d)) = best.filter(|(_, d)| *d <= cfg.match_threshold) {
-            out.insert(t.track_id, Match { member_idx: i, via: "body", dist: d });
+            out.insert(
+                t.track_id,
+                Match {
+                    member_idx: i,
+                    via: "body",
+                    dist: d,
+                },
+            );
         }
     }
 
@@ -76,7 +83,14 @@ pub fn match_tracks(
         };
         let target = tightest_containing(&fe.bbox, tracks);
         if let Some(t) = target {
-            out.insert(t.track_id, Match { member_idx: i, via: "face", dist: d });
+            out.insert(
+                t.track_id,
+                Match {
+                    member_idx: i,
+                    via: "face",
+                    dist: d,
+                },
+            );
         }
     }
 
@@ -94,9 +108,7 @@ pub fn tightest_containing<'a>(fb: &Bbox, tracks: &'a [Track]) -> Option<&'a Tra
             let b = &t.bbox;
             fx >= b.x && fx <= b.x + b.w && fy >= b.y && fy <= b.y + b.h
         })
-        .min_by(|a, b| {
-            (a.bbox.w * a.bbox.h).total_cmp(&(b.bbox.w * b.bbox.h))
-        })
+        .min_by(|a, b| (a.bbox.w * a.bbox.h).total_cmp(&(b.bbox.w * b.bbox.h)))
 }
 
 #[cfg(test)]
@@ -121,8 +133,16 @@ mod tests {
     fn track(tid: i64, bbox: (f32, f32, f32, f32), emb: Option<Vec<f32>>) -> Track {
         Track {
             track_id: tid,
-            bbox: Bbox { x: bbox.0, y: bbox.1, w: bbox.2, h: bbox.3 },
-            foot: Point { x: bbox.0 + bbox.2 / 2.0, y: bbox.1 + bbox.3 },
+            bbox: Bbox {
+                x: bbox.0,
+                y: bbox.1,
+                w: bbox.2,
+                h: bbox.3,
+            },
+            foot: Point {
+                x: bbox.0 + bbox.2 / 2.0,
+                y: bbox.1 + bbox.3,
+            },
             pose: None,
             face: emb.map(|e| Face { emb: e, det: 0.8 }),
         }
@@ -136,11 +156,14 @@ mod tests {
             member("m2", "小蓝", vec![0.0, 1.0, 0.0], vec![]),
         ];
         // track 1's BODY embedding is 小蓝's body… but its FACE is 小红's
-        let tracks = vec![
-            track(1, (0.4, 0.3, 0.2, 0.5), Some(vec![0.0, 1.0, 0.0])),
-        ];
+        let tracks = vec![track(1, (0.4, 0.3, 0.2, 0.5), Some(vec![0.0, 1.0, 0.0]))];
         let faces = vec![FaceBox {
-            bbox: Bbox { x: 0.45, y: 0.32, w: 0.1, h: 0.1 },
+            bbox: Bbox {
+                x: 0.45,
+                y: 0.32,
+                w: 0.1,
+                h: 0.1,
+            },
             det: 0.9,
             emb: Some(vec![8.9, 9.0, 9.05]),
         }];
@@ -156,8 +179,8 @@ mod tests {
         let members = vec![member("m1", "小红", vec![1.0, 0.0, 0.0], vec![])];
         let tracks = vec![
             track(1, (0.1, 0.1, 0.2, 0.2), Some(vec![0.99, 0.01, 0.0])), // near → match
-            track(2, (0.5, 0.1, 0.2, 0.2), Some(vec![0.0, 1.0, 0.0])),  // far → none
-            track(3, (0.7, 0.1, 0.2, 0.2), None),                       // no emb → none
+            track(2, (0.5, 0.1, 0.2, 0.2), Some(vec![0.0, 1.0, 0.0])),   // far → none
+            track(3, (0.7, 0.1, 0.2, 0.2), None),                        // no emb → none
         ];
         let out = match_tracks(&cfg, &members, &tracks, &[]);
         assert!(out.contains_key(&1));

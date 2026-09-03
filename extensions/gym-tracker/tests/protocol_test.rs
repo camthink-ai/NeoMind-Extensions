@@ -22,7 +22,12 @@ async fn protocol_metadata() {
 async fn protocol_unknown_command() {
     let mut kit = TestKit::new(GymTrackerExtension::new());
     kit.start().await;
-    assert!(kit.execute_command("__nonexistent__", &json!({})).await.is_err(), "unknown command should error");
+    assert!(
+        kit.execute_command("__nonexistent__", &json!({}))
+            .await
+            .is_err(),
+        "unknown command should error"
+    );
 }
 
 /// Key commands respond within timeout (5s default — deadlock detection).
@@ -40,11 +45,16 @@ async fn protocol_get_status() {
             let msg = e.to_string();
             // Expected error patterns for commands requiring external deps
             assert!(
-                msg.contains("not found") || msg.contains("not loaded")
-                || msg.contains("not connected") || msg.contains("failed")
-                || msg.contains("invalid") || msg.contains("missing")
-                || msg.contains("error") || msg.contains("service")
-                || msg.contains("timeout") || msg.contains("model"),
+                msg.contains("not found")
+                    || msg.contains("not loaded")
+                    || msg.contains("not connected")
+                    || msg.contains("failed")
+                    || msg.contains("invalid")
+                    || msg.contains("missing")
+                    || msg.contains("error")
+                    || msg.contains("service")
+                    || msg.contains("timeout")
+                    || msg.contains("model"),
                 "unexpected error for get_status: {msg}"
             );
         }
@@ -64,14 +74,18 @@ async fn protocol_get_snapshot() {
             let msg = e.to_string();
             // Expected error patterns for commands requiring external deps
             assert!(
-                msg.contains("not found") || msg.contains("not loaded")
-                || msg.contains("not connected") || msg.contains("failed")
-                || msg.contains("invalid") || msg.contains("missing")
-                || msg.contains("error") || msg.contains("service")
-                || msg.contains("timeout") || msg.contains("model"),
+                msg.contains("not found")
+                    || msg.contains("not loaded")
+                    || msg.contains("not connected")
+                    || msg.contains("failed")
+                    || msg.contains("invalid")
+                    || msg.contains("missing")
+                    || msg.contains("error")
+                    || msg.contains("service")
+                    || msg.contains("timeout")
+                    || msg.contains("model"),
                 "unexpected error for get_snapshot: {msg}"
             );
         }
     }
 }
-

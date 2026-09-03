@@ -1,39 +1,50 @@
 // db.rs
-use std::collections::HashMap;
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Zone {
     pub id: String,
     pub name: String,
     pub equipment_type: String,
-    pub polygon: Vec<(f32,f32)>,   // normalized [[x,y]...]
+    pub polygon: Vec<(f32, f32)>, // normalized [[x,y]...]
     pub enabled: bool,
 }
 
-pub struct Db { conn: Mutex<Connection> }
+pub struct Db {
+    conn: Mutex<Connection>,
+}
 
 impl Db {
     pub fn open(path: &str) -> Result<Self, rusqlite::Error> {
-        let conn = if path == ":memory:" { Connection::open_in_memory()? } else { Connection::open(path)? };
-        let db = Self { conn: Mutex::new(conn) };
+        let conn = if path == ":memory:" {
+            Connection::open_in_memory()?
+        } else {
+            Connection::open(path)?
+        };
+        let db = Self {
+            conn: Mutex::new(conn),
+        };
         db.migrate()?;
         // v2 of member_embeddings: tag samples body|face (pre-existing
         // installs got the table without the column)
         let _ = db.conn.lock().execute(
             "ALTER TABLE member_embeddings ADD COLUMN kind TEXT NOT NULL DEFAULT 'body'",
-            []);
+            [],
+        );
         // v3: member avatar photo (base64 JPEG thumbnail, captured by the
         // Monitor from the live video — mosaic-free source frame)
-        let _ = db.conn.lock().execute(
-            "ALTER TABLE members ADD COLUMN photo TEXT",
-            []);
+        let _ = db
+            .conn
+            .lock()
+            .execute("ALTER TABLE members ADD COLUMN photo TEXT", []);
         Ok(db)
     }
     fn migrate(&self) -> Result<(), rusqlite::Error> {
-        self.conn.lock().execute_batch(r#"
+        self.conn.lock().execute_batch(
+            r#"
             CREATE TABLE IF NOT EXISTS members (
                 id TEXT PRIMARY KEY, display_name TEXT NOT NULL, phone TEXT,
                 is_enrolled INTEGER NOT NULL DEFAULT 0, source TEXT NOT NULL DEFAULT 'auto_capture',
@@ -70,12 +81,14 @@ impl Db {
                 kind TEXT NOT NULL DEFAULT 'body',
                 created_at INTEGER,
                 FOREIGN KEY(member_id) REFERENCES members(id));
-        "#)?;
+        "#,
+        )?;
         Ok(())
     }
     pub fn list_zones(&self) -> Result<Vec<Zone>, rusqlite::Error> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare("SELECT id,name,equipment_type,polygon,enabled FROM zones ORDER BY name")?;
+        let mut stmt =
+            conn.prepare("SELECT id,name,equipment_type,polygon,enabled FROM zones ORDER BY name")?;
         let rows = stmt.query_map([], |r| {
             let poly_str: String = r.get(3)?;
             let poly: Vec<(f32,f32)> = match serde_json::from_str(&poly_str) {
@@ -95,8 +108,61 @@ impl Db {
         )?;
         Ok(())
     }
+    /// Deleting a zone keeps its equipment_usage history: rows are detached
+    /// (zone_id → NULL, the denormalized zone_name survives) — otherwise the
+    /// zones(id) FK makes any zone that ever accumulated usage immortal.
     pub fn delete_zone(&self, id: &str) -> Result<(), rusqlite::Error> {
-        self.conn.lock().execute("DELETE FROM zones WHERE id=?1", params![id])?;
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE equipment_usage SET zone_id=NULL WHERE zone_id=?1",
+            params![id],
+        )?;
+        tx.execute("DELETE FROM zones WHERE id=?1", params![id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Atomic full-replace for set_roi_zones: zones absent from the incoming
+    /// set are deleted (usage detached, see `delete_zone`), the rest upserted —
+    /// one transaction, so a mid-set failure (UNIQUE(name) collision, FK)
+    /// rolls back instead of leaving a half-replaced zone table.
+    pub fn replace_zones(&self, zones: &[Zone]) -> Result<(), rusqlite::Error> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare("SELECT id FROM zones")?;
+            let ids: Vec<String> = stmt
+                .query_map([], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            drop(stmt);
+            for id in ids {
+                if !zones.iter().any(|z| z.id == id) {
+                    tx.execute(
+                        "UPDATE equipment_usage SET zone_id=NULL WHERE zone_id=?1",
+                        params![&id],
+                    )?;
+                    tx.execute("DELETE FROM zones WHERE id=?1", params![&id])?;
+                }
+            }
+        }
+        let mut stmt = tx.prepare(
+            "INSERT INTO zones(id,name,equipment_type,polygon,enabled,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?6)
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name, equipment_type=excluded.equipment_type, polygon=excluded.polygon, enabled=excluded.enabled, updated_at=excluded.updated_at",
+        )?;
+        for z in zones {
+            let poly = serde_json::to_string(&z.polygon).unwrap();
+            stmt.execute(params![
+                z.id,
+                z.name,
+                z.equipment_type,
+                poly,
+                z.enabled as i64,
+                now_secs()
+            ])?;
+        }
+        drop(stmt);
+        tx.commit()?;
         Ok(())
     }
 
@@ -118,28 +184,46 @@ impl Db {
 
     /// Full-replace semantics (mirrors set_roi_zones): lines absent from the
     /// incoming set are deleted first, then the rest upserted.
-    pub fn replace_lines(&self, lines: &[crate::analytics::CrossLine]) -> Result<(), rusqlite::Error> {
+    pub fn replace_lines(
+        &self,
+        lines: &[crate::analytics::CrossLine],
+    ) -> Result<(), rusqlite::Error> {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM cross_lines", [])?;
         let mut stmt = conn.prepare(
             "INSERT INTO cross_lines(id,name,ax,ay,bx,by,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?7)",
         )?;
         for l in lines {
-            stmt.execute(params![l.id, l.name, l.a.0, l.a.1, l.b.0, l.b.1, now_secs()])?;
+            stmt.execute(params![
+                l.id,
+                l.name,
+                l.a.0,
+                l.a.1,
+                l.b.0,
+                l.b.1,
+                now_secs()
+            ])?;
         }
         Ok(())
     }
 
     // ---- workout records (P4: sessions + equipment usage) ----
 
-    pub fn upsert_session(&self, id: &str, member_id: Option<&str>,
-                          device_id: &str, started: i64, ended: i64,
-                          duration_sec: i64, status: &str,
-                          member_name: Option<&str>)
-        -> Result<(), rusqlite::Error> {
+    pub fn upsert_session(
+        &self,
+        id: &str,
+        member_id: Option<&str>,
+        device_id: &str,
+        started: i64,
+        ended: i64,
+        duration_sec: i64,
+        status: &str,
+        member_name: Option<&str>,
+    ) -> Result<(), rusqlite::Error> {
         let summary = serde_json::to_string(&serde_json::json!({
             "member_name": member_name.unwrap_or(""),
-        })).unwrap();
+        }))
+        .unwrap();
         self.conn.lock().execute(
             "INSERT INTO sessions(id, member_id, device_id, started_at, ended_at, duration_sec, status, summary)
              VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
@@ -150,10 +234,16 @@ impl Db {
         Ok(())
     }
 
-    pub fn upsert_equipment_usage(&self, id: &str, session_id: &str,
-                                  member_id: Option<&str>, zone_id: &str,
-                                  duration_sec: i64, exercise: &str, reps: i64)
-        -> Result<(), rusqlite::Error> {
+    pub fn upsert_equipment_usage(
+        &self,
+        id: &str,
+        session_id: &str,
+        member_id: Option<&str>,
+        zone_id: &str,
+        duration_sec: i64,
+        exercise: &str,
+        reps: i64,
+    ) -> Result<(), rusqlite::Error> {
         self.conn.lock().execute(
             "INSERT INTO equipment_usage(id, session_id, member_id, zone_id, zone_name, started_at, ended_at, duration_sec, primary_action, reps)
              VALUES(?1,?2,?3,?4,?5,?6,?6,?7,?8,?9)
@@ -167,26 +257,35 @@ impl Db {
 
     /// Per-equipment usage totals since `day_from`, optionally one member.
     /// Returns (zone_id, total_sec, reps, primary exercise).
-    pub fn equipment_stats(&self, member_id: Option<&str>, day_from: i64)
-        -> Result<Vec<(String, i64, i64, String)>, rusqlite::Error> {
+    pub fn equipment_stats(
+        &self,
+        member_id: Option<&str>,
+        day_from: i64,
+    ) -> Result<Vec<(String, i64, i64, String)>, rusqlite::Error> {
         let conn = self.conn.lock();
         let mut stmt = if member_id.is_some() {
             conn.prepare(
                 "SELECT zone_id, SUM(duration_sec), MAX(reps), MAX(primary_action)
                  FROM equipment_usage WHERE member_id=?1 AND ended_at>=?2
-                 GROUP BY zone_id ORDER BY 2 DESC")?
+                 GROUP BY zone_id ORDER BY 2 DESC",
+            )?
         } else {
             conn.prepare(
                 "SELECT zone_id, SUM(duration_sec), MAX(reps), MAX(primary_action)
                  FROM equipment_usage WHERE ended_at>=?1
-                 GROUP BY zone_id ORDER BY 2 DESC")?
+                 GROUP BY zone_id ORDER BY 2 DESC",
+            )?
         };
         let mut map = |p: &[&dyn rusqlite::ToSql]| -> Result<Vec<_>, _> {
             stmt.query_map(p, |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<i64>>(1)?.unwrap_or(0),
                     r.get::<_, Option<i64>>(2)?.unwrap_or(0),
-                    r.get::<_, Option<String>>(3)?.unwrap_or_default()))
-            })?.collect()
+                    r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                ))
+            })?
+            .collect()
         };
         match member_id {
             Some(mid) => map(&[&mid, &day_from]),
@@ -195,27 +294,37 @@ impl Db {
     }
 
     /// Sessions since `day_from`, newest first, optionally one member.
-    pub fn list_sessions(&self, member_id: Option<&str>, day_from: i64, limit: i64)
-        -> Result<Vec<serde_json::Value>, rusqlite::Error> {
+    pub fn list_sessions(
+        &self,
+        member_id: Option<&str>,
+        day_from: i64,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>, rusqlite::Error> {
         let conn = self.conn.lock();
         let mut stmt = if member_id.is_some() {
             conn.prepare(
                 "SELECT s.id, s.member_id, s.started_at, s.ended_at, s.duration_sec, s.summary
                  FROM sessions s WHERE s.member_id=?1 AND s.started_at>=?2
-                 ORDER BY s.started_at DESC LIMIT ?3")?
+                 ORDER BY s.started_at DESC LIMIT ?3",
+            )?
         } else {
             conn.prepare(
                 "SELECT s.id, s.member_id, s.started_at, s.ended_at, s.duration_sec, s.summary
                  FROM sessions s WHERE s.started_at>=?1
-                 ORDER BY s.started_at DESC LIMIT ?2")?
+                 ORDER BY s.started_at DESC LIMIT ?2",
+            )?
         };
         let mut map = |p: &[&dyn rusqlite::ToSql]| -> Result<Vec<_>, _> {
             stmt.query_map(p, |r| {
                 let summary: Option<String> = r.get(5)?;
-                let name = serde_json::from_str::<serde_json::Value>(
-                    summary.as_deref().unwrap_or("{}"))
-                    .ok().and_then(|v| v.get("member_name")
-                        .and_then(|n| n.as_str()).map(String::from));
+                let name =
+                    serde_json::from_str::<serde_json::Value>(summary.as_deref().unwrap_or("{}"))
+                        .ok()
+                        .and_then(|v| {
+                            v.get("member_name")
+                                .and_then(|n| n.as_str())
+                                .map(String::from)
+                        });
                 Ok(serde_json::json!({
                     "id": r.get::<_, String>(0)?,
                     "member_id": r.get::<_, Option<String>>(1)?,
@@ -224,7 +333,8 @@ impl Db {
                     "ended_at": r.get::<_, Option<i64>>(3)?,
                     "duration_sec": r.get::<_, Option<i64>>(4)?.unwrap_or(0),
                 }))
-            })?.collect()
+            })?
+            .collect()
         };
         match member_id {
             Some(mid) => map(&[&mid, &day_from, &limit]),
@@ -238,7 +348,11 @@ impl Db {
     pub fn load_heatmap(&self, day: i64) -> Option<(Vec<u32>, i64)> {
         let conn = self.conn.lock();
         let raw: Option<String> = conn
-            .query_row("SELECT grid FROM heatmap_day WHERE day=?1", params![day], |r| r.get(0))
+            .query_row(
+                "SELECT grid FROM heatmap_day WHERE day=?1",
+                params![day],
+                |r| r.get(0),
+            )
             .ok();
         let raw = raw?;
         let grid: Vec<u32> = serde_json::from_str(&raw).ok()?;
@@ -257,8 +371,12 @@ impl Db {
 
     // ---- members (P3: body-ReID member library) ----
 
-    pub fn insert_member(&self, id: &str, name: &str, embedding: &[f32])
-        -> Result<(), rusqlite::Error> {
+    pub fn insert_member(
+        &self,
+        id: &str,
+        name: &str,
+        embedding: &[f32],
+    ) -> Result<(), rusqlite::Error> {
         // embedding rides the BLOB column as JSON — self-describing and
         // debuggable; a raw f32 LE blob would be smaller but opaque.
         let raw = serde_json::to_string(embedding).unwrap();
@@ -274,13 +392,18 @@ impl Db {
     /// created when an unknown person's embedding first appears. The name
     /// is `{prefix}-{n}` with n past the highest existing auto index —
     /// stable across deletions (no reuse of freed numbers).
-    pub fn insert_auto_member(&self, prefix: &str, embedding: &[f32])
-        -> Result<Member, rusqlite::Error> {
+    pub fn insert_auto_member(
+        &self,
+        prefix: &str,
+        embedding: &[f32],
+    ) -> Result<Member, rusqlite::Error> {
         let conn = self.conn.lock();
         let hi: i64 = conn.query_row(
             "SELECT COALESCE(MAX(CAST(SUBSTR(display_name, LENGTH(?1)+2) AS INTEGER)), 0)
              FROM members WHERE source='auto' AND display_name LIKE ?1 || '-%'",
-            params![prefix], |r| r.get(0))?;
+            params![prefix],
+            |r| r.get(0),
+        )?;
         let name = format!("{prefix}-{}", hi + 1);
         let id = format!("member_{}", uuid::Uuid::new_v4().simple());
         let raw = serde_json::to_string(embedding).unwrap();
@@ -290,13 +413,21 @@ impl Db {
              VALUES(?1, ?2, 0, 'auto', ?3, ?4, ?4, ?4)",
             params![id, name, raw, now],
         )?;
-        Ok(Member { id, name, source: "auto".into(), embedding: embedding.to_vec(), extra_embeddings: Vec::new(), face_embeddings: Vec::new(), photo: None, created_at: Some(now) })
+        Ok(Member {
+            id,
+            name,
+            source: "auto".into(),
+            embedding: embedding.to_vec(),
+            extra_embeddings: Vec::new(),
+            face_embeddings: Vec::new(),
+            photo: None,
+            created_at: Some(now),
+        })
     }
 
     /// Store / clear a member's avatar photo (base64 JPEG thumbnail).
     /// Pass `None` to remove. Returns false when the member id is unknown.
-    pub fn set_member_photo(&self, id: &str, photo: Option<&str>)
-        -> Result<bool, rusqlite::Error> {
+    pub fn set_member_photo(&self, id: &str, photo: Option<&str>) -> Result<bool, rusqlite::Error> {
         let n = self.conn.lock().execute(
             "UPDATE members SET photo=?2, updated_at=?3 WHERE id=?1",
             params![id, photo, now_secs()],
@@ -305,8 +436,7 @@ impl Db {
     }
 
     /// Rename a member (fills in / corrects the display name later).
-    pub fn rename_member(&self, id: &str, name: &str)
-        -> Result<usize, rusqlite::Error> {
+    pub fn rename_member(&self, id: &str, name: &str) -> Result<usize, rusqlite::Error> {
         let n = self.conn.lock().execute(
             "UPDATE members SET display_name=?2, is_enrolled=1, updated_at=?3 WHERE id=?1",
             params![id, name, now_secs()],
@@ -342,8 +472,8 @@ impl Db {
         // attach the accumulated samples, split body|face (one query)
         let mut extras: HashMap<String, (Vec<Vec<f32>>, Vec<Vec<f32>>)> = HashMap::new();
         {
-            let mut stmt = conn.prepare(
-                "SELECT member_id, embedding, kind FROM member_embeddings ORDER BY id")?;
+            let mut stmt = conn
+                .prepare("SELECT member_id, embedding, kind FROM member_embeddings ORDER BY id")?;
             let rows = stmt.query_map([], |r| {
                 let mid: String = r.get(0)?;
                 let raw: String = r.get(1)?;
@@ -357,7 +487,11 @@ impl Db {
                     continue;
                 }
                 let e = extras.entry(mid).or_default();
-                if kind == "face" { e.1.push(emb) } else { e.0.push(emb) }
+                if kind == "face" {
+                    e.1.push(emb)
+                } else {
+                    e.0.push(emb)
+                }
             }
         }
         Ok(members
@@ -376,20 +510,28 @@ impl Db {
     /// Gated by the caller (confidence + diversity + cooldown live in
     /// commands.rs where the live state is); this only enforces the hard
     /// cap. Returns true when the sample was stored.
-    pub fn append_member_embedding(&self, member_id: &str, embedding: &[f32])
-        -> Result<bool, rusqlite::Error> {
+    pub fn append_member_embedding(
+        &self,
+        member_id: &str,
+        embedding: &[f32],
+    ) -> Result<bool, rusqlite::Error> {
         self.append_member_embedding_kind(member_id, embedding, "body")
     }
 
     /// kind = body (osnet) | face (arcface). The per-kind cap reserves the
     /// library for both modalities independently.
-    pub fn append_member_embedding_kind(&self, member_id: &str, embedding: &[f32],
-                                        kind: &str)
-        -> Result<bool, rusqlite::Error> {
+    pub fn append_member_embedding_kind(
+        &self,
+        member_id: &str,
+        embedding: &[f32],
+        kind: &str,
+    ) -> Result<bool, rusqlite::Error> {
         let conn = self.conn.lock();
         let n: i64 = conn.query_row(
             "SELECT COUNT(*) FROM member_embeddings WHERE member_id=?1 AND kind=?2",
-            params![member_id, kind], |r| r.get(0))?;
+            params![member_id, kind],
+            |r| r.get(0),
+        )?;
         // +1: members.embedding is body sample #0 (face has no primary)
         let cap = if kind == "face" {
             crate::config::MAX_FACE_EMBEDDINGS_PER_MEMBER
@@ -424,12 +566,15 @@ impl Db {
     /// human confirmation path for outfit changes — a new outfit
     /// legitimately looks like a stranger to body-ReID and lands as its
     /// own auto entry; merging reunifies the identities.
-    pub fn merge_members(&self, src_id: &str, dst_id: &str)
-        -> Result<(), rusqlite::Error> {
+    pub fn merge_members(&self, src_id: &str, dst_id: &str) -> Result<(), rusqlite::Error> {
         let conn = self.conn.lock();
-        let raw: Option<String> = conn.query_row(
-            "SELECT embedding FROM members WHERE id=?1", params![src_id],
-            |r| r.get(0)).ok();
+        let raw: Option<String> = conn
+            .query_row(
+                "SELECT embedding FROM members WHERE id=?1",
+                params![src_id],
+                |r| r.get(0),
+            )
+            .ok();
         if let Some(raw) = raw {
             conn.execute(
                 "INSERT INTO member_embeddings(member_id, embedding, created_at) VALUES(?1, ?2, ?3)",
@@ -441,8 +586,10 @@ impl Db {
             params![src_id, dst_id],
         )?;
         // respect the per-kind caps: keep the newest samples if over
-        for (kind, cap) in [("body", crate::config::MAX_EMBEDDINGS_PER_MEMBER as i64 - 1),
-                            ("face", crate::config::MAX_FACE_EMBEDDINGS_PER_MEMBER as i64)] {
+        for (kind, cap) in [
+            ("body", crate::config::MAX_EMBEDDINGS_PER_MEMBER as i64 - 1),
+            ("face", crate::config::MAX_FACE_EMBEDDINGS_PER_MEMBER as i64),
+        ] {
             conn.execute(
                 "DELETE FROM member_embeddings WHERE member_id=?1 AND kind=?3 AND id NOT IN (
                      SELECT id FROM member_embeddings WHERE member_id=?1 AND kind=?3
@@ -456,7 +603,10 @@ impl Db {
 
     pub fn delete_member(&self, id: &str) -> Result<usize, rusqlite::Error> {
         let conn = self.conn.lock();
-        conn.execute("DELETE FROM member_embeddings WHERE member_id=?1", params![id])?;
+        conn.execute(
+            "DELETE FROM member_embeddings WHERE member_id=?1",
+            params![id],
+        )?;
         let n = conn.execute("DELETE FROM members WHERE id=?1", params![id])?;
         Ok(n)
     }
@@ -512,7 +662,9 @@ pub fn l2_dist(a: &[f32], b: &[f32]) -> f32 {
     s.sqrt()
 }
 
-fn now_secs() -> i64 { chrono::Utc::now().timestamp() }
+fn now_secs() -> i64 {
+    chrono::Utc::now().timestamp()
+}
 
 #[cfg(test)]
 mod tests {
@@ -520,19 +672,124 @@ mod tests {
     #[test]
     fn zone_crud_and_unique_name() {
         let db = Db::open(":memory:").unwrap();
-        let z = Zone { id: "u1".into(), name: "跑步机区".into(), equipment_type: "treadmill".into(), polygon: vec![(0.1,0.1),(0.4,0.1),(0.4,0.5),(0.1,0.5)], enabled: true };
+        let z = Zone {
+            id: "u1".into(),
+            name: "跑步机区".into(),
+            equipment_type: "treadmill".into(),
+            polygon: vec![(0.1, 0.1), (0.4, 0.1), (0.4, 0.5), (0.1, 0.5)],
+            enabled: true,
+        };
         db.upsert_zone(&z).unwrap();
         assert_eq!(db.list_zones().unwrap().len(), 1);
-        assert_eq!(db.list_zones().unwrap()[0].polygon, z.polygon, "polygon round-trips");
+        assert_eq!(
+            db.list_zones().unwrap()[0].polygon,
+            z.polygon,
+            "polygon round-trips"
+        );
         // duplicate name (different id) must fail due to UNIQUE(name)
-        let mut z2 = z.clone(); z2.id = "u2".into();
+        let mut z2 = z.clone();
+        z2.id = "u2".into();
         assert!(db.upsert_zone(&z2).is_err(), "duplicate name must fail");
         // rename via upsert(same id) preserves association (FK is zones.id, stable uuid)
-        let mut renamed = z.clone(); renamed.name = "有氧区".into();
+        let mut renamed = z.clone();
+        renamed.name = "有氧区".into();
         db.upsert_zone(&renamed).unwrap();
         assert_eq!(db.list_zones().unwrap()[0].name, "有氧区");
         db.delete_zone("u1").unwrap();
         assert!(db.list_zones().unwrap().is_empty());
+    }
+
+    #[test]
+    fn zone_delete_keeps_usage_history() {
+        let db = Db::open(":memory:").unwrap();
+        let fk_on: i64 = db
+            .conn
+            .lock()
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            fk_on, 1,
+            "FK enforcement must be on or the detach path is untested"
+        );
+        let z = Zone {
+            id: "z1".into(),
+            name: "力量区".into(),
+            equipment_type: "squat_rack".into(),
+            polygon: vec![(0.1, 0.1), (0.4, 0.1), (0.4, 0.5), (0.1, 0.5)],
+            enabled: true,
+        };
+        db.upsert_zone(&z).unwrap();
+        db.upsert_equipment_usage("u1", "s1", None, "z1", 30, "squat", 8)
+            .unwrap();
+        // Previously this DELETE hit the zones(id) FK and failed forever.
+        db.delete_zone("z1").unwrap();
+        assert!(db.list_zones().unwrap().is_empty());
+        let (zone_id, dur): (Option<String>, i64) = db
+            .conn
+            .lock()
+            .query_row(
+                "SELECT zone_id, duration_sec FROM equipment_usage WHERE id='u1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(zone_id, None, "usage row detached, not deleted");
+        assert_eq!(dur, 30);
+    }
+
+    #[test]
+    fn replace_zones_atomic_and_fk_safe() {
+        let db = Db::open(":memory:").unwrap();
+        let old = Zone {
+            id: "z-old".into(),
+            name: "旧区".into(),
+            equipment_type: "treadmill".into(),
+            polygon: vec![(0.1, 0.1), (0.2, 0.1), (0.2, 0.2)],
+            enabled: true,
+        };
+        db.upsert_zone(&old).unwrap();
+        db.upsert_equipment_usage("u1", "s1", None, "z-old", 60, "walk", 0)
+            .unwrap();
+        let new = Zone {
+            id: "z-new".into(),
+            name: "新区".into(),
+            equipment_type: "bench".into(),
+            polygon: vec![(0.5, 0.5), (0.6, 0.5), (0.6, 0.6)],
+            enabled: true,
+        };
+        db.replace_zones(&[new]).unwrap();
+        let zones = db.list_zones().unwrap();
+        assert_eq!(zones.len(), 1);
+        assert_eq!(zones[0].id, "z-new");
+        let n: i64 = db
+            .conn
+            .lock()
+            .query_row(
+                "SELECT COUNT(*) FROM equipment_usage WHERE id='u1' AND zone_id IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "old zone's usage detached by replace");
+        // A failing replace (UNIQUE name collision within the set) must roll
+        // back entirely — no half-replaced table.
+        let a = Zone {
+            id: "a".into(),
+            name: "同名".into(),
+            equipment_type: "bench".into(),
+            polygon: vec![(0.1, 0.1), (0.2, 0.1), (0.2, 0.2)],
+            enabled: true,
+        };
+        let b = Zone {
+            id: "b".into(),
+            name: "同名".into(),
+            equipment_type: "bench".into(),
+            polygon: vec![(0.3, 0.3), (0.4, 0.3), (0.4, 0.4)],
+            enabled: true,
+        };
+        assert!(db.replace_zones(&[a, b]).is_err());
+        assert_eq!(db.list_zones().unwrap().len(), 1, "rollback kept prior set");
+        assert_eq!(db.list_zones().unwrap()[0].id, "z-new");
     }
 
     #[test]
@@ -547,7 +804,11 @@ mod tests {
 
         assert_eq!(l2_dist(&[1.0, 0.0], &[1.0, 0.0]), 0.0);
         assert!((l2_dist(&[1.0, 0.0], &[0.0, 1.0]) - std::f32::consts::SQRT_2).abs() < 1e-5);
-        assert_eq!(l2_dist(&[1.0], &[1.0, 2.0]), f32::INFINITY, "length mismatch → ∞");
+        assert_eq!(
+            l2_dist(&[1.0], &[1.0, 2.0]),
+            f32::INFINITY,
+            "length mismatch → ∞"
+        );
         assert_eq!(l2_dist(&[], &[]), f32::INFINITY);
 
         assert_eq!(db.delete_member("m1").unwrap(), 1);

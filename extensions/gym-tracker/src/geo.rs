@@ -70,7 +70,10 @@ mod tests {
 
     #[test]
     fn degenerate_polygons_are_outside() {
-        assert!(!point_in_polygon(0.5, 0.5, &[(0.0, 0.0), (1.0, 1.0)]), "2 vertices");
+        assert!(
+            !point_in_polygon(0.5, 0.5, &[(0.0, 0.0), (1.0, 1.0)]),
+            "2 vertices"
+        );
         assert!(!point_in_polygon(0.5, 0.5, &[]), "empty");
         assert!(!point_in_polygon(0.5, 0.5, &[(0.5, 0.5)]), "1 vertex");
     }
@@ -89,11 +92,20 @@ mod tests {
         // U-shape: the notch in the middle is outside even though its bbox is
         // inside the polygon's bounds.
         let u = vec![
-            (0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.6, 1.0),
-            (0.6, 0.4), (0.4, 0.4), (0.4, 1.0), (0.0, 1.0),
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (1.0, 1.0),
+            (0.6, 1.0),
+            (0.6, 0.4),
+            (0.4, 0.4),
+            (0.4, 1.0),
+            (0.0, 1.0),
         ];
         assert!(point_in_polygon(0.2, 0.2, &u), "inside left arm");
         assert!(point_in_polygon(0.8, 0.8, &u), "inside right arm");
-        assert!(!point_in_polygon(0.5, 0.8, &u), "inside the notch — outside");
+        assert!(
+            !point_in_polygon(0.5, 0.8, &u),
+            "inside the notch — outside"
+        );
     }
 }

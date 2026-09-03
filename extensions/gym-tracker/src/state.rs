@@ -64,9 +64,7 @@ impl LiveState {
             preview_wait: Mutex::new(()),
             preview_cv: Condvar::new(),
             track_hist: Default::default(),
-            faces_seen: RwLock::new(
-                Instant::now() - Duration::from_secs(3600),
-            ),
+            faces_seen: RwLock::new(Instant::now() - Duration::from_secs(3600)),
         }
     }
 
@@ -89,14 +87,19 @@ impl LiveState {
         *self.faces_seen.write() = now;
         *self.tracks_ts.write() = f.ts_ns;
         if let Some(img) = f.img_b64.as_ref() {
-            *self.frame_img.write() =
-                Some((img.clone(), tracks_now, f.faces.clone()));
+            *self.frame_img.write() = Some((img.clone(), tracks_now, f.faces.clone()));
         }
         // ts-keyed history for timestamp-exact overlay interpolation
         {
             let mut h = self.track_hist.write();
             h.push_back((f.ts_ns, f.tracks.clone()));
-            while h.len() > 1 && f.ts_ns - h.front().map(|(t, _)| *t).unwrap_or(0) > 3_000_000_000 {
+            // saturating_sub: a stale/out-of-order ts (camera clock jump) must
+            // not underflow — it panics debug builds and corrupts the window.
+            while h.len() > 1
+                && f.ts_ns
+                    .saturating_sub(h.front().map(|(t, _)| *t).unwrap_or(0))
+                    > 3_000_000_000
+            {
                 h.pop_front();
             }
         }
@@ -168,7 +171,11 @@ impl LiveState {
     }
 
     pub fn snapshot(&self) -> Vec<Track> {
-        self.inner.read().values().map(|e| e.track.clone()).collect()
+        self.inner
+            .read()
+            .values()
+            .map(|e| e.track.clone())
+            .collect()
     }
 
     /// Latest frame-level face boxes, `None` when the last face-bearing
@@ -231,7 +238,12 @@ mod tests {
 
         let mut f = frame(2);
         f.faces = vec![FaceBox {
-            bbox: Bbox { x: 0.1, y: 0.1, w: 0.2, h: 0.2 },
+            bbox: Bbox {
+                x: 0.1,
+                y: 0.1,
+                w: 0.2,
+                h: 0.2,
+            },
             det: 0.9,
             emb: None,
         }];

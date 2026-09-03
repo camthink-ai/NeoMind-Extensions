@@ -144,8 +144,7 @@ mod tests {
         assert_eq!(face.emb, vec![0.1, 0.2, 0.3]);
         assert_eq!(face.det, 0.77);
 
-        let back: TrackFrame =
-            serde_json::from_value(serde_json::to_value(&f).unwrap()).unwrap();
+        let back: TrackFrame = serde_json::from_value(serde_json::to_value(&f).unwrap()).unwrap();
         assert_eq!(back, f);
     }
 
@@ -198,8 +197,7 @@ mod tests {
         assert_eq!(f.faces[0].det, 0.87);
         assert_eq!(f.faces[0].emb.as_deref(), Some(&[1.0, 0.5][..]));
 
-        let back: TrackFrame =
-            serde_json::from_value(serde_json::to_value(&f).unwrap()).unwrap();
+        let back: TrackFrame = serde_json::from_value(serde_json::to_value(&f).unwrap()).unwrap();
         assert_eq!(back, f);
     }
 }

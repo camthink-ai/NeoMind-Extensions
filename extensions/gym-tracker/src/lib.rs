@@ -22,8 +22,8 @@ pub mod analytics;
 pub mod commands;
 pub mod config;
 pub mod db;
-pub mod geo;
 pub mod exercise;
+pub mod geo;
 mod identity;
 mod ingest;
 pub mod metrics;
@@ -34,12 +34,12 @@ pub mod types;
 
 use std::sync::{Arc, OnceLock};
 
-use neomind_extension_sdk::{
-    async_trait, Extension, ExtensionCommand, ExtensionError, ExtensionMetadata,
-    ExtensionMetricValue, MetricDescriptor, PushOutputMessage, Result, send_push_output,
-};
 use neomind_extension_sdk::prelude::{
     FlowControl, StreamCapability, StreamDataType, StreamDirection, StreamMode, StreamSession,
+};
+use neomind_extension_sdk::{
+    async_trait, send_push_output, Extension, ExtensionCommand, ExtensionError, ExtensionMetadata,
+    ExtensionMetricValue, MetricDescriptor, PushOutputMessage, Result,
 };
 use parking_lot::{Mutex, RwLock};
 
@@ -91,9 +91,11 @@ fn cmd(name: &str, desc: &str) -> ExtensionCommand {
 }
 
 /// Live push sessions (session_id → stop flag) for the frame stream.
-static PUSH_SESSIONS: OnceLock<Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>> =
-    OnceLock::new();
-fn push_sessions() -> &'static Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>> {
+static PUSH_SESSIONS: OnceLock<
+    Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
+> = OnceLock::new();
+fn push_sessions(
+) -> &'static Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>> {
     PUSH_SESSIONS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
@@ -233,15 +235,11 @@ impl Extension for GymTrackerExtension {
 
         let ne = Arc::new(Ne503Client::new(&cfg));
 
-        // Best-effort login so the ingest WS `?token=` query param has a value.
-        // If it fails here (device unreachable at configure time), ingest still
-        // spawns and reconnects on its own schedule, but without a token — log
-        // and continue rather than failing the whole configure.
-        let token = ne
-            .login()
-            .ok()
-            .and_then(|()| ne.token_string())
-            .unwrap_or_default();
+        // Best-effort warm-up login; the ingest loop re-logins on its own
+        // whenever its cached token is empty or a reconnect is needed, so a
+        // failure here (device busy at configure time) no longer starves the
+        // subscriber.
+        let _ = ne.login();
 
         let state = Arc::new(LiveState::new(cfg.ingest.track_ttl_sec));
         let metrics = Arc::new(Metrics::new());
@@ -250,8 +248,13 @@ impl Extension for GymTrackerExtension {
         // first produce_metrics() advertises the right descriptors.
         metrics.sync_zones(&db.list_zones().unwrap_or_default());
 
-        let ingest_handle =
-            ingest::spawn(cfg.clone(), state.clone(), analytics.clone(), db.clone(), token);
+        let ingest_handle = ingest::spawn(
+            cfg.clone(),
+            state.clone(),
+            analytics.clone(),
+            db.clone(),
+            ne.clone(),
+        );
 
         // Replacing a previous Inner drops the old IngestHandle → its Drop stops
         // the old ingest thread. Single write-lock acquisition.
@@ -276,9 +279,7 @@ impl Extension for GymTrackerExtension {
         Some(StreamCapability {
             direction: StreamDirection::Download,
             mode: StreamMode::Push,
-            supported_data_types: vec![
-                StreamDataType::Json,
-            ],
+            supported_data_types: vec![StreamDataType::Json],
             max_chunk_size: 1 << 20,
             preferred_chunk_size: 48 * 1024,
             max_concurrent_sessions: 4,
@@ -305,7 +306,8 @@ impl Extension for GymTrackerExtension {
         };
         let flag = {
             let mut g = push_sessions().lock();
-            let f = g.entry(session_id.to_string())
+            let f = g
+                .entry(session_id.to_string())
                 .or_insert_with(|| Arc::new(std::sync::atomic::AtomicBool::new(true)));
             f.store(true, std::sync::atomic::Ordering::SeqCst);
             f.clone()
@@ -316,9 +318,10 @@ impl Extension for GymTrackerExtension {
             while flag.load(std::sync::atomic::Ordering::SeqCst) {
                 // wake on every incoming preview frame (display rate);
                 // 120 ms timeout keeps a heartbeat when idle
-                let Some((ts_ns, img)) =
-                    state.wait_preview(std::time::Duration::from_millis(120))
-                else { continue };
+                let Some((ts_ns, img)) = state.wait_preview(std::time::Duration::from_millis(120))
+                else {
+                    continue;
+                };
                 // evict departed tracks BEFORE snapshotting — otherwise a
                 // person who left lingers in every pushed frame until the
                 // (much slower) REST poll happens to evict, and the Monitor

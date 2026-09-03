@@ -132,11 +132,17 @@ pub fn classify_from_pose(pose: &Pose) -> &'static str {
             };
         }
         if elbow.map_or(false, |e| e < 90.0) {
-            let arms_up = kp(pose, L_WRIST).zip(kp(pose, L_SHOULDER))
+            let arms_up = kp(pose, L_WRIST)
+                .zip(kp(pose, L_SHOULDER))
                 .map_or(false, |(w, s)| w.y < s.y)
-                || kp(pose, R_WRIST).zip(kp(pose, R_SHOULDER))
+                || kp(pose, R_WRIST)
+                    .zip(kp(pose, R_SHOULDER))
                     .map_or(false, |(w, s)| w.y < s.y);
-            return if arms_up { "lat_pulldown" } else { "bicep_curl" };
+            return if arms_up {
+                "lat_pulldown"
+            } else {
+                "bicep_curl"
+            };
         }
     }
     "unknown"
@@ -146,18 +152,18 @@ pub fn classify_from_pose(pose: &Pose) -> &'static str {
 fn thresholds(exercise: &str) -> Option<(f32, f32)> {
     // (up_angle, down_angle) on the exercise's primary joint
     Some(match exercise {
-        "squat" | "lunge" => (160.0, 110.0),   // knee angle
-        "deadlift" => (160.0, 130.0),          // hip angle
-        "bench_press" | "pushup" => (160.0, 100.0), // elbow
-        "lat_pulldown" => (160.0, 110.0),      // elbow
+        "squat" | "lunge" => (160.0, 110.0),                // knee angle
+        "deadlift" => (160.0, 130.0),                       // hip angle
+        "bench_press" | "pushup" => (160.0, 100.0),         // elbow
+        "lat_pulldown" => (160.0, 110.0),                   // elbow
         "bicep_curl" | "crunch" | "situp" => (150.0, 60.0), // elbow / torso-hip
-        "shoulder_press" => (150.0, 80.0),     // elbow
-        "pullup" => (160.0, 90.0),             // elbow
-        "lateral_raise" => (85.0, 20.0),       // wrist elevation
-        "chest_fly" => (150.0, 110.0),         // elbow (shallow arc)
-        "dumbbell_row" => (160.0, 90.0),       // elbow
-        "kettlebell_swing" => (170.0, 120.0),  // hip angle
-        _ => return None,   // cardio / plank / standing: duration only
+        "shoulder_press" => (150.0, 80.0),                  // elbow
+        "pullup" => (160.0, 90.0),                          // elbow
+        "lateral_raise" => (85.0, 20.0),                    // wrist elevation
+        "chest_fly" => (150.0, 110.0),                      // elbow (shallow arc)
+        "dumbbell_row" => (160.0, 90.0),                    // elbow
+        "kettlebell_swing" => (170.0, 120.0),               // hip angle
+        _ => return None, // cardio / plank / standing: duration only
     })
 }
 
@@ -165,9 +171,7 @@ fn thresholds(exercise: &str) -> Option<(f32, f32)> {
 fn primary_angle(pose: &Pose, exercise: &str) -> Option<f32> {
     let best = |(a, b, c): (usize, usize, usize)| {
         let l = joint_angle(kp(pose, a), kp(pose, b), kp(pose, c));
-        let r = joint_angle(
-            kp(pose, a + 1), kp(pose, b + 1), kp(pose, c + 1),
-        );
+        let r = joint_angle(kp(pose, a + 1), kp(pose, b + 1), kp(pose, c + 1));
         // prefer the side with more confidence; fall back to either
         match (l, r) {
             (Some(l), Some(r)) => Some(l.min(r).max(l.min(r))), // avg-ish: take mean
@@ -183,16 +187,19 @@ fn primary_angle(pose: &Pose, exercise: &str) -> Option<f32> {
         // raises count on wrist ELEVATION (straight arm), not a joint.
         // (the local `best` closure takes joint triplets — inline instead)
         "lateral_raise" => {
-            return match (wrist_elevation(pose, L_SHOULDER, L_WRIST),
-                          wrist_elevation(pose, R_SHOULDER, R_WRIST)) {
+            return match (
+                wrist_elevation(pose, L_SHOULDER, L_WRIST),
+                wrist_elevation(pose, R_SHOULDER, R_WRIST),
+            ) {
                 (Some(a), Some(b)) => Some((a + b) / 2.0),
                 (Some(a), None) => Some(a),
                 (None, Some(b)) => Some(b),
                 (None, None) => None,
             };
         }
-        "bench_press" | "pushup" | "lat_pulldown" | "bicep_curl"
-        | "shoulder_press" | "pullup" => best((L_SHOULDER, L_ELBOW, L_WRIST)),
+        "bench_press" | "pushup" | "lat_pulldown" | "bicep_curl" | "shoulder_press" | "pullup" => {
+            best((L_SHOULDER, L_ELBOW, L_WRIST))
+        }
         _ => None,
     }
 }
@@ -258,7 +265,7 @@ fn wrist_elevation(pose: &Pose, shoulder: usize, wrist: usize) -> Option<f32> {
     let s = kp(pose, shoulder)?;
     let w = kp(pose, wrist)?;
     let (dx, dy) = (w.x - s.x, w.y - s.y); // image coords: +y down
-    // angle from straight-down (0°) rotating outward/up
+                                           // angle from straight-down (0°) rotating outward/up
     Some(dy.atan2(dx.abs().max(1e-6)).to_degrees() + 90.0)
 }
 
@@ -284,9 +291,11 @@ impl PoseTimeline {
         ));
         self.hip_y.push(hip_center_y(pose).unwrap_or(f32::NAN));
         self.arms_up.push(
-            kp(pose, L_WRIST).zip(kp(pose, L_SHOULDER))
+            kp(pose, L_WRIST)
+                .zip(kp(pose, L_SHOULDER))
                 .map_or(false, |(w, s)| w.y < s.y)
-                || kp(pose, R_WRIST).zip(kp(pose, R_SHOULDER))
+                || kp(pose, R_WRIST)
+                    .zip(kp(pose, R_SHOULDER))
                     .map_or(false, |(w, s)| w.y < s.y),
         );
         self.stride.push(stride_width(pose).unwrap_or(f32::NAN));
@@ -295,7 +304,12 @@ impl PoseTimeline {
             wrist_elevation(pose, R_SHOULDER, R_WRIST),
         ));
         if self.t.len() > MAX {
-            for v in [&mut self.torso, &mut self.torso_hip, &mut self.knee, &mut self.elbow] {
+            for v in [
+                &mut self.torso,
+                &mut self.torso_hip,
+                &mut self.knee,
+                &mut self.elbow,
+            ] {
                 v.remove(0);
             }
             self.t.remove(0);
@@ -355,7 +369,10 @@ fn oscillation(series: &[Option<f32>], t: &[f64]) -> Option<Osc> {
     } else {
         0.0
     };
-    Some(Osc { amplitude, cadence_hz })
+    Some(Osc {
+        amplitude,
+        cadence_hz,
+    })
 }
 
 /// Second-tier classifier: posture family from the latest frame, specific
@@ -371,16 +388,20 @@ pub fn classify_with_history(tl: &PoseTimeline) -> &'static str {
     let elbow_osc = oscillation(&tl.elbow, &tl.t);
     let tho = oscillation(&tl.torso_hip, &tl.t);
     let hip_y_osc = oscillation(
-        &tl.hip_y.iter().map(|v| Some(*v)).collect::<Vec<_>>(), &tl.t);
+        &tl.hip_y.iter().map(|v| Some(*v)).collect::<Vec<_>>(),
+        &tl.t,
+    );
 
     // ---- lying family (torso > 45° lean) ----
     if torso.map_or(false, |a| a > 45.0) {
         // torso-hip oscillating, elbow quiet → crunch (small) / situp (big)
         if let Some(o) = tho {
-            if o.amplitude > 12.0
-                && elbow_osc.map_or(true, |e| e.amplitude < o.amplitude)
-            {
-                return if o.amplitude > 35.0 { "situp" } else { "crunch" };
+            if o.amplitude > 12.0 && elbow_osc.map_or(true, |e| e.amplitude < o.amplitude) {
+                return if o.amplitude > 35.0 {
+                    "situp"
+                } else {
+                    "crunch"
+                };
             }
         }
         // fully static, elbows under shoulders → plank
@@ -395,8 +416,7 @@ pub fn classify_with_history(tl: &PoseTimeline) -> &'static str {
         if let Some(e) = elbow_osc {
             if e.amplitude > 25.0 {
                 // elbow MIN during the cycle: bench bottom ~90°, fly ~130°+
-                let min_elbow = tl.elbow.iter().filter_map(|v| *v)
-                    .fold(f32::MAX, f32::min);
+                let min_elbow = tl.elbow.iter().filter_map(|v| *v).fold(f32::MAX, f32::min);
                 if min_elbow > 120.0 {
                     return "chest_fly";
                 }
@@ -416,8 +436,12 @@ pub fn classify_with_history(tl: &PoseTimeline) -> &'static str {
         if let Some(o) = knee_osc {
             if o.amplitude > 25.0 {
                 // wide stance / split stance → lunge
-                let stride = tl.stride.iter()
-                    .filter(|v| !v.is_nan()).cloned().fold(0.0f32, f32::max);
+                let stride = tl
+                    .stride
+                    .iter()
+                    .filter(|v| !v.is_nan())
+                    .cloned()
+                    .fold(0.0f32, f32::max);
                 if stride > 0.16 {
                     return "lunge";
                 }
@@ -440,8 +464,8 @@ pub fn classify_with_history(tl: &PoseTimeline) -> &'static str {
         // elbow oscillation → pullup/shoulder_press (arms up) vs curl
         if let Some(o) = elbow_osc {
             if o.amplitude > 25.0 {
-                let up_frac = tl.arms_up.iter().filter(|u| **u).count() as f32
-                    / tl.arms_up.len() as f32;
+                let up_frac =
+                    tl.arms_up.iter().filter(|u| **u).count() as f32 / tl.arms_up.len() as f32;
                 if up_frac > 0.7 {
                     return if hip_y_osc.map_or(false, |h| h.amplitude > 0.03) {
                         "pullup"
@@ -456,8 +480,8 @@ pub fn classify_with_history(tl: &PoseTimeline) -> &'static str {
         // → the raise family: lateral/front raise (to ~90°) vs overhead
         // press variants (already caught above by elbow osc)
         if let Some(we) = oscillation(&tl.wrist_elev, &tl.t) {
-            let elbow_straight = tl.elbow.iter().filter_map(|v| *v)
-                .fold(f32::MAX, f32::min) > 120.0;
+            let elbow_straight =
+                tl.elbow.iter().filter_map(|v| *v).fold(f32::MAX, f32::min) > 120.0;
             if we.amplitude > 30.0 && elbow_straight {
                 // tops out near horizontal → lateral_raise; goes overhead
                 // with straight arm → front-raise-to-overhead (rare) —
@@ -593,21 +617,33 @@ mod tests {
     /// above the 150° deadlift hinge line). Mirrored right side.
     const STAND: &[(usize, f32, f32, f32)] = &[
         (NOSE, 0.50, 0.10, 0.9),
-        (L_SHOULDER, 0.45, 0.20, 0.9), (R_SHOULDER, 0.55, 0.20, 0.9),
-        (L_ELBOW, 0.42, 0.30, 0.8), (R_ELBOW, 0.58, 0.30, 0.8),
-        (L_WRIST, 0.42, 0.38, 0.8), (R_WRIST, 0.58, 0.38, 0.8),
-        (L_HIP, 0.47, 0.40, 0.9), (R_HIP, 0.53, 0.40, 0.9),
-        (L_KNEE, 0.47, 0.56, 0.9), (R_KNEE, 0.53, 0.56, 0.9),
-        (L_ANKLE, 0.47, 0.72, 0.9), (R_ANKLE, 0.53, 0.72, 0.9),
+        (L_SHOULDER, 0.45, 0.20, 0.9),
+        (R_SHOULDER, 0.55, 0.20, 0.9),
+        (L_ELBOW, 0.42, 0.30, 0.8),
+        (R_ELBOW, 0.58, 0.30, 0.8),
+        (L_WRIST, 0.42, 0.38, 0.8),
+        (R_WRIST, 0.58, 0.38, 0.8),
+        (L_HIP, 0.47, 0.40, 0.9),
+        (R_HIP, 0.53, 0.40, 0.9),
+        (L_KNEE, 0.47, 0.56, 0.9),
+        (R_KNEE, 0.53, 0.56, 0.9),
+        (L_ANKLE, 0.47, 0.72, 0.9),
+        (R_ANKLE, 0.53, 0.72, 0.9),
     ];
     const DEEP: &[(usize, f32, f32, f32)] = &[
         (NOSE, 0.50, 0.11, 0.9),
-        (L_SHOULDER, 0.47, 0.21, 0.9), (R_SHOULDER, 0.53, 0.21, 0.9),
-        (L_ELBOW, 0.44, 0.32, 0.8), (R_ELBOW, 0.56, 0.32, 0.8),
-        (L_WRIST, 0.44, 0.40, 0.8), (R_WRIST, 0.56, 0.40, 0.8),
-        (L_HIP, 0.47, 0.40, 0.9), (R_HIP, 0.53, 0.40, 0.9),
-        (L_KNEE, 0.555, 0.556, 0.9), (R_KNEE, 0.445, 0.556, 0.9),
-        (L_ANKLE, 0.41, 0.72, 0.9), (R_ANKLE, 0.59, 0.72, 0.9),
+        (L_SHOULDER, 0.47, 0.21, 0.9),
+        (R_SHOULDER, 0.53, 0.21, 0.9),
+        (L_ELBOW, 0.44, 0.32, 0.8),
+        (R_ELBOW, 0.56, 0.32, 0.8),
+        (L_WRIST, 0.44, 0.40, 0.8),
+        (R_WRIST, 0.56, 0.40, 0.8),
+        (L_HIP, 0.47, 0.40, 0.9),
+        (R_HIP, 0.53, 0.40, 0.9),
+        (L_KNEE, 0.555, 0.556, 0.9),
+        (R_KNEE, 0.445, 0.556, 0.9),
+        (L_ANKLE, 0.41, 0.72, 0.9),
+        (R_ANKLE, 0.59, 0.72, 0.9),
     ];
 
     fn squat_pose(standing: bool) -> Pose {
@@ -621,12 +657,18 @@ mod tests {
         assert_eq!(classify_from_pose(&squat), "squat");
         // lying down (torso horizontal) + bent elbow → bench_press
         let bench = pose_with(&[
-            (L_SHOULDER, 0.55, 0.35, 0.9), (R_SHOULDER, 0.57, 0.37, 0.9),
-            (L_HIP, 0.30, 0.35, 0.9), (R_HIP, 0.32, 0.37, 0.9),
-            (L_KNEE, 0.24, 0.55, 0.9), (R_KNEE, 0.26, 0.57, 0.9),
-            (L_ANKLE, 0.22, 0.70, 0.9), (R_ANKLE, 0.24, 0.72, 0.9),
-            (L_ELBOW, 0.63, 0.33, 0.9), (R_ELBOW, 0.65, 0.35, 0.9),
-            (L_WRIST, 0.66, 0.38, 0.9), (R_WRIST, 0.68, 0.40, 0.9),
+            (L_SHOULDER, 0.55, 0.35, 0.9),
+            (R_SHOULDER, 0.57, 0.37, 0.9),
+            (L_HIP, 0.30, 0.35, 0.9),
+            (R_HIP, 0.32, 0.37, 0.9),
+            (L_KNEE, 0.24, 0.55, 0.9),
+            (R_KNEE, 0.26, 0.57, 0.9),
+            (L_ANKLE, 0.22, 0.70, 0.9),
+            (R_ANKLE, 0.24, 0.72, 0.9),
+            (L_ELBOW, 0.63, 0.33, 0.9),
+            (R_ELBOW, 0.65, 0.35, 0.9),
+            (L_WRIST, 0.66, 0.38, 0.9),
+            (R_WRIST, 0.68, 0.40, 0.9),
         ]);
         assert_eq!(classify_from_pose(&bench), "bench_press");
     }
@@ -647,9 +689,12 @@ mod tests {
         let deep = squat_pose(false);
         let mut t = 0.0;
         for cycle in 0..3 {
-            c.update(&deep, t); t += 1.0;      // down
-            c.update(&deep, t); t += 1.0;      // hold
-            c.update(&stand, t); t += 1.0;     // up → rep
+            c.update(&deep, t);
+            t += 1.0; // down
+            c.update(&deep, t);
+            t += 1.0; // hold
+            c.update(&stand, t);
+            t += 1.0; // up → rep
             assert_eq!(c.reps as usize, cycle + 1, "rep {}", cycle + 1);
         }
         assert_eq!(c.phase, Phase::Up);
@@ -671,8 +716,15 @@ mod temporal_tests {
 
     /// Feature-level timeline: bypass pose geometry, inject the angle
     /// series directly — the decision logic is what needs locking.
-    fn tl(torso: f32, torso_hip: &[f32], knee: &[f32], elbow: &[f32],
-          hip_y: &[f32], arms_up: bool, stride: f32) -> PoseTimeline {
+    fn tl(
+        torso: f32,
+        torso_hip: &[f32],
+        knee: &[f32],
+        elbow: &[f32],
+        hip_y: &[f32],
+        arms_up: bool,
+        stride: f32,
+    ) -> PoseTimeline {
         let n = torso_hip.len();
         let mut t = PoseTimeline {
             t: (0..n).map(|i| i as f64 * 0.2).collect(),
@@ -691,32 +743,66 @@ mod temporal_tests {
     }
 
     fn osc_series(n: usize, hi: f32, lo: f32, period: usize) -> Vec<f32> {
-        (0..n).map(|i| {
-            let ph = ((i % period) as f32) / period as f32;
-            if ph < 0.5 { hi } else { lo }
-        }).collect()
+        (0..n)
+            .map(|i| {
+                let ph = ((i % period) as f32) / period as f32;
+                if ph < 0.5 {
+                    hi
+                } else {
+                    lo
+                }
+            })
+            .collect()
     }
 
     #[test]
     fn lying_family() {
         // torso-hip oscillates ±15°, elbow quiet → crunch
-        let t = tl(60.0, &osc_series(20, 150.0, 120.0, 10),
-                   &vec![140.0; 20], &vec![160.0; 20],
-                   &vec![0.4; 20], false, 0.08);
+        let t = tl(
+            60.0,
+            &osc_series(20, 150.0, 120.0, 10),
+            &vec![140.0; 20],
+            &vec![160.0; 20],
+            &vec![0.4; 20],
+            false,
+            0.08,
+        );
         assert_eq!(classify_with_history(&t), "crunch");
         // big torso-hip amplitude → situp
-        let t = tl(60.0, &osc_series(20, 160.0, 100.0, 10),
-                   &vec![140.0; 20], &vec![160.0; 20],
-                   &vec![0.4; 20], false, 0.08);
+        let t = tl(
+            60.0,
+            &osc_series(20, 160.0, 100.0, 10),
+            &vec![140.0; 20],
+            &vec![160.0; 20],
+            &vec![0.4; 20],
+            false,
+            0.08,
+        );
         assert_eq!(classify_with_history(&t), "situp");
         // elbow oscillates, torso quiet → bench/pushup family, not crunch
-        let t = tl(60.0, &vec![145.0; 20],
-                   &vec![140.0; 20], &osc_series(20, 165.0, 95.0, 10),
-                   &vec![0.4; 20], false, 0.08);
-        assert!(matches!(classify_with_history(&t), "bench_press" | "pushup"));
+        let t = tl(
+            60.0,
+            &vec![145.0; 20],
+            &vec![140.0; 20],
+            &osc_series(20, 165.0, 95.0, 10),
+            &vec![0.4; 20],
+            false,
+            0.08,
+        );
+        assert!(matches!(
+            classify_with_history(&t),
+            "bench_press" | "pushup"
+        ));
         // everything static → plank
-        let t = tl(60.0, &vec![145.0; 20], &vec![140.0; 20], &vec![155.0; 20],
-                   &vec![0.4; 20], false, 0.08);
+        let t = tl(
+            60.0,
+            &vec![145.0; 20],
+            &vec![140.0; 20],
+            &vec![155.0; 20],
+            &vec![0.4; 20],
+            false,
+            0.08,
+        );
         assert_eq!(classify_with_history(&t), "plank");
     }
 
@@ -725,23 +811,51 @@ mod temporal_tests {
         // knee oscillation ~1.7 Hz + hip bob → run (period 3 @ 5 Hz)
         let knee = osc_series(20, 170.0, 100.0, 3);
         let hip = osc_series(20, 0.52, 0.48, 3);
-        let t = tl(5.0, &vec![170.0; 20], &knee, &vec![160.0; 20],
-                   &hip, false, 0.06);
+        let t = tl(
+            5.0,
+            &vec![170.0; 20],
+            &knee,
+            &vec![160.0; 20],
+            &hip,
+            false,
+            0.06,
+        );
         assert_eq!(classify_with_history(&t), "run");
         // slower cadence ~0.7 Hz → walk (period 7 @ 5 Hz)
         let knee = osc_series(20, 170.0, 120.0, 7);
         let hip = osc_series(20, 0.51, 0.49, 7);
-        let t = tl(5.0, &vec![170.0; 20], &knee, &vec![160.0; 20],
-                   &hip, false, 0.06);
+        let t = tl(
+            5.0,
+            &vec![170.0; 20],
+            &knee,
+            &vec![160.0; 20],
+            &hip,
+            false,
+            0.06,
+        );
         assert_eq!(classify_with_history(&t), "walk");
         // slow deep knee cycle, narrow stride → squat
         let knee = osc_series(20, 170.0, 105.0, 20);
-        let t = tl(5.0, &vec![160.0; 20], &knee, &vec![160.0; 20],
-                   &vec![0.5; 20], false, 0.06);
+        let t = tl(
+            5.0,
+            &vec![160.0; 20],
+            &knee,
+            &vec![160.0; 20],
+            &vec![0.5; 20],
+            false,
+            0.06,
+        );
         assert_eq!(classify_with_history(&t), "squat");
         // same but wide split stance → lunge
-        let t = tl(5.0, &vec![160.0; 20], &knee, &vec![160.0; 20],
-                   &vec![0.5; 20], false, 0.25);
+        let t = tl(
+            5.0,
+            &vec![160.0; 20],
+            &knee,
+            &vec![160.0; 20],
+            &vec![0.5; 20],
+            false,
+            0.25,
+        );
         assert_eq!(classify_with_history(&t), "lunge");
     }
 
@@ -750,27 +864,62 @@ mod temporal_tests {
         // elbow oscillation, arms up, hips bobbing → pullup
         let elbow = osc_series(20, 165.0, 80.0, 10);
         let hip = osc_series(20, 0.60, 0.52, 10);
-        let t = tl(5.0, &vec![170.0; 20], &vec![170.0; 20], &elbow,
-                   &hip, true, 0.08);
+        let t = tl(
+            5.0,
+            &vec![170.0; 20],
+            &vec![170.0; 20],
+            &elbow,
+            &hip,
+            true,
+            0.08,
+        );
         assert_eq!(classify_with_history(&t), "pullup");
         // arms up, hips still → shoulder_press
-        let t = tl(5.0, &vec![170.0; 20], &vec![170.0; 20], &elbow,
-                   &vec![0.5; 20], true, 0.08);
+        let t = tl(
+            5.0,
+            &vec![170.0; 20],
+            &vec![170.0; 20],
+            &elbow,
+            &vec![0.5; 20],
+            true,
+            0.08,
+        );
         assert_eq!(classify_with_history(&t), "shoulder_press");
         // arms down → bicep_curl
-        let t = tl(5.0, &vec![170.0; 20], &vec![170.0; 20], &elbow,
-                   &vec![0.5; 20], false, 0.08);
+        let t = tl(
+            5.0,
+            &vec![170.0; 20],
+            &vec![170.0; 20],
+            &elbow,
+            &vec![0.5; 20],
+            false,
+            0.08,
+        );
         assert_eq!(classify_with_history(&t), "bicep_curl");
         // nothing oscillating → standing
-        let t = tl(5.0, &vec![170.0; 20], &vec![170.0; 20], &vec![160.0; 20],
-                   &vec![0.5; 20], false, 0.08);
+        let t = tl(
+            5.0,
+            &vec![170.0; 20],
+            &vec![170.0; 20],
+            &vec![160.0; 20],
+            &vec![0.5; 20],
+            false,
+            0.08,
+        );
         assert_eq!(classify_with_history(&t), "standing");
     }
 
     #[test]
     fn short_window_pending() {
-        let t = tl(5.0, &vec![170.0; 4], &vec![170.0; 4], &vec![160.0; 4],
-                   &vec![0.5; 4], false, 0.08);
+        let t = tl(
+            5.0,
+            &vec![170.0; 4],
+            &vec![170.0; 4],
+            &vec![160.0; 4],
+            &vec![0.5; 4],
+            false,
+            0.08,
+        );
         assert_eq!(classify_with_history(&t), "pending");
     }
 }
@@ -779,9 +928,16 @@ mod temporal_tests {
 mod dumbbell_tests {
     use super::*;
 
-    fn tl2(torso: f32, torso_hip: &[f32], knee: &[f32], elbow: &[f32],
-           hip_y: &[f32], arms_up: bool, stride: f32,
-           wrist_elev: &[f32]) -> PoseTimeline {
+    fn tl2(
+        torso: f32,
+        torso_hip: &[f32],
+        knee: &[f32],
+        elbow: &[f32],
+        hip_y: &[f32],
+        arms_up: bool,
+        stride: f32,
+        wrist_elev: &[f32],
+    ) -> PoseTimeline {
         let n = elbow.len();
         PoseTimeline {
             t: (0..n).map(|i| i as f64 * 0.2).collect(),
@@ -797,43 +953,83 @@ mod dumbbell_tests {
     }
 
     fn osc(n: usize, hi: f32, lo: f32, period: usize) -> Vec<f32> {
-        (0..n).map(|i| if (i % period) < period / 2 { hi } else { lo }).collect()
+        (0..n)
+            .map(|i| if (i % period) < period / 2 { hi } else { lo })
+            .collect()
     }
 
     #[test]
     fn curl_vs_raise_by_elbow() {
         // elbow BENDS (170↔50), wrists stay low → bicep_curl
-        let t = tl2(5.0, &vec![170.0; 20], &vec![170.0; 20],
-                    &osc(20, 170.0, 50.0, 10), &vec![0.5; 20],
-                    false, 0.08, &osc(20, 30.0, 20.0, 10));
+        let t = tl2(
+            5.0,
+            &vec![170.0; 20],
+            &vec![170.0; 20],
+            &osc(20, 170.0, 50.0, 10),
+            &vec![0.5; 20],
+            false,
+            0.08,
+            &osc(20, 30.0, 20.0, 10),
+        );
         assert_eq!(classify_with_history(&t), "bicep_curl");
         // elbow STRAIGHT (150↔130), wrist ELEVATION swings 15↔95 → raise
-        let t = tl2(5.0, &vec![170.0; 20], &vec![170.0; 20],
-                    &osc(20, 150.0, 130.0, 10), &vec![0.5; 20],
-                    false, 0.08, &osc(20, 95.0, 15.0, 10));
+        let t = tl2(
+            5.0,
+            &vec![170.0; 20],
+            &vec![170.0; 20],
+            &osc(20, 150.0, 130.0, 10),
+            &vec![0.5; 20],
+            false,
+            0.08,
+            &osc(20, 95.0, 15.0, 10),
+        );
         assert_eq!(classify_with_history(&t), "lateral_raise");
     }
 
     #[test]
     fn fly_vs_bench_by_elbow_min() {
         // lying + elbow osc to 95° → bench family
-        let t = tl2(60.0, &vec![145.0; 20], &vec![140.0; 20],
-                    &osc(20, 165.0, 95.0, 10), &vec![0.4; 20],
-                    false, 0.08, &vec![60.0; 20]);
-        assert!(matches!(classify_with_history(&t), "bench_press" | "pushup"));
+        let t = tl2(
+            60.0,
+            &vec![145.0; 20],
+            &vec![140.0; 20],
+            &osc(20, 165.0, 95.0, 10),
+            &vec![0.4; 20],
+            false,
+            0.08,
+            &vec![60.0; 20],
+        );
+        assert!(matches!(
+            classify_with_history(&t),
+            "bench_press" | "pushup"
+        ));
         // same but elbow stays straight-ish (135° min) → chest_fly
-        let t = tl2(60.0, &vec![145.0; 20], &vec![140.0; 20],
-                    &osc(20, 170.0, 135.0, 10), &vec![0.4; 20],
-                    false, 0.08, &osc(20, 90.0, 40.0, 10));
+        let t = tl2(
+            60.0,
+            &vec![145.0; 20],
+            &vec![140.0; 20],
+            &osc(20, 170.0, 135.0, 10),
+            &vec![0.4; 20],
+            false,
+            0.08,
+            &osc(20, 90.0, 40.0, 10),
+        );
         assert_eq!(classify_with_history(&t), "chest_fly");
     }
 
     #[test]
     fn bent_over_row() {
         // torso 38° (bent-over band) + elbow osc → dumbbell_row
-        let t = tl2(38.0, &vec![160.0; 20], &vec![165.0; 20],
-                    &osc(20, 165.0, 70.0, 10), &vec![0.5; 20],
-                    false, 0.15, &osc(20, 70.0, 30.0, 10));
+        let t = tl2(
+            38.0,
+            &vec![160.0; 20],
+            &vec![165.0; 20],
+            &osc(20, 165.0, 70.0, 10),
+            &vec![0.5; 20],
+            false,
+            0.15,
+            &osc(20, 70.0, 30.0, 10),
+        );
         assert_eq!(classify_with_history(&t), "dumbbell_row");
     }
 
@@ -841,6 +1037,9 @@ mod dumbbell_tests {
     fn free_weight_zone_defers_to_pose() {
         assert_eq!(zone_exercise("dumbbell"), None);
         assert_eq!(zone_exercise("free_weights"), None);
-        assert_eq!(zone_exercise("kettlebell"), Some(("kettlebell_swing", false)));
+        assert_eq!(
+            zone_exercise("kettlebell"),
+            Some(("kettlebell_swing", false))
+        );
     }
 }

@@ -72,17 +72,22 @@ pub fn parse_preview(raw: &str) -> Option<(u64, String)> {
     }
     let payload = &ev["payload"];
     let p = match payload {
-        serde_json::Value::String(s) =>
-            serde_json::from_str::<serde_json::Value>(s).ok()?,
+        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s).ok()?,
         other => other.clone(),
     };
     Some((p["ts_ns"].as_u64()?, p["img_b64"].as_str()?.to_string()))
 }
 
 /// Debug counters for GYM_INGEST_DBG diagnostics.
-pub static INGEST_COUNTS: std::sync::OnceLock<parking_lot::Mutex<IngestDbg>> = std::sync::OnceLock::new();
+pub static INGEST_COUNTS: std::sync::OnceLock<parking_lot::Mutex<IngestDbg>> =
+    std::sync::OnceLock::new();
 #[derive(Default, Clone)]
-pub struct IngestDbg { pub total: u64, pub topic_counts: std::collections::HashMap<String, u64>, pub parsed_ok: u64, pub parse_fail: u64 }
+pub struct IngestDbg {
+    pub total: u64,
+    pub topic_counts: std::collections::HashMap<String, u64>,
+    pub parsed_ok: u64,
+    pub parse_fail: u64,
+}
 pub fn ingest_dbg() -> &'static parking_lot::Mutex<IngestDbg> {
     INGEST_COUNTS.get_or_init(|| parking_lot::Mutex::new(IngestDbg::default()))
 }
@@ -121,21 +126,25 @@ enum Disconnect {
 /// Spawn the WS subscriber on a dedicated `std::thread` with its own
 /// current-thread Tokio runtime.
 ///
-/// `token` is the login token from `Ne503Client::login()` / `token_string()`
-/// (NOT the password). On this firmware it includes the `Bearer ` prefix. The
-/// primary WS URL uses the token verbatim; if that handshake is rejected we
-/// also try once with the `Bearer ` prefix stripped, in case the device's WS
-/// auth wants the bare secret (decided empirically by the live test).
-pub fn spawn(cfg: Config, state: Arc<LiveState>, analytics: Arc<crate::analytics::Analytics>, db: Arc<crate::db::Db>, token: String) -> IngestHandle {
+/// The login token is resolved INSIDE the reconnect loop from `ne` (cache
+/// first, re-login on every retry): a login that failed at configure time
+/// (device busy, empty token cache) or a token revoked mid-session must not
+/// starve the subscriber forever. On this firmware the token includes the
+/// `Bearer ` prefix; the primary WS URL uses it verbatim and a Bearer-stripped
+/// fallback is tried too, in case the device's WS auth wants the bare secret.
+pub fn spawn(
+    cfg: Config,
+    state: Arc<LiveState>,
+    analytics: Arc<crate::analytics::Analytics>,
+    db: Arc<crate::db::Db>,
+    ne: Arc<crate::ne503::Ne503Client>,
+) -> IngestHandle {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_c = stop.clone();
-    // Build the primary URL up front (task contract). The raw token is passed
-    // through to the loop so it can also build the Bearer-stripped fallback.
-    let primary_url = build_ws_url(&cfg.ws_url(), &token);
     std::thread::Builder::new()
         .name("gym-ingest".into())
         .spawn(move || {
-            run_loop(&primary_url, &token, &cfg, &state, &analytics, &db, &stop_c);
+            run_loop(&ne, &cfg, &state, &analytics, &db, &stop_c);
         })
         .ok();
     IngestHandle { stop }
@@ -144,8 +153,7 @@ pub fn spawn(cfg: Config, state: Arc<LiveState>, analytics: Arc<crate::analytics
 /// The (blocking) reconnect loop, run inside the ingest thread. Owns a
 /// current-thread Tokio runtime (the cdylib has no ambient runtime to borrow).
 fn run_loop(
-    primary_url: &str,
-    token: &str,
+    ne: &Arc<crate::ne503::Ne503Client>,
     cfg: &Config,
     state: &Arc<LiveState>,
     analytics: &Arc<crate::analytics::Analytics>,
@@ -163,18 +171,26 @@ fn run_loop(
         }
     };
 
-    // Candidate URLs tried in order each cycle. Primary = token verbatim
-    // (Bearer prefix on this firmware). Fallback = bare secret, only if the
-    // token actually had a Bearer prefix to strip.
-    let mut urls: Vec<String> = vec![primary_url.to_string()];
-    if let Some(bare) = token.strip_prefix("Bearer ") {
-        urls.push(build_ws_url(&cfg.ws_url(), bare));
-    }
-
     rt.block_on(async move {
         let backoff = &cfg.ingest.reconnect_backoff_sec;
         let mut attempt: usize = 0;
         while !stop.load(Ordering::Relaxed) {
+            // Cycle 0 reuses the token cached by configure()'s login; every
+            // retry re-logins first (cheap REST call, at most once per backoff
+            // cycle) so an empty or dead token can't wedge the subscriber.
+            let token = match ne.token_string() {
+                Some(t) if attempt == 0 && !t.is_empty() => t,
+                _ => {
+                    let _ = ne.login();
+                    ne.token_string().unwrap_or_default()
+                }
+            };
+            // Primary URL = token verbatim (Bearer prefix on this firmware).
+            // Fallback = bare secret, only if there was a prefix to strip.
+            let mut urls: Vec<String> = vec![build_ws_url(&cfg.ws_url(), &token)];
+            if let Some(bare) = token.strip_prefix("Bearer ") {
+                urls.push(build_ws_url(&cfg.ws_url(), bare));
+            }
             match connect_and_drain(&analytics, &db, &urls, cfg, state, stop).await {
                 Disconnect::Stop => break,
                 Disconnect::Error(e) => {
@@ -377,7 +393,7 @@ mod tests {
         // Any gym/ prefix passes the client-side filter (e.g. gym/test probes).
         let probe = serde_json::json!({"topic":"gym/test","payload":{
             "device_id":"d","frame_seq":9,"ts_ns":1,"tracks":[]}})
-            .to_string();
+        .to_string();
         let f = parse_event(&probe).expect("gym/test should pass the topic filter");
         assert_eq!(f.frame_seq, 9);
         assert!(f.tracks.is_empty());
@@ -407,7 +423,8 @@ mod tests {
             "tracks": [{"track_id": 4242,
                 "bbox": {"x":0.1,"y":0.2,"w":0.3,"h":0.4},
                 "foot": {"x":0.25,"y":0.6}, "pose": null, "face": null}]
-        }).to_string();
+        })
+        .to_string();
         let envelope = serde_json::json!({
             "event_id": "evt-1784085237439-901369",
             "payload": inner,                 // <-- STRING, not object
@@ -429,10 +446,7 @@ mod tests {
         let u = build_ws_url("wss://h/api/v1/events/stream", "Bearer abc def");
         // spaces and the rest of "Bearer abc def" are percent-encoded so the
         // value survives intact in a query string.
-        assert_eq!(
-            u,
-            "wss://h/api/v1/events/stream?token=Bearer%20abc%20def"
-        );
+        assert_eq!(u, "wss://h/api/v1/events/stream?token=Bearer%20abc%20def");
     }
 
     /// LIVE integration test against the real NE503 at 192.168.93.200.
@@ -450,20 +464,23 @@ mod tests {
         let raw = r#"{"device":{"host":"192.168.93.200","username":"admin","password":"password","tls_insecure":true},"device_id":"ne503-001","ingest":{"topic":"gym/track","publish_hz":8,"track_ttl_sec":30,"reconnect_backoff_sec":[1,2,5,10,30]},"identity":{"match_threshold":0.55,"auto_capture_unknown":true,"unknown_prefix":"未知会员"},"roi":{"dwell_debounce_sec":3,"hysteresis":true},"data_dir":"/tmp/gym"}"#;
         let cfg = Config::parse(raw).expect("config parse");
 
-        // Login to get the token used for both the WS query param and the REST
-        // publish Authorization header.
-        let client = crate::ne503::Ne503Client::new(&cfg);
+        // Login to get the token used for the REST publish Authorization
+        // header; the ingest loop resolves its own WS token from this client.
+        let client = Arc::new(crate::ne503::Ne503Client::new(&cfg));
         client.login().expect("login should succeed");
-        let token = client
-            .token_string()
-            .expect("token should be set after login");
         tracing::info!("[live] login ok"); // token redacted from logs
 
         // Fresh live-state mirror + spawn the ingest subscriber.
         let state = Arc::new(LiveState::new(30));
         let db = Arc::new(crate::db::Db::open(":memory:").expect("in-memory db"));
         let analytics = Arc::new(crate::analytics::Analytics::new(&db));
-        let handle = spawn(cfg.clone(), state.clone(), analytics, db.clone(), token.clone());
+        let handle = spawn(
+            cfg.clone(),
+            state.clone(),
+            analytics,
+            db.clone(),
+            client.clone(),
+        );
 
         // Give the WS subscriber a moment to connect + run its backoff cycle.
         std::thread::sleep(Duration::from_secs(2));
@@ -490,11 +507,17 @@ mod tests {
         eprintln!("[live] publishing probe event to {pub_url}");
         // The device's self-signed cert means we must publish via a TLS-skipping
         // ureq agent too — a bare ureq::post() uses webpki roots and is rejected.
+        let token = client
+            .token_string()
+            .expect("token should be set after login");
         let agent = ureq::AgentBuilder::new()
             .tls_config(Arc::new(crate::tls::insecure_client_config()))
             .timeout(Duration::from_secs(5))
             .build();
-        let resp = agent.post(&pub_url).set("Authorization", &token).send_json(probe);
+        let resp = agent
+            .post(&pub_url)
+            .set("Authorization", &token)
+            .send_json(probe);
         match &resp {
             Ok(r) => eprintln!("[live] publish status = {}", r.status()),
             Err(e) => eprintln!("[live] publish error = {e}"),
