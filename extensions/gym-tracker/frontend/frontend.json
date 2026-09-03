@@ -1,6 +1,6 @@
 {
   "id": "gym-tracker",
-  "version": "2.8.7",
+  "version": "2.8.8",
   "entrypoint": "gym-tracker-components.umd.cjs",
   "components": [
     {

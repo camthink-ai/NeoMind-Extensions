@@ -25,6 +25,10 @@ struct Entry {
 
 pub struct LiveState {
     ttl: Duration,
+    /// A track absent from the latest frame survives this long before
+    /// being pruned (device tracker drops tracks after ~3 s without a
+    /// detection and stops publishing them immediately).
+    refresh_grace: Duration,
     inner: RwLock<HashMap<i64, Entry>>,
     /// Latest frame-level face boxes (P2). Refreshed per frame; faces are
     /// detected every Nth frame on the device and reused in between, so a
@@ -55,6 +59,7 @@ impl LiveState {
     pub fn new(ttl_sec: u32) -> Self {
         Self {
             ttl: Duration::from_secs(ttl_sec as u64),
+            refresh_grace: Duration::from_millis(2500),
             inner: Default::default(),
             faces: Default::default(),
             frame_img: Default::default(),
@@ -68,21 +73,31 @@ impl LiveState {
         }
     }
 
-    /// Upsert all tracks in `f` with `last_seen = now`.
+    /// Upsert all tracks in `f` with `last_seen = now`. Frames carry the
+    /// producer's FULL live set, so tracks missing from the latest frame are
+    /// authoritative-departed: they are pruned once unseen for longer than
+    /// the refresh grace (short occlusions — a beat where the device's own
+    /// tracker coasts without publishing — survive inside the grace).
     pub fn apply_frame(&self, f: &TrackFrame) {
-        let mut g = self.inner.write();
         let now = Instant::now();
-        for t in &f.tracks {
-            g.insert(
-                t.track_id,
-                Entry {
-                    track: t.clone(),
-                    last_seen: now,
-                },
-            );
+        {
+            let mut g = self.inner.write();
+            for t in &f.tracks {
+                g.insert(
+                    t.track_id,
+                    Entry {
+                        track: t.clone(),
+                        last_seen: now,
+                    },
+                );
+            }
+            // Upsert-only with the 30 s TTL kept ghosts on screen for the
+            // whole TTL after a person left (boxes + keypoints frozen on
+            // the picture, tracking "lost" but never cleaned).
+            let grace = self.refresh_grace;
+            g.retain(|_, e| now.duration_since(e.last_seen) < grace);
         }
         let tracks_now: Vec<Track> = f.tracks.clone();
-        drop(g);
         *self.faces.write() = f.faces.clone();
         *self.faces_seen.write() = now;
         *self.tracks_ts.write() = f.ts_ns;
@@ -225,6 +240,22 @@ mod tests {
         s.evict_expired();
         assert_eq!(s.present_count(), 0);
         assert!(s.evict_expired().is_empty());
+    }
+
+    #[test]
+    fn departed_tracks_pruned_after_refresh_grace() {
+        let mut s = LiveState::new(3600); // ttl long — grace is what cleans
+        s.refresh_grace = Duration::from_millis(30);
+        s.apply_frame(&frame(1));
+        assert_eq!(s.present_count(), 1);
+        // still inside the grace: a frame that omits tid1 keeps it (plus tid2)
+        s.apply_frame(&frame(2));
+        assert_eq!(s.present_count(), 2, "short omission survives the grace");
+        std::thread::sleep(Duration::from_millis(60));
+        let mut empty = frame(9);
+        empty.tracks = vec![];
+        s.apply_frame(&empty);
+        assert_eq!(s.present_count(), 0, "departed tracks pruned, no ghost");
     }
 
     #[test]
