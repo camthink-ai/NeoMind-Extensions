@@ -102,12 +102,19 @@ const OVERLAY_DELAY_MS = 0.15 // sec
 // keyframes have samples on EITHER side of the playhead — interpolation
 // instead of extrapolation, i.e. true A/V sync at a fixed ~300 ms latency.
 const PLAY_DELAY = 0.12 // sec
+// playhead sits this far BEHIND the newest track keyframe: pure interpolation
+// (exact) instead of 2-point extrapolation (drifts behind accelerating people)
+const STRADDLE_MARGIN = 0.06 // sec
 const EXTRAP_MAX_MS = 0.45 // sec (kept name for history)
 
-interface HistEntry { t: number; bbox: Bbox; foot?: Point | null }
+interface HistEntry { t: number; bbox: Bbox; foot?: Point | null; kpts?: [number, number, number][] | null }
 
-/** Interpolated bbox at wall-time `target` from a sample history. */
-function bboxAt(hist: HistEntry[], target: number): Bbox | null {
+/** Interpolated bbox + keypoints + foot at device-time `target` from the
+ *  per-track history. Beyond the newest sample the bbox extrapolates
+ *  linearly (velocity from the last span, EXTRAP_MAX_MS cap) while limbs
+ *  hold their newest pose — extrapolated skeletons flail. */
+function sampleAt(hist: HistEntry[], target: number, kptMin: number):
+  { bbox: Bbox; kpts?: [number, number, number][]; foot?: Point | null } | null {
   if (hist.length === 0) return null
   const first = hist[0]
   const last = hist[hist.length - 1]
@@ -136,12 +143,30 @@ function bboxAt(hist: HistEntry[], target: number): Bbox | null {
       }
     }
   }
-  return {
-    x: a.bbox.x + (b.bbox.x - a.bbox.x) * f,
-    y: a.bbox.y + (b.bbox.y - a.bbox.y) * f,
-    w: a.bbox.w + (b.bbox.w - a.bbox.w) * f,
-    h: a.bbox.h + (b.bbox.h - a.bbox.h) * f,
+  const lerp = (pa: number, pb: number) => pa + (pb - pa) * f
+  const bbox = {
+    x: lerp(a.bbox.x, b.bbox.x),
+    y: lerp(a.bbox.y, b.bbox.y),
+    w: lerp(a.bbox.w, b.bbox.w),
+    h: lerp(a.bbox.h, b.bbox.h),
   }
+  // limbs: per-point lerp when both sides are visible, else the visible one
+  let kpts: [number, number, number][] | undefined
+  const ka = a.kpts
+  const kb = b.kpts
+  if (kb && kb.length) {
+    kpts = kb.map((k2, i) => {
+      const k1 = ka && ka[i]
+      if (k1 && k1[2] > kptMin && k2[2] > kptMin)
+        return [lerp(k1[0], k2[0]), lerp(k1[1], k2[1]), k2[2]] as [number, number, number]
+      return k2
+    })
+  }
+  const foot =
+    a.foot && b.foot
+      ? { x: lerp(a.foot.x, b.foot.x), y: lerp(a.foot.y, b.foot.y) }
+      : b.foot ?? a.foot
+  return { bbox, kpts, foot }
 }
 
 interface DraftZone extends Zone {
@@ -254,7 +279,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     // 0.3–1.5 s, so drawing "the newest sample" misplaces boxes. Instead each
     // track keeps a short bbox history and the renderer interpolates to
     // (now − overlayDelayMs), extrapolating up to 0.4 s when data is behind.
-    const trackHistRef = useRef<Map<number, Array<{ t: number; bbox: Bbox; foot?: Point | null }>>>(new Map())
+    const trackHistRef = useRef<Map<number, HistEntry[]>>(new Map())
 
     useEffect(() => { zonesRef.current = zones }, [zones])
     useEffect(() => { linesRef.current = lines }, [lines])
@@ -348,6 +373,8 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     const frameBufRef = useRef<Array<{ t: number; img: HTMLImageElement }>>([])
     // TRUE ts (sec) of the latest track data — drives the adaptive playhead
     const lastTracksTsRef = useRef(0)
+    // EMA of (frame_ts − tracks_ts): smoothed inference lag for the delay
+    const emaLagRef = useRef<number | null>(null)
     const applyFrameBundle = useCallback((data: FrameBundle) => {
       if (!data.img_b64 || data.img_b64 === lastImgRef.current) return
       lastImgRef.current = data.img_b64
@@ -413,7 +440,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             || Math.abs(last.bbox.w - t.bbox.w) > 1e-4
             || Math.abs(last.bbox.h - t.bbox.h) > 1e-4
           if (moved || tSec - last.t > 0.5) {
-            arr.push({ t: tSec, bbox: t.bbox, foot: t.foot })
+            arr.push({ t: tSec, bbox: t.bbox, foot: t.foot, kpts: (t as any).pose?.kpts ?? null })
           }
           while (arr.length > 0 && tSec - arr[0].t > 3) arr.shift()
         }
@@ -652,20 +679,29 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
 
       ctx.fillStyle = '#050505'
       ctx.fillRect(0, 0, VW, VH)
-      // jitter buffer playhead: display the newest frame that is at least
-      // PLAY_DELAY old — keyframes then straddle the playhead and overlay
-      // interpolation is exact (no extrapolation drift)
+      // jitter buffer playhead. The delay is driven by the SMOOTHED data lag
+      // (EMA, ~1 s): the per-frame lag jitters ±80 ms with scene load and a
+      // playhead that follows it frame-by-frame wobbles through the newest
+      // keyframe into noisy 2-point extrapolation — the classic "overlay
+      // trails the person" artifact. With the EMA plus STRADDLE_MARGIN the
+      // playhead sits a fixed ~60 ms BEHIND the newest track keyframe, so
+      // alignment is true interpolation between two real samples.
       const buf = frameBufRef.current
       let img: HTMLImageElement | null = null
       if (buf.length > 0) {
         const newest = buf[buf.length - 1].t
-        // adaptive delay: never play video NEWER than the track data
-        // (+margin) — inference latency varies 0.2-2 s with scene load, so
-        // a fixed 300 ms buffer still desynced; this way the picture waits
-        // for the data and interpolation always has straddling keyframes
-        const dataLag = newest - lastTracksTsRef.current
-        const delay = Math.max(PLAY_DELAY, dataLag > 0 ? dataLag - 0.05 : PLAY_DELAY)
-        const playhead = newest - Math.min(delay, 0.9)
+        const dataLag = Math.max(0, newest - lastTracksTsRef.current)
+        const ema = emaLagRef.current
+        emaLagRef.current = ema == null ? dataLag : ema + (dataLag - ema) * 0.12
+        const delay = Math.min(
+          Math.max(PLAY_DELAY, emaLagRef.current + STRADDLE_MARGIN),
+          0.9
+        )
+        let playhead = newest - delay
+        // a lag spike raising `delay` must not rewind the clock visibly —
+        // let it drift back at most 40 ms per rendered frame
+        const prev = lastTsRef.current
+        if (prev != null && playhead < prev - 0.04) playhead = prev - 0.04
         for (let i = buf.length - 1; i >= 0; i--) {
           if (buf[i].t <= playhead + 0.004) { img = buf[i].img; break }
         }
@@ -950,28 +986,13 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       ).map((tr) => {
         const hist = trackHistRef.current.get(tr.track_id)
         if (!tr.bbox || !hist || hist.length === 0) return tr
-        const ib = bboxAt(hist, drawNow)
-        if (!ib) return tr
-        // affine (translate+scale around bbox center) mapping raw→interp so
-        // skeleton points and feet ride along the interpolated box
-        const cx = tr.bbox.x + tr.bbox.w / 2
-        const cy = tr.bbox.y + tr.bbox.h / 2
-        const sx = tr.bbox.w > 1e-6 ? ib.w / tr.bbox.w : 1
-        const sy = tr.bbox.h > 1e-6 ? ib.h / tr.bbox.h : 1
-        const map = (px: number, py: number) => ({
-          x: cx + (px - cx) * sx + (ib.x + ib.w / 2 - cx),
-          y: cy + (py - cy) * sy + (ib.y + ib.h / 2 - cy),
-        })
-        const kpts = tr.pose?.kpts?.map((k) => {
-          const p = map(k[0], k[1])
-          return [p.x, p.y, k[2]] as [number, number, number]
-        })
-        const foot = tr.foot ? map(tr.foot.x, tr.foot.y) : tr.foot
+        const s = sampleAt(hist, drawNow, KPT_MIN_SCORE)
+        if (!s) return tr
         return {
           ...tr,
-          bbox: ib,
-          pose: tr.pose && kpts ? { kpts, score: tr.pose.score } : tr.pose,
-          foot,
+          bbox: s.bbox,
+          pose: tr.pose && s.kpts ? { kpts: s.kpts, score: tr.pose.score } : tr.pose,
+          foot: s.foot ?? tr.foot,
         }
       })
       for (const track of alignedTracks) {
