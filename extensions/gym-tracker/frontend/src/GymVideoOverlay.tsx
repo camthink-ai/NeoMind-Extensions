@@ -70,6 +70,26 @@ const MOSAIC_CELL = 14
 // so a head moving between detections stays covered.
 const MOSAIC_PAD = 0.12
 
+// Zone equipment presets — canonical equipment_type values that hit the
+// exercise-classification map in exercise.rs (zone_exercise). Chinese
+// labels for the editor; values feed analytics.
+const EQUIPMENT_PRESETS: Array<[string, string]> = [
+  ['跑步机', 'treadmill'],
+  ['椭圆机', 'elliptical'],
+  ['动感单车', 'spin_bike'],
+  ['划船机', 'rowing'],
+  ['深蹲架', 'squat_rack'],
+  ['卧推凳', 'bench'],
+  ['硬拉台', 'deadlift_platform'],
+  ['单杠', 'pullup_bar'],
+  ['龙门架', 'cable_machine'],
+  ['瑜伽垫', 'mat'],
+  ['壶铃区', 'kettlebell'],
+  ['哑铃区', 'dumbbell'],
+  ['自由重量', 'free_weights'],
+  ['其他', 'equipment'],
+]
+
 // ---- overlay/video time alignment ----
 // The video path (RTSP/file → decode → JPEG → WS) lags the analytics path by
 // a variable 0.3–1.5 s, so drawing the NEWEST sample on the NEWEST frame
@@ -1415,11 +1435,17 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                             onChange={(e) =>
                               setZones((zs) => zs.map((x) => (x.id === z.id ? { ...x, name: e.target.value } : x)))
                             } />
-                          <input className="gym-ov-input type" value={z.equipment_type}
-                            placeholder="器械类型"
+                          <select className="gym-ov-input type" value={z.equipment_type}
                             onChange={(e) =>
                               setZones((zs) => zs.map((x) => (x.id === z.id ? { ...x, equipment_type: e.target.value } : x)))
-                            } />
+                            }>
+                            {!EQUIPMENT_PRESETS.some(([, v]) => v === z.equipment_type) && (
+                              <option value={z.equipment_type}>{z.equipment_type}</option>
+                            )}
+                            {EQUIPMENT_PRESETS.map(([label, value]) => (
+                              <option key={value} value={value}>{label}</option>
+                            ))}
+                          </select>
                           <button className="gym-ov-btn danger"
                             onClick={() => setZones((zs) => zs.filter((x) => x.id !== z.id))}>删除</button>
                         </div>

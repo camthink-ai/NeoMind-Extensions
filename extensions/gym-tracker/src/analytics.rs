@@ -307,6 +307,37 @@ fn point_line_dist(px: f32, py: f32, a: (f32, f32), b: (f32, f32)) -> f32 {
     ((px - cx).powi(2) + (py - cy).powi(2)).sqrt()
 }
 
+/// Zone-prior vs temporal arbitration.
+/// - cardio zones: zone IS the exercise (pose can't tell treadmill from
+///   elliptical); duration only.
+/// - strength zones: zone acts as a PRIOR; a temporal result that keeps
+///   disagreeing for >5 s wins ("curling by the squat rack" = curl).
+/// - no/unmapped zone: temporal classifier decides (pending → seed pose).
+/// Returns (exercise, is_cardio, new_disagree_since).
+fn arbitrate(
+    zone_ex: Option<(&'static str, bool)>,
+    temporal: &'static str,
+    disagree_since: Option<f64>,
+    now: f64,
+) -> (&'static str, bool, Option<f64>) {
+    match zone_ex {
+        Some((e, true)) => (e, true, None),
+        Some((e, false)) => {
+            if temporal != "pending" && temporal != e {
+                let since = disagree_since.unwrap_or(now);
+                if now - since > 5.0 {
+                    (temporal, false, Some(since))
+                } else {
+                    (e, false, Some(since))
+                }
+            } else {
+                (e, false, None)
+            }
+        }
+        None => (temporal, false, None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,6 +361,38 @@ mod tests {
             faces: vec![],
             img_b64: None,
         }
+    }
+
+
+    #[test]
+    fn arbitrate_zone_prior_rules() {
+        use super::arbitrate;
+        // cardio zone: zone wins outright, no arbitration
+        assert_eq!(arbitrate(Some(("treadmill_run", true)), "squat", None, 100.0),
+            ("treadmill_run", true, None));
+        // strength zone agreeing with temporal → zone, timer reset
+        assert_eq!(arbitrate(Some(("squat", false)), "squat", None, 100.0),
+            ("squat", false, None));
+        // disagreement < 5 s → zone still wins, timer running
+        let (ex, _, ds) = arbitrate(Some(("squat", false)), "bicep_curl", None, 100.0);
+        assert_eq!(ex, "squat");
+        assert_eq!(ds, Some(100.0));
+        let (ex, _, ds) = arbitrate(Some(("squat", false)), "bicep_curl", Some(100.0), 104.0);
+        assert_eq!(ex, "squat"); // only 4 s in
+        assert_eq!(ds, Some(100.0));
+        // sustained > 5 s → temporal wins
+        let (ex, _, ds) = arbitrate(Some(("squat", false)), "bicep_curl", Some(100.0), 106.0);
+        assert_eq!(ex, "bicep_curl");
+        assert_eq!(ds, Some(100.0));
+        // agreement again resets the streak
+        assert_eq!(arbitrate(Some(("squat", false)), "squat", Some(100.0), 107.0),
+            ("squat", false, None));
+        // pending temporal in a strength zone → zone holds
+        assert_eq!(arbitrate(Some(("squat", false)), "pending", Some(100.0), 107.0),
+            ("squat", false, None));
+        // unmapped zone → temporal
+        assert_eq!(arbitrate(None, "lunge", None, 100.0),
+            ("lunge", false, None));
     }
 
     #[test]
@@ -446,6 +509,11 @@ pub struct WorkoutTracker {
     counter: crate::exercise::RepCounter,
     counter_inited: bool,
     timeline: crate::exercise::PoseTimeline,
+    /// Zone-prior arbitration: when the temporal classifier persistently
+    /// disagrees with the zone's mapped exercise, the temporal result wins
+    /// ("curling next to the squat rack" is a curl). Timestamp of the
+    /// FIRST disagreement in the current streak; None = agreeing/pending.
+    disagree_since: Option<f64>,
     dirty: bool,
 }
 
@@ -478,6 +546,7 @@ impl Inner {
                 counter: crate::exercise::RepCounter::new("unknown", false, now),
                 counter_inited: false,
                 timeline: crate::exercise::PoseTimeline::default(),
+                disagree_since: None,
                 dirty: true,
             });
             w.last_seen = now;
@@ -529,17 +598,10 @@ impl Inner {
                 let zone_ex = w.zone_enter.as_ref()
                     .and_then(|(zid, _)| zones.iter().find(|z| &z.id == zid))
                     .and_then(|z| crate::exercise::zone_exercise(&z.equipment_type));
-                let (ex, cardio) = match zone_ex {
-                    Some((e, c)) => (e, c),
-                    None => {
-                        let hist = crate::exercise::classify_with_history(&w.timeline);
-                        if hist == "pending" {
-                            (crate::exercise::classify_from_pose(pose), false)
-                        } else {
-                            (hist, false)
-                        }
-                    }
-                };
+                let temporal = crate::exercise::classify_with_history(&w.timeline);
+                let (ex, cardio, dsince) = arbitrate(
+                    zone_ex, temporal, w.disagree_since, now);
+                w.disagree_since = dsince;
                 if !w.counter_inited || w.exercise != ex {
                     let total = w.reps + w.counter.reps;
                     w.reps = if w.counter_inited { total } else { 0 };
