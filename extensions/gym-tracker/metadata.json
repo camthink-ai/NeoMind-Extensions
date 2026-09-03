@@ -1,7 +1,7 @@
 {
   "id": "gym-tracker",
   "name": "Gym Tracker",
-  "version": "2.8.0",
+  "version": "2.8.2",
   "description": "Smart-gym extension: NE503 person-tracking ingestion, live state, ROI equipment zones, member identity, pose-based rep counting, session reporting",
   "author": "NeoMind Team",
   "license": "Apache-2.0",

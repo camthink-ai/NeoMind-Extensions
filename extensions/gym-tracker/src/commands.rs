@@ -211,9 +211,14 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                             continue; // need 3 consecutive unknown readings
                         }
                     }
-                    // Size gate: tiny far-field bodies produce unstable
+                    // Size gate: far-field bodies produce unstable
                     // embeddings — don't build a member library from them.
-                    if t.bbox.h < 0.10 {
+                    // 0.15 (was 0.10): with 4K tiles feeding far-field
+                    // tracks, h 0.10–0.14 embeddings drifted >600 and each
+                    // drift forked a new 访客 (154 members, 54 with no
+                    // session, ~18/day from 2-3 real people). Those tracks
+                    // still track + match, they just don't enroll.
+                    if t.bbox.h < 0.15 {
                         continue;
                     }
                     match ctx
@@ -695,6 +700,36 @@ mod tests {
             faces: vec![],
             img_b64: None,
         }
+    }
+
+    #[test]
+    fn auto_enroll_skips_far_field() {
+        // far-field bodies (h<0.15, from the 4K tile passes) must NOT fork
+        // new members — their embeddings drift past auto_capture_distance
+        // and every drift created a fresh 访客
+        let ctx = make_ctx_identity(
+            30,
+            r#"{ "match_threshold": 0.1, "auto_capture_unknown": true, "unknown_prefix": "U", "auto_capture_distance": 0.5 }"#,
+        );
+        let mut t = track(7);
+        t.bbox.h = 0.12; // far-field
+        t.face = Some(crate::types::Face {
+            emb: vec![1.0, 0.0, 0.0],
+            det: 0.8,
+        });
+        for _ in 0..5 {
+            ctx.state.apply_frame(&frame(vec![t.clone()]));
+            let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+            assert_eq!(out["members_count"], 0, "far-field unknown never enrolls");
+        }
+        // same body walks closer (h=0.3) → enrolls after the streak gate
+        t.bbox.h = 0.3;
+        for _ in 0..3 {
+            ctx.state.apply_frame(&frame(vec![t.clone()]));
+            let out = handle(&ctx, "get_live_state", &json!({})).expect("ok");
+        }
+        let out = handle(&ctx, "get_live_state", &json!({})).unwrap();
+        assert_eq!(out["members_count"], 1, "near-field unknown enrolls");
     }
 
     #[test]
