@@ -83,7 +83,35 @@ struct Inner {
     heat: Vec<u32>,
     heat_day: i64,
     workouts: HashMap<i64, WorkoutTracker>,
+    alerts: VecDeque<Alert>,
+    /// per-track fall-rule state: (lying_since, alerted)
+    lying: HashMap<i64, (f64, bool)>,
+    /// per-(track,zone) long-occupancy alerted flag
+    long_occ: HashMap<(i64, String), bool>,
 }
+
+/// A safety/ops alert pushed to the Gym·Alerts card.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Alert {
+    pub ts: f64,
+    /// "fall" | "long_occupancy"
+    pub kind: &'static str,
+    /// "warn" | "info"
+    pub level: &'static str,
+    pub track_id: i64,
+    pub message: String,
+}
+
+const ALERT_CAP: usize = 50;
+/// torso lean beyond this reads as lying/fallen (degrees from vertical)
+const LYING_TORSO_DEG: f32 = 55.0;
+/// lying must persist this long before a fall alert (filters bench crunch
+/// transitions and pose flicker)
+const LYING_SUSTAIN_SEC: f64 = 8.0;
+/// single zone occupied continuously this long → courtesy alert
+const LONG_OCCUPANCY_SEC: f64 = 1800.0;
+/// zones whose exercises legitimately involve lying — no fall alerts there
+const LYING_OK_EXERCISES: &[&str] = &["crunch", "situp", "plank", "bench_press", "pushup"];
 
 pub struct Analytics {
     inner: Mutex<Inner>,
@@ -114,9 +142,19 @@ impl Analytics {
                 heat,
                 heat_day,
                 workouts: Default::default(),
+                alerts: Default::default(),
+                lying: Default::default(),
+                long_occ: Default::default(),
             }),
             dirty_frames: AtomicU64::new(0),
         }
+    }
+
+    /// Recent alerts, newest first (for the Gym·Alerts card).
+    pub fn alerts_snapshot(&self) -> serde_json::Value {
+        let g = self.inner.lock();
+        let rows: Vec<&Alert> = g.alerts.iter().rev().collect();
+        serde_json::json!({ "alerts": rows })
     }
 
     /// Process one frame: trails, crossing tests, heatmap accumulation.
@@ -678,8 +716,69 @@ impl Inner {
                 if w.counter.reps > 0 || w.counter.sets > 0 {
                     w.dirty = true;
                 }
+
+                // ---- alert rules ----
+                // copy the workout data out first so the &mut w borrow ends
+                // before the alert-state maps borrow self again
+                let zone_hold: Option<(String, f64)> = w.zone_enter.as_ref().map(|(zid, _)| {
+                    (zid.clone(), w.zone_secs.get(zid).copied().unwrap_or(0.0))
+                });
+                // fall-suspect: torso lying (away from vertical) sustained
+                // outside the legitimately-lying exercises/zones
+                let lying_ok = LYING_OK_EXERCISES.contains(&ex);
+                let torso_deg = crate::exercise::torso_angle_public(pose);
+                if !lying_ok && torso_deg.map_or(false, |a| a > LYING_TORSO_DEG) {
+                    let st = self.lying.entry(t.track_id).or_insert((now, false));
+                    if !st.1 && now - st.0 >= LYING_SUSTAIN_SEC {
+                        st.1 = true;
+                        self.push_alert(Alert {
+                            ts: now,
+                            kind: "fall",
+                            level: "warn",
+                            track_id: t.track_id,
+                            message: format!(
+                                "疑似跌倒/躺卧：轨迹 #{} 躯干倾斜 {:.0}° 持续超过 {} 秒",
+                                t.track_id, torso_deg.unwrap_or(0.0), LYING_SUSTAIN_SEC as u32
+                            ),
+                        });
+                    }
+                } else {
+                    self.lying.remove(&t.track_id);
+                }
+                // long occupancy: one person holding one zone for 30 min
+                if let Some((zid, secs)) = zone_hold {
+                    let key = (t.track_id, zid.clone());
+                    let flagged = self.long_occ.entry(key).or_insert(false);
+                    if !*flagged && secs >= LONG_OCCUPANCY_SEC {
+                        *flagged = true;
+                        let zname = zones
+                            .iter()
+                            .find(|z| z.id == zid)
+                            .map(|z| z.name.as_str())
+                            .unwrap_or("区域");
+                        self.push_alert(Alert {
+                            ts: now,
+                            kind: "long_occupancy",
+                            level: "info",
+                            track_id: t.track_id,
+                            message: format!(
+                                "{} 连续占用超过 {} 分钟（轨迹 #{}）",
+                                zname,
+                                (LONG_OCCUPANCY_SEC / 60.0) as u32,
+                                t.track_id
+                            ),
+                        });
+                    }
+                }
             }
         }
+    }
+
+    fn push_alert(&mut self, a: Alert) {
+        if self.alerts.len() >= ALERT_CAP {
+            self.alerts.pop_front();
+        }
+        self.alerts.push_back(a);
     }
 
     /// Close workouts whose track expired; persist them. Called from

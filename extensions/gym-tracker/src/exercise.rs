@@ -58,6 +58,10 @@ fn joint_angle(a: Option<Pt>, b: Option<Pt>, c: Option<Pt>) -> Option<f32> {
 }
 
 /// Torso lean from vertical (0 = upright), from shoulder-mid vs hip-mid.
+pub fn torso_angle_public(pose: &Pose) -> Option<f32> {
+    torso_angle(pose)
+}
+
 fn torso_angle(pose: &Pose) -> Option<f32> {
     let (ls, rs) = (kp(pose, L_SHOULDER)?, kp(pose, R_SHOULDER)?);
     let (lh, rh) = (kp(pose, L_HIP)?, kp(pose, R_HIP)?);

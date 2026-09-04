@@ -162,6 +162,97 @@
         }
       },
       "category": "custom"
+    },
+    {
+      "name": "GymEquipmentRank",
+      "type": "gym-equipment-rank",
+      "displayName": "Gym · 器械排行",
+      "description": "今日各器械使用时长排行（条形图，含次数）",
+      "icon": "bar-chart",
+      "defaultSize": {
+        "width": 420,
+        "height": 300
+      },
+      "minSize": {
+        "width": 280,
+        "height": 160
+      },
+      "refreshable": true,
+      "refreshInterval": 15000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "topN": {
+          "type": "number",
+          "default": 8,
+          "minimum": 3,
+          "maximum": 20,
+          "description": "显示前 N 台"
+        }
+      }
+    },
+    {
+      "name": "GymMemberReport",
+      "type": "gym-member-report",
+      "displayName": "Gym · 会员周报",
+      "description": "会员到店次数/时长/最近到店（近 N 天）",
+      "icon": "users",
+      "defaultSize": {
+        "width": 420,
+        "height": 300
+      },
+      "minSize": {
+        "width": 280,
+        "height": 160
+      },
+      "refreshable": true,
+      "refreshInterval": 15000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "days": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "maximum": 90,
+          "description": "统计窗口（天）"
+        }
+      }
+    },
+    {
+      "name": "GymAlerts",
+      "type": "gym-alerts",
+      "displayName": "Gym · 告警",
+      "description": "实时安全告警：疑似跌倒、器械久占",
+      "icon": "alert-triangle",
+      "defaultSize": {
+        "width": 420,
+        "height": 260
+      },
+      "minSize": {
+        "width": 280,
+        "height": 160
+      },
+      "refreshable": true,
+      "refreshInterval": 15000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "onlyWarn": {
+          "type": "boolean",
+          "default": false,
+          "description": "只显示警示级（跌倒）告警"
+        }
+      }
     }
   ],
   "i18n": {

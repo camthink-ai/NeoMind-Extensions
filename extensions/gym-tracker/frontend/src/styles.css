@@ -1213,3 +1213,40 @@
 .gym-ov-compact {
   background: transparent;
 }
+
+/* ============================================================================
+   New cards v2.9.3: EquipmentRank / MemberReport / Alerts
+   (ride the unified card surface from v2.9.2)
+   ============================================================================ */
+.gym-rank-body, .gym-report-body, .gym-alerts-body {
+  flex: 1; overflow: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px;
+}
+.gym-rank-empty, .gym-alerts-empty {
+  color: var(--muted-foreground, #a1a1aa); font-size: 12px; padding: 8px 0;
+  display: flex; align-items: center; gap: 8px;
+}
+.gym-rank-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.gym-rank-name { width: 84px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground, #fafafa); }
+.gym-rank-track { flex: 1; height: 8px; border-radius: 4px; background: var(--muted, rgba(255,255,255,.08)); overflow: hidden; }
+.gym-rank-bar { height: 100%; border-radius: 4px; background: var(--primary, #22c55e); }
+.gym-rank-val { width: 44px; text-align: right; color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; }
+.gym-rank-reps { width: 40px; text-align: right; color: var(--muted-foreground, #a1a1aa); font-size: 11px; }
+.gym-report-row {
+  display: grid; grid-template-columns: 1fr auto auto auto; gap: 10px;
+  align-items: center; font-size: 12px; padding: 4px 0;
+  border-bottom: 1px solid var(--border, #232323);
+}
+.gym-report-row:last-child { border-bottom: none; }
+.gym-report-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground, #fafafa); }
+.gym-report-visits { color: var(--primary, #22c55e); font-variant-numeric: tabular-nums; }
+.gym-report-dur { color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; }
+.gym-report-seen { color: var(--muted-foreground, #a1a1aa); font-size: 11px; }
+.gym-alerts-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 0; }
+.gym-alerts-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; }
+.gym-alerts-dot.warn { background: var(--color-error, #ef4444); box-shadow: 0 0 6px var(--color-error, #ef4444); }
+.gym-alerts-dot.info { background: var(--color-info, #3b82f6); }
+.gym-alerts-dot.ok { background: var(--color-success, #22c55e); }
+.gym-alerts-time { color: var(--muted-foreground, #a1a1aa); font-variant-numeric: tabular-nums; font-size: 11px; width: 56px; flex-shrink: 0; }
+.gym-alerts-msg { color: var(--foreground, #fafafa); }
+.gym-ov-badge.warn { color: var(--color-error, #ef4444); border-color: color-mix(in oklab, var(--color-error, #ef4444) 50%, transparent); }
+.gym-ov-badge.ok { color: var(--color-success, #22c55e); border-color: color-mix(in oklab, var(--color-success, #22c55e) 50%, transparent); }

@@ -618,6 +618,52 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             }
             Ok(json!({ "deleted": id }))
         }
+        // Member visit report for the weekly card: per-member visits /
+        // minutes / last-seen over the last N days, plus library totals.
+        "get_member_report" => {
+            let days = args["days"].as_i64().unwrap_or(7).clamp(1, 90);
+            let since = chrono::Utc::now().timestamp() - days * 86400;
+            let members = ctx.db.list_members().map_err(|e| e.to_string())?;
+            let sessions = ctx
+                .db
+                .list_sessions(None, since, 20000)
+                .map_err(|e| e.to_string())?;
+            use std::collections::BTreeMap;
+            let mut agg: BTreeMap<String, (String, u32, i64, i64)> = BTreeMap::new();
+            for s in &sessions {
+                let mid = match s["member_id"].as_str() {
+                    Some(m) if !m.is_empty() => m.to_string(),
+                    _ => continue, // anonymous walk-in sessions don't rank
+                };
+                let name = s["member_name"].as_str().unwrap_or("会员").to_string();
+                let dur = s["duration_sec"].as_i64().unwrap_or(0).max(0);
+                let started = s["started_at"].as_i64().unwrap_or(0);
+                let e = agg.entry(mid).or_insert((name, 0, 0, 0));
+                e.1 += 1;
+                e.2 += dur;
+                e.3 = e.3.max(started);
+            }
+            let mut rows: Vec<_> = agg
+                .into_iter()
+                .map(|(id, (name, visits, secs, last))| json!({
+                    "member_id": id, "name": name, "visits": visits,
+                    "duration_sec": secs, "last_seen": last,
+                }))
+                .collect();
+            rows.sort_by(|a, b| {
+                b["duration_sec"].as_i64().cmp(&a["duration_sec"].as_i64())
+            });
+            let total_visits: u32 = rows.iter().filter_map(|r| r["visits"].as_u64()).sum::<u64>() as u32;
+            Ok(json!({
+                "days": days,
+                "members_total": members.len(),
+                "active_members": rows.len(),
+                "total_visits": total_visits,
+                "rows": rows,
+            }))
+        }
+        // Recent safety/ops alerts (fall-suspect, long-occupancy).
+        "get_alerts" => Ok(ctx.analytics.alerts_snapshot()),
         // P1 stub: no single-frame REST endpoint on this firmware yet. Not
         // fatal — the dispatch maps the client error to an error object so the
         // frontend can render a placeholder. P2 will grab a frame via RTSP.
