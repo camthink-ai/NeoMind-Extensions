@@ -415,10 +415,10 @@
 }
 .gym-ov-btn {
   font-size: 11px; padding: 3px 10px; border-radius: 6px; cursor: pointer;
-  background: #17171d; color: #fafafa;
-  border: 1px solid #3c3c46;
+  background: #1e1e22; color: #d4d4d8;
+  border: 1px solid #2e2e34;
 }
-.gym-ov-btn:hover { background: #23232b; }
+.gym-ov-btn:hover { background: #26262b; }
 .gym-ov-legend {
   display: flex; gap: 14px; padding: 6px 14px 8px; font-size: 11px;
   color: var(--muted-foreground, #a1a1aa); border-top: 1px solid var(--border, #2a2a2a);
@@ -508,8 +508,9 @@
   border-color: rgba(59, 130, 246, .55);
   background: rgba(59, 130, 246, .1);
 }
-.gym-ov-btn.primary { background: var(--primary, #22c55e); color: #04250f; border-color: transparent; font-weight: 600; }
-.gym-ov-btn.danger { color: #ef4444; border-color: #7a2c2c; }
+.gym-ov-btn.primary { background: #f4f4f5; color: #18181b; border-color: #f4f4f5; font-weight: 600; }
+.gym-ov-btn.primary:hover:not(:disabled) { background: #e4e4e7; color: #18181b; border-color: #e4e4e7; }
+.gym-ov-btn.danger { color: #f87171; border-color: #3f2a2a; }
 .gym-ov-badge.ok { color: #22c55e; border-color: rgba(34, 197, 94, .5); }
 .gym-ov-edit-tip {
   position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
@@ -985,17 +986,17 @@
   letter-spacing: 0.08em;
   padding: 3.5px 10px;
   border-radius: 999px;
-  color: #cbd5e1;
-  background: #1d1d24;
-  border: 1px solid #32323c;
+  color: #d4d4d8;
+  background: #1b1b20;
+  border: 1px solid #2c2c33;
 }
 .gym-ov-live-pill.on {
-  color: #86efac;
-  background: #122c1c;
-  border-color: #1f6b3a;
+  color: #4ade80;
+  background: #1b1b20;
+  border-color: #2c4a36;
 }
-.gym-ov-live-pill.connecting { color: #fde68a; background: #33270e; border-color: #8a5a0e; }
-.gym-ov-live-pill.error { color: #fca5a5; background: #381616; border-color: #8f2c2c; }
+.gym-ov-live-pill.connecting { color: #fbbf24; background: #1b1b20; border-color: #4a3d22; }
+.gym-ov-live-pill.error { color: #f87171; background: #1b1b20; border-color: #4a2a2a; }
 
 .gym-ov-live-dot {
   width: 7px;
@@ -1027,11 +1028,11 @@
   font-size: 11.5px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  color: #e2e8f0;
+  color: #d4d4d8;
   padding: 3.5px 9px;
   border-radius: 8px;
-  background: #1d1d24;
-  border: 1px solid #32323c;
+  background: #1b1b20;
+  border: 1px solid #2c2c33;
 }
 .gym-ov-chip svg { width: 12px; height: 12px; color: #67e8f9; opacity: 0.9; }
 
@@ -1043,26 +1044,26 @@
   gap: 5px;
   font-size: 11.5px;
   font-weight: 600;
-  color: #cbd5e1;
+  color: #d4d4d8;
   padding: 4.5px 10px;
   border-radius: 8px;
-  border: 1px solid #34343d;
-  background: #212129;
+  border: 1px solid #2e2e34;
+  background: #1e1e22;
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
 }
 .gym-ov-btn svg { width: 12px; height: 12px; opacity: 0.9; }
 .gym-ov-btn:hover:not(:disabled) {
-  background: #2b2b35;
-  border-color: #4a4a57;
-  color: #f1f5f9;
+  background: #26262b;
+  border-color: #3f3f46;
+  color: #f4f4f5;
 }
 .gym-ov-btn:disabled { opacity: 0.4; cursor: default; }
 .gym-ov-btn.on {
-  color: #a5f3fc;
-  background: #0d3c46;
-  border-color: #0e7490;
+  color: #18181b;
+  background: #d4d4d8;
+  border-color: #d4d4d8;
   box-shadow: none;
 }
 .gym-ov-btn.primary {
@@ -1131,26 +1132,28 @@
   color: var(--muted-foreground);
   padding: 2px 8px;
   border-radius: 6px;
-  border: 1px solid #34343d;
-  background: #212129;
+  border: 1px solid #2e2e34;
+  background: #1e1e22;
   cursor: pointer;
   transition: all 0.12s ease;
   white-space: nowrap;
 }
-.gym-ov-tg:hover { color: var(--foreground); background: #2b2b35; border-color: #4a4a57; }
+.gym-ov-tg:hover { color: var(--foreground); background: #26262b; border-color: #3f3f46; }
 .gym-ov-tg.on {
-  color: #67e8f9;
-  background: #0d3c46;
-  border-color: #0e7490;
-}
-.gym-ov-tg:disabled { opacity: 0.35; cursor: default; }
-.gym-ov-tg-edit { color: #a5f3fc; }
-.gym-ov-tg-save {
-  color: #05242e;
-  background: #22d3ee;
+  color: #18181b;
+  background: #d4d4d8;
+  border-color: #d4d4d8;
   font-weight: 600;
 }
-.gym-ov-tg-save:hover:not(:disabled) { background: #06b6d4; color: #05242e; }
+.gym-ov-tg:disabled { opacity: 0.35; cursor: default; }
+.gym-ov-tg-edit { color: var(--foreground, #fafafa); }
+.gym-ov-tg-save {
+  color: #18181b;
+  background: #f4f4f5;
+  border-color: #f4f4f5;
+  font-weight: 600;
+}
+.gym-ov-tg-save:hover:not(:disabled) { background: #e4e4e7; color: #18181b; border-color: #e4e4e7; }
 
 /* ============================================================================
    GymSelect — host-styled dropdown (mirrors shadcn Select: h-10 trigger,
