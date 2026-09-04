@@ -10,13 +10,20 @@ import {
   DEFAULT_EXTENSION_ID,
   ExtensionComponentProps,
   injectStyles,
+  memberPhotoSrc,
   runExtensionCommand,
 } from './common'
 import STYLES from './styles.css?raw'
 
 const STYLE_ID = 'gym-report-styles-v1'
 
-interface ReportRow { member_id: string; name: string; visits: number; duration_sec: number; last_seen: number }
+interface ReportRow {
+  member_id: string; name: string; visits: number; duration_sec: number; last_seen: number
+  /** base64 JPEG avatar (server caps photos to the head of the list) */
+  photo?: string | null
+  /** "auto" = auto-enrolled walk-in, "manual" = registered member */
+  source?: string
+}
 interface Report { days: number; members_total: number; active_members: number; total_visits: number; rows: ReportRow[] }
 
 export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProps>(
@@ -75,14 +82,25 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
                 还没有会员到店记录——注册会员后自动累计（匿名访客不计入）
               </div>
             )}
-            {rep && rep.rows.slice(0, 10).map((m) => (
-              <div className="gym-report-row" key={m.member_id}>
-                <span className="gym-report-name">{m.name}</span>
-                <span className="gym-report-visits">{m.visits} 次</span>
-                <span className="gym-report-dur">{fmtDur(m.duration_sec)}</span>
-                <span className="gym-report-seen">最近 {fmtSeen(m.last_seen)}</span>
-              </div>
-            ))}
+            {rep && rep.rows.slice(0, 10).map((m) => {
+              const src = memberPhotoSrc(m.photo)
+              return (
+                <div className="gym-report-row" key={m.member_id}>
+                  {src ? (
+                    <img className="gym-report-avatar" src={src} alt={m.name} title={m.name} />
+                  ) : (
+                    <span className="gym-report-avatar gym-report-avatar-fb" title={m.name}>
+                      {(m.name || '?').slice(0, 1)}
+                    </span>
+                  )}
+                  <span className="gym-report-name">{m.name}</span>
+                  {m.source === 'auto' && <span className="gym-report-vtag">访客</span>}
+                  <span className="gym-report-visits">{m.visits} 次</span>
+                  <span className="gym-report-dur">{fmtDur(m.duration_sec)}</span>
+                  <span className="gym-report-seen">最近 {fmtSeen(m.last_seen)}</span>
+                </div>
+              )
+            })}
           </div>
         </div>
       </div>

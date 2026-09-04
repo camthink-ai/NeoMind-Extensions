@@ -653,6 +653,27 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             rows.sort_by(|a, b| {
                 b["duration_sec"].as_i64().cmp(&a["duration_sec"].as_i64())
             });
+            // Avatar thumbnails + enrollment source per row. Photos ride
+            // along only for the head of the (sorted) list — the report card
+            // renders ~10 rows and each photo is ~3 KB of base64; shipping
+            // one per member would turn a 30 s poll into hundreds of KB.
+            let info: std::collections::HashMap<&str, (Option<&str>, &str)> = members
+                .iter()
+                .map(|m| (m.id.as_str(), (m.photo.as_deref(), m.source.as_str())))
+                .collect();
+            for (i, r) in rows.iter_mut().enumerate() {
+                let Some((photo, source)) = info.get(r["member_id"].as_str().unwrap_or(""))
+                else {
+                    continue;
+                };
+                let obj = r.as_object_mut().unwrap();
+                obj.insert("source".into(), json!(source));
+                if i < 12 {
+                    if let Some(p) = *photo {
+                        obj.insert("photo".into(), json!(p));
+                    }
+                }
+            }
             let total_visits: u32 = rows.iter().filter_map(|r| r["visits"].as_u64()).sum::<u64>() as u32;
             Ok(json!({
                 "days": days,

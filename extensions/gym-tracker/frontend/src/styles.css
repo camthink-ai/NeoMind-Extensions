@@ -1261,11 +1261,25 @@
 .gym-rank-val { width: 44px; text-align: right; color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; }
 .gym-rank-reps { width: 40px; text-align: right; color: var(--muted-foreground, #a1a1aa); font-size: 11px; }
 .gym-report-row {
-  display: grid; grid-template-columns: 1fr auto auto auto; gap: 10px;
+  display: grid; grid-template-columns: auto 1fr auto auto auto; gap: 10px;
   align-items: center; font-size: 12px; padding: 4px 0;
   border-bottom: 1px solid var(--border, #232323);
 }
 .gym-report-row:last-child { border-bottom: none; }
+.gym-report-avatar {
+  width: 26px; height: 26px; border-radius: 50%; object-fit: cover;
+  display: inline-flex; flex-shrink: 0;
+}
+.gym-report-avatar-fb {
+  align-items: center; justify-content: center;
+  background: var(--secondary, #1e1e22); border: 1px solid var(--border, #2e2e34);
+  color: var(--muted-foreground, #a1a1aa); font-size: 11px; font-weight: 600;
+}
+.gym-report-vtag {
+  font-size: 10px; color: var(--muted-foreground, #a1a1aa);
+  border: 1px solid var(--border, #2e2e34); border-radius: 4px; padding: 0 4px;
+  white-space: nowrap;
+}
 .gym-report-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground, #fafafa); }
 .gym-report-visits { color: var(--primary, #22c55e); font-variant-numeric: tabular-nums; }
 .gym-report-dur { color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; }
