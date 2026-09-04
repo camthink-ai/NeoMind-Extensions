@@ -191,8 +191,9 @@ const BboxIndicator = ({ track }: { track: Track }) => {
 
 export const GymLiveState = forwardRef<HTMLDivElement, ExtensionComponentProps>(
   function GymLiveState(props, ref) {
-    const { dataSource, className = '' } = props
+    const { dataSource, className = '', config } = props
     const extensionId = dataSource?.extensionId || EXTENSION_ID
+    const maxRows = Math.min(40, Math.max(4, Number(config?.maxRows) || 12))
 
     useEffect(() => injectStyles(), [])
 
@@ -295,7 +296,7 @@ export const GymLiveState = forwardRef<HTMLDivElement, ExtensionComponentProps>(
                 </div>
               ) : (
                 <div className="gym-live-list">
-                  {tracks.map((t) => (
+                  {tracks.slice(0, maxRows).map((t) => (
                     <div className="gym-live-track" key={t.track_id}>
                       <span className="gym-live-track-id">#{t.track_id}</span>
                       <BboxIndicator track={t} />

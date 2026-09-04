@@ -24,7 +24,15 @@
         "extension",
         "extension-command"
       ],
-      "configSchema": {},
+      "configSchema": {
+        "maxRows": {
+          "type": "number",
+          "default": 12,
+          "minimum": 4,
+          "maximum": 40,
+          "description": "会员/轨迹列表最多显示行数"
+        }
+      },
       "category": "custom"
     },
     {
@@ -48,7 +56,13 @@
         "extension",
         "extension-command"
       ],
-      "configSchema": {},
+      "configSchema": {
+        "showIdle": {
+          "type": "boolean",
+          "default": true,
+          "description": "显示空闲器械（关闭则只看占用中的）"
+        }
+      },
       "category": "custom"
     },
     {
@@ -131,25 +145,20 @@
         "extension-command"
       ],
       "configSchema": {
-        "sourceUrl": {
-          "type": "string",
-          "default": "",
-          "description": "RTSP/RTMP/HLS source URL (e.g. rtsp://host:8554/sub); requires the stream-player extension"
+        "showBoxes": {
+          "type": "boolean",
+          "default": true,
+          "description": "默认显示检测框"
         },
-        "targetFps": {
-          "type": "number",
-          "default": 10,
-          "description": "Video target FPS (1-24)"
+        "showSkeleton": {
+          "type": "boolean",
+          "default": true,
+          "description": "默认显示骨架关键点"
         },
-        "outputWidth": {
-          "type": "number",
-          "default": 960,
-          "description": "Decode width in px"
-        },
-        "statePollMs": {
-          "type": "number",
-          "default": 600,
-          "description": "Track-state poll interval ms (250-5000)"
+        "showTrails": {
+          "type": "boolean",
+          "default": true,
+          "description": "默认显示运动轨迹"
         }
       },
       "category": "custom"

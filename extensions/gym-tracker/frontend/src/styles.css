@@ -1185,3 +1185,31 @@
 .gym-sel-item.selected { color: var(--primary, #22c55e); font-weight: 600; }
 .gym-sel-check { width: 14px; flex-shrink: 0; text-align: center; }
 .gym-sel-label { overflow: hidden; text-overflow: ellipsis; }
+
+/* ============================================================================
+   Unified card surface — v2.9.2
+   One look for all five widgets: opaque background (the host --card can be
+   semi-transparent in some themes, which read as "透明卡片"), one radius,
+   one border. The gradient-over-background layering makes any card-token
+   alpha composite onto the page background → visually solid.
+   ============================================================================ */
+.gym-ov-card,
+.gym-eq-card,
+.gym-traffic-card,
+.gym-live-card,
+.gym-sum-card {
+  border-radius: 12px !important;
+  border: 1px solid var(--border, #2a2a2a) !important;
+  background:
+    linear-gradient(var(--card, #171717), var(--card, #171717)),
+    var(--background, #0b0b0d) !important;
+  box-shadow: none !important;
+}
+/* headers share the same rhythm */
+.gym-ov-header, .gym-eq-header, .gym-traffic-header {
+  min-height: 40px;
+}
+/* the compact monitor toolbar sits on the opaque header, not on video */
+.gym-ov-compact {
+  background: transparent;
+}

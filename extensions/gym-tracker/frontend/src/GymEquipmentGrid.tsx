@@ -43,8 +43,10 @@ const DumbbellIcon = () => (
 
 export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentProps>(
   function GymEquipmentGrid(props, ref) {
-    const { dataSource, className = '' } = props
+    const { dataSource, className = '', config } = props
     const extensionId = dataSource?.extensionId || DEFAULT_EXTENSION_ID
+    // dense boards can hide idle zones and show only what's in use
+    const showIdle = config?.showIdle !== false
 
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
 
@@ -89,8 +91,9 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
           ).length
           return { zone, count, occupied: count > 0 }
         })
+        .filter((v) => showIdle || v.occupied)
         .sort((a, b) => a.zone.name.localeCompare(b.zone.name))
-    }, [zones, state])
+    }, [zones, state, showIdle])
 
     const occupiedCount = views.filter((v) => v.occupied).length
     const totalInZones = views.reduce((s, v) => s + v.count, 0)

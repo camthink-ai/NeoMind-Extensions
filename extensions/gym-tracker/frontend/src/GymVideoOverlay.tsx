@@ -339,6 +339,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       targetFps = 10,
       outputWidth = 960,
       statePollMs = 600,
+      config,
     } = props
     const extensionId = dataSource?.extensionId || DEFAULT_EXTENSION_ID
     const fps = Math.min(24, Math.max(1, Number(targetFps) || 10))
@@ -365,9 +366,9 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
   // P4: member being merged — holds the src id while the user picks dst
   const [merging, setMerging] = useState<string | null>(null)
 
-    const [showTrails, setShowTrails] = useState(true)
-    const [showBoxes, setShowBoxes] = useState(true)
-    const [showPose, setShowPose] = useState(true)
+    const [showTrails, setShowTrails] = useState(config?.showTrails !== false)
+    const [showBoxes, setShowBoxes] = useState(config?.showBoxes !== false)
+    const [showPose, setShowPose] = useState(config?.showSkeleton !== false)
     const [showZones, setShowZones] = useState(true)
     const [showHeatmap, setShowHeatmap] = useState(false)
     const [mosaic, setMosaic] = useState(true)
