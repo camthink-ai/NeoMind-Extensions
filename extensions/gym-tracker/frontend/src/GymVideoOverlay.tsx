@@ -374,7 +374,10 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     const [mosaic, setMosaic] = useState(true)
     const [heat, setHeat] = useState<HeatmapData | null>(null)
     // zone/line selected from the edit list — gets a highlight on canvas
+    // (and, in the compact list below, expands the single inspector row)
     const [selZoneId, setSelZoneId] = useState<string | null>(null)
+    const [selLineId, setSelLineId] = useState<string | null>(null)
+    const [selMemberId, setSelMemberId] = useState<string | null>(null)
 
     const [saving, setSaving] = useState(false)
     // wipe guard: set_roi_zones/set_lines are full-replace, so a save with
@@ -950,6 +953,10 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       const { dx, dy, dw, dh } = layoutRef.current
       const X = (nx: number) => dx + nx * dw
       const Y = (ny: number) => dy + ny * dh
+      // Edit-handle sizes in CSS px, converted into virtual units: virtual
+      // space is fixed at 960 wide, so constant radii balloon on wide
+      // widgets. S = virtual units per CSS pixel.
+      const S = canvas.clientWidth > 0 ? 960 / canvas.clientWidth : 1
 
       const state = stateRef.current
       const tracks = state?.tracks ?? []
@@ -1055,11 +1062,11 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             // draggable vertex handles: dark ring + light core (grab affordance)
             for (const p of poly) {
               ctx.beginPath()
-              ctx.arc(X(p[0]), Y(p[1]), 7, 0, Math.PI * 2)
+              ctx.arc(X(p[0]), Y(p[1]), 5.5 * S, 0, Math.PI * 2)
               ctx.fillStyle = 'rgba(15, 23, 42, 0.85)'
               ctx.fill()
               ctx.beginPath()
-              ctx.arc(X(p[0]), Y(p[1]), sel ? 4.5 : 3.5, 0, Math.PI * 2)
+              ctx.arc(X(p[0]), Y(p[1]), (sel ? 3.2 : 2.6) * S, 0, Math.PI * 2)
               ctx.fillStyle = sel ? '#3b82f6' : 'rgba(226, 232, 240, 0.95)'
               ctx.fill()
             }
@@ -1070,13 +1077,13 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
               const mx = (a[0] + b[0]) / 2
               const my = (a[1] + b[1]) / 2
               ctx.beginPath()
-              ctx.arc(X(mx), Y(my), 5, 0, Math.PI * 2)
+              ctx.arc(X(mx), Y(my), 4.2 * S, 0, Math.PI * 2)
               ctx.fillStyle = 'rgba(15, 23, 42, 0.7)'
               ctx.fill()
               ctx.beginPath()
-              ctx.arc(X(mx), Y(my), 3.2, 0, Math.PI * 2)
+              ctx.arc(X(mx), Y(my), 2.4 * S, 0, Math.PI * 2)
               ctx.strokeStyle = sel ? '#93c5fd' : 'rgba(148, 163, 184, 0.9)'
-              ctx.lineWidth = 1.5
+              ctx.lineWidth = 1.5 * S
               ctx.stroke()
             }
           }
@@ -1125,12 +1132,12 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         for (const [px, py] of [[ax, ay], [bx, by]]) {
           if (editing) {
             ctx.beginPath()
-            ctx.arc(px, py, 8, 0, Math.PI * 2)
+            ctx.arc(px, py, 6 * S, 0, Math.PI * 2)
             ctx.fillStyle = 'rgba(15, 23, 42, 0.85)'
             ctx.fill()
           }
           ctx.beginPath()
-          ctx.arc(px, py, editing ? 4.5 : 4, 0, Math.PI * 2)
+          ctx.arc(px, py, (editing ? 3.4 : 3.2) * S, 0, Math.PI * 2)
           ctx.fillStyle = 'rgba(245, 158, 11, 0.95)'
           ctx.fill()
         }
@@ -1324,7 +1331,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           ctx.fillStyle = '#3b82f6'
           for (const p of d) {
             ctx.beginPath()
-            ctx.arc(X(p[0]), Y(p[1]), 5, 0, Math.PI * 2)
+            ctx.arc(X(p[0]), Y(p[1]), 3.4 * S, 0, Math.PI * 2)
             ctx.fill()
           }
         }
@@ -1882,11 +1889,11 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
               {editing && (
                 <>
                   <button className={`gym-ov-tg ${editKind === 'zones' ? 'on' : ''}`}
-                    onClick={() => { setEditKind('zones'); setDraftLine([]) }}>分区</button>
+                    onClick={() => { setEditKind('zones'); setDraftLine([]); setSelLineId(null); setSelMemberId(null) }}>分区</button>
                   <button className={`gym-ov-tg ${editKind === 'lines' ? 'on' : ''}`}
-                    onClick={() => { setEditKind('lines'); setDraft([]) }}>计数线</button>
+                    onClick={() => { setEditKind('lines'); setDraft([]); setSelZoneId(null); setSelMemberId(null) }}>计数线</button>
                   <button className={`gym-ov-tg ${editKind === 'members' ? 'on' : ''}`}
-                    onClick={() => { setEditKind('members'); setDraft([]); setDraftLine([]); loadMembers() }}>会员</button>
+                    onClick={() => { setEditKind('members'); setDraft([]); setDraftLine([]); setSelZoneId(null); setSelLineId(null); loadMembers() }}>会员</button>
                   {editKind !== 'members' && (
                     <>
                       <button className="gym-ov-tg" onClick={undo}
@@ -1906,7 +1913,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                     // the edit isn't silently lost
                     const ok = await save()
                     if (!ok) return
-                    setMode('view'); setDraft([]); setDraftLine([]); setSelZoneId(null)
+                    setMode('view'); setDraft([]); setDraftLine([]); setSelZoneId(null); setSelLineId(null); setSelMemberId(null)
                   }}>{saving ? '保存中…' : '完成'}</button>
                 </>
               )}
@@ -1944,7 +1951,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                   ? '拖顶点调形状 · 拖空心中点加点 · 区内拖动整体移动 · 双击顶点删除 · 点击空白画新分区'
                   : editKind === 'lines'
                     ? '拖端点/线身调整 · 点击两点画计数线（a→b 为方向基准，↑=向左穿入）'
-                    : `会员库（${members.length} 人）——新人自动录入编号，选中姓名即可补填真名；回车保存`}
+                    : `会员库（${members.length} 人）——点击条目展开编辑，回车保存改名；新人自动录入编号`}
               </div>
             )}
             {!editing && register && (
@@ -1982,28 +1989,38 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                 ? (zones.length === 0
                     ? [<span key="e" className="gym-ov-zonelist-empty">还没有分区——在画面上点出第一块器械区</span>]
                     : zones.map((z, i) => (
-                        <div key={z.id}
-                          className={`gym-ov-zonerow ${selZoneId === z.id ? 'sel' : ''}`}
-                          onClick={() => setSelZoneId(selZoneId === z.id ? null : z.id)}>
-                          <span className="gym-ov-zoneidx">{i + 1}</span>
-                          <input className="gym-ov-input name" value={z.name}
-                            onChange={(e) =>
-                              setZones((zs) => zs.map((x) => (x.id === z.id ? { ...x, name: e.target.value } : x)))
-                            } />
-                          <GymSelect
-                            value={z.equipment_type}
-                            onChange={(v) =>
-                              setZones((zs) => zs.map((x) => (x.id === z.id ? { ...x, equipment_type: v } : x)))
-                            }
-                            options={[
-                              ...(!EQUIPMENT_PRESETS.some(([, v]) => v === z.equipment_type)
-                                ? [{ value: z.equipment_type, label: z.equipment_type }]
-                                : []),
-                              ...EQUIPMENT_PRESETS.map(([label, value]) => ({ value, label })),
-                            ]}
-                          />
-                          <button className="gym-ov-btn danger"
-                            onClick={() => { deletedRef.current.zone = true; setZones((zs) => zs.filter((x) => x.id !== z.id)) }}>删除</button>
+                        <div key={z.id} className="gym-ov-rowwrap">
+                          <div
+                            className={`gym-ov-zonerow ${selZoneId === z.id ? 'sel' : ''}`}
+                            onClick={() => setSelZoneId(selZoneId === z.id ? null : z.id)}>
+                            <span className="gym-ov-zoneidx">{i + 1}</span>
+                            <span className="gym-ov-zonename">{z.name || '未命名分区'}</span>
+                            <span className="gym-ov-typetag">
+                              {EQUIPMENT_PRESETS.find(([, v]) => v === z.equipment_type)?.[0] ?? z.equipment_type}
+                            </span>
+                          </div>
+                          {selZoneId === z.id && (
+                            <div className="gym-ov-rowins">
+                              <input className="gym-ov-input name" value={z.name}
+                                onChange={(e) =>
+                                  setZones((zs) => zs.map((x) => (x.id === z.id ? { ...x, name: e.target.value } : x)))
+                                } />
+                              <GymSelect
+                                value={z.equipment_type}
+                                onChange={(v) =>
+                                  setZones((zs) => zs.map((x) => (x.id === z.id ? { ...x, equipment_type: v } : x)))
+                                }
+                                options={[
+                                  ...(!EQUIPMENT_PRESETS.some(([, v]) => v === z.equipment_type)
+                                    ? [{ value: z.equipment_type, label: z.equipment_type }]
+                                    : []),
+                                  ...EQUIPMENT_PRESETS.map(([label, value]) => ({ value, label })),
+                                ]}
+                              />
+                              <button className="gym-ov-btn danger"
+                                onClick={() => { deletedRef.current.zone = true; setZones((zs) => zs.filter((x) => x.id !== z.id)); setSelZoneId(null) }}>删除</button>
+                            </div>
+                          )}
                         </div>
                       )))
                 : (editKind === 'lines'
@@ -2012,62 +2029,79 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                         : lines.map((l, i) => {
                             const st = crossings.find((s) => s.line_id === l.id)
                             return (
-                              <div key={l.id} className="gym-ov-zonerow">
-                                <span className="gym-ov-zoneidx line">{i + 1}</span>
-                                <input className="gym-ov-input name" value={l.name}
-                                  onChange={(e) =>
-                                    setLines((ls) => ls.map((x) => (x.id === l.id ? { ...x, name: e.target.value } : x)))
-                                  } />
-                                <span className="gym-ov-linecount">
-                                  ↑{st?.in_count ?? 0} ↓{st?.out_count ?? 0}
-                                </span>
-                                <button className="gym-ov-btn danger"
-                                  onClick={() => { deletedRef.current.line = true; setLines((ls) => ls.filter((x) => x.id !== l.id)) }}>删除</button>
+                              <div key={l.id} className="gym-ov-rowwrap">
+                                <div className={`gym-ov-zonerow ${selLineId === l.id ? 'sel' : ''}`}
+                                  onClick={() => setSelLineId(selLineId === l.id ? null : l.id)}>
+                                  <span className="gym-ov-zoneidx line">{i + 1}</span>
+                                  <span className="gym-ov-zonename">{l.name || '未命名计数线'}</span>
+                                  <span className="gym-ov-linecount">
+                                    ↑{st?.in_count ?? 0} ↓{st?.out_count ?? 0}
+                                  </span>
+                                </div>
+                                {selLineId === l.id && (
+                                  <div className="gym-ov-rowins">
+                                    <input className="gym-ov-input name" value={l.name}
+                                      onChange={(e) =>
+                                        setLines((ls) => ls.map((x) => (x.id === l.id ? { ...x, name: e.target.value } : x)))
+                                      } />
+                                    <button className="gym-ov-btn danger"
+                                      onClick={() => { deletedRef.current.line = true; setLines((ls) => ls.filter((x) => x.id !== l.id)); setSelLineId(null) }}>删除</button>
+                                  </div>
+                                )}
                               </div>
                             )
                           }))
                     : (members.length === 0
                         ? [<span key="e" className="gym-ov-zonelist-empty">会员库为空——新人入画会自动录入特征；也可在查看模式点击人物注册</span>]
                         : members.map((m, i) => (
-                            <div key={m.id} className="gym-ov-zonerow">
-                              {memberPhotoSrc(m.photo) ? (
-                                <img className="gym-ov-avatar" src={memberPhotoSrc(m.photo)!}
-                                  alt={m.name} title={m.name} />
-                              ) : (
-                                <span className="gym-ov-zoneidx member">{i + 1}</span>
+                            <div key={m.id} className="gym-ov-rowwrap">
+                              <div className={`gym-ov-zonerow ${selMemberId === m.id ? 'sel' : ''}`}
+                                onClick={() => setSelMemberId(selMemberId === m.id ? null : m.id)}>
+                                {memberPhotoSrc(m.photo) ? (
+                                  <img className="gym-ov-avatar" src={memberPhotoSrc(m.photo)!}
+                                    alt={m.name} title={m.name} />
+                                ) : (
+                                  <span className="gym-ov-zoneidx member">{i + 1}</span>
+                                )}
+                                <span className="gym-ov-zonename">{m.name || '未命名'}</span>
+                                <span className="gym-ov-typetag">
+                                  {m.source === 'auto' ? '自动' : '手动'} · {m.samples ?? 1}样本
+                                </span>
+                              </div>
+                              {selMemberId === m.id && (
+                                <div className="gym-ov-rowins">
+                                  <input className="gym-ov-input name" key={`rn-${m.id}`} autoFocus
+                                    defaultValue={m.name}
+                                    placeholder={m.source === 'auto' ? '补填姓名' : '会员姓名'}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                                    }}
+                                    onBlur={async (e) => {
+                                      const v = e.target.value.trim()
+                                      if (v && v !== m.name) {
+                                        await renameMember(extensionId, m.id, v)
+                                        if (mountedRef.current) loadMembers()
+                                      }
+                                    }} />
+                                  {merging === m.id ? (
+                                    <GymSelect
+                                      value=""
+                                      autoOpen
+                                      placeholder="并入哪位会员？"
+                                      onClose={() => setMerging(null)}
+                                      onChange={(v) => { if (v) doMerge(v) }}
+                                      options={members
+                                        .filter((x) => x.id !== m.id)
+                                        .map((x) => ({ value: x.id, label: x.name }))}
+                                    />
+                                  ) : (
+                                    <button className="gym-ov-btn" title="把此人的特征并入另一位会员（换装确认）"
+                                      onClick={() => { setMerging(m.id); setSavedFlash(0) }}>并入</button>
+                                  )}
+                                  <button className="gym-ov-btn danger"
+                                    onClick={() => { removeMember(m.id); setSelMemberId(null) }}>删除</button>
+                                </div>
                               )}
-                              <input className="gym-ov-input name" defaultValue={m.name}
-                                placeholder={m.source === 'auto' ? '补填姓名' : '会员姓名'}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                                }}
-                                onBlur={async (e) => {
-                                  const v = e.target.value.trim()
-                                  if (v && v !== m.name) {
-                                    await renameMember(extensionId, m.id, v)
-                                    if (mountedRef.current) loadMembers()
-                                  }
-                                }} />
-                              <span className="gym-ov-linecount">
-                                {m.source === 'auto' ? '自动' : '手动'} · {m.samples ?? 1}样本
-                              </span>
-                              {merging === m.id ? (
-                                <GymSelect
-                                  value=""
-                                  autoOpen
-                                  placeholder="并入哪位会员？"
-                                  onClose={() => setMerging(null)}
-                                  onChange={(v) => { if (v) doMerge(v) }}
-                                  options={members
-                                    .filter((x) => x.id !== m.id)
-                                    .map((x) => ({ value: x.id, label: x.name }))}
-                                />
-                              ) : (
-                                <button className="gym-ov-btn" title="把此人的特征并入另一位会员（换装确认）"
-                                  onClick={() => { setMerging(m.id); setSavedFlash(0) }}>并入</button>
-                              )}
-                              <button className="gym-ov-btn danger"
-                                onClick={() => removeMember(m.id)}>删除</button>
                             </div>
                           ))))}
             </div>
