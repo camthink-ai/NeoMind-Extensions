@@ -415,10 +415,10 @@
 }
 .gym-ov-btn {
   font-size: 11px; padding: 3px 10px; border-radius: 6px; cursor: pointer;
-  background: rgba(0, 0, 0, .55); color: #fafafa;
-  border: 1px solid rgba(255, 255, 255, .25);
+  background: #17171d; color: #fafafa;
+  border: 1px solid #3c3c46;
 }
-.gym-ov-btn:hover { background: rgba(0, 0, 0, .8); }
+.gym-ov-btn:hover { background: #23232b; }
 .gym-ov-legend {
   display: flex; gap: 14px; padding: 6px 14px 8px; font-size: 11px;
   color: var(--muted-foreground, #a1a1aa); border-top: 1px solid var(--border, #2a2a2a);
@@ -509,7 +509,7 @@
   background: rgba(59, 130, 246, .1);
 }
 .gym-ov-btn.primary { background: var(--primary, #22c55e); color: #04250f; border-color: transparent; font-weight: 600; }
-.gym-ov-btn.danger { color: #ef4444; border-color: rgba(239, 68, 68, .4); }
+.gym-ov-btn.danger { color: #ef4444; border-color: #7a2c2c; }
 .gym-ov-badge.ok { color: #22c55e; border-color: rgba(34, 197, 94, .5); }
 .gym-ov-edit-tip {
   position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
@@ -986,16 +986,16 @@
   padding: 3.5px 10px;
   border-radius: 999px;
   color: #cbd5e1;
-  background: rgba(100, 116, 139, 0.18);
-  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: #1d1d24;
+  border: 1px solid #32323c;
 }
 .gym-ov-live-pill.on {
   color: #86efac;
-  background: rgba(22, 163, 74, 0.16);
-  border-color: rgba(34, 197, 94, 0.45);
+  background: #122c1c;
+  border-color: #1f6b3a;
 }
-.gym-ov-live-pill.connecting { color: #fde68a; background: rgba(202, 138, 4, 0.15); border-color: rgba(245, 158, 11, 0.4); }
-.gym-ov-live-pill.error { color: #fca5a5; background: rgba(185, 28, 28, 0.15); border-color: rgba(239, 68, 68, 0.4); }
+.gym-ov-live-pill.connecting { color: #fde68a; background: #33270e; border-color: #8a5a0e; }
+.gym-ov-live-pill.error { color: #fca5a5; background: #381616; border-color: #8f2c2c; }
 
 .gym-ov-live-dot {
   width: 7px;
@@ -1030,8 +1030,8 @@
   color: #e2e8f0;
   padding: 3.5px 9px;
   border-radius: 8px;
-  background: rgba(148, 163, 184, 0.1);
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: #1d1d24;
+  border: 1px solid #32323c;
 }
 .gym-ov-chip svg { width: 12px; height: 12px; color: #67e8f9; opacity: 0.9; }
 
@@ -1046,24 +1046,24 @@
   color: #cbd5e1;
   padding: 4.5px 10px;
   border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: rgba(148, 163, 184, 0.07);
+  border: 1px solid #34343d;
+  background: #212129;
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
 }
 .gym-ov-btn svg { width: 12px; height: 12px; opacity: 0.9; }
 .gym-ov-btn:hover:not(:disabled) {
-  background: rgba(148, 163, 184, 0.16);
-  border-color: rgba(148, 163, 184, 0.35);
+  background: #2b2b35;
+  border-color: #4a4a57;
   color: #f1f5f9;
 }
 .gym-ov-btn:disabled { opacity: 0.4; cursor: default; }
 .gym-ov-btn.on {
   color: #a5f3fc;
-  background: rgba(34, 211, 238, 0.14);
-  border-color: rgba(34, 211, 238, 0.45);
-  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.12), 0 1px 8px rgba(34, 211, 238, 0.12);
+  background: #0d3c46;
+  border-color: #0e7490;
+  box-shadow: none;
 }
 .gym-ov-btn.primary {
   color: #06202a;
@@ -1131,17 +1131,17 @@
   color: var(--muted-foreground);
   padding: 2px 8px;
   border-radius: 6px;
-  border: 1px solid transparent;
-  background: transparent;
+  border: 1px solid #34343d;
+  background: #212129;
   cursor: pointer;
   transition: all 0.12s ease;
   white-space: nowrap;
 }
-.gym-ov-tg:hover { color: var(--foreground); background: rgba(148, 163, 184, 0.12); }
+.gym-ov-tg:hover { color: var(--foreground); background: #2b2b35; border-color: #4a4a57; }
 .gym-ov-tg.on {
   color: #67e8f9;
-  background: rgba(34, 211, 238, 0.12);
-  border-color: rgba(34, 211, 238, 0.3);
+  background: #0d3c46;
+  border-color: #0e7490;
 }
 .gym-ov-tg:disabled { opacity: 0.35; cursor: default; }
 .gym-ov-tg-edit { color: #a5f3fc; }
