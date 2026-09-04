@@ -2,6 +2,18 @@
 
 ## 2026-08 (unreleased)
 
+- **gym-tracker 2.10.0** — binary push frames end-to-end (rides the platform's
+  new opt-in binary channel, NeoMind core ≥ 0.9.23): ingest decodes the
+  device's `img_b64` once and stores `Arc<Vec<u8>>`; the push thread emits an
+  `application/x-neomind-frame` container (`[u32 meta_len][tracks/faces/ts
+  JSON][JPEG]`), eliminating BOTH base64 layers on the browser leg (~-43%
+  wire for the Monitor, no per-frame `atob`/130 KB JSON parse). Monitor
+  frontend: binary-frame branch + `createImageBitmap` (async off-main-thread
+  decode, jitter buffer holds encoded bytes and decodes at draw time),
+  legacy Text/REST paths retained for old servers; `vel` added to the `Track`
+  TS interface (was `as any`), dead `start_push` WS message removed,
+  frame dedup switched to device `ts_ns`. REST `get_frame` still returns an
+  `img_b64` string for old frontends.
 - **vision-hub 0.1.0** — unified vision extension (detect batch): pipeline
   engine over device frames, hardware-accelerated inference via
   `crates/vision-common` (direct ort, no usls), virtual-metric/event sinks,
