@@ -1942,3 +1942,33 @@ button.gym-ov-tg {
 .gym-report-exicon svg { width: 14px; height: 14px; }
 .gym-report-exrow { align-items: center; }
 .gym-history-ex { display: inline-flex; align-items: center; }
+
+/* ============================================================================
+   v2.16 Workout Summary: aligned with the de-boxed member modal —
+   one card surface, hairline dividers between sections
+   ============================================================================ */
+/* stats row: plain numbers, no boxes */
+.gym-sum-body .gym-sum-stats { gap: 18px; padding: 4px 2px 2px; }
+.gym-sum-body .gym-sum-stat {
+  background: none; border: none; padding: 0;
+  align-items: flex-start;
+}
+.gym-sum-body .gym-sum-stat::after { display: none; }
+.gym-sum-body .gym-sum-stat:nth-child(1),
+.gym-sum-body .gym-sum-stat:nth-child(2),
+.gym-sum-body .gym-sum-stat:nth-child(3) { border-top: none; }
+/* section titles carry the divider (like the modal's) */
+.gym-sum-body .gym-sum-section { margin-bottom: 12px; }
+.gym-sum-body .gym-sum-section-title {
+  padding-bottom: 6px; margin-bottom: 8px;
+  border-bottom: 1px solid var(--border, #232323);
+}
+/* session rows: quiet lines, not chips */
+.gym-sum-body .gym-sum-session {
+  background: none; border: none; padding: 4px 2px; margin-bottom: 0;
+  border-bottom: 1px dashed var(--border, #1e1e24);
+}
+.gym-sum-body .gym-sum-session:last-child { border-bottom: none; }
+/* equipment bars keep their track (data viz) but the row unboxes */
+.gym-sum-eqrow { padding: 1px 0; }
+/* timeline rows stay (they ARE data) */
