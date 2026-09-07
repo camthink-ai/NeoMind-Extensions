@@ -1713,6 +1713,19 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       }
     }, [merging, extensionId, loadMembers])
 
+    // 放弃：重载服务端已保存的分区/线（丢弃未保存修改）并回到查看模式
+    const cancelEdit = useCallback(async () => {
+      // mirror the render-time `dirty` derivation via the refs (this
+      // callback is declared before the derived const)
+      const dirtyNow =
+        zonesRef.current.some((z) => z.isNew) || linesRef.current.some((l) => l.isNew)
+      if (dirtyNow && !window.confirm('有未保存的修改，确定放弃并退出编辑？')) return
+      await Promise.all([loadZones(), loadLines()])
+      deletedRef.current = { zone: false, line: false }
+      setDraft([]); setDraftLine([]); setSelZoneId(null); setSelLineId(null); setSelMemberId(null)
+      setMode('view')
+    }, [loadZones, loadLines])
+
     const save = useCallback(async (): Promise<boolean> => {
       setSaving(true)
       try {
@@ -1894,25 +1907,29 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                   <span className="gym-ov-editkind">
                     {editKind === 'zones' ? '分区管理' : '计数线管理'}
                   </span>
+                  <span className="gym-ov-tb-sep" />
                   <button className="gym-ov-tg" onClick={undo}
-                    disabled={editKind === 'lines' ? draftLine.length === 0 : draft.length === 0}>撤销</button>
+                    disabled={editKind === 'lines' ? draftLine.length === 0 : draft.length === 0}
+                    title="撤销当前草稿的上一个点">撤销</button>
                   {editKind === 'zones' && (
-                    <button className="gym-ov-tg" onClick={closeDraft} disabled={draft.length < 3}>
-                      闭合{draft.length}
-                    </button>
+                    <button className="gym-ov-tg" onClick={closeDraft} disabled={draft.length < 3}
+                      title="把当前点串闭合为分区">闭合{draft.length}</button>
                   )}
+                  <span className="gym-ov-flex" />
                   <button className={`gym-ov-tg ${listOpen ? 'on' : ''}`} onClick={() => setListOpen(!listOpen)}
                     title="收起/展开右侧列表，留出画面空间">{listOpen ? '隐藏列表' : '列表'}</button>
-                  <button className="gym-ov-tg gym-ov-tg-save" onClick={save} disabled={saving}>
-                    {saving ? '…' : dirty ? '保存*' : '保存'}
-                  </button>
-                  <button className="gym-ov-tg" onClick={async () => {
+                  <span className="gym-ov-tb-sep" />
+                  <button className="gym-ov-tg" onClick={cancelEdit}
+                    title="丢弃未保存的修改，回到查看模式">取消</button>
+                  <button className="gym-ov-tg" onClick={save} disabled={saving}
+                    title="保存到服务器，继续编辑">{saving ? '…' : dirty ? '保存*' : '保存'}</button>
+                  <button className="gym-ov-tg gym-ov-tg-save" onClick={async () => {
                     // 完成 = save & exit; on failure stay in the editor so
                     // the edit isn't silently lost
                     const ok = await save()
                     if (!ok) return
                     setMode('view'); setDraft([]); setDraftLine([]); setSelZoneId(null); setSelLineId(null); setSelMemberId(null)
-                  }}>{saving ? '保存中…' : '完成'}</button>
+                  }} disabled={saving} title="保存并返回查看模式">{saving ? '保存中…' : '完成'}</button>
                 </>
               )}
             </div>
