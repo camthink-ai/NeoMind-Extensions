@@ -64,8 +64,8 @@
         },
         "busySec": {
           "type": "number",
-          "default": 60,
-          "minimum": 10,
+          "default": 5,
+          "minimum": 5,
           "maximum": 600,
           "description": "占用判定阈值（秒）：同一人持续停留该时长才计为占用中"
         }
