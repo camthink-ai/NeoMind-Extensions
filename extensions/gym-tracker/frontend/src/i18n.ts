@@ -112,8 +112,9 @@ export function translator(lang: Lang) {
  *  `ui.language` (the GLOBAL setting from the extension config panel) > zh.
  *  The global value is fetched by each card and passed in. */
 export function resolveLang(config: Record<string, unknown> | undefined, globalLang?: string): Lang {
-  const card = (config?.lang as string) || (globalLang as string) || 'zh'
-  return card === 'en' ? 'en' : 'zh'
+  // English is the product default; Chinese is opt-in
+  const card = (config?.lang as string) || (globalLang as string) || 'en'
+  return card === 'zh' ? 'zh' : 'en'
 }
 
 /** React hook: card config wins over the extension-level global. */

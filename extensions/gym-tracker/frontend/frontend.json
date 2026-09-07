@@ -35,11 +35,11 @@
         "lang": {
           "type": "string",
           "enum": [
-            "zh",
-            "en"
+            "en",
+            "zh"
           ],
-          "default": "zh",
-          "description": "界面语言 / UI language（zh 中文 · en English）"
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
         }
       },
       "category": "custom"
@@ -81,11 +81,11 @@
         "lang": {
           "type": "string",
           "enum": [
-            "zh",
-            "en"
+            "en",
+            "zh"
           ],
-          "default": "zh",
-          "description": "界面语言 / UI language（zh 中文 · en English）"
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
         }
       },
       "category": "custom"
@@ -122,11 +122,11 @@
         "lang": {
           "type": "string",
           "enum": [
-            "zh",
-            "en"
+            "en",
+            "zh"
           ],
-          "default": "zh",
-          "description": "界面语言 / UI language（zh 中文 · en English）"
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
         }
       },
       "category": "custom"
@@ -156,11 +156,11 @@
         "lang": {
           "type": "string",
           "enum": [
-            "zh",
-            "en"
+            "en",
+            "zh"
           ],
-          "default": "zh",
-          "description": "界面语言 / UI language（zh 中文 · en English）"
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
         }
       },
       "category": "custom"
@@ -207,11 +207,11 @@
         "lang": {
           "type": "string",
           "enum": [
-            "zh",
-            "en"
+            "en",
+            "zh"
           ],
-          "default": "zh",
-          "description": "界面语言 / UI language（zh 中文 · en English）"
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
         }
       },
       "category": "custom"
@@ -248,11 +248,11 @@
         "lang": {
           "type": "string",
           "enum": [
-            "zh",
-            "en"
+            "en",
+            "zh"
           ],
-          "default": "zh",
-          "description": "界面语言 / UI language（zh 中文 · en English）"
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
         }
       }
     },
@@ -288,11 +288,11 @@
         "lang": {
           "type": "string",
           "enum": [
-            "zh",
-            "en"
+            "en",
+            "zh"
           ],
-          "default": "zh",
-          "description": "界面语言 / UI language（zh 中文 · en English）"
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
         }
       }
     },
@@ -326,11 +326,11 @@
         "lang": {
           "type": "string",
           "enum": [
-            "zh",
-            "en"
+            "en",
+            "zh"
           ],
-          "default": "zh",
-          "description": "界面语言 / UI language（zh 中文 · en English）"
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
         }
       }
     },
@@ -366,11 +366,11 @@
         "lang": {
           "type": "string",
           "enum": [
-            "zh",
-            "en"
+            "en",
+            "zh"
           ],
-          "default": "zh",
-          "description": "界面语言 / UI language（zh 中文 · en English）"
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
         }
       }
     },
@@ -399,11 +399,11 @@
         "lang": {
           "type": "string",
           "enum": [
-            "zh",
-            "en"
+            "en",
+            "zh"
           ],
-          "default": "zh",
-          "description": "界面语言 / UI language（zh 中文 · en English）"
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
         }
       }
     },
@@ -437,11 +437,11 @@
         "lang": {
           "type": "string",
           "enum": [
-            "zh",
-            "en"
+            "en",
+            "zh"
           ],
-          "default": "zh",
-          "description": "界面语言 / UI language（zh 中文 · en English）"
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
         }
       }
     }

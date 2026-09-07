@@ -55,9 +55,11 @@ import {
   renameMember,
   runExtensionCommand,
   setMemberPhoto,
+  fetchExtensionUiConfig,
 } from './common'
 import STYLES from './styles.css?raw'
 import { GymSelect } from './GymSelect'
+import { useLang } from './i18n'
 
 const STYLE_ID = 'gym-monitor-styles-v1'
 
@@ -492,6 +494,16 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       config,
     } = props
     const extensionId = dataSource?.extensionId || DEFAULT_EXTENSION_ID
+    // global ui.language from the EXTENSION config (card lang overrides)
+    const [gLang, setGLang] = useState<string | undefined>(undefined)
+    useEffect(() => {
+      let alive = true
+      fetchExtensionUiConfig(extensionId).then((c: { ui?: { language?: string } }) => {
+        if (alive) setGLang(c.ui?.language)
+      })
+      return () => { alive = false }
+    }, [extensionId])
+    const { t } = useLang(config as Record<string, unknown>, gLang)
     const fps = Math.min(24, Math.max(1, Number(targetFps) || 10))
     const pollMs = Math.min(5000, Math.max(250, Number(statePollMs) || 600))
 
@@ -522,6 +534,16 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     const [showZones, setShowZones] = useState(true)
     const [showHeatmap, setShowHeatmap] = useState(false)
     const [mosaic, setMosaic] = useState(true)
+    const layerToggles: Array<
+      [string, boolean, (fn: (v: boolean) => boolean) => void, string]
+    > = [
+      ['boxes', showBoxes, setShowBoxes, t('frames')],
+      ['pose', showPose, setShowPose, t('skeleton')],
+      ['zones', showZones, setShowZones, t('zones')],
+      ['mosaic', mosaic, setMosaic, t('mosaic')],
+    ]
+    const editLabel = t('edit')
+
     const [heat, setHeat] = useState<HeatmapData | null>(null)
     // zone/line selected from the edit list — gets a highlight on canvas
     // (and, in the compact list below, expands the single inspector row)
@@ -771,7 +793,6 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         // TRUE capture time of the positions — the preview ts is one
         // inference-latency ahead of when these positions were real
         const tracksTs = (data.tracks_ts ?? 0) / 1e6
-        const tSec = tracksTs > 0 ? tracksTs : tsNs / 1e6
         if (tracksTs > 0 && tracksTs > lastTracksTsRef.current)
           lastTracksTsRef.current = tracksTs
         const seen = new Set<number>()
@@ -780,7 +801,22 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           seen.add(t.track_id)
           let arr = hist.get(t.track_id)
           if (!arr) { arr = []; hist.set(t.track_id, arr) }
+          // PER-TRACK ts when present: far-field tile tracks carry their
+          // older true grab time — keying their history by the fresh frame
+          // ts made their boxes trail the person by the whole tile
+          // pipeline age (0.4-0.9 s). Old producers fall back to the
+          // frame-level clocks.
+          const tSec = t.ts
+            ? t.ts / 1e6
+            : (tracksTs > 0 ? tracksTs : tsNs / 1e6)
           const last = arr[arr.length - 1]
+          // PER-TRACK MONOTONIC: a fast-moving person can alternate between
+          // a fresh full-frame sample and a stale tile sample of the SAME
+          // track (association flicker at NMS boundaries). Appending the
+          // older ts rewinds that track's history — the interpolation then
+          // oscillates between two positions and the box visibly stutters.
+          // Keep the history strictly non-decreasing in time.
+          if (last && tSec < last.t) continue
           const moved = !last
             || Math.abs(last.bbox.x - t.bbox.x) > 1e-4
             || Math.abs(last.bbox.y - t.bbox.y) > 1e-4
@@ -2240,16 +2276,15 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
               <span className="gym-ov-flex" />
               {!editing && (
                 <>
-                  {([[ 'boxes', showBoxes, setShowBoxes, '框'],
-                     ['pose', showPose, setShowPose, '骨架'],
-                     ['zones', showZones, setShowZones, '分区'],
-                     ['mosaic', mosaic, setMosaic, '打码']] as const).map(
+                  {layerToggles.map(
                     ([key, on, set, label]) => (
                       <button key={key} className={`gym-ov-tg ${on ? 'on' : ''}`}
                         onClick={() => set((v: boolean) => !v)}>{label}</button>
                     )
                   )}
-                  <button className="gym-ov-tg gym-ov-tg-edit" onClick={() => { deletedRef.current = { zone: false, line: false }; setMode('edit'); setListOpen(true) }}>编辑</button>
+                  <button className="gym-ov-tg gym-ov-tg-edit"
+                    onClick={() => { deletedRef.current = { zone: false, line: false }; setMode('edit'); setListOpen(true) }}
+                  >{editLabel}</button>
                 </>
               )}
               {editing && (

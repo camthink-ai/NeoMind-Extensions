@@ -128,10 +128,10 @@ impl Extension for GymTrackerExtension {
                         description: "所有 Gym Tracker 卡片的默认语言（卡片级 lang 配置可覆盖）"
                             .into(),
                         param_type: MetricDataType::Enum {
-                            options: vec!["zh".into(), "en".into()],
+                            options: vec!["en".into(), "zh".into()],
                         },
                         required: false,
-                        default_value: Some(MetricValue::from("zh")),
+                        default_value: Some(MetricValue::from("en")),
                         ..Default::default()
                     },
                     ParameterDefinition {
