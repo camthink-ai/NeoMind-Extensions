@@ -36,8 +36,6 @@ const HEATMAP_ROWS: usize = 36;
 const HEATMAP_SAVE_EVERY: u64 = 250;
 /// One foot_log sample per track per this many seconds (query grain).
 const FOOT_SAMPLE_SEC: u64 = 2;
-/// foot_log retention window.
-pub const FOOT_LOG_RETAIN_SEC: i64 = 24 * 3600;
 /// Re-arm distance for crossing hysteresis, in normalized units.
 const CROSS_REARM_DIST: f32 = 0.02;
 
@@ -126,10 +124,16 @@ pub struct Analytics {
     dirty_frames: AtomicU64,
     /// A crossing counter changed since the last maybe_save flush.
     dirty_crossings: AtomicBool,
+    /// foot_log retention in seconds (from roi.foot_retain_days).
+    foot_retain_sec: i64,
 }
 
 impl Analytics {
     pub fn new(db: &Db) -> Self {
+        Self::with_foot_retention(db, 30 * 86400)
+    }
+
+    pub fn with_foot_retention(db: &Db, retain_sec: i64) -> Self {
         let mut lines: Vec<LineState> = db
             .list_lines()
             .unwrap_or_default()
@@ -168,6 +172,7 @@ impl Analytics {
             }),
             dirty_frames: AtomicU64::new(0),
             dirty_crossings: AtomicBool::new(false),
+            foot_retain_sec: retain_sec.max(3600),
         }
     }
 
@@ -293,7 +298,7 @@ impl Analytics {
                 g.pending_feet.clear();
             }
         }
-        db.prune_foot_log(chrono::Utc::now().timestamp() - FOOT_LOG_RETAIN_SEC);
+        db.prune_foot_log(chrono::Utc::now().timestamp() - self.foot_retain_sec);
         if self.dirty_crossings.swap(false, Ordering::Relaxed) {
             let g = self.inner.lock();
             for ls in g.lines.iter() {

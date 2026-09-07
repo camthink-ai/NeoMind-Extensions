@@ -97,6 +97,13 @@ pub const MAX_FACE_EMBEDDINGS_PER_MEMBER: usize = 8;
 pub struct RoiCfg {
     pub dwell_debounce_sec: u32,
     pub hysteresis: bool,
+    /// foot_log retention in days (trails/heatmap time-range replay).
+    /// Storage is ~1-2 MB/day even at full occupancy; 30 days ≈ 50 MB.
+    #[serde(default = "default_foot_retain_days")]
+    pub foot_retain_days: u32,
+}
+fn default_foot_retain_days() -> u32 {
+    30
 }
 
 impl Default for IngestCfg {
@@ -131,6 +138,7 @@ impl Default for RoiCfg {
         Self {
             dwell_debounce_sec: 3,
             hysteresis: true,
+            foot_retain_days: default_foot_retain_days(),
         }
     }
 }

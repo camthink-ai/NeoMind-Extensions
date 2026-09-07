@@ -232,7 +232,10 @@ impl Extension for GymTrackerExtension {
         // ConfigUpdate supplies a device host; configure() runs again then.
         if !cfg.provisioned() {
             tracing::info!("gym-tracker: no device.host configured, idling until ConfigUpdate");
-            let analytics = Arc::new(Analytics::new(&db));
+            let analytics = Arc::new(Analytics::with_foot_retention(
+                &db,
+                (cfg.roi.foot_retain_days.max(1) as i64) * 86400,
+            ));
             *self.inner.write() = Some(Inner {
                 state: Arc::new(LiveState::new(cfg.ingest.track_ttl_sec)),
                 db,
@@ -255,7 +258,10 @@ impl Extension for GymTrackerExtension {
 
         let state = Arc::new(LiveState::new(cfg.ingest.track_ttl_sec));
         let metrics = Arc::new(Metrics::new());
-        let analytics = Arc::new(Analytics::new(&db));
+        let analytics = Arc::new(Analytics::with_foot_retention(
+            &db,
+            (cfg.roi.foot_retain_days.max(1) as i64) * 86400,
+        ));
         // Seed the per-zone metric registry from the persisted zone set so the
         // first produce_metrics() advertises the right descriptors.
         metrics.sync_zones(&db.list_zones().unwrap_or_default());
