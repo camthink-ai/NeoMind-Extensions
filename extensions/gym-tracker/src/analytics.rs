@@ -19,7 +19,7 @@
 // Lines are configured via set_lines (full-replace) and persisted like zones.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use chrono::{Datelike, Local};
 use parking_lot::Mutex;
@@ -116,11 +116,13 @@ const LYING_OK_EXERCISES: &[&str] = &["crunch", "situp", "plank", "bench_press",
 pub struct Analytics {
     inner: Mutex<Inner>,
     dirty_frames: AtomicU64,
+    /// A crossing counter changed since the last maybe_save flush.
+    dirty_crossings: AtomicBool,
 }
 
 impl Analytics {
     pub fn new(db: &Db) -> Self {
-        let lines: Vec<LineState> = db
+        let mut lines: Vec<LineState> = db
             .list_lines()
             .unwrap_or_default()
             .into_iter()
@@ -132,6 +134,14 @@ impl Analytics {
                 armed: Default::default(),
             })
             .collect();
+        // restore today's crossing counters — a reload/restart must not
+        // zero the day's in/out tally mid-shift
+        for (lid, ic, oc) in db.load_crossings(today()) {
+            if let Some(ls) = lines.iter_mut().find(|l| l.line.id == lid) {
+                ls.in_count = ic;
+                ls.out_count = oc;
+            }
+        }
         let (heat, heat_day) = db
             .load_heatmap(today())
             .unwrap_or_else(|| (vec![0u32; HEATMAP_COLS * HEATMAP_ROWS], today()));
@@ -147,6 +157,7 @@ impl Analytics {
                 long_occ: Default::default(),
             }),
             dirty_frames: AtomicU64::new(0),
+            dirty_crossings: AtomicBool::new(false),
         }
     }
 
@@ -161,6 +172,7 @@ impl Analytics {
     pub fn on_frame(&self, f: &TrackFrame) {
         let day = today();
         let mut g = self.inner.lock();
+        let mut crossing_dirty = false;
 
         if g.heat_day != day {
             g.heat_day = day;
@@ -221,6 +233,7 @@ impl Analytics {
                             ls.out_count += 1;
                         }
                         ls.armed.insert(t.track_id, false);
+                        crossing_dirty = true;
                     }
                 }
             }
@@ -240,11 +253,21 @@ impl Analytics {
 
         drop(g);
         self.dirty_frames.fetch_add(1, Ordering::Relaxed);
+        if crossing_dirty {
+            self.dirty_crossings.store(true, Ordering::Relaxed);
+        }
     }
 
-    /// Persist the heatmap if enough dirty frames have accumulated.
+    /// Persist the heatmap if enough dirty frames have accumulated, and any
+    /// dirty crossing counters (they flip rarely — always worth a write).
     /// Called opportunistically from the command path (polls are frequent).
     pub fn maybe_save(&self, db: &Db) {
+        if self.dirty_crossings.swap(false, Ordering::Relaxed) {
+            let g = self.inner.lock();
+            for ls in g.lines.iter() {
+                let _ = db.save_crossing(&ls.line.id, ls.day, ls.in_count, ls.out_count);
+            }
+        }
         let d = self.dirty_frames.swap(0, Ordering::Relaxed);
         if d >= HEATMAP_SAVE_EVERY {
             self.save_heatmap(db);
@@ -258,15 +281,26 @@ impl Analytics {
 
     pub fn set_lines(&self, db: &Db, lines: Vec<CrossLine>) -> Result<(), String> {
         db.replace_lines(&lines).map_err(|e| e.to_string())?;
+        let day = today();
+        // full-replace keeps today's counters for lines that survive (the
+        // editor round-trips the same ids on every save)
+        let persisted = db.load_crossings(day);
         let mut g = self.inner.lock();
         g.lines = lines
             .into_iter()
-            .map(|l| LineState {
-                line: l,
-                in_count: 0,
-                out_count: 0,
-                day: today(),
-                armed: Default::default(),
+            .map(|l| {
+                let (ic, oc) = persisted
+                    .iter()
+                    .find(|(lid, _, _)| *lid == l.id)
+                    .map(|(_, i, o)| (*i, *o))
+                    .unwrap_or((0, 0));
+                LineState {
+                    line: l,
+                    in_count: ic,
+                    out_count: oc,
+                    day,
+                    armed: Default::default(),
+                }
             })
             .collect();
         Ok(())
@@ -499,6 +533,48 @@ mod tests {
         a.on_frame(&frame(10_000_000_000, vec![(1, 0.30, 0.5)]));
         let s = &a.get_crossings()[0];
         assert_eq!((s.in_count, s.out_count), (2, 2));
+    }
+
+    #[test]
+    fn crossing_counters_survive_reload_and_resave() {
+        let db = Db::open(":memory:").unwrap();
+        let a = Analytics::new(&db);
+        a.set_lines(
+            &db,
+            vec![CrossLine {
+                id: "door".into(),
+                name: "门口".into(),
+                a: (0.5, 0.0),
+                b: (0.5, 1.0),
+            }],
+        )
+        .unwrap();
+        // one left→right traversal
+        a.on_frame(&frame(1_000_000_000, vec![(1, 0.30, 0.5)]));
+        a.on_frame(&frame(2_000_000_000, vec![(1, 0.70, 0.5)]));
+        let s = &a.get_crossings()[0];
+        assert_eq!((s.in_count, s.out_count), (1, 0));
+
+        // poll flush (as get_live_state does) then "reload" via a fresh
+        // Analytics over the same DB — counts must round-trip
+        a.maybe_save(&db);
+        let a2 = Analytics::new(&db);
+        let s = &a2.get_crossings()[0];
+        assert_eq!((s.in_count, s.out_count), (1, 0), "counts survive reload");
+
+        // an editor save (full-replace, same ids) must NOT zero them either
+        a2.set_lines(
+            &db,
+            vec![CrossLine {
+                id: "door".into(),
+                name: "门口改线".into(),
+                a: (0.5, 0.0),
+                b: (0.5, 1.0),
+            }],
+        )
+        .unwrap();
+        let s = &a2.get_crossings()[0];
+        assert_eq!((s.in_count, s.out_count), (1, 0), "set_lines keeps the day's tally");
     }
 
     #[test]

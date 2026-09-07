@@ -69,6 +69,14 @@ impl Db {
                 created_at INTEGER, updated_at INTEGER);
             CREATE TABLE IF NOT EXISTS heatmap_day (
                 day INTEGER PRIMARY KEY, grid TEXT NOT NULL, updated_at INTEGER);
+            -- Per-line daily crossing counters. The in-memory counters reset
+            -- on every extension reload/restart — without this table each
+            -- deploy wipes the day's in/out tally mid-shift.
+            CREATE TABLE IF NOT EXISTS crossing_day (
+                line_id TEXT NOT NULL, day INTEGER NOT NULL,
+                in_count INTEGER NOT NULL DEFAULT 0, out_count INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER,
+                PRIMARY KEY(line_id, day));
             CREATE TABLE IF NOT EXISTS kv_settings (key TEXT PRIMARY KEY, value TEXT);
             -- P4: per-member embedding LIBRARY. members.embedding stays as the
             -- primary (first) sample; this table holds the additional samples
@@ -367,6 +375,42 @@ impl Db {
             "INSERT INTO heatmap_day(day,grid,updated_at) VALUES(?1,?2,?3)
              ON CONFLICT(day) DO UPDATE SET grid=excluded.grid, updated_at=excluded.updated_at",
             params![day, raw, now_secs()],
+        )?;
+        Ok(())
+    }
+
+    /// Today's persisted crossing counters: (line_id, in_count, out_count).
+    pub fn load_crossings(&self, day: i64) -> Vec<(String, u64, u64)> {
+        self.conn
+            .lock()
+            .prepare("SELECT line_id, in_count, out_count FROM crossing_day WHERE day=?1")
+            .and_then(|mut stmt| {
+                let rows = stmt.query_map(params![day], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)? as u64,
+                        r.get::<_, i64>(2)? as u64,
+                    ))
+                })?;
+                rows.collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Upsert one line's daily counter.
+    pub fn save_crossing(
+        &self,
+        line_id: &str,
+        day: i64,
+        in_count: u64,
+        out_count: u64,
+    ) -> Result<(), rusqlite::Error> {
+        self.conn.lock().execute(
+            "INSERT INTO crossing_day(line_id,day,in_count,out_count,updated_at)
+             VALUES(?1,?2,?3,?4,?5)
+             ON CONFLICT(line_id,day) DO UPDATE SET
+               in_count=excluded.in_count, out_count=excluded.out_count, updated_at=excluded.updated_at",
+            params![line_id, day, in_count as i64, out_count as i64, now_secs()],
         )?;
         Ok(())
     }
