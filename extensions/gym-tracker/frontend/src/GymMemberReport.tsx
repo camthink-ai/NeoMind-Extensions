@@ -281,10 +281,18 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
                         {(m.name || '?').slice(0, 1)}
                       </span>
                     )}
-                    <span className="gym-report-name">{m.name}</span>
-                    {m.source === 'auto' && <span className="gym-report-vtag">访客</span>}
-                    <span className="gym-report-visits">{m.visits} 次</span>
-                    <span className="gym-report-dur">{fmtDur(m.duration_sec)}</span>
+                    <span className="gym-report-name">
+                      {m.name}
+                      {m.source === 'auto' && <span className="gym-report-vtag">访客</span>}
+                    </span>
+                    <span className="gym-report-statcol">
+                      <span className="gym-report-statcol-v accent">{m.visits}</span>
+                      <span className="gym-report-statcol-k">到店</span>
+                    </span>
+                    <span className="gym-report-statcol">
+                      <span className="gym-report-statcol-v">{fmtDur(m.duration_sec)}</span>
+                      <span className="gym-report-statcol-k">总时长</span>
+                    </span>
                     <span className="gym-report-seen">最近 {fmtTs(m.last_seen)}</span>
                   </div>
                 </div>

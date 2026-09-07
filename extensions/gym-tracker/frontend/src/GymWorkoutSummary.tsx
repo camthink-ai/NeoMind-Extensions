@@ -414,7 +414,7 @@ export const GymWorkoutSummary =
                   <div className="gym-sum-section">
                     <div className="gym-sum-section-title">训练记录</div>
                     <div className="gym-sum-sessions">
-                      {sessions.map((s) => (
+                      {sessions.slice(0, 8).map((s) => (
                         <div className="gym-sum-session" key={s.id}>
                           <span
                             className="gym-sum-session-dot"
@@ -424,7 +424,7 @@ export const GymWorkoutSummary =
                             {s.member_name || s.member_id || '访客'}
                           </span>
                           <span className="gym-sum-session-time">
-                            {fmtTime(s.started_at)}
+                            {fmtTime(s.started_at)} 入场
                           </span>
                           <span className="gym-sum-session-dur">
                             {fmtDuration(s.duration_sec)}

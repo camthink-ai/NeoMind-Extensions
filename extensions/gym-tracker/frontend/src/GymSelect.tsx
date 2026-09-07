@@ -27,9 +27,12 @@ interface Props {
   /** open immediately (action-replacement dropdowns, e.g. 并入) */
   autoOpen?: boolean
   title?: string
+  /** right-align the popup to the trigger's right edge (narrow rows near
+   *  the card's right border — the inspector rows) */
+  alignRight?: boolean
 }
 
-export function GymSelect({ value, options, onChange, onClose, placeholder, autoOpen, title }: Props) {
+export function GymSelect({ value, options, onChange, onClose, placeholder, autoOpen, title, alignRight }: Props) {
   const [open, setOpen] = useState(!!autoOpen)
   const [active, setActive] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -45,14 +48,17 @@ export function GymSelect({ value, options, onChange, onClose, placeholder, auto
   const place = useCallback(() => {
     const r = triggerRef.current?.getBoundingClientRect()
     if (!r) return
+    const popW = Math.max(r.width, 160)
+    // right-aligned: popup's right edge hugs the trigger's right edge
+    const x = alignRight ? Math.max(4, r.right - popW) : r.left
     setRect({
-      x: r.left,
+      x,
       y: r.top,
       w: r.width,
       h: r.height,
       up: window.innerHeight - r.bottom < 260 && r.top > 260,
     })
-  }, [])
+  }, [alignRight])
 
   useLayoutEffect(() => {
     if (open) place()

@@ -1525,3 +1525,115 @@ button.gym-ov-tg {
 .gym-timebar-slider { flex: 1; min-width: 80px; accent-color: var(--primary, #22c55e); height: 20px; }
 .gym-timebar-label { font-size: 11px; color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .gym-timebar-label em { font-style: normal; color: var(--muted-foreground, #a1a1aa); margin-left: 6px; }
+
+/* ============================================================================
+   v2.12 visual upgrade: 运动概况 + 会员到店 richer layouts
+   ============================================================================ */
+
+/* ---- 运动概况: hero stat blocks with accent + icons ---- */
+.gym-sum-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.gym-sum-stat {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 10px 12px;
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.gym-sum-stat::after {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--stat-accent, var(--primary, #22c55e));
+  opacity: .9;
+}
+.gym-sum-stat:nth-child(1) { --stat-accent: #22c55e; }
+.gym-sum-stat:nth-child(2) { --stat-accent: #3b82f6; }
+.gym-sum-stat:nth-child(3) { --stat-accent: #f59e0b; }
+.gym-sum-stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--foreground, #fafafa);
+  font-variant-numeric: tabular-nums;
+}
+.gym-sum-stat-label {
+  font-size: 11px;
+  color: var(--muted-foreground, #a1a1aa);
+}
+
+/* section titles get a subtle rail */
+.gym-sum-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground, #fafafa);
+}
+.gym-sum-section-title::before {
+  content: '';
+  width: 3px; height: 11px; border-radius: 2px;
+  background: var(--primary, #22c55e);
+}
+
+/* session rows: richer two-line layout */
+.gym-sum-session {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: var(--secondary, #1e1e22);
+  margin-bottom: 4px;
+}
+.gym-sum-session:last-child { margin-bottom: 0; }
+.gym-sum-session-dot {
+  width: 7px; height: 7px; border-radius: 999px;
+  background: var(--primary, #22c55e);
+}
+.gym-sum-session-name { color: var(--foreground, #fafafa); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gym-sum-session-time { color: var(--muted-foreground, #a1a1aa); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
+.gym-sum-session-dur {
+  color: var(--foreground, #fafafa); font-size: 12px; font-weight: 600;
+  font-variant-numeric: tabular-nums; text-align: right;
+}
+
+/* ---- 会员到店: richer row card per member ---- */
+.gym-report-row {
+  padding: 7px 10px;
+  border-radius: 10px;
+  border-bottom: none;
+  margin-bottom: 5px;
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+  transition: border-color .12s ease;
+}
+.gym-report-row:last-child { margin-bottom: 0; }
+.gym-report-row.clickable:hover { border-color: var(--input, #3f3f46); }
+.gym-report-row.sel { border-color: var(--primary, #22c55e); }
+.gym-report-avatar { width: 34px; height: 34px; }
+.gym-report-avatar-fb { font-size: 13px; }
+.gym-report-name { font-weight: 600; font-size: 13px; }
+.gym-report-visits { color: var(--primary, #22c55e); font-weight: 600; }
+.gym-report-dur { color: var(--foreground, #fafafa); }
+.gym-report-seen { font-size: 10.5px; }
+
+/* stat mini-columns inside the member row */
+.gym-report-statcol {
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  min-width: 40px;
+}
+.gym-report-statcol-v { font-size: 13px; font-weight: 700; color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.gym-report-statcol-v.accent { color: var(--primary, #22c55e); }
+.gym-report-statcol-k { font-size: 9.5px; color: var(--muted-foreground, #a1a1aa); }

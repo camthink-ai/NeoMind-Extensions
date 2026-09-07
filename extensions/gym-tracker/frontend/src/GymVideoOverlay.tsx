@@ -2368,6 +2368,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                                   setZones((zs) => zs.map((x) => (x.id === z.id ? { ...x, name: e.target.value } : x)))
                                 } />
                               <GymSelect
+                                alignRight
                                 value={z.equipment_type}
                                 onChange={(v) =>
                                   setZones((zs) => zs.map((x) => (x.id === z.id ? { ...x, equipment_type: v } : x)))
