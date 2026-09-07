@@ -133,6 +133,7 @@ mod tests {
     fn track(tid: i64, bbox: (f32, f32, f32, f32), emb: Option<Vec<f32>>) -> Track {
         Track {
             track_id: tid,
+            ts: None,
             bbox: Bbox {
                 x: bbox.0,
                 y: bbox.1,

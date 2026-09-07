@@ -261,9 +261,15 @@ impl Analytics {
             let row = (fy.clamp(0.0, 0.999) * HEATMAP_ROWS as f32) as usize;
             g.heat[row * HEATMAP_COLS + col] += 1;
 
-            // time-series foot sample (throttled) for window queries
+            // time-series foot sample (throttled) for window queries.
+            // Clock regression (device resync) would starve saturating_sub
+            // forever — a backward stamp RESETS the throttle instead.
             let last = g.feet_last.get(&t.track_id).copied().unwrap_or(0);
-            if f.ts_ns.saturating_sub(last) >= FOOT_SAMPLE_SEC * 1_000_000_000 {
+            let sample = match f.ts_ns.checked_sub(last) {
+                Some(d) if d >= FOOT_SAMPLE_SEC * 1_000_000_000 => true,
+                _ => last == 0 || f.ts_ns < last,
+            };
+            if sample {
                 g.feet_last.insert(t.track_id, f.ts_ns);
                 g.pending_feet.push((
                     (f.ts_ns / 1_000_000_000) as i64,
@@ -464,6 +470,7 @@ mod tests {
                 .into_iter()
                 .map(|(id, x, y)| Track {
                     track_id: id,
+                    ts: None,
                     bbox: Bbox {
                         x,
                         y: 0.2,

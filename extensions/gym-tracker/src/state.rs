@@ -338,6 +338,7 @@ mod tests {
             ts_ns: 0,
             tracks: vec![Track {
                 track_id: tid,
+                ts: None,
                 bbox: Bbox {
                     x: 0.,
                     y: 0.,

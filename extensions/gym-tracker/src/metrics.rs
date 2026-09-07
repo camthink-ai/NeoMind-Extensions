@@ -271,6 +271,7 @@ mod tests {
     fn track_foot(tid: i64, x: f32, y: f32) -> Track {
         Track {
             track_id: tid,
+            ts: None,
             bbox: Bbox {
                 x,
                 y,

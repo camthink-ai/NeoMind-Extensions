@@ -871,6 +871,7 @@ mod tests {
     fn track(tid: i64) -> Track {
         Track {
             track_id: tid,
+            ts: None,
             bbox: Bbox {
                 x: 0.1,
                 y: 0.2,
