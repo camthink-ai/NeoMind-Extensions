@@ -378,6 +378,9 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     const [selZoneId, setSelZoneId] = useState<string | null>(null)
     const [selLineId, setSelLineId] = useState<string | null>(null)
     const [selMemberId, setSelMemberId] = useState<string | null>(null)
+    // right-side edit-list drawer (card-anchored); collapsible to free the
+    // canvas while drawing
+    const [listOpen, setListOpen] = useState(true)
 
     const [saving, setSaving] = useState(false)
     // wipe guard: set_roi_zones/set_lines are full-replace, so a save with
@@ -1883,7 +1886,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                         onClick={() => set((v: boolean) => !v)}>{label}</button>
                     )
                   )}
-                  <button className="gym-ov-tg gym-ov-tg-edit" onClick={() => { deletedRef.current = { zone: false, line: false }; setMode('edit') }}>编辑</button>
+                  <button className="gym-ov-tg gym-ov-tg-edit" onClick={() => { deletedRef.current = { zone: false, line: false }; setMode('edit'); setListOpen(true) }}>编辑</button>
                 </>
               )}
               {editing && (
@@ -1905,6 +1908,8 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                       )}
                     </>
                   )}
+                  <button className={`gym-ov-tg ${listOpen ? 'on' : ''}`} onClick={() => setListOpen(!listOpen)}
+                    title="收起/展开右侧列表，留出画面空间">{listOpen ? '隐藏列表' : '列表'}</button>
                   <button className="gym-ov-tg gym-ov-tg-save" onClick={save} disabled={saving}>
                     {saving ? '…' : dirty ? '保存*' : '保存'}
                   </button>
@@ -1984,7 +1989,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           </div>
 
           {editing && (
-            <div className="gym-ov-zonelist">
+            <div className={`gym-ov-zonelist ${listOpen ? '' : 'closed'}`}>
               {editKind === 'zones'
                 ? (zones.length === 0
                     ? [<span key="e" className="gym-ov-zonelist-empty">还没有分区——在画面上点出第一块器械区</span>]
