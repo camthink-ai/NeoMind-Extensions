@@ -168,6 +168,8 @@ export async function fetchZones(
 }
 
 export interface MetricPoint {
+  /** Normalized to epoch MILLISECONDS (the server stores seconds —
+   * `new Date(point.timestamp)` must "just work" for callers). */
   timestamp: number
   value: number
 }
@@ -178,15 +180,26 @@ export async function fetchMetricHistory(
   hours: number
 ): Promise<MetricPoint[]> {
   try {
+    // `start`/`end` are Unix SECONDS on this API. The legacy `hours=`
+    // query key is NOT part of the server's TimeRangeQuery — it was
+    // silently ignored and every query fell back to a 24 h window while
+    // the chart claimed "last {hours}h".
+    const start = Math.floor(Date.now() / 1000) - hours * 3600
     const res = await fetch(
       `${getApiBase()}/extensions/${extensionId}/metrics/${encodeURIComponent(
         metric
-      )}/data?hours=${hours}`,
+      )}/data?start=${start}&limit=1000`,
       { headers: getApiHeaders() }
     )
     if (!res.ok) return []
     const json = await res.json()
-    return json?.data?.data ?? []
+    const raw: Array<{ timestamp: number; value: number }> = json?.data?.data ?? []
+    // Unit-agnostic: seconds (< ~2001-09 in ms terms) become ms; already-ms
+    // values (any server that switches) pass through untouched.
+    return raw.map((p) => ({
+      timestamp: p.timestamp > 1e12 ? p.timestamp : p.timestamp * 1000,
+      value: p.value,
+    }))
   } catch {
     return []
   }
