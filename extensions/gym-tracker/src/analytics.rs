@@ -731,6 +731,9 @@ pub struct WorkoutTracker {
     /// zone → accumulated seconds (debounced by dwell_debounce_sec)
     pub zone_secs: HashMap<String, f64>,
     pub zone_enter: Option<(String, f64)>,
+    /// Device the track was seen on (config device_id; empty on
+    /// hand-built test tracks → persisted as "unknown").
+    pub device_id: Option<String>,
     /// Continuous dwell in the CURRENT zone (device clock), recomputed
     /// every frame — the equipment board's BUSY state keys off this
     /// (same person, same zone, ≥ busy threshold), not raw presence.
@@ -779,6 +782,9 @@ impl Inner {
                     session_id: format!("sess_{}", uuid::Uuid::new_v4().simple()),
                     started_at: now,
                     last_seen: now,
+                    // frame's own device id — was hardcoded 'ne503-001',
+                    // so every session row lied about its source
+                    device_id: Some(f.device_id.clone()),
                     member_id: None,
                     member_name: None,
                     zone_secs: HashMap::new(),
@@ -997,6 +1003,7 @@ impl Inner {
     }
 
     fn persist_workout(db: &Db, w: &WorkoutTracker) {
+        let device_id = w.device_id.as_deref().unwrap_or("unknown");
         // ended_at = LAST SEEN, not close time: close_expired_workouts
         // fires one TTL after the person left — wall-clock close inflated
         // every session's duration by the TTL
@@ -1005,7 +1012,7 @@ impl Inner {
         let _ = db.upsert_session(
             &w.session_id,
             w.member_id.as_deref(),
-            "ne503-001",
+            device_id,
             w.started_at as i64,
             ended,
             dur,
