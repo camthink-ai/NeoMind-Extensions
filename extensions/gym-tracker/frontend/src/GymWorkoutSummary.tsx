@@ -254,13 +254,13 @@ export const GymWorkoutSummary =
       return (
         <div ref={ref} className={`gym-sum ${className}`}>
           <div className="gym-sum-card">
-            {/* Header */}
-            <div className="gym-sum-header">
-              <div className="gym-sum-title">
+            {/* Header — same rhythm as the other cards (traffic-header) */}
+            <div className="gym-traffic-header gym-sum-header">
+              <div className="gym-traffic-title gym-sum-title">
                 <ClockIcon />
                 <span>{t('workoutSummary')}</span>
               </div>
-              <div className="gym-sum-daynav">
+              <div className="gym-traffic-headright gym-sum-daynav">
                 <button
                   className="gym-sum-navbtn"
                   onClick={() => setDay(new Date(day.getTime() - DAY_MS))}
