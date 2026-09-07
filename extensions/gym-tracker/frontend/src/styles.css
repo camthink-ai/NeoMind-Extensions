@@ -386,6 +386,7 @@
 .gym-ov { height: 100%; min-height: 0; }
 .gym-ov-card {
   display: flex; flex-direction: column; height: 100%;
+  position: relative;
   border: 1px solid var(--border, #2a2a2a); border-radius: 10px;
   background: var(--card, #171717); color: var(--foreground, #fafafa);
   font-family: inherit; font-size: 13px; overflow: hidden;
@@ -1361,3 +1362,46 @@
 .gym-report-exbar { height: 6px; border-radius: 3px; background: var(--secondary, #26262b); overflow: hidden; }
 .gym-report-exbar-fill { height: 100%; border-radius: 3px; background: var(--primary, #22c55e); }
 .gym-report-exmeta { color: var(--muted-foreground, #a1a1aa); font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 11px; }
+
+/* ============================================================================
+   GymDrawer — viewport right side drawer
+   ============================================================================ */
+.gym-drawer-root { position: fixed; inset: 0; z-index: 240; pointer-events: none; }
+.gym-drawer-root.shown { pointer-events: auto; }
+.gym-drawer-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0, 0, 0, .35);
+  opacity: 0; transition: opacity .18s ease;
+}
+.gym-drawer-root.shown .gym-drawer-backdrop { opacity: 1; }
+.gym-drawer {
+  position: absolute; right: 0; top: 0; bottom: 0;
+  display: flex; flex-direction: column;
+  background: var(--popover, #1c1c1f); color: var(--popover-foreground, #fafafa);
+  border-left: 1px solid var(--border, #2a2a2a);
+  box-shadow: -18px 0 44px -18px rgba(0, 0, 0, .5);
+  transform: translateX(100%); transition: transform .18s ease;
+}
+.gym-drawer-root.shown .gym-drawer { transform: translateX(0); }
+.gym-drawer-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 14px; border-bottom: 1px solid var(--border, #2a2a2a);
+}
+.gym-drawer-title { font-size: 13px; font-weight: 600; color: var(--foreground, #fafafa); }
+.gym-drawer-body { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px; }
+
+/* ---- drawer adjustments ---- */
+.gym-drawer .gym-report-detail { margin: 0; }
+
+/* ---- Monitor edit list: card-anchored right drawer (was below-card) ---- */
+.gym-ov-zonelist {
+  position: absolute; right: 10px; top: 54px; bottom: 10px; width: min(340px, 46%);
+  z-index: 6;
+  border-radius: 12px;
+  background: var(--popover, #1c1c1f);
+  border: 1px solid var(--border, #2a2a2a);
+  box-shadow: -12px 0 32px -14px rgba(0, 0, 0, .55);
+  max-height: none;
+  padding: 8px 10px;
+}
+.gym-ov-zonelist.closed { display: none; }

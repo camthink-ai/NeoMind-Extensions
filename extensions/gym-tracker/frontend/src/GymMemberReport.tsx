@@ -20,6 +20,7 @@ import {
   runExtensionCommand,
 } from './common'
 import { GymSelect } from './GymSelect'
+import { GymDrawer } from './GymDrawer'
 import STYLES from './styles.css?raw'
 
 const STYLE_ID = 'gym-report-styles-v1'
@@ -67,7 +68,7 @@ const fmtTs = (ts?: number) => {
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-/** Expanded per-member panel: records + management. */
+/** Expanded per-member panel: records + management (lives in a GymDrawer). */
 function MemberDetail({ extensionId, row, mates, days, onClose, onChanged }: {
   extensionId: string
   row: ReportRow
@@ -152,8 +153,6 @@ function MemberDetail({ extensionId, row, mates, days, onClose, onChanged }: {
             title="把此人的到店与特征并入另一位（同一人换装/重复录入时用）">并入</button>
         )}
         <button className="gym-ov-btn danger" disabled={busy} onClick={doDelete}>删除</button>
-        <span className="gym-report-detail-flex" />
-        <button className="gym-ov-btn" onClick={onClose}>收起</button>
       </div>
 
       {err && <div className="gym-report-records-error">{err}</div>}
@@ -273,7 +272,7 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
                   <div
                     className={`gym-report-row clickable ${open ? 'sel' : ''}`}
                     onClick={() => setOpenId(open ? null : m.member_id)}
-                    title={open ? undefined : '点击展开健身记录与管理'}
+                    title={open ? undefined : '点击查看健身记录与管理'}
                   >
                     {src ? (
                       <img className="gym-report-avatar" src={src} alt={m.name} title={m.name} />
@@ -288,21 +287,35 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
                     <span className="gym-report-dur">{fmtDur(m.duration_sec)}</span>
                     <span className="gym-report-seen">最近 {fmtTs(m.last_seen)}</span>
                   </div>
-                  {open && (
-                    <MemberDetail
-                      extensionId={extensionId}
-                      row={m}
-                      mates={rep.rows.slice(0, 10)}
-                      days={days}
-                      onClose={() => setOpenId(null)}
-                      onChanged={refresh}
-                    />
-                  )}
                 </div>
               )
             })}
           </div>
         </div>
+        {rep && openId && (() => {
+          const m = rep.rows.find((r) => r.member_id === openId)
+          if (!m) return null
+          const src = memberPhotoSrc(m.photo)
+          return (
+            <GymDrawer open onClose={() => setOpenId(null)} width={400}
+              title={
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  {src && <img className="gym-report-avatar" src={src} alt={m.name} />}
+                  {m.name}
+                  {m.source === 'auto' && <span className="gym-report-vtag">访客</span>}
+                </span>
+              }>
+              <MemberDetail
+                extensionId={extensionId}
+                row={m}
+                mates={rep.rows.slice(0, 10)}
+                days={days}
+                onClose={() => setOpenId(null)}
+                onChanged={refresh}
+              />
+            </GymDrawer>
+          )
+        })()}
       </div>
     )
   },
