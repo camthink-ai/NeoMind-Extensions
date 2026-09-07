@@ -42,6 +42,16 @@ pub struct Ctx {
 pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
     match cmd {
         // Live mirror of tracks currently tracked by the device-app.
+        "get_push_diag" => {
+            use std::sync::atomic::Ordering as O;
+            let d = crate::state::push_diag();
+            return Ok(json!({
+                "ingested": d.ingested.load(O::Relaxed),
+                "ingest_gaps": d.ingest_gaps.load(O::Relaxed),
+                "queue_overflow": d.queue_overflow.load(O::Relaxed),
+                "pushed": d.pushed.load(O::Relaxed),
+            }));
+        }
         "get_live_state" => {
             let workouts = ctx.analytics.workout_snapshot();
             // Evict departed tracks (last_seen past TTL) before reading, so the
@@ -311,8 +321,10 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                         "bbox": t.bbox,
                         "foot": t.foot,
                         // live workout: exercise, reps/sets, current zone
+                        // + continuous dwell there (equipment BUSY gate)
                         "exercise": workouts.get(&t.track_id).map(|w| json!({
                             "name": w.0, "reps": w.1, "sets": w.2, "zone": w.3,
+                            "zone_hold": (w.4 * 10.0).round() / 10.0,
                         })),
                         // Pose/face round-trip the producer's optional fields so
                         // debug tooling (and P2 rep counting) can see them without
@@ -383,6 +395,7 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                         "member": member,
                         "exercise": workouts.get(&t.track_id).map(|w| json!({
                             "name": w.0, "reps": w.1, "sets": w.2, "zone": w.3,
+                            "zone_hold": (w.4 * 10.0).round() / 10.0,
                         })),
                     })
                 })

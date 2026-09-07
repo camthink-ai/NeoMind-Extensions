@@ -25,7 +25,11 @@ const STYLE_ID = 'gym-eq-styles-v1'
 interface ZoneView {
   zone: Zone
   count: number
+  /** dwell-gated: someone held the zone past busySec */
   occupied: boolean
+  /** people present but nobody held past busySec yet */
+  warm: boolean
+  holding: number
 }
 
 const DumbbellIcon = () => (
@@ -47,6 +51,9 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
     const extensionId = dataSource?.extensionId || DEFAULT_EXTENSION_ID
     // dense boards can hide idle zones and show only what's in use
     const showIdle = config?.showIdle !== false
+    // BUSY requires the SAME person (track) holding the zone this long —
+    // raw presence only warms the cell. 60 s default per the gym's ask.
+    const busySec = Math.min(600, Math.max(10, Number(config?.busySec) || 60))
 
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
 
@@ -86,14 +93,30 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
       return zones
         .filter((z) => z.enabled === true || z.enabled === 1)
         .map((zone) => {
-          const count = tracks.filter(
+          const inZone = tracks.filter(
             (t) => t.foot && pointInPolygon(t.foot.x, t.foot.y, zone.polygon)
-          ).length
-          return { zone, count, occupied: count > 0 }
+          )
+          // busy = someone has HELD this zone past the threshold (the
+          // extension reports continuous dwell per track); merely being
+          // inside only counts as "warm" so passers-by never flip a
+          // machine to busy on their way through
+          const holding = inZone.filter(
+            (t) =>
+              t.exercise?.zone === zone.id &&
+              (t.exercise?.zone_hold ?? 0) >= busySec
+          )
+          const count = inZone.length
+          return {
+            zone,
+            count,
+            occupied: holding.length > 0,
+            warm: count > 0 && holding.length === 0,
+            holding: holding.length,
+          }
         })
         .filter((v) => showIdle || v.occupied)
         .sort((a, b) => a.zone.name.localeCompare(b.zone.name))
-    }, [zones, state, showIdle])
+    }, [zones, state, showIdle, busySec])
 
     const occupiedCount = views.filter((v) => v.occupied).length
     const totalInZones = views.reduce((s, v) => s + v.count, 0)
@@ -129,9 +152,19 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
             </div>
           ) : (
             <div className="gym-eq-grid">
-              {views.map(({ zone, count, occupied }) => (
-                <div key={zone.id} className={`gym-eq-cell ${occupied ? 'busy' : 'idle'}`}>
-                  <span className={`gym-eq-dot ${occupied ? 'on' : ''}`} />
+              {views.map(({ zone, count, occupied, warm }) => (
+                <div
+                  key={zone.id}
+                  className={`gym-eq-cell ${occupied ? 'busy' : warm ? 'warm' : 'idle'}`}
+                  title={
+                    occupied
+                      ? '占用中——同一人持续驻留达标'
+                      : warm
+                        ? `有人在区域（未满 ${busySec}s 驻留，不计占用）`
+                        : '空闲'
+                  }
+                >
+                  <span className={`gym-eq-dot ${occupied ? 'on' : warm ? 'warm' : ''}`} />
                   <div className="gym-eq-cell-body">
                     <span className="gym-eq-zone-name" title={zone.name}>
                       {zone.name}

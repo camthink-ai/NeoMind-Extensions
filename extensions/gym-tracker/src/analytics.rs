@@ -582,6 +582,10 @@ pub struct WorkoutTracker {
     /// zone → accumulated seconds (debounced by dwell_debounce_sec)
     pub zone_secs: HashMap<String, f64>,
     pub zone_enter: Option<(String, f64)>,
+    /// Continuous dwell in the CURRENT zone (device clock), recomputed
+    /// every frame — the equipment board's BUSY state keys off this
+    /// (same person, same zone, ≥ busy threshold), not raw presence.
+    pub zone_hold: f64,
     pub last_flush: Option<f64>,
     pub exercise: String,
     pub reps: u32,
@@ -622,6 +626,7 @@ impl Inner {
                     member_name: None,
                     zone_secs: HashMap::new(),
                     zone_enter: None,
+                    zone_hold: 0.0,
                     last_flush: None,
                     exercise: "unknown".into(),
                     reps: 0,
@@ -666,6 +671,9 @@ impl Inner {
             };
             match (in_zone, &w.zone_enter) {
                 (Some(z), Some((zid, since))) if z.id == *zid => {
+                    // continuous dwell in this zone — the equipment board
+                    // flips BUSY only when this crosses its threshold
+                    w.zone_hold = now - since;
                     // still inside: accumulate once we pass the debounce
                     if now - since >= dwell_debounce_sec as f64 {
                         *w.zone_secs.entry(z.id.clone()).or_insert(0.0) +=
@@ -676,10 +684,12 @@ impl Inner {
                 }
                 (Some(z), _) => {
                     w.zone_enter = Some((z.id.clone(), now));
+                    w.zone_hold = 0.0;
                     w.last_flush = None;
                 }
                 (None, Some(_)) => {
                     w.zone_enter = None;
+                    w.zone_hold = 0.0;
                     w.last_flush = None;
                 }
                 (None, None) => {}
@@ -835,7 +845,9 @@ impl Inner {
     }
 
     /// Live workout snapshot for get_live_state.
-    pub fn workout_snapshot(&self) -> HashMap<i64, (String, u32, u32, Option<String>)> {
+    pub fn workout_snapshot(
+        &self,
+    ) -> HashMap<i64, (String, u32, u32, Option<String>, f64)> {
         self.workouts
             .iter()
             .map(|(tid, w)| {
@@ -846,6 +858,7 @@ impl Inner {
                         w.reps + w.counter.reps,
                         w.sets + w.counter.sets,
                         w.zone_enter.as_ref().map(|(z, _)| z.clone()),
+                        w.zone_hold,
                     ),
                 )
             })
@@ -871,7 +884,9 @@ impl Analytics {
         self.inner.lock().close_expired_workouts(db, ttl_sec);
     }
 
-    pub fn workout_snapshot(&self) -> HashMap<i64, (String, u32, u32, Option<String>)> {
+    pub fn workout_snapshot(
+        &self,
+    ) -> HashMap<i64, (String, u32, u32, Option<String>, f64)> {
         self.inner.lock().workout_snapshot()
     }
 }
