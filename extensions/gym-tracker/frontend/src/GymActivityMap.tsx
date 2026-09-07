@@ -265,7 +265,9 @@ export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>
     }, [extensionId])
     useEffect(() => {
       refresh()
-      const id = setInterval(refresh, 2000)
+      // 1-minute cadence: these cards are retrospective overlays,
+      // not live monitors — per-minute data is the right grain
+      const id = setInterval(refresh, 60000)
       return () => clearInterval(id)
     }, [refresh])
 
@@ -284,11 +286,11 @@ export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>
         setWinInfo({ samples: r.data.samples })
       }
       load()
-      const id = setInterval(load, 5000)
+      const id = setInterval(load, 60000)
       return () => { alive = false; clearInterval(id) }
     }, [extensionId, scrub, span])
 
-    useFrameCanvas(canvasRef, extensionId, 2500, (ctx, W, H, bg) => {
+    useFrameCanvas(canvasRef, extensionId, 60000, (ctx, W, H, bg) => {
       paintBackground(ctx, W, H, bg)
       drawZoneOutlines(ctx, W, H, zonesRef.current)
       const win = scrub == null ? null : winRef.current
@@ -396,7 +398,7 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
     }, [extensionId])
     useEffect(() => {
       refresh()
-      const id = setInterval(refresh, 15000)
+      const id = setInterval(refresh, 60000)
       return () => clearInterval(id)
     }, [refresh])
 
@@ -414,11 +416,11 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
         setWinInfo({ samples: r.data.samples })
       }
       load()
-      const id = setInterval(load, 5000)
+      const id = setInterval(load, 60000)
       return () => { alive = false; clearInterval(id) }
     }, [extensionId, scrub, span])
 
-    useFrameCanvas(canvasRef, extensionId, 5000, (ctx, W, H, bg) => {
+    useFrameCanvas(canvasRef, extensionId, 60000, (ctx, W, H, bg) => {
       paintBackground(ctx, W, H, bg)
       const win = scrub == null ? null : winRef.current
       const heat: Heat | null = win
