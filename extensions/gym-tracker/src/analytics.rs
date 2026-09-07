@@ -353,7 +353,8 @@ impl Analytics {
     }
 }
 
-fn today() -> i64 {
+/// Today as CE days (matches the crossing_day/heatmap_day `day` key).
+pub fn today() -> i64 {
     Local::now().date_naive().num_days_from_ce() as i64
 }
 

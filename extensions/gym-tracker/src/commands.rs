@@ -455,6 +455,36 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             )
         }
         "get_crossings" => Ok(json!({ "lines": ctx.analytics.get_crossings() })),
+        // ---- door-flow history (per-day, all lines aggregated) ----
+        "get_crossing_history" => {
+            let days = args["days"].as_i64().unwrap_or(7).clamp(1, 90);
+            let today = crate::analytics::today();
+            let since = today - (days - 1);
+            let mut rows: Vec<(i64, u64, u64)> = ctx.db.list_crossing_history(since);
+            // today's persisted row can lag the live counters (flush rides
+            // the poll cadence) — overlay the in-memory tally so "now"
+            // reads live while history stays from SQLite
+            let live: (u64, u64) = ctx
+                .analytics
+                .get_crossings()
+                .iter()
+                .fold((0, 0), |(i, o), s| (i + s.in_count, o + s.out_count));
+            match rows.iter_mut().find(|(d, _, _)| *d == today) {
+                Some(r) => r.1 = r.1.max(live.0),
+                None => {
+                    if live.0 > 0 || live.1 > 0 {
+                        rows.push((today, live.0, live.1))
+                    }
+                }
+            }
+            Ok(json!({
+                "days": days,
+                "today": { "in": live.0, "out": live.1, "net": (live.0 as i64 - live.1 as i64) },
+                "history": rows.iter().map(|(d, i, o)| json!({
+                    "day": d, "in": i, "out": o, "net": (*i as i64 - *o as i64),
+                })).collect::<Vec<_>>(),
+            }))
+        }
         // ---- P1: heatmap ----
         "get_heatmap" => Ok(ctx.analytics.get_heatmap()),
         // ---- P3: member library (body-ReID via osnet embeddings) ----

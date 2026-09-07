@@ -415,6 +415,28 @@ impl Db {
         Ok(())
     }
 
+    /// Daily in/out totals across all lines since `since_day` (CE days,
+    /// ascending). Gaps simply have no row — the frontend fills zeros.
+    pub fn list_crossing_history(&self, since_day: i64) -> Vec<(i64, u64, u64)> {
+        self.conn
+            .lock()
+            .prepare(
+                "SELECT day, SUM(in_count), SUM(out_count) FROM crossing_day
+                 WHERE day >= ?1 GROUP BY day ORDER BY day ASC",
+            )
+            .and_then(|mut stmt| {
+                let rows = stmt.query_map(params![since_day], |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, Option<i64>>(1)?.unwrap_or(0) as u64,
+                        r.get::<_, Option<i64>>(2)?.unwrap_or(0) as u64,
+                    ))
+                })?;
+                rows.collect()
+            })
+            .unwrap_or_default()
+    }
+
     // ---- members (P3: body-ReID member library) ----
 
     pub fn insert_member(
