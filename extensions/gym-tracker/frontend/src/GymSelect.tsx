@@ -11,6 +11,7 @@
  * an overflow:auto list that would clip an absolute popup.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 export interface GymSelectOption {
   value: string
@@ -33,6 +34,7 @@ export function GymSelect({ value, options, onChange, onClose, placeholder, auto
   const [active, setActive] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const popRefHolder = useRef<HTMLDivElement>(null)
   const [rect, setRect] = useState({ x: 0, y: 0, w: 0, h: 0, up: false })
 
   const close = useCallback(() => {
@@ -60,8 +62,14 @@ export function GymSelect({ value, options, onChange, onClose, placeholder, auto
     if (!open) return
     const idx = options.findIndex((o) => o.value === value)
     setActive(idx >= 0 ? idx : 0)
+    const popRef = popRefHolder
     const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) close()
+      const t = e.target as Node
+      // the popup is PORTALED to <body> (transformed grid ancestors turn
+      // position:fixed into "relative to the card" — viewport coords from
+      // getBoundingClientRect would place it wrong), so it is NOT under
+      // rootRef; check both before calling it an outside click
+      if (!rootRef.current?.contains(t) && !popRef.current?.contains(t)) close()
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.stopPropagation(); close() }
@@ -105,8 +113,8 @@ export function GymSelect({ value, options, onChange, onClose, placeholder, auto
           <path d="m6 9 6 6 6-6" />
         </svg>
       </button>
-      {open && (
-        <div className="gym-sel-pop" style={{ left: rect.x, top: popTop, width: Math.max(rect.w, 160) }} role="listbox">
+      {open && typeof document !== 'undefined' && createPortal(
+        <div ref={popRefHolder} className="gym-sel-pop" style={{ left: rect.x, top: popTop, width: Math.max(rect.w, 160) }} role="listbox">
           {options.map((o, i) => (
             <div
               key={o.value}
@@ -121,7 +129,8 @@ export function GymSelect({ value, options, onChange, onClose, placeholder, auto
               <span className="gym-sel-label">{o.label}</span>
             </div>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
