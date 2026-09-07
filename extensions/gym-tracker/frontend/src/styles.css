@@ -1405,3 +1405,34 @@
   padding: 8px 10px;
 }
 .gym-ov-zonelist.closed { display: none; }
+
+/* ---- edit drawer: category tabs (zones vs lines) ---- */
+.gym-ov-editkind {
+  font-size: 11.5px; font-weight: 700; color: var(--foreground, #fafafa);
+  white-space: nowrap; margin-right: 2px;
+}
+.gym-ov-drawtabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.gym-ov-drawtab {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  padding: 6px 8px; border-radius: 8px;
+  color: var(--muted-foreground, #a1a1aa);
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+  transition: all 0.12s ease;
+}
+.gym-ov-drawtab:hover { color: var(--foreground, #fafafa); }
+.gym-ov-drawtab.on {
+  color: var(--primary-foreground, #18181b);
+  background: var(--primary, #d4d4d8);
+  border-color: var(--primary, #d4d4d8);
+}
+.gym-ov-drawtab-n {
+  min-width: 18px; padding: 0 5px; border-radius: 999px;
+  font-size: 10px; font-variant-numeric: tabular-nums; line-height: 16px;
+  background: rgba(0, 0, 0, .18); color: inherit;
+}
+.gym-ov-drawtab:not(.on) .gym-ov-drawtab-n {
+  background: var(--accent, rgba(255, 255, 255, .08));
+  color: var(--muted-foreground, #a1a1aa);
+}
