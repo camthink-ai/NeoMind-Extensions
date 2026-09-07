@@ -306,10 +306,12 @@ export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>
               <TrailsIcon />
               <span>Gym · 轨迹</span>
             </div>
-            <TimeModeSelect span={span} scrub={scrub} setSpan={setSpan} setScrub={setScrub} />
-            <span className="gym-ov-badge">
-              {scrub == null ? (present != null ? `${present} 人在场` : '…') : '回看'}
-            </span>
+            <div className="gym-traffic-headright">
+              <TimeModeSelect span={span} scrub={scrub} setSpan={setSpan} setScrub={setScrub} />
+              <span className="gym-ov-badge">
+                {scrub == null ? (present != null ? `${present} 人在场` : '…') : '回看'}
+              </span>
+            </div>
           </div>
           <div className="gym-activity-body">
             <div className="gym-activity-stagewrap">
@@ -415,10 +417,12 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
               <HeatIcon />
               <span>Gym · 热力</span>
             </div>
-            <TimeModeSelect span={span} scrub={scrub} setSpan={setSpan} setScrub={setScrub} />
-            <span className="gym-ov-badge">
-              {scrub == null ? (peak != null ? `今日峰值 ${peak}` : '…') : '回看'}
-            </span>
+            <div className="gym-traffic-headright">
+              <TimeModeSelect span={span} scrub={scrub} setSpan={setSpan} setScrub={setScrub} />
+              <span className="gym-ov-badge">
+                {scrub == null ? (peak != null ? `今日峰值 ${peak}` : '…') : '回看'}
+              </span>
+            </div>
           </div>
           <div className="gym-activity-body">
             <div className="gym-activity-stagewrap">

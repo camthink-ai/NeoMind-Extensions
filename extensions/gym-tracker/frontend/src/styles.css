@@ -1637,3 +1637,6 @@ button.gym-ov-tg {
 .gym-report-statcol-v { font-size: 13px; font-weight: 700; color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; line-height: 1.1; }
 .gym-report-statcol-v.accent { color: var(--primary, #22c55e); }
 .gym-report-statcol-k { font-size: 9.5px; color: var(--muted-foreground, #a1a1aa); }
+
+/* activity cards: right cluster in the header (mode select + badge) */
+.gym-traffic-headright { display: flex; align-items: center; gap: 8px; margin-left: auto; }
