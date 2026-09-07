@@ -12,6 +12,7 @@ import {
   runExtensionCommand,
 } from './common'
 import STYLES from './styles.css?raw'
+import { useLang } from './i18n'
 
 const STYLE_ID = 'gym-rank-styles-v1'
 
@@ -23,6 +24,7 @@ export const GymEquipmentRank = forwardRef<HTMLDivElement, ExtensionComponentPro
     const { dataSource, className = '', config } = props
     const extensionId = dataSource?.extensionId || DEFAULT_EXTENSION_ID
     const topN = Math.min(20, Math.max(3, Number(config?.topN) || 8))
+    const { t } = useLang(config as Record<string, unknown>)
 
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
 
@@ -59,13 +61,13 @@ export const GymEquipmentRank = forwardRef<HTMLDivElement, ExtensionComponentPro
       <div ref={ref} className={`gym-rank ${className}`}>
         <div className="gym-eq-card">
           <div className="gym-eq-header">
-            <span className="gym-ov-title">器械使用排行 · 今日</span>
-            <span className="gym-ov-badge">{rows ? `${rows.length} 台` : '…'}</span>
+            <span className="gym-ov-title">{t('equipRank')} · {t('today')}</span>
+            <span className="gym-ov-badge">{rows ? `${rows.length} {t('units')}` : '…'}</span>
           </div>
           <div className="gym-rank-body">
             {error && <div className="gym-rank-empty">{error}</div>}
             {!error && rows && top.length === 0 && (
-              <div className="gym-rank-empty">今日还没有器械使用记录</div>
+              <div className="gym-rank-empty">{t('noUsageToday')}</div>
             )}
             {top.map((r, i) => (
               <div className="gym-rank-row" key={r.zone_id + i}>

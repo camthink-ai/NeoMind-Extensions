@@ -17,6 +17,7 @@ import {
   injectStyles,
 } from './common'
 import STYLES from './styles.css?raw'
+import { useLang } from './i18n'
 
 const STYLE_ID = 'gym-sum-styles-v2'
 
@@ -119,7 +120,8 @@ interface MemberLane {
 export const GymWorkoutSummary =
   forwardRef<HTMLDivElement, ExtensionComponentProps>(
     function GymWorkoutSummary(props, ref) {
-      const { dataSource, className = '' } = props
+      const { dataSource, className = '', config } = props
+      const { t } = useLang(config as Record<string, unknown>)
       const extensionId = dataSource?.extensionId || DEFAULT_EXTENSION_ID
 
       useEffect(() => injectStyles(STYLE_ID, STYLES), [])
@@ -246,7 +248,7 @@ export const GymWorkoutSummary =
             <div className="gym-sum-header">
               <div className="gym-sum-title">
                 <ClockIcon />
-                <span>运动概况</span>
+                <span>{t('workoutSummary')}</span>
               </div>
               <div className="gym-sum-daynav">
                 <button
@@ -255,7 +257,7 @@ export const GymWorkoutSummary =
                   aria-label="前一天"
                 >‹</button>
                 <span className="gym-sum-day">
-                  {isToday ? '今天' : fmtDay(day)}
+                  {isToday ? t('today') : fmtDay(day)}
                 </span>
                 <button
                   className="gym-sum-navbtn"
@@ -279,7 +281,7 @@ export const GymWorkoutSummary =
             ) : sessions.length === 0 && equipment.length === 0 ? (
               <div className="gym-sum-state">
                 <ClockIcon />
-                <span className="gym-sum-state-text">当日暂无运动记录</span>
+                <span className="gym-sum-state-text">{t('noRecords')}</span>
               </div>
             ) : (
               <>
@@ -289,24 +291,24 @@ export const GymWorkoutSummary =
                     <span className="gym-sum-stat-value">
                       {fmtDuration(summary?.total_duration_sec ?? 0)}
                     </span>
-                    <span className="gym-sum-stat-label">总时长</span>
+                    <span className="gym-sum-stat-label">{t('totalTime')}</span>
                   </div>
                   <div className="gym-sum-stat">
                     <span className="gym-sum-stat-value">
                       {summary?.visit_count ?? 0}
                     </span>
-                    <span className="gym-sum-stat-label">训练场次</span>
+                    <span className="gym-sum-stat-label">{t('visits')}</span>
                   </div>
                   <div className="gym-sum-stat">
                     <span className="gym-sum-stat-value">{uniqueMembers}</span>
-                    <span className="gym-sum-stat-label">到访会员</span>
+                    <span className="gym-sum-stat-label">{t('visitedMembers')}</span>
                   </div>
                 </div>
 
                 {/* 24h Gantt timeline */}
                 {lanesMerged.length > 0 && (
                   <div className="gym-sum-section">
-                    <div className="gym-sum-section-title">到店时间轴</div>
+                    <div className="gym-sum-section-title">{t('timeline')}</div>
                     <div className="gym-sum-tl">
                       {lanesMerged.map((l) => (
                         <div className="gym-sum-tl-row" key={l.key}>
@@ -347,7 +349,7 @@ export const GymWorkoutSummary =
                 {/* Equipment share bars */}
                 {eqRows.length > 0 && (
                   <div className="gym-sum-section">
-                    <div className="gym-sum-section-title">器材使用时长</div>
+                    <div className="gym-sum-section-title">{t('equipmentUsage')}</div>
                     <div className="gym-sum-eqbars">
                       {eqRows.map((e) => (
                         <div className="gym-sum-eqrow" key={e.zone}>
@@ -374,7 +376,7 @@ export const GymWorkoutSummary =
                 {/* Sessions */}
                 {sessions.length > 0 && (
                   <div className="gym-sum-section">
-                    <div className="gym-sum-section-title">训练记录</div>
+                    <div className="gym-sum-section-title">{t('sessionLog')}</div>
                     <div className="gym-sum-sessions">
                       {sessions.slice(0, 8).map((s) => (
                         <div className="gym-sum-session" key={s.id}>

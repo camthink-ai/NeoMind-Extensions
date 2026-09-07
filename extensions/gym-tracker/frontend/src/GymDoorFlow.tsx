@@ -13,6 +13,7 @@ import {
   runExtensionCommand,
 } from './common'
 import STYLES from './styles.css?raw'
+import { useLang } from './i18n'
 
 const STYLE_ID = 'gym-door-styles-v1'
 
@@ -46,6 +47,7 @@ export const GymDoorFlow = forwardRef<HTMLDivElement, ExtensionComponentProps>(
     const { dataSource, className = '', config } = props
     const extensionId = dataSource?.extensionId || DEFAULT_EXTENSION_ID
     const days = Math.min(90, Math.max(1, Number(config?.days) || 7))
+    const { t } = useLang(config as Record<string, unknown>)
 
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
 
@@ -98,10 +100,10 @@ export const GymDoorFlow = forwardRef<HTMLDivElement, ExtensionComponentProps>(
           <div className="gym-traffic-header">
             <div className="gym-traffic-title">
               <DoorIcon />
-              <span>进出场 · 近{days}天</span>
+              <span>{t('doorTitle')} · {t('lastNDays', { n: days })}</span>
             </div>
             <span className="gym-ov-badge">
-              {flow ? `今日 净在场 ${flow.today.net >= 0 ? '+' : ''}${flow.today.net}` : '…'}
+              {flow ? `${t('netIn')} ${flow.today.net >= 0 ? '+' : ''}${flow.today.net}` : '…'}
             </span>
           </div>
 
@@ -111,33 +113,33 @@ export const GymDoorFlow = forwardRef<HTMLDivElement, ExtensionComponentProps>(
               <div className="gym-door-today">
                 <div className="gym-door-today-item in">
                   <span className="gym-door-today-value">{flow.today.in}</span>
-                  <span className="gym-door-today-label">今日进场 ↑</span>
+                  <span className="gym-door-today-label">{t('todayIn')} ↑</span>
                 </div>
                 <div className="gym-door-today-item out">
                   <span className="gym-door-today-value">{flow.today.out}</span>
-                  <span className="gym-door-today-label">今日出场 ↓</span>
+                  <span className="gym-door-today-label">{t('todayOut')} ↓</span>
                 </div>
                 <div className="gym-door-today-item net">
                   <span className="gym-door-today-value">
                     {flow.today.net >= 0 ? '+' : ''}{flow.today.net}
                   </span>
-                  <span className="gym-door-today-label">净在场</span>
+                  <span className="gym-door-today-label">{t('netIn')}</span>
                 </div>
               </div>
             )}
 
             {rows.length === 0 && !error && (
               <div className="gym-rank-empty">
-                还没有进出场记录——画好计数线后，过线即开始累计并按天留档
+                {t('noDoorRecords')}
               </div>
             )}
 
             {rows.length > 0 && (
               <div className="gym-door-hist">
                 <div className="gym-door-hist-head">
-                  <span className="gym-door-hist-side out">出场 ↓</span>
-                  <span className="gym-door-hist-mid">日期</span>
-                  <span className="gym-door-hist-side in">进场 ↑</span>
+                  <span className="gym-door-hist-side out">{t('out')} ↓</span>
+                  <span className="gym-door-hist-mid">{t('date')}</span>
+                  <span className="gym-door-hist-side in">{t('in')} ↑</span>
                 </div>
                 {rows.map((r) => (
                   <div key={r.day} className="gym-door-hist-row">

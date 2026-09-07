@@ -16,6 +16,7 @@ import {
   injectStyles,
 } from './common'
 import STYLES from './styles.css?raw'
+import { useLang } from './i18n'
 
 const STYLE_ID = 'gym-traffic-styles-v1'
 
@@ -36,6 +37,7 @@ export const GymTrafficChart = forwardRef<HTMLDivElement, ExtensionComponentProp
     const { dataSource, className = '', hours = 6 } = props
     const extensionId = dataSource?.extensionId || DEFAULT_EXTENSION_ID
     const windowHours = Math.min(24, Math.max(1, Number(hours) || 6))
+    const { t } = useLang(props.config as Record<string, unknown>)
 
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
 
@@ -111,9 +113,9 @@ export const GymTrafficChart = forwardRef<HTMLDivElement, ExtensionComponentProp
           <div className="gym-traffic-header">
             <div className="gym-traffic-title">
               <TrendIcon />
-              <span>Gym · Traffic</span>
+              <span>Gym · {t('trafficTitle')}</span>
             </div>
-            <span className="gym-traffic-window">last {windowHours}h</span>
+            <span className="gym-traffic-window">{t('lastHours', { n: windowHours })}</span>
           </div>
 
           <div className="gym-traffic-body">
@@ -121,7 +123,7 @@ export const GymTrafficChart = forwardRef<HTMLDivElement, ExtensionComponentProp
               <span className="gym-traffic-now-value">
                 {current ?? '—'}
               </span>
-              <span className="gym-traffic-now-label">in gym now</span>
+              <span className="gym-traffic-now-label">{t('peopleInGym')}</span>
               {stats && (
                 <span className="gym-traffic-stats">
                   peak {stats.peak} · avg {stats.avg.toFixed(1)}

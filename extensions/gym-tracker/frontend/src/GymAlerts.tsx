@@ -13,6 +13,7 @@ import {
   runExtensionCommand,
 } from './common'
 import STYLES from './styles.css?raw'
+import { useLang } from './i18n'
 
 const STYLE_ID = 'gym-alerts-styles-v1'
 
@@ -24,6 +25,7 @@ export const GymAlerts = forwardRef<HTMLDivElement, ExtensionComponentProps>(
     const { dataSource, className = '', config } = props
     const extensionId = dataSource?.extensionId || DEFAULT_EXTENSION_ID
     const onlyWarn = config?.onlyWarn === true
+    const { t } = useLang(config as Record<string, unknown>)
 
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
 
@@ -62,9 +64,9 @@ export const GymAlerts = forwardRef<HTMLDivElement, ExtensionComponentProps>(
       <div ref={ref} className={`gym-alerts ${className}`}>
         <div className="gym-traffic-card">
           <div className="gym-traffic-header">
-            <span className="gym-ov-title">实时告警</span>
+            <span className="gym-ov-title">{t('alertsTitle')}</span>
             <span className={`gym-ov-badge ${warnCount > 0 ? 'warn' : 'ok'}`}>
-              {items == null ? '…' : warnCount > 0 ? `${warnCount} 条警示` : '一切正常'}
+              {items == null ? '…' : warnCount > 0 ? `${warnCount}` : t('allGood')}
             </span>
           </div>
           <div className="gym-alerts-body">
@@ -72,7 +74,7 @@ export const GymAlerts = forwardRef<HTMLDivElement, ExtensionComponentProps>(
             {!error && shown.length === 0 && (
               <div className="gym-alerts-empty">
                 <span className="gym-alerts-dot ok" />
-                暂无告警——跌倒检测与器械久占监控运行中
+                {t('noAlerts')}
               </div>
             )}
             {shown.map((a, i) => (

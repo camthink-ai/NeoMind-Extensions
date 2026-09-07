@@ -1,6 +1,6 @@
 {
   "id": "gym-tracker",
-  "version": "2.10.0",
+  "version": "2.11.0",
   "entrypoint": "gym-tracker-components.umd.cjs",
   "components": [
     {
@@ -31,6 +31,15 @@
           "minimum": 4,
           "maximum": 40,
           "description": "会员/轨迹列表最多显示行数"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "zh",
+            "en"
+          ],
+          "default": "zh",
+          "description": "界面语言 / UI language（zh 中文 · en English）"
         }
       },
       "category": "custom"
@@ -68,6 +77,15 @@
           "minimum": 5,
           "maximum": 600,
           "description": "占用判定阈值（秒）：同一人持续停留该时长才计为占用中"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "zh",
+            "en"
+          ],
+          "default": "zh",
+          "description": "界面语言 / UI language（zh 中文 · en English）"
         }
       },
       "category": "custom"
@@ -100,6 +118,15 @@
           "description": "Trend window in hours (1-24)",
           "minimum": 1,
           "maximum": 24
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "zh",
+            "en"
+          ],
+          "default": "zh",
+          "description": "界面语言 / UI language（zh 中文 · en English）"
         }
       },
       "category": "custom"
@@ -125,7 +152,17 @@
         "extension",
         "extension-command"
       ],
-      "configSchema": {},
+      "configSchema": {
+        "lang": {
+          "type": "string",
+          "enum": [
+            "zh",
+            "en"
+          ],
+          "default": "zh",
+          "description": "界面语言 / UI language（zh 中文 · en English）"
+        }
+      },
       "category": "custom"
     },
     {
@@ -166,6 +203,15 @@
           "type": "boolean",
           "default": true,
           "description": "默认显示运动轨迹"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "zh",
+            "en"
+          ],
+          "default": "zh",
+          "description": "界面语言 / UI language（zh 中文 · en English）"
         }
       },
       "category": "custom"
@@ -198,6 +244,15 @@
           "minimum": 3,
           "maximum": 20,
           "description": "显示前 N 台"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "zh",
+            "en"
+          ],
+          "default": "zh",
+          "description": "界面语言 / UI language（zh 中文 · en English）"
         }
       }
     },
@@ -229,6 +284,15 @@
           "minimum": 1,
           "maximum": 90,
           "description": "统计窗口（天）"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "zh",
+            "en"
+          ],
+          "default": "zh",
+          "description": "界面语言 / UI language（zh 中文 · en English）"
         }
       }
     },
@@ -258,6 +322,15 @@
           "type": "boolean",
           "default": false,
           "description": "只显示警示级（跌倒）告警"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "zh",
+            "en"
+          ],
+          "default": "zh",
+          "description": "界面语言 / UI language（zh 中文 · en English）"
         }
       }
     },
@@ -289,6 +362,15 @@
           "minimum": 1,
           "maximum": 90,
           "description": "历史天数（含今天）"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "zh",
+            "en"
+          ],
+          "default": "zh",
+          "description": "界面语言 / UI language（zh 中文 · en English）"
         }
       }
     },
@@ -313,7 +395,17 @@
         "extension",
         "extension-command"
       ],
-      "configSchema": {}
+      "configSchema": {
+        "lang": {
+          "type": "string",
+          "enum": [
+            "zh",
+            "en"
+          ],
+          "default": "zh",
+          "description": "界面语言 / UI language（zh 中文 · en English）"
+        }
+      }
     },
     {
       "name": "GymHeatCard",
@@ -341,6 +433,15 @@
           "type": "boolean",
           "default": true,
           "description": "叠加分区轮廓参考线"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "zh",
+            "en"
+          ],
+          "default": "zh",
+          "description": "界面语言 / UI language（zh 中文 · en English）"
         }
       }
     }

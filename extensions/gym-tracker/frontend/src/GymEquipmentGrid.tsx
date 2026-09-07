@@ -19,6 +19,7 @@ import {
   pointInPolygon,
 } from './common'
 import STYLES from './styles.css?raw'
+import { useLang } from './i18n'
 
 const STYLE_ID = 'gym-eq-styles-v1'
 
@@ -54,6 +55,7 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
     // BUSY requires the SAME person (track) holding the zone this long —
     // raw presence only warms the cell. 5 s default per the gym's ask.
     const busySec = Math.min(600, Math.max(5, Number(config?.busySec) || 5))
+    const { t } = useLang(config as Record<string, unknown>)
 
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
 
@@ -127,10 +129,10 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
           <div className="gym-eq-header">
             <div className="gym-eq-title">
               <DumbbellIcon />
-              <span>Gym · Equipment</span>
+              <span>Gym · {t('equipment')}</span>
             </div>
             <span className="gym-eq-summary">
-              {occupiedCount}/{views.length} busy · {totalInZones} on gear
+              {occupiedCount}/{views.length} {t('busy')} · {totalInZones} {t('onGear')}
             </span>
           </div>
 
@@ -158,10 +160,10 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
                   className={`gym-eq-cell ${occupied ? 'busy' : warm ? 'warm' : 'idle'}`}
                   title={
                     occupied
-                      ? '占用中——同一人持续驻留达标'
+                      ? t('busy')
                       : warm
-                        ? `有人在区域（未满 ${busySec}s 驻留，不计占用）`
-                        : '空闲'
+                        ? t('idle')
+                        : t('idle')
                   }
                 >
                   <span className={`gym-eq-dot ${occupied ? 'on' : warm ? 'warm' : ''}`} />
@@ -171,7 +173,7 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
                     </span>
                     <span className="gym-eq-zone-meta">
                       {zone.equipment_type || 'equipment'}
-                      {count > 0 ? ` · ${count} 人` : ''}
+                      {count > 0 ? ` · ${count} ${t('people')}` : ''}
                     </span>
                   </div>
                   <span className={`gym-eq-count ${occupied ? 'on' : ''}`}>{count}</span>

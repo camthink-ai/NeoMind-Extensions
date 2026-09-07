@@ -20,6 +20,7 @@ import {
   runExtensionCommand,
 } from './common'
 import { GymSelect } from './GymSelect'
+import { useLang } from './i18n'
 import { GymModal } from './GymDrawer'
 import STYLES from './styles.css?raw'
 
@@ -321,6 +322,7 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
     const { dataSource, className = '', config } = props
     const extensionId = dataSource?.extensionId || DEFAULT_EXTENSION_ID
     const days = Math.min(90, Math.max(1, Number(config?.days) || 7))
+    const { t } = useLang(config as Record<string, unknown>)
 
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
 
@@ -353,9 +355,9 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
       <div ref={ref} className={`gym-report ${className}`}>
         <div className="gym-traffic-card">
           <div className="gym-traffic-header">
-            <span className="gym-ov-title">会员到店 · 近{days}天</span>
+            <span className="gym-ov-title">{t('memberVisits')} · {t('lastNDays', { n: days })}</span>
             <span className="gym-ov-badge">
-              {rep ? `${rep.total_visits} 人次 / ${rep.active_members} 位会员` : '…'}
+              {rep ? `${rep.total_visits} / ${rep.active_members}` : '…'}
             </span>
           </div>
           <div className="gym-report-body">

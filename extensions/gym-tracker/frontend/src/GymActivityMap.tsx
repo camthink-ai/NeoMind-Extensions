@@ -13,6 +13,7 @@ import {
   runExtensionCommand,
 } from './common'
 import STYLES from './styles.css?raw'
+import { useLang, translator } from './i18n'
 
 const STYLE_ID = 'gym-activity-styles-v1'
 
@@ -36,11 +37,12 @@ const fmtClock = (ts: number) => {
 /** Shared timeline: LIVE toggle + span chips + a scrub slider over 24h.
  *  When scrubbing, `start/end` describe the queried window; null = live. */
 /** Header mode dropdown: 实时 / 30分 / 1时 / 4时 / 12时 / 24时 回看. */
-function TimeModeSelect({ span, scrub, setSpan, setScrub }: {
+function TimeModeSelect({ span, scrub, setSpan, setScrub, t }: {
   span: number
   scrub: number | null
   setSpan: (s: number) => void
   setScrub: (v: number | null) => void
+  t: ReturnType<typeof translator>
 }) {
   const value = scrub == null ? 'live' : String(span)
   return (
@@ -62,20 +64,21 @@ function TimeModeSelect({ span, scrub, setSpan, setScrub }: {
       }}
       title="时间范围"
     >
-      <option value="live">实时</option>
+      <option value="live">{t('live')}</option>
       {SPANS.map(([s, label]) => (
-        <option key={s} value={String(s)}>{label}回看</option>
+        <option key={s} value={String(s)}>{label}{t('replaySuffix')}</option>
       ))}
     </select>
   )
 }
 
 /** Bottom scrub bar: drag back over 24 h; label shows window + samples. */
-function TimeScrub({ span, scrub, setScrub, samples }: {
+function TimeScrub({ span, scrub, setScrub, samples, t }: {
   span: number
   scrub: number | null
   setScrub: (v: number | null) => void
   samples: number
+  t: ReturnType<typeof translator>
 }) {
   const [, force] = useState(0)
   useEffect(() => {
@@ -99,8 +102,8 @@ function TimeScrub({ span, scrub, setScrub, samples }: {
         }}
       />
       <span className="gym-timebar-label">
-        {scrub == null ? '实时' : `${fmtClock(scrub)}–${fmtClock(scrub + span)}`}
-        {samples > 0 && <em>{samples} 样本</em>}
+        {scrub == null ? t('live') : `${fmtClock(scrub)}–${fmtClock(scrub + span)}`}
+        {samples > 0 && <em>{samples} {t('samples')}</em>}
       </span>
     </div>
   )
@@ -229,8 +232,9 @@ const TrailsIcon = () => (
 
 export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
   function GymTrailsCard(props, ref) {
-    const { dataSource, className = '' } = props
+    const { dataSource, className = '', config } = props
     const extensionId = dataSource?.extensionId || DEFAULT_EXTENSION_ID
+    const { t } = useLang(config as Record<string, unknown>)
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const zonesRef = useZones(extensionId)
@@ -311,12 +315,12 @@ export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>
           <div className="gym-traffic-header">
             <div className="gym-traffic-title">
               <TrailsIcon />
-              <span>Gym · 轨迹</span>
+              <span>Gym · {t('trailsTitle')}</span>
             </div>
             <div className="gym-traffic-headright">
-              <TimeModeSelect span={span} scrub={scrub} setSpan={setSpan} setScrub={setScrub} />
+              <TimeModeSelect span={span} scrub={scrub} setSpan={setSpan} setScrub={setScrub} t={t} />
               <span className="gym-ov-badge">
-                {scrub == null ? (present != null ? `${present} 人在场` : '…') : '回看'}
+                {scrub == null ? (present != null ? `${present} ${t('peopleInGym')}` : '…') : t('replay')}
               </span>
             </div>
           </div>
@@ -325,13 +329,13 @@ export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>
               <canvas ref={canvasRef} className="gym-activity-canvas" />
               {scrub != null && (winInfo?.samples ?? 0) === 0 && (
                 <div className="gym-activity-empty">
-                  该时段没有足迹记录
-                  <small>足迹日志自今天起累积；拖回最右侧查看实时</small>
+                  {t('noFootprint')}
+                  <small>{t('footprintNote')}</small>
                 </div>
               )}
             </div>
             <TimeScrub span={span} scrub={scrub} setScrub={setScrub}
-              samples={winInfo?.samples ?? 0} />
+              samples={winInfo?.samples ?? 0} t={t} />
           </div>
         </div>
       </div>
@@ -353,6 +357,7 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
     const { dataSource, className = '', config } = props
     const extensionId = dataSource?.extensionId || DEFAULT_EXTENSION_ID
     const showZones = config?.showZones !== false
+    const { t } = useLang(config as Record<string, unknown>)
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const zonesRef = useZones(extensionId)
@@ -422,12 +427,12 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
           <div className="gym-traffic-header">
             <div className="gym-traffic-title">
               <HeatIcon />
-              <span>Gym · 热力</span>
+              <span>Gym · {t('heatTitle')}</span>
             </div>
             <div className="gym-traffic-headright">
-              <TimeModeSelect span={span} scrub={scrub} setSpan={setSpan} setScrub={setScrub} />
+              <TimeModeSelect span={span} scrub={scrub} setSpan={setSpan} setScrub={setScrub} t={t} />
               <span className="gym-ov-badge">
-                {scrub == null ? (peak != null ? `今日峰值 ${peak}` : '…') : '回看'}
+                {scrub == null ? (peak != null ? `${t('todayPeak')} ${peak}` : '…') : t('replay')}
               </span>
             </div>
           </div>
@@ -436,18 +441,18 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
             <canvas ref={canvasRef} className="gym-activity-canvas" />
             {scrub != null && (winInfo?.samples ?? 0) === 0 && (
               <div className="gym-activity-empty">
-                该时段没有足迹记录
-                <small>足迹日志自今天起累积；拖回最右侧查看实时</small>
+                {t('noFootprint')}
+                <small>{t('footprintNote')}</small>
               </div>
             )}
             </div>
             <div className="gym-activity-legend">
-              <span>低</span>
+              <span>{t('low')}</span>
               <span className="gym-activity-ramp" />
-              <span>高</span>
+              <span>{t('high')}</span>
             </div>
             <TimeScrub span={span} scrub={scrub} setScrub={setScrub}
-              samples={winInfo?.samples ?? 0} />
+              samples={winInfo?.samples ?? 0} t={t} />
           </div>
         </div>
       </div>
