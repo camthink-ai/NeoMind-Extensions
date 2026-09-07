@@ -1896,3 +1896,40 @@ button.gym-ov-tg {
   background: var(--secondary, #1e1e22);
   border: 1px solid var(--border, #2e2e34);
 }
+
+/* ============================================================================
+   v2.15 member modal: de-boxed interior — the modal IS the surface
+   (flattens the border-in-border-in-border stack: detail box, identity
+   strip, stat cards, history days all lose their outlines)
+   ============================================================================ */
+.gym-modal .gym-report-detail {
+  background: none; border: none; padding: 0; margin: 0;
+}
+.gym-modal .gym-identity-strip {
+  background: none; border: none; padding: 0 0 10px; margin: 0;
+  border-bottom: 1px solid var(--border, #232323);
+  border-radius: 0;
+}
+.gym-modal .gym-detail-stats { gap: 18px; }
+.gym-modal .gym-detail-stat {
+  background: none; border: none; padding: 0;
+}
+.gym-modal .gym-detail-stat:nth-child(1),
+.gym-modal .gym-detail-stat:nth-child(2),
+.gym-modal .gym-detail-stat:nth-child(3) { border-top: none; }
+.gym-modal .gym-detail-sec { margin-top: 14px; gap: 8px; }
+.gym-modal .gym-detail-sec-title {
+  padding-bottom: 6px; margin-bottom: 2px;
+  border-bottom: 1px solid var(--border, #232323);
+}
+.gym-modal .gym-history-day {
+  background: none; border: none; padding: 0 0 8px; border-radius: 0;
+}
+.gym-modal .gym-history-day + .gym-history-day {
+  margin-top: 0; padding-top: 8px;
+  border-top: 1px dashed var(--border, #232323);
+}
+.gym-modal .gym-report-detail-manage {
+  padding-bottom: 10px; margin-bottom: 4px;
+  border-bottom: 1px solid var(--border, #232323);
+}
