@@ -35,31 +35,52 @@ const fmtClock = (ts: number) => {
 
 /** Shared timeline: LIVE toggle + span chips + a scrub slider over 24h.
  *  When scrubbing, `start/end` describe the queried window; null = live. */
-function TimeBar({ span, setSpan, scrub, setScrub, samples }: {
+/** Header mode dropdown: 实时 / 30分 / 1时 / 4时 / 12时 / 24时 回看. */
+function TimeModeSelect({ span, scrub, setSpan, setScrub }: {
   span: number
+  scrub: number | null
   setSpan: (s: number) => void
+  setScrub: (v: number | null) => void
+}) {
+  const value = scrub == null ? 'live' : String(span)
+  return (
+    <select
+      className="gym-timebar-select"
+      value={value}
+      onChange={(e) => {
+        const v = e.target.value
+        if (v === 'live') setScrub(null)
+        else if (Number(v) !== span) { setSpan(Number(v)); setScrub(null) }
+        else setScrub(Math.floor(Date.now() / 1000) - span)
+      }}
+      title="时间范围"
+    >
+      <option value="live">实时</option>
+      {SPANS.map(([s, label]) => (
+        <option key={s} value={String(s)}>{label}回看</option>
+      ))}
+    </select>
+  )
+}
+
+/** Bottom scrub bar: drag back over 24 h; label shows window + samples. */
+function TimeScrub({ span, scrub, setScrub, samples }: {
+  span: number
   scrub: number | null
   setScrub: (v: number | null) => void
   samples: number
 }) {
+  const [, force] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => force((v) => v + 1), 1000)
+    return () => clearInterval(id)
+  }, [])
   const now = Math.floor(Date.now() / 1000)
-  const maxStart = now - span
-  const pos = scrub == null ? 1 : Math.max(0, Math.min(1, (now - span - scrub) / Math.max(1, maxStart - scrub + span - span || 1)))
-  // slider maps 0..1 → window end offset from now (0 = newest, 1 = oldest)
-  const sliderVal = scrub == null ? 0 : Math.min(1, (now - (scrub + span)) / (24 * 3600 - span))
+  // slider maps 0..1 → window start offset (0 = newest window, 1 = oldest)
+  const sliderVal = scrub == null ? 0 : Math.min(1, (now - span - scrub) / Math.max(1, 24 * 3600 - span))
   return (
     <div className="gym-timebar">
-      <button
-        className={`gym-ov-tg ${scrub == null ? 'on' : ''}`}
-        onClick={() => setScrub(null)}
-        title="回到实时"
-      >实时</button>
-      <div className="gym-timebar-spans">
-        {SPANS.map(([s, label]) => (
-          <button key={s} className={`gym-ov-tg ${span === s ? 'on' : ''}`}
-            onClick={() => { setSpan(s); setScrub(null) }}>{label}</button>
-        ))}
-      </div>
+      <span className="gym-timebar-live-dot" data-live={scrub == null ? '1' : '0'} />
       <input
         className="gym-timebar-slider"
         type="range" min={0} max={1} step={0.001}
@@ -74,12 +95,9 @@ function TimeBar({ span, setSpan, scrub, setScrub, samples }: {
         {scrub == null ? '实时' : `${fmtClock(scrub)}–${fmtClock(scrub + span)}`}
         {samples > 0 && <em>{samples} 样本</em>}
       </span>
-      {voidPos(pos)}
     </div>
   )
 }
-// keeps the unused pos var referenced without tripping lint
-const voidPos = (_: number) => null
 
 /** blue → cyan → yellow → red ramp, alpha by intensity */
 function heatColor(v: number): string {
@@ -288,6 +306,7 @@ export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>
               <TrailsIcon />
               <span>Gym · 轨迹</span>
             </div>
+            <TimeModeSelect span={span} scrub={scrub} setSpan={setSpan} setScrub={setScrub} />
             <span className="gym-ov-badge">
               {scrub == null ? (present != null ? `${present} 人在场` : '…') : '回看'}
             </span>
@@ -302,7 +321,7 @@ export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>
                 </div>
               )}
             </div>
-            <TimeBar span={span} setSpan={setSpan} scrub={scrub} setScrub={setScrub}
+            <TimeScrub span={span} scrub={scrub} setScrub={setScrub}
               samples={winInfo?.samples ?? 0} />
           </div>
         </div>
@@ -396,6 +415,7 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
               <HeatIcon />
               <span>Gym · 热力</span>
             </div>
+            <TimeModeSelect span={span} scrub={scrub} setSpan={setSpan} setScrub={setScrub} />
             <span className="gym-ov-badge">
               {scrub == null ? (peak != null ? `今日峰值 ${peak}` : '…') : '回看'}
             </span>
@@ -415,7 +435,7 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
               <span className="gym-activity-ramp" />
               <span>高</span>
             </div>
-            <TimeBar span={span} setSpan={setSpan} scrub={scrub} setScrub={setScrub}
+            <TimeScrub span={span} scrub={scrub} setScrub={setScrub}
               samples={winInfo?.samples ?? 0} />
           </div>
         </div>
