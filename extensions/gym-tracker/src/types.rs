@@ -61,6 +61,13 @@ pub struct Track {
     /// the picture runs ahead of the track stream.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vel: Option<[f32; 2]>,
+    /// Per-track TRUE capture timestamp (ns). Present on newer producers:
+    /// far-field tile-sourced tracks carry the TILE grab time (0.4-0.9 s
+    /// older than the frame ts) — keying the overlay history by it removes
+    /// the systematic far-person box trail. Absent on old producers, where
+    /// the frame-level ts applies to every track.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ts: Option<u64>,
 }
 
 /// One frame of `gym/track` events published by the NE503 device-app.

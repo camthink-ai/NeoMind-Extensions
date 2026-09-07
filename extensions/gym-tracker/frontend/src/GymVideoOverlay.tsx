@@ -1279,7 +1279,20 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         for (let i = buf.length - 1; i >= 0; i--) {
           if (buf[i].t <= want + 0.004) { img = buf[i].img; lastTsRef.current = buf[i].t; break }
         }
-        if (!img) { img = buf[0].img; lastTsRef.current = buf[0].t }
+        if (!img && buf.length > 0) {
+          // No frame at/before `want` (all buffered frames newer — the
+          // delay just shrank or the wanted stretch was evicted). Redraw
+          // the frame AT/BEFORE the previously shown ts — the old fallback
+          // jumped to buf[0] and MOVED lastTs BACKWARD, so picture and
+          // boxes visibly rewound on every gap spike.
+          let hi = -1
+          const anchor = prevShown ?? want
+          for (let i = buf.length - 1; i >= 0; i--) {
+            if (buf[i].t <= anchor + 0.004) { hi = i; break }
+          }
+          if (hi >= 0) { img = buf[hi].img; lastTsRef.current = buf[hi].t }
+          else { img = buf[0].img; lastTsRef.current = buf[0].t } // buffer rotated past anchor: forward jump
+        }
       }
       if (!img) img = imgRef.current
       // per-type dims: HTMLImageElement naturalWidth/Height, ImageBitmap
