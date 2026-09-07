@@ -52,8 +52,8 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
     // dense boards can hide idle zones and show only what's in use
     const showIdle = config?.showIdle !== false
     // BUSY requires the SAME person (track) holding the zone this long —
-    // raw presence only warms the cell. 60 s default per the gym's ask.
-    const busySec = Math.min(600, Math.max(10, Number(config?.busySec) || 60))
+    // raw presence only warms the cell. 5 s default per the gym's ask.
+    const busySec = Math.min(600, Math.max(5, Number(config?.busySec) || 5))
 
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
 
@@ -91,7 +91,7 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
       if (!zones) return []
       const tracks = state?.tracks ?? []
       return zones
-        .filter((z) => z.enabled === true || z.enabled === 1)
+        .filter((z) => (z.enabled === true || z.enabled === 1) && z.equipment_type !== 'exclusion')
         .map((zone) => {
           const inZone = tracks.filter(
             (t) => t.foot && pointInPolygon(t.foot.x, t.foot.y, zone.polygon)

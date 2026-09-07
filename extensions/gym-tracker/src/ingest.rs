@@ -83,6 +83,43 @@ pub fn parse_preview(raw: &str) -> Option<(u64, Vec<u8>)> {
     Some((ts_ns, img))
 }
 
+/// Parse a `gym/preview_h264` envelope → the fields of an [`H264Sample`]
+/// (nalu as raw bytes). None for other topics or undecodable payloads.
+pub fn parse_preview_h264(
+    raw: &str,
+) -> Option<(u64, u64, bool, u32, u32, u64, Vec<u8>)> {
+    let ev: serde_json::Value = serde_json::from_str(raw).ok()?;
+    if ev["topic"].as_str()? != "gym/preview_h264" {
+        return None;
+    }
+    let payload = &ev["payload"];
+    let p = match payload {
+        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s).ok()?,
+        other => other.clone(),
+    };
+    let ts_ns = p["ts_ns"].as_u64()?;
+    let pts_ns = p["pts_ns"].as_u64().unwrap_or(0);
+    let key = p["key"].as_bool().unwrap_or(false);
+    let w = p["w"].as_u64().unwrap_or(0) as u32;
+    let h = p["h"].as_u64().unwrap_or(0) as u32;
+    use base64::Engine as _;
+    let b64 = p["nalu_b64"].as_str()?;
+    let nalu = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .ok()
+        .or_else(|| {
+            base64::engine::general_purpose::STANDARD_NO_PAD
+                .decode(b64.trim_end_matches('='))
+                .ok()
+        })?;
+    // Annex-B sanity: must start with a start code (00 00 01 / 00 00 00 01)
+    if nalu.len() < 4 || !(nalu.starts_with(&[0, 0, 0, 1]) || nalu.starts_with(&[0, 0, 1])) {
+        return None;
+    }
+    let seq = p["seq"].as_u64().unwrap_or(0);
+    Some((ts_ns, pts_ns, key, w, h, seq, nalu))
+}
+
 /// Debug counters for GYM_INGEST_DBG diagnostics.
 pub static INGEST_COUNTS: std::sync::OnceLock<parking_lot::Mutex<IngestDbg>> =
     std::sync::OnceLock::new();
@@ -280,6 +317,7 @@ async fn connect_and_drain(
     // 49 min of zero traffic with the socket "open"). Ping every 5 s and
     // force-reconnect after 20 s of silence.
     let mut last_alive = std::time::Instant::now();
+    let mut last_h264_seq: Option<u64> = None;
     let mut ping = tokio::time::interval(std::time::Duration::from_secs(5));
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -312,6 +350,38 @@ async fn connect_and_drain(
                     }
                     if let Some((pts, pimg)) = parse_preview(&txt) {
                         state.set_preview(pts, Arc::new(pimg));
+                    } else if let Some((ts, pts, key, w, h, seq, nalu)) = parse_preview_h264(&txt) {
+                        // relay seq continuity check: a gap means the
+                        // device→platform hop dropped frames (event bus /
+                        // relay). Warn loudly — the decoder downstream will
+                        // corrupt until the next keyframe; only a ≤1 s GOP
+                        // bounds the damage.
+                        crate::state::push_diag().ingested.fetch_add(1, crate::state::AtomicOrd::Relaxed);
+                        if seq > 1 {
+                            if let Some(prev) = last_h264_seq.replace(seq) {
+                                if seq > prev + 1 {
+                                    crate::state::push_diag().ingest_gaps
+                                        .fetch_add(seq - prev - 1, crate::state::AtomicOrd::Relaxed);
+                                    tracing::warn!(
+                                        expected = prev + 1,
+                                        got = seq,
+                                        gap = seq - prev - 1,
+                                        "h264 frame loss on device→platform hop"
+                                    );
+                                }
+                            }
+                        } else {
+                            last_h264_seq.take(); // seq-less producer or session reset
+                        }
+                        state.set_h264(crate::state::H264Sample {
+                            ts_ns: ts,
+                            pts_ns: pts,
+                            key,
+                            w,
+                            h,
+                            seq,
+                            nalu: Arc::new(nalu),
+                        });
                     } else if serde_json::from_str::<serde_json::Value>(&txt)
                         .ok()
                         .and_then(|v| v["topic"].as_str().map(|t| t == "gym/preview"))
@@ -324,15 +394,48 @@ async fn connect_and_drain(
                     match parse_event(&txt) {
                         Some(frame) => {
                             ingest_dbg().lock().parsed_ok += 1;
-                            state.apply_frame(&frame);
-                            analytics.on_frame(&frame);
                             // workout pipeline: zones + members fresh per frame
                             // (small tables; keeps set_roi_zones / member edits
                             // live without a cache-invalidation dance)
                             let zones = db.list_zones().unwrap_or_default();
                             let members = db.list_members().unwrap_or_default();
+                            // EXCLUSION zones (mirrors / no-go areas): tracks
+                            // inside them are reflections or noise — dropped
+                            // HERE, before any consumer, so live state, trails,
+                            // crossings, heatmap, occupancy and enrollment all
+                            // stay clean. Foot first, bbox center as fallback
+                            // (mirrors the occupancy rule).
+                            let excl: Vec<&crate::db::Zone> = zones
+                                .iter()
+                                .filter(|z| z.enabled && z.equipment_type == "exclusion")
+                                .collect();
+                            let frame = if excl.is_empty() {
+                                frame
+                            } else {
+                                let in_excl = |x: f32, y: f32| {
+                                    excl.iter().any(|z| {
+                                        crate::geo::point_in_polygon(x, y, &z.polygon)
+                                    })
+                                };
+                                let mut f = frame;
+                                f.tracks.retain(|t| {
+                                    let (cx, cy) = (
+                                        t.bbox.x + t.bbox.w / 2.0,
+                                        t.bbox.y + t.bbox.h / 2.0,
+                                    );
+                                    !(in_excl(t.foot.x, t.foot.y) || in_excl(cx, cy))
+                                });
+                                f
+                            };
+                            // exclusion areas are filters, never equipment
+                            let active: Vec<crate::db::Zone> = zones
+                                .into_iter()
+                                .filter(|z| z.equipment_type != "exclusion")
+                                .collect();
+                            state.apply_frame(&frame);
+                            analytics.on_frame(&frame);
                             analytics.on_workout_frame(
-                                &frame, &zones, &members, &cfg.identity,
+                                &frame, &active, &members, &cfg.identity,
                                 cfg.roi.dwell_debounce_sec);
                         }
                         None => {
@@ -487,6 +590,32 @@ mod tests {
         })
         .to_string();
         assert!(parse_preview(&env).is_none());
+    }
+
+    #[test]
+    fn parse_preview_h264_roundtrip_and_rejects() {
+        let nalu: Vec<u8> = vec![0, 0, 0, 1, 0x67, 0x64, 0x00, 0x1f, 0xab];
+        let env = serde_json::json!({
+            "topic": "gym/preview_h264",
+            "payload": {"ts_ns": 7u64, "pts_ns": 70u64, "key": true,
+                        "w": 1280u64, "h": 720u64, "seq": 42u64,
+                        "nalu_b64": crate::frame::encode_b64(&nalu)}
+        })
+        .to_string();
+        let (ts, pts, key, w, h, sq, n) =
+            parse_preview_h264(&env).expect("valid h264 sample must decode");
+        assert_eq!((ts, pts, key, w, h, sq), (7, 70, true, 1280, 720, 42));
+        assert_eq!(n, nalu);
+
+        // non-Annex-B bytes → rejected
+        let bad = serde_json::json!({
+            "topic": "gym/preview_h264",
+            "payload": {"ts_ns": 1u64, "nalu_b64": crate::frame::encode_b64(b"junk")}
+        })
+        .to_string();
+        assert!(parse_preview_h264(&bad).is_none());
+        // other topics → rejected
+        assert!(parse_preview_h264(r#"{"topic":"gym/preview","payload":{}}"#).is_none());
     }
 
     #[test]

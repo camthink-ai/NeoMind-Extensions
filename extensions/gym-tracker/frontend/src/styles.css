@@ -1473,3 +1473,16 @@ button.gym-ov-tg {
   min-height: 0; height: 28px; box-sizing: border-box;
 }
 .gym-ov-rowins, .gym-report-detail-manage { align-items: center; }
+
+/* ============================================================================
+   GymActivityMap — trails + heatmap card
+   ============================================================================ */
+.gym-activity-body { padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; }
+.gym-activity-canvas { width: 100%; aspect-ratio: 16 / 9; display: block; border-radius: 10px; border: 1px solid var(--border, #2a2a2a); }
+.gym-activity-legend { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted-foreground, #a1a1aa); }
+.gym-activity-ramp {
+  flex: 0 0 120px; height: 6px; border-radius: 3px;
+  background: linear-gradient(90deg, rgba(60,90,255,.35), rgba(255,220,0,.7), rgba(255,60,40,.95));
+}
+.gym-activity-trailhint { margin-left: auto; color: #60a5fa; }
+.gym-ov-zoneidx.excl { background: rgba(239, 68, 68, .18); color: #f87171; }
