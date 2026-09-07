@@ -40,6 +40,7 @@ import {
   fetchFrame,
   FrameBundle,
   FRAME_DATA_TYPE,
+  AVC_DATA_TYPE,
   fetchHeatmap,
   fetchLines,
   fetchLiveState,
@@ -148,19 +149,168 @@ function parseFrameContainer(bytes: Uint8Array): { bundle: FrameBundle; jpeg: Ui
 }
 
 /** Decode a server→client binary push frame → (platform meta, payload). */
-function parseBinaryPushFrame(buf: ArrayBuffer): { meta: Record<string, any>; payload: Uint8Array } | null {
+function parseBinaryPushFrame(buf: ArrayBuffer): { meta: Record<string, any>; payload: Uint8Array; seq: number } | null {
   if (buf.byteLength < BIN_HEADER_LEN) return null
   const v = new DataView(buf)
   const kind = v.getUint8(0)
   const version = v.getUint8(1)
   if (kind !== BIN_KIND_PUSH || version !== BIN_VERSION) return null
+  const seq = Number(v.getBigUint64(2))
   const metaLen = v.getUint32(10)
   if (BIN_HEADER_LEN + metaLen > buf.byteLength) return null
   try {
     const meta = JSON.parse(textDecoder.decode(new Uint8Array(buf, BIN_HEADER_LEN, metaLen)))
-    return { meta, payload: new Uint8Array(buf, BIN_HEADER_LEN + metaLen) }
+    return { meta, payload: new Uint8Array(buf, BIN_HEADER_LEN + metaLen), seq }
   } catch {
     return null
+  }
+}
+
+// ---- hardware H.264 preview (WebCodecs) ----
+// The device relays the vc8000e hardware encoder's sub stream as Annex-B
+// access units (`video/avc` frames, same container layout). WebCodecs wants
+// AVCC (length-prefixed NALs) plus an avcC description — both derived
+// client-side from the first keyframe. The low-rate JPEG frames keep
+// arriving as fallback and take over automatically whenever the decoder is
+// unavailable, errored or starved.
+
+/** Split one Annex-B access unit into NAL units (start codes stripped). */
+function splitAnnexB(data: Uint8Array): Uint8Array[] {
+  const starts: number[] = []
+  for (let i = 0; i + 2 < data.length; i++) {
+    if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 1) {
+      starts.push(i)
+      i += 2
+    }
+  }
+  const nals: Uint8Array[] = []
+  for (let k = 0; k < starts.length; k++) {
+    // EXACT bytes — no trailing-zero trimming: cabac_zero_words are part
+    // of the bitstream and stripping them corrupts decode.
+    const s = starts[k] + 3
+    const end = k + 1 < starts.length ? starts[k + 1] : data.length
+    if (end > s) nals.push(data.subarray(s, end))
+  }
+  return nals
+}
+
+/** Re-pack one Annex-B access unit as AVCC (4-byte BE length prefixes). */
+function annexBToAvcc(data: Uint8Array): Uint8Array | null {
+  const nals = splitAnnexB(data)
+  if (!nals.length) return null
+  let len = 0
+  for (const n of nals) len += 4 + n.length
+  const out = new Uint8Array(len)
+  let o = 0
+  for (const n of nals) {
+    out[o++] = (n.length >>> 24) & 0xff
+    out[o++] = (n.length >>> 16) & 0xff
+    out[o++] = (n.length >>> 8) & 0xff
+    out[o++] = n.length & 0xff
+    out.set(n, o)
+    o += n.length
+  }
+  return out
+}
+
+/** Extract SPS+PPS from a keyframe → avcC record + codec string. */
+function buildAvcC(data: Uint8Array): { codec: string; avcC: Uint8Array } | null {
+  let sps: Uint8Array | null = null
+  let pps: Uint8Array | null = null
+  for (const n of splitAnnexB(data)) {
+    const type = n[0] & 0x1f
+    if (type === 7 && !sps) sps = n
+    else if (type === 8 && !pps) pps = n
+  }
+  if (!sps || !pps || sps.length < 4) return null
+  const hex = (b: number) => b.toString(16).padStart(2, '0')
+  const codec = `avc1.${hex(sps[1])}${hex(sps[2])}${hex(sps[3])}`
+  const avcC = new Uint8Array(11 + sps.length + pps.length)
+  avcC[0] = 1
+  avcC[1] = sps[1]
+  avcC[2] = sps[2]
+  avcC[3] = sps[3]
+  avcC[4] = 0xfc | 3 // lengthSizeMinusOne = 3 → 4-byte lengths
+  avcC[5] = 0xe0 | 1 // numSPS
+  avcC[6] = sps.length >> 8
+  avcC[7] = sps.length & 0xff
+  avcC.set(sps, 8)
+  avcC[8 + sps.length] = 1 // numPPS
+  avcC[9 + sps.length] = pps.length >> 8
+  avcC[10 + sps.length] = pps.length & 0xff
+  avcC.set(pps, 11 + sps.length)
+  return { codec, avcC }
+}
+
+/** In-order H.264 decode pump. Configures lazily on the first keyframe
+ *  (SPS/PPS ride in-band); resets — and waits for the NEXT keyframe — on
+ *  error or queue overrun, so a stalled consumer degrades to the JPEG
+ *  fallback instead of lagging forever. */
+class H264Decoder {
+  private dec: VideoDecoder | null = null
+  private metaQueue: Array<Record<string, any> | undefined> = []
+  private lastPts = 0
+  onFrame: ((frame: VideoFrame, meta: Record<string, any>) => void) | null = null
+
+  get active(): boolean {
+    return this.dec != null
+  }
+
+  feed(meta: Record<string, any>, nalu: Uint8Array): void {
+    if (typeof VideoDecoder === 'undefined' || typeof EncodedVideoChunk === 'undefined') return
+    if (!this.dec) {
+      if (!meta.key) return // mid-GOP join — wait for a keyframe
+      const cfg = buildAvcC(nalu)
+      if (!cfg) return
+      try {
+        this.dec = new VideoDecoder({
+          output: (frame) => {
+            const m = this.metaQueue.shift()
+            if (m) this.onFrame?.(frame, m)
+            else frame.close()
+          },
+          error: () => this.reset(),
+        })
+        this.dec.configure({
+          codec: cfg.codec,
+          description: cfg.avcC as unknown as BufferSource,
+          optimizeForLatency: true,
+        })
+      } catch {
+        this.dec = null
+        return
+      }
+    }
+    if (this.dec.decodeQueueSize > 60) {
+      this.reset() // consumer stalled — resync on the next keyframe
+      return
+    }
+    const avcc = annexBToAvcc(nalu)
+    if (!avcc) return
+    // timestamps must strictly increase — clamp encoder hiccups
+    let pts = Math.floor((meta.pts_ns || meta.ts_ns || 0) / 1000)
+    if (pts <= this.lastPts) pts = this.lastPts + 1
+    this.lastPts = pts
+    this.metaQueue.push(meta)
+    try {
+      this.dec.decode(
+        new EncodedVideoChunk({
+          type: meta.key ? 'key' : 'delta',
+          timestamp: pts,
+          data: avcc as unknown as BufferSource,
+        })
+      )
+    } catch {
+      this.metaQueue.pop()
+    }
+  }
+
+  reset(): void {
+    this.metaQueue.length = 0
+    if (this.dec) {
+      try { this.dec.close() } catch { /* already closed */ }
+      this.dec = null
+    }
   }
 }
 
@@ -525,20 +675,50 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     // delay so the shown frame lands behind it (interpolation, not extrapolation)
     const lastTracksTsRef = useRef(0)
     const emaGapRef = useRef<number | null>(null)
-    // jitter buffer: decoded frames (ts sec, ImageBitmap | HTMLImageElement)
-    // in arrival order; bitmaps are closed on eviction (GPU-backed memory)
-    const frameBufRef = useRef<Array<{ t: number; img: HTMLImageElement | ImageBitmap }>>([])
+    // rolling window of recent video-vs-tracks gaps — the delay derives
+    // from the window MAX, not an EMA: the gap oscillates by up to one
+    // inference period (EMA sits mid-range) and a mid-range delay leaves
+    // extrapolation windows of up to half a period — the residual lag
+    // users still saw. Max+margin guarantees the playhead stays behind
+    // the newest track sample, i.e. pure interpolation, always.
+    const gapWinRef = useRef<number[]>([])
+    // jitter buffer: decoded frames (ts sec, ImageBitmap | VideoFrame |
+    // HTMLImageElement) in arrival order; bitmaps/frames are closed on
+    // eviction (GPU-backed memory)
+    const frameBufRef = useRef<Array<{ t: number; img: HTMLImageElement | ImageBitmap | VideoFrame }>>([])
+    // hardware H.264 decode state (video/avc frames)
+    const h264Ref = useRef<H264Decoder | null>(null)
+    const h264ActiveRef = useRef(false)
+    const lastPushSeqRef = useRef<number | null>(null)
+    // wall-clock anchor for the encoder PTS timeline (pts_ns has an
+    // arbitrary origin; ts_ns is the device wall clock). Slowly adapted
+    // EMA so systematic relay-latency changes are followed, read-jitter
+    // is smoothed away.
+    const ptsAnchorRef = useRef<number | null>(null)
+
+    // current interpolation delay (sec) — written by draw(), read by the
+    // jitter-buffer eviction so retention always covers the playhead
+    const delayEstRef = useRef(1.5)
+    const closeFrameImg = (img: HTMLImageElement | ImageBitmap | VideoFrame) => {
+      if (img instanceof ImageBitmap) img.close()
+      else if (typeof VideoFrame !== 'undefined' && img instanceof VideoFrame) img.close()
+    }
 
     /** Push one decoded frame into the jitter buffer (called async after
-     * bitmap/Image decode resolves — ordering tolerance matches the old
+     * bitmap/VideoFrame decode resolves — ordering tolerance matches the old
      * Image.onload behavior; the draw loop picks by ts, not index). */
-    const pushDecodedFrame = useCallback((frameTs: number, img: HTMLImageElement | ImageBitmap) => {
+    const pushDecodedFrame = useCallback((frameTs: number, img: HTMLImageElement | ImageBitmap | VideoFrame) => {
       if (!mountedRef.current) return
       const buf = frameBufRef.current
       buf.push({ t: frameTs, img })
-      while (buf.length > 0 && frameTs - buf[0].t > 1.5) {
+      // retention must cover the interpolation delay (draw() writes
+      // delayEstRef): the playhead sits `delay` behind newest, so a
+      // fixed 1.5 s trim would clamp playback ahead of track-now and
+      // reintroduce the box-vs-picture slide the delay cap fixes.
+      const retain = Math.min(3.0, Math.max(1.5, delayEstRef.current + 0.35))
+      while (buf.length > 0 && frameTs - buf[0].t > retain) {
         const evicted = buf.shift()
-        if (evicted && evicted.img instanceof ImageBitmap) evicted.img.close()
+        if (evicted) closeFrameImg(evicted.img)
       }
       const c = fpsCounterRef.current
       c.frames++
@@ -571,44 +751,22 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       im.src = `data:image/jpeg;base64,${b64Fallback}`
     }, [pushDecodedFrame])
 
-    const applyFrameBundle = useCallback((data: FrameBundle, jpegBytes?: Uint8Array) => {
-      // Dedup: device ts_ns is unique per frame and present on both the WS
-      // and REST legs; fall back to img_b64 equality for ts-less producers.
-      const tsNs = data.ts_ns
-      if (tsNs != null) {
-        if (tsNs === lastFrameTsNsRef.current) return
-        lastFrameTsNsRef.current = tsNs
-      } else {
-        if (!data.img_b64 || data.img_b64 === lastImgRef.current) return
-        lastImgRef.current = data.img_b64
-      }
-      if (!deviceFramesRef.current) {
-        deviceFramesRef.current = true
-        // stream-player video is superseded by the device frames
-        if (wsRef.current) { try { wsRef.current.close() } catch { /* already closed */ } wsRef.current = null }
-      }
-      // every device frame proves the display pipeline is alive — also
-      // overrides any stale error status from the superseded video path
-      setStatus('streaming')
-      const frameTs = tsNs != null ? tsNs / 1e6 : Date.now() / 1000
-      if (jpegBytes) {
-        decodeJpeg(jpegBytes, frameTs)
-      } else if (data.img_b64) {
-        // legacy string leg (REST fallback / old-core Text sessions)
-        const bytes = bytesFromB64(data.img_b64)
-        if (bytes) decodeJpeg(bytes, frameTs, data.img_b64)
-      }
+    /** Track-history + live-state update from a bundle meta — shared by the
+     * JPEG frames, the H.264 frames (which carry the same meta fields) and
+     * the REST fallback. */
+    const applyTrackMeta = useCallback((data: FrameBundle) => {
       const hist = trackHistRef.current
+      const tsNs = data.ts_ns
       // ts-keyed from the device clock: each preview frame carries the
       // latest tracks + its own ts — the local history built from these is
       // the interpolation source (exact, and no server-side hist needed).
       // Falls back to receive-time keys when ts is absent (old producers).
       if (tsNs) {
         // device-clock keyframes: tracks only change at inference rate
-        // (~5 Hz) while preview frames arrive at ~20 Hz — append a history
+        // (~5 Hz) while preview frames arrive faster — append a history
         // entry ONLY when the position actually moved (plus a 500 ms
         // heartbeat so a stationary person doesn't age out). A staircase
-        // history (identical positions at 20 Hz) zeroes the interpolation
+        // history (identical positions repeated) zeroes the interpolation
         // velocity and the overlay visibly trails the video.
         // TRUE capture time of the positions — the preview ts is one
         // inference-latency ahead of when these positions were real
@@ -653,7 +811,125 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         faces: data.faces ?? [],
       } as LiveState
       setPresent(data.present_count ?? data.tracks?.length ?? 0)
-    }, [decodeJpeg])
+    }, [])
+
+    /** One hardware H.264 frame (Annex-B AU + bundle-shaped meta). Meta is
+     *  processed immediately (tracks ride at the relay rate); the NALU goes
+     *  through the WebCodecs pump and lands in the jitter buffer as a
+     *  VideoFrame. While the decoder is actively producing, JPEG frames are
+     *  held back as the fallback. */
+    const handleH264Frame = useCallback((meta: Record<string, any>, nalu: Uint8Array, pushSeq?: number) => {
+      if (!deviceFramesRef.current) {
+        deviceFramesRef.current = true
+        if (wsRef.current) { try { wsRef.current.close() } catch { /* already closed */ } wsRef.current = null }
+      }
+      setStatus('streaming')
+      applyTrackMeta(meta as FrameBundle)
+      // DEVICE-seq gap (meta.h264_seq, monotonic per relay session) = a
+      // frame was lost anywhere upstream. The platform session seq is
+      // contiguous BY CONSTRUCTION and hides loss; the device seq is the
+      // truthful end-to-end signal. Feeding the decoder past a gap decodes
+      // smear until the next keyframe; resetting bounds the corruption to
+      // ≤1 GOP and re-syncs cleanly. A seq that goes backwards = relay
+      // session restart, not a gap.
+      const devSeq = Number(meta.h264_seq ?? 0) || pushSeq || 0
+      if (devSeq > 0) {
+        const prev = lastPushSeqRef.current
+        if (prev != null && devSeq > prev + 1) {
+          h264Ref.current?.reset()
+          lastPushSeqRef.current = null
+        } else if (prev == null || devSeq >= prev) {
+          lastPushSeqRef.current = devSeq
+        }
+      }
+      if (!h264Ref.current) h264Ref.current = new H264Decoder()
+      const dec = h264Ref.current
+      dec.onFrame = (vf, m) => {
+        h264ActiveRef.current = true
+        // Key the jitter buffer by ENCODER PTS (capture clock), not the
+        // relay-read ts: the read side wobbles with socket scheduling
+        // (GIL, batching) and that wobble lands directly in the overlay's
+        // alignment. pts is monotonic and jitter-free; a slow EMA anchor
+        // maps it onto the device wall clock the track history uses.
+        const pts = Number(m.pts_ns ?? 0)
+        const tsNs = Number(m.ts_ns ?? 0) || Date.now() * 1e6
+        let t: number
+        if (pts > 0) {
+          const a = ptsAnchorRef.current
+          ptsAnchorRef.current = a == null ? tsNs - pts
+            : a + ((tsNs - pts) - a) * 0.02
+          t = (pts + (ptsAnchorRef.current ?? 0)) / 1e6
+        } else {
+          t = tsNs / 1e6
+        }
+        // 4K VideoFrames held for the full ~2.1 s alignment delay would
+        // pin ~850 MB of GPU memory (≈70 frames × 12.4 MB). Transcode to
+        // a ≤1280-wide ImageBitmap immediately and close the source
+        // frame — the buffer then holds ~2.8 MB bitmaps and the draw
+        // loop blits bitmap→widget in one GPU op instead of scaling 4K
+        // every rAF. Falls back to a plain copy, then to the raw
+        // VideoFrame, when resize options are unsupported.
+        if (typeof createImageBitmap === 'function') {
+          const dw = vf.displayWidth
+          const opts = dw > 1280
+            ? { resizeWidth: 1280, resizeHeight: Math.max(2, Math.round(1280 * vf.displayHeight / dw)), resizeQuality: 'low' as const }
+            : undefined
+          createImageBitmap(vf, opts ?? {})
+            .then(bm => {
+              vf.close()
+              if (mountedRef.current) pushDecodedFrame(t, bm)
+              else bm.close()
+            })
+            .catch(() => createImageBitmap(vf)
+              .then(bm => {
+                vf.close()
+                if (mountedRef.current) pushDecodedFrame(t, bm)
+                else bm.close()
+              })
+              .catch(() => pushDecodedFrame(t, vf)))
+        } else {
+          pushDecodedFrame(t, vf)
+        }
+      }
+      dec.feed(meta, nalu)
+      // after a reset (error/stall) the decoder waits for a keyframe —
+      // unblock the JPEG fallback for that window
+      h264ActiveRef.current = dec.active
+    }, [applyTrackMeta, pushDecodedFrame])
+
+    const applyFrameBundle = useCallback((data: FrameBundle, jpegBytes?: Uint8Array) => {
+      // Dedup: device ts_ns is unique per frame and present on both the WS
+      // and REST legs; fall back to img_b64 equality for ts-less producers.
+      const tsNs = data.ts_ns
+      if (tsNs != null) {
+        if (tsNs === lastFrameTsNsRef.current) return
+        lastFrameTsNsRef.current = tsNs
+      } else {
+        if (!data.img_b64 || data.img_b64 === lastImgRef.current) return
+        lastImgRef.current = data.img_b64
+      }
+      if (!deviceFramesRef.current) {
+        deviceFramesRef.current = true
+        // stream-player video is superseded by the device frames
+        if (wsRef.current) { try { wsRef.current.close() } catch { /* already closed */ } wsRef.current = null }
+      }
+      // every device frame proves the display pipeline is alive — also
+      // overrides any stale error status from the superseded video path
+      setStatus('streaming')
+      const frameTs = tsNs != null ? tsNs / 1e6 : Date.now() / 1000
+      // JPEG is the fallback image path: skip while the hardware H.264
+      // decoder is actively producing frames (it still processes meta)
+      if (!h264ActiveRef.current) {
+        if (jpegBytes) {
+          decodeJpeg(jpegBytes, frameTs)
+        } else if (data.img_b64) {
+          // legacy string leg (REST fallback / old-core Text sessions)
+          const bytes = bytesFromB64(data.img_b64)
+          if (bytes) decodeJpeg(bytes, frameTs, data.img_b64)
+        }
+      }
+      applyTrackMeta(data)
+    }, [decodeJpeg, applyTrackMeta])
 
     useEffect(() => {
       let stopped = false
@@ -707,13 +983,16 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           }
           ws.onmessage = (event) => {
             if (!mountedRef.current) return
-            // Binary leg: [14B header][meta][container] — JPEG arrives as
+            // Binary leg: [14B header][meta][container] — payloads arrive as
             // raw bytes, zero base64 on the wire.
             if (event.data instanceof ArrayBuffer) {
               const parsed = parseBinaryPushFrame(event.data)
               if (parsed && parsed.meta?.data_type === FRAME_DATA_TYPE) {
                 const frame = parseFrameContainer(parsed.payload)
                 if (frame) applyFrameBundle(frame.bundle, frame.jpeg)
+              } else if (parsed && parsed.meta?.data_type === AVC_DATA_TYPE) {
+                const frame = parseFrameContainer(parsed.payload)
+                if (frame) handleH264Frame(frame.bundle as unknown as Record<string, any>, frame.jpeg, parsed.seq)
               }
               return
             }
@@ -725,13 +1004,17 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                 // (a former `start_push` message never existed in the
                 // server enum and was silently dropped)
               } else if (msg.type === 'push_output') {
-                if (msg.data_type === FRAME_DATA_TYPE) {
+                if (msg.data_type === FRAME_DATA_TYPE || msg.data_type === AVC_DATA_TYPE) {
                   // legacy Text leg from a new extension: the container is
                   // base64-wrapped inside the JSON envelope
                   const bytes = typeof msg.data === 'string' ? bytesFromB64(msg.data) : null
                   if (bytes) {
                     const frame = parseFrameContainer(bytes)
-                    if (frame) applyFrameBundle(frame.bundle, frame.jpeg)
+                    if (frame) {
+                      if (msg.data_type === AVC_DATA_TYPE)
+                        handleH264Frame(frame.bundle as unknown as Record<string, any>, frame.jpeg)
+                      else applyFrameBundle(frame.bundle, frame.jpeg)
+                    }
                   }
                 } else if (msg.data_type === 'application/json') {
                   // old extension build: img_b64 embedded in the bundle
@@ -764,7 +1047,16 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         if (timer) clearTimeout(timer)
         if (ws) { try { ws.close() } catch { /* already closed */ } }
       }
-    }, [extensionId, applyFrameBundle])
+    }, [extensionId, applyFrameBundle, handleH264Frame])
+
+    // release GPU-backed decode state on unmount
+    useEffect(() => () => {
+      h264Ref.current?.reset()
+      h264Ref.current = null
+      h264ActiveRef.current = false
+      for (const f of frameBufRef.current) closeFrameImg(f.img)
+      frameBufRef.current.length = 0
+    }, [])
 
     const loadZones = useCallback(async () => {
       const r = await fetchZones(extensionId)
@@ -920,13 +1212,30 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       // overlay INTERPOLATES between two real samples (exact) almost always;
       // spikes fall into bounded extrapolation along the device velocity.
       const buf = frameBufRef.current
-      let img: HTMLImageElement | ImageBitmap | null = null
+      let img: HTMLImageElement | ImageBitmap | VideoFrame | null = null
       if (buf.length > 0) {
         const newest = buf[buf.length - 1].t
         const gap = Math.max(0, newest - lastTracksTsRef.current)
-        const ema = emaGapRef.current
-        emaGapRef.current = ema == null ? gap : ema + (gap - ema) * 0.1
-        const delay = Math.min(0.45, Math.max(0.05, emaGapRef.current - 0.04))
+        const gw = gapWinRef.current
+        gw.push(gap)
+        if (gw.length > 90) gw.shift()
+        // PURE-INTERPOLATION MODE: delay from the rolling window MAX of
+        // the video-vs-tracks gap (+ small margin), not an EMA. The gap
+        // swings by up to one inference PERIOD (2 Hz cadence ⇒ ±240 ms
+        // around its mean); an EMA-based delay sits mid-range and leaves
+        // half-period extrapolation windows — the residual "box trails
+        // person" users saw. Window-max guarantees the playhead is behind
+        // the newest track sample essentially every frame: pure two-sample
+        // interpolation, sub-pixel error, no velocity guessing. The cap must
+        // sit ABOVE the steady-state gap or it forces the playhead AHEAD of
+        // the newest track sample into clamped extrapolation — measured
+        // steady gap with the 4K H.264 relay + 2.2 Hz track pipeline is
+        // 1.05–2.1 s (rolling max ≈ 2.1), so a 1.2 s cap left the playhead
+        // up to 0.9 s ahead of track-now and boxes slid off walkers every
+        // ~1 s cycle. 2.6 s covers the operating point with margin and
+        // still bounds the dead-track-stream case.
+        const delay = Math.min(2.6, Math.max(0.05, Math.max(...gw) + 0.05))
+        delayEstRef.current = delay
         let want = newest - delay
         // don't visibly rewind when a burst of old frames lands late
         const prevShown = lastTsRef.current
@@ -937,9 +1246,15 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         if (!img) { img = buf[0].img; lastTsRef.current = buf[0].t }
       }
       if (!img) img = imgRef.current
-      // ImageBitmap exposes width/height; HTMLImageElement naturalWidth/Height
-      const iw = img ? (img instanceof HTMLImageElement ? img.naturalWidth : img.width) : 0
-      const ih = img ? (img instanceof HTMLImageElement ? img.naturalHeight : img.height) : 0
+      // per-type dims: HTMLImageElement naturalWidth/Height, ImageBitmap
+      // width/height, VideoFrame displayWidth/displayHeight
+      const frameDims = (im: NonNullable<typeof img>): [number, number] => {
+        if (im instanceof HTMLImageElement) return [im.naturalWidth, im.naturalHeight]
+        if (typeof VideoFrame !== 'undefined' && im instanceof VideoFrame)
+          return [im.displayWidth, im.displayHeight]
+        return [(im as ImageBitmap).width, (im as ImageBitmap).height]
+      }
+      const [iw, ih] = img ? frameDims(img) : [0, 0]
       if (img && iw > 0) {
         const scale = Math.min(VW / iw, VH / ih)
         const l = {
@@ -1322,8 +1637,11 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         }
       }
 
-      // ---- drafts (edit mode) ----
-      if (modeRef.current === 'edit' && editKindRef.current === 'zones') {
+      // ---- drafts (edit mode) — zones AND exclusion areas share this ----
+      if (
+        modeRef.current === 'edit' &&
+        (editKindRef.current === 'zones' || editKindRef.current === 'exclude')
+      ) {
         const d = draftRef.current
         if (d.length > 0) {
           ctx.beginPath()
@@ -1512,7 +1830,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
               : !!hitZoneHandle(cx, cy) ||
                 draftRef.current.some((p) => Math.hypot(cx - vX(p[0]), cy - vY(p[1])) <= HIT)
           const inside =
-            editKindRef.current === 'zones' &&
+            (editKindRef.current === 'zones' || editKindRef.current === 'exclude') &&
             zonesRef.current.some((z) => z.polygon && pointInPolygon(nx, ny, z.polygon))
           canvas.style.cursor = grab ? 'grab' : inside ? 'move' : 'crosshair'
         } else if (canvas.style.cursor) canvas.style.cursor = ''
@@ -1677,7 +1995,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         setDraftLine((d) => d.slice(0, -1))
         return
       }
-      if (editKind === 'zones' && draft.length > 0) {
+      if ((editKind === 'zones' || editKind === 'exclude') && draft.length > 0) {
         setDraft((d) => d.slice(0, -1))
         return
       }
