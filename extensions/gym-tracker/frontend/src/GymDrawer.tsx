@@ -86,3 +86,38 @@ export function GymDrawer({ open, onClose, title, children, width = 380 }: Props
     document.body
   )
 }
+
+/** Centered large modal variant — same portal/backdrop/Esc machinery. */
+export function GymModal({ open, onClose, title, children, width = 900 }: {
+  open: boolean
+  onClose: () => void
+  title?: React.ReactNode
+  children: React.ReactNode
+  width?: number
+}) {
+  const [mounted, setMounted] = useState(open)
+  const prevOpen = useRef(false)
+  useEffect(() => injectStyles(STYLE_ID, STYLES), [])
+  useEffect(() => { setMounted(open) }, [open])
+  useEffect(() => {
+    if (!open || !prevOpen.current) prevOpen.current = open
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+  if (!mounted || typeof document === 'undefined') return null
+  return createPortal(
+    <div className="gym-modal-root shown">
+      <div className="gym-modal-backdrop" onClick={onClose} />
+      <div className="gym-modal" style={{ width: `min(${width}px, 94vw)` }} role="dialog" aria-modal="true">
+        <div className="gym-drawer-head">
+          <span className="gym-drawer-title">{title}</span>
+          <button className="gym-ov-btn" onClick={onClose}>关闭</button>
+        </div>
+        <div className="gym-drawer-body">{children}</div>
+      </div>
+    </div>,
+    document.body
+  )
+}

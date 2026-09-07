@@ -514,8 +514,21 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
         // ---- per-member workout detail (exercises / zones / sessions) ----
         "get_member_workout_detail" => {
             let id = args["member_id"].as_str().ok_or("get_member_workout_detail: missing member_id")?;
-            let days = args["days"].as_i64().unwrap_or(7).clamp(1, 90);
-            let since = chrono::Utc::now().timestamp() - days * 86400;
+            // days=all (0) → entire history
+            let days = args["days"].as_i64().unwrap_or(7);
+            let all_history = days <= 0;
+            let days = days.clamp(1, 90);
+            let since = if all_history {
+                0
+            } else {
+                chrono::Utc::now().timestamp() - days * 86400
+            };
+            let (body_samples, face_samples) = ctx.db.member_sample_counts(id);
+            let daily = if all_history {
+                ctx.db.member_daily_history(id, since).map_err(|e| e.to_string())?
+            } else {
+                Vec::new()
+            };
             let exercises = ctx
                 .db
                 .member_exercise_stats(id, since)
@@ -530,9 +543,11 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 .map(|s| s["duration_sec"].as_i64().unwrap_or(0))
                 .sum();
             Ok(json!({
-                "days": days,
+                "days": if all_history { json!(0) } else { json!(days) },
+                "all_history": all_history,
                 "total_duration_sec": total,
                 "visits": sessions.len(),
+                "identity": { "body_samples": body_samples, "face_samples": face_samples },
                 // 动作明细: label, sets, reps, minutes, session appearances
                 "exercises": exercises.iter().map(|(ex, sets, reps, secs, sess)| json!({
                     "exercise": ex, "sets": sets, "reps": reps,
@@ -544,6 +559,11 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 "sessions": sessions.iter().rev().take(20).map(|s| json!({
                     "id": s["id"], "started_at": s["started_at"],
                     "duration_sec": s["duration_sec"],
+                })).collect::<Vec<_>>(),
+                // per-day grouped history (all_history only)
+                "daily": daily.iter().map(|(day, ex, sets, reps, secs)| json!({
+                    "day": day, "exercise": ex, "sets": sets,
+                    "reps": reps, "duration_sec": secs,
                 })).collect::<Vec<_>>(),
             }))
         }

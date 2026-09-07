@@ -400,6 +400,77 @@ impl Db {
         Ok(())
     }
 
+    /// Per-DAY, per-exercise history for one member:
+    /// (day CE, exercise, sets, reps, secs). Powers the modal's 健身历史.
+    pub fn member_daily_history(
+        &self,
+        member_id: &str,
+        since: i64,
+    ) -> Result<Vec<(i64, String, i64, i64, i64)>, rusqlite::Error> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT eu.started_at, eu.exercise, SUM(eu.sets), SUM(eu.reps), SUM(eu.duration_sec)
+             FROM exercise_usage eu
+             JOIN sessions s ON s.id = eu.session_id
+             WHERE eu.member_id=?1 AND eu.ended_at>=?2
+             GROUP BY eu.started_at, eu.exercise
+             ORDER BY eu.started_at DESC",
+        )?;
+        // bucket by local day from started_at
+        use chrono::{Datelike, Local, TimeZone};
+        let mut out: Vec<(i64, String, i64, i64, i64)> = Vec::new();
+        let rows = stmt.query_map(params![member_id, since], |r| {
+            Ok((
+                r.get::<_, Option<i64>>(0)?.unwrap_or(0),
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                r.get::<_, Option<i64>>(4)?.unwrap_or(0),
+            ))
+        })?;
+        let mut by_day: std::collections::BTreeMap<i64, Vec<(String, i64, i64, i64)>> =
+            std::collections::BTreeMap::new();
+        for (started, ex, sets, reps, secs) in rows.flatten() {
+            let day = if started > 0 {
+                Local
+                    .timestamp_opt(started, 0)
+                    .single()
+                    .map(|d| d.num_days_from_ce() as i64)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            by_day.entry(day).or_default().push((ex, sets, reps, secs));
+        }
+        for (day, mut exs) in by_day {
+            exs.sort_by(|a, b| b.3.cmp(&a.3));
+            for (ex, sets, reps, secs) in exs {
+                out.push((day, ex, sets, reps, secs));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Identity-sample counts for one member: (body, face).
+    pub fn member_sample_counts(&self, member_id: &str) -> (i64, i64) {
+        self.conn
+            .lock()
+            .query_row(
+                "SELECT
+                   SUM(CASE WHEN kind='face' THEN 0 ELSE 1 END),
+                   SUM(CASE WHEN kind='face' THEN 1 ELSE 0 END)
+                 FROM member_embeddings WHERE member_id=?1",
+                params![member_id],
+                |r| {
+                    Ok((
+                        r.get::<_, Option<i64>>(0)?.unwrap_or(0),
+                        r.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                    ))
+                },
+            )
+            .unwrap_or((0, 0))
+    }
+
     /// Per-exercise totals for one member since `since`: (exercise, sets,
     /// reps, secs, session_count). The panel's 动作明细 rides this.
     pub fn member_exercise_stats(
