@@ -287,48 +287,56 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
             </span>
           </div>
           <div className="gym-report-body">
-            {rep && rep.rows.length > 0 && (
-              <div className="gym-report-thead">
-                <span className="gym-report-thead-name">会员</span>
-                <span>到店</span>
-                <span>总时长</span>
-                <span>最近</span>
-              </div>
-            )}
             {error && <div className="gym-rank-empty">{error}</div>}
             {!error && rep && rep.rows.length === 0 && (
               <div className="gym-rank-empty">
                 还没有会员到店记录——注册会员后自动累计（匿名访客不计入）
               </div>
             )}
-            {rep && rep.rows.slice(0, 10).map((m) => {
-              const src = memberPhotoSrc(m.photo)
-              const open = openId === m.member_id
-              return (
-                <div key={m.member_id} className="gym-report-rowwrap">
-                  <div
-                    className={`gym-report-row clickable ${open ? 'sel' : ''}`}
-                    onClick={() => setOpenId(open ? null : m.member_id)}
-                    title={open ? undefined : '点击查看健身记录与管理'}
-                  >
-                    {src ? (
-                      <img className="gym-report-avatar" src={src} alt={m.name} title={m.name} />
-                    ) : (
-                      <span className="gym-report-avatar gym-report-avatar-fb" title={m.name}>
-                        {(m.name || '?').slice(0, 1)}
-                      </span>
-                    )}
-                    <span className="gym-report-name">
-                      {m.name}
-                      {m.source === 'auto' && <span className="gym-report-vtag">访客</span>}
-                    </span>
-                    <span className="gym-report-cell">{m.visits}<em>次</em></span>
-                    <span className="gym-report-cell">{fmtDur(m.duration_sec)}</span>
-                    <span className="gym-report-cell dim">{fmtTs(m.last_seen)}</span>
-                  </div>
-                </div>
-              )
-            })}
+            {rep && rep.rows.length > 0 && (
+              <div className="gym-report-grid">
+                {rep.rows.slice(0, 10).map((m) => {
+                  const src = memberPhotoSrc(m.photo)
+                  const open = openId === m.member_id
+                  return (
+                    <div
+                      key={m.member_id}
+                      className={`gym-mcard clickable ${open ? 'sel' : ''}`}
+                      onClick={() => setOpenId(open ? null : m.member_id)}
+                      title={open ? undefined : '点击查看健身记录与管理'}
+                    >
+                      <div className="gym-mcard-head">
+                        {src ? (
+                          <img className="gym-report-avatar" src={src} alt={m.name} title={m.name} />
+                        ) : (
+                          <span className="gym-report-avatar gym-report-avatar-fb" title={m.name}>
+                            {(m.name || '?').slice(0, 1)}
+                          </span>
+                        )}
+                        <span className="gym-mcard-name">
+                          {m.name}
+                          {m.source === 'auto' && <span className="gym-report-vtag">访客</span>}
+                        </span>
+                      </div>
+                      <div className="gym-mcard-stats">
+                        <span className="gym-mcard-stat">
+                          <span className="gym-mcard-stat-v accent">{m.visits}</span>
+                          <span className="gym-mcard-stat-k">到店</span>
+                        </span>
+                        <span className="gym-mcard-stat">
+                          <span className="gym-mcard-stat-v">{fmtDur(m.duration_sec)}</span>
+                          <span className="gym-mcard-stat-k">时长</span>
+                        </span>
+                        <span className="gym-mcard-stat">
+                          <span className="gym-mcard-stat-v dim">{fmtTs(m.last_seen)}</span>
+                          <span className="gym-mcard-stat-k">最近</span>
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         </div>
         {rep && openId && (() => {
