@@ -11,6 +11,7 @@ import {
   fetchFrame,
   injectStyles,
   runExtensionCommand,
+  fetchExtensionUiConfig
 } from './common'
 import STYLES from './styles.css?raw'
 import { useLang, translator } from './i18n'
@@ -234,7 +235,16 @@ export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>
   function GymTrailsCard(props, ref) {
     const { dataSource, className = '', config } = props
     const extensionId = dataSource?.extensionId || DEFAULT_EXTENSION_ID
-    const { t } = useLang(config as Record<string, unknown>)
+    // global ui.language from the EXTENSION config (card lang overrides)
+    const [gLang, setGLang] = useState<string | undefined>(undefined)
+    useEffect(() => {
+      let alive = true
+      fetchExtensionUiConfig(extensionId).then((c: { ui?: { language?: string } }) => {
+        if (alive) setGLang(c.ui?.language)
+      })
+      return () => { alive = false }
+    }, [extensionId])
+    const { t } = useLang(config as Record<string, unknown>, gLang)
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const zonesRef = useZones(extensionId)
@@ -356,8 +366,17 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
   function GymHeatCard(props, ref) {
     const { dataSource, className = '', config } = props
     const extensionId = dataSource?.extensionId || DEFAULT_EXTENSION_ID
+    // global ui.language from the EXTENSION config (card lang overrides)
+    const [gLang, setGLang] = useState<string | undefined>(undefined)
+    useEffect(() => {
+      let alive = true
+      fetchExtensionUiConfig(extensionId).then((c: { ui?: { language?: string } }) => {
+        if (alive) setGLang(c.ui?.language)
+      })
+      return () => { alive = false }
+    }, [extensionId])
     const showZones = config?.showZones !== false
-    const { t } = useLang(config as Record<string, unknown>)
+    const { t } = useLang(config as Record<string, unknown>, gLang)
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const zonesRef = useZones(extensionId)

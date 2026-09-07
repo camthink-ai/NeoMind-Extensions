@@ -108,9 +108,20 @@ export function translator(lang: Lang) {
   }
 }
 
-/** React hook: reads `lang` from the widget config, defaults zh. */
-export function useLang(config?: Record<string, unknown>) {
-  const lang: Lang = config?.lang === 'en' ? 'en' : 'zh'
+/** Resolve the card language: card config `lang` > extension-level
+ *  `ui.language` (the GLOBAL setting from the extension config panel) > zh.
+ *  The global value is fetched by each card and passed in. */
+export function resolveLang(config: Record<string, unknown> | undefined, globalLang?: string): Lang {
+  const card = (config?.lang as string) || (globalLang as string) || 'zh'
+  return card === 'en' ? 'en' : 'zh'
+}
+
+/** React hook: card config wins over the extension-level global. */
+export function useLang(
+  config?: Record<string, unknown>,
+  globalLang?: string
+) {
+  const lang = resolveLang(config, globalLang)
   const t = useMemo(() => translator(lang), [lang])
   return { lang, t }
 }

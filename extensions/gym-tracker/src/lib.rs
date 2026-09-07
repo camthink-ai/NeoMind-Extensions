@@ -40,7 +40,8 @@ use neomind_extension_sdk::prelude::{
 };
 use neomind_extension_sdk::{
     async_trait, send_push_output, Extension, ExtensionCommand, ExtensionError, ExtensionMetadata,
-    ExtensionMetricValue, MetricDescriptor, PushOutputMessage, Result,
+    ExtensionMetricValue, MetricDataType, MetricDescriptor, MetricValue, ParameterDefinition,
+    PushOutputMessage, Result,
 };
 use parking_lot::{Mutex, RwLock};
 
@@ -116,6 +117,33 @@ impl Extension for GymTrackerExtension {
             ExtensionMetadata::new("gym-tracker", "Gym Tracker", env!("CARGO_PKG_VERSION"))
                 .with_description("Smart-gym analytics on the NeoEyes NE503")
                 .with_author("NeoMind Team")
+                // Extension-level settings (rendered by the host's extension
+                // config UI). `ui.*` keys are consumed by the frontend: the
+                // widgets read ui.language as the GLOBAL default and apply
+                // it to every card unless a card overrides lang itself.
+                .with_config_parameters(vec![
+                    ParameterDefinition {
+                        name: "ui.language".into(),
+                        display_name: "界面语言 / UI Language".into(),
+                        description: "所有 Gym Tracker 卡片的默认语言（卡片级 lang 配置可覆盖）"
+                            .into(),
+                        param_type: MetricDataType::Enum {
+                            options: vec!["zh".into(), "en".into()],
+                        },
+                        required: false,
+                        default_value: Some(MetricValue::from("zh")),
+                        ..Default::default()
+                    },
+                    ParameterDefinition {
+                        name: "ui.mosaicDefault".into(),
+                        display_name: "默认开启人脸打码".into(),
+                        description: "Monitor 卡片人脸隐私打码的默认开关".into(),
+                        param_type: MetricDataType::Boolean,
+                        required: false,
+                        default_value: Some(MetricValue::from(true)),
+                        ..Default::default()
+                    },
+                ])
         })
     }
 

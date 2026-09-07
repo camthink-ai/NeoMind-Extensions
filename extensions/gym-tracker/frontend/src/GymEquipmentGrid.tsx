@@ -17,6 +17,7 @@ import {
   fetchZones,
   injectStyles,
   pointInPolygon,
+  fetchExtensionUiConfig,
 } from './common'
 import STYLES from './styles.css?raw'
 import { useLang } from './i18n'
@@ -55,7 +56,16 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
     // BUSY requires the SAME person (track) holding the zone this long —
     // raw presence only warms the cell. 5 s default per the gym's ask.
     const busySec = Math.min(600, Math.max(5, Number(config?.busySec) || 5))
-    const { t } = useLang(config as Record<string, unknown>)
+    // global ui.language from the EXTENSION config (card lang overrides)
+    const [gLang, setGLang] = useState<string | undefined>(undefined)
+    useEffect(() => {
+      let alive = true
+      fetchExtensionUiConfig(extensionId).then((c: { ui?: { language?: string } }) => {
+        if (alive) setGLang(c.ui?.language)
+      })
+      return () => { alive = false }
+    }, [extensionId])
+    const { t } = useLang(config as Record<string, unknown>, gLang)
 
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
 

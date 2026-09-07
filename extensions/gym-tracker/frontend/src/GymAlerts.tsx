@@ -11,6 +11,7 @@ import {
   ExtensionComponentProps,
   injectStyles,
   runExtensionCommand,
+  fetchExtensionUiConfig
 } from './common'
 import STYLES from './styles.css?raw'
 import { useLang } from './i18n'
@@ -25,7 +26,16 @@ export const GymAlerts = forwardRef<HTMLDivElement, ExtensionComponentProps>(
     const { dataSource, className = '', config } = props
     const extensionId = dataSource?.extensionId || DEFAULT_EXTENSION_ID
     const onlyWarn = config?.onlyWarn === true
-    const { t } = useLang(config as Record<string, unknown>)
+    // global ui.language from the EXTENSION config (card lang overrides)
+    const [gLang, setGLang] = useState<string | undefined>(undefined)
+    useEffect(() => {
+      let alive = true
+      fetchExtensionUiConfig(extensionId).then((c: { ui?: { language?: string } }) => {
+        if (alive) setGLang(c.ui?.language)
+      })
+      return () => { alive = false }
+    }, [extensionId])
+    const { t } = useLang(config as Record<string, unknown>, gLang)
 
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
 

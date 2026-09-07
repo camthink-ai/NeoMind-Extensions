@@ -49,6 +49,10 @@ export interface Track {
   face?: unknown
   /** Device-tracker EMA velocity, normalized units/sec (absent pre-2.9 producers). */
   vel?: [number, number] | null
+  /** Per-track TRUE capture timestamp ns — far-field tile tracks carry the
+   *  tile grab time (older than the frame ts); keying history by it removes
+   *  the far-person box trail. Absent on older producers. */
+  ts?: number | null
   /** True when the device attached a body-ReID embedding (P3). */
   has_emb?: boolean
   /** Matched member via nearest-L2 over the member library (P3); null = unknown. */
@@ -92,6 +96,9 @@ export interface FrameBundle {
 
 /** data_type of the binary frame container pushed by the extension. */
 export const FRAME_DATA_TYPE = 'application/x-neomind-frame'
+
+/** data_type of hardware-H.264 relay frames (Annex-B access units). */
+export const AVC_DATA_TYPE = 'video/avc'
 
 export interface Zone {
   id: string
@@ -170,6 +177,30 @@ export async function fetchZones(
   extensionId: string
 ): Promise<{ success: boolean; data?: { zones: Zone[] }; error?: string }> {
   return runExtensionCommand<{ zones: Zone[] }>(extensionId, 'get_roi_zones')
+}
+
+/** Extension-level config (PUT /api/extensions/:id/config shape) — carries
+ *  the GLOBAL ui.* settings (language, mosaic default). Cached briefly;
+ *  widgets pass ui.language into useLang as the card-level fallback. */
+let extConfigCache: { at: number; cfg: Record<string, unknown> } | null = null
+export async function fetchExtensionUiConfig(
+  extensionId: string
+): Promise<Record<string, unknown>> {
+  const now = Date.now()
+  if (extConfigCache && now - extConfigCache.at < 10000) return extConfigCache.cfg
+  try {
+    const res = await fetch(
+      `${getApiBase()}/extensions/${extensionId}/config`,
+      { headers: getApiHeaders() }
+    )
+    if (!res.ok) return {}
+    const json = await res.json()
+    const cfg = json?.data?.current_config ?? {}
+    extConfigCache = { at: now, cfg }
+    return cfg
+  } catch {
+    return {}
+  }
 }
 
 export interface MetricPoint {
