@@ -479,7 +479,14 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             }
             Ok(json!({
                 "days": days,
+                // reconciliation: door counters vs live presence — the two
+                // drift apart (partial crossings, line loitering) and the
+                // card showed contradictory numbers with no explanation
                 "today": { "in": live.0, "out": live.1, "net": (live.0 as i64 - live.1 as i64) },
+                "presence": {
+                    "live": ctx.state.present_count() as i64,
+                    "drift": ctx.state.present_count() as i64 - (live.0 as i64 - live.1 as i64),
+                },
                 "history": rows.iter().map(|(d, i, o)| json!({
                     "day": d, "in": i, "out": o, "net": (*i as i64 - *o as i64),
                 })).collect::<Vec<_>>(),
@@ -807,7 +814,16 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             }))
         }
         // Recent safety/ops alerts (fall-suspect, long-occupancy).
-        "get_alerts" => Ok(ctx.analytics.alerts_snapshot()),
+        "get_alerts" => Ok(ctx.analytics.alerts_snapshot(&ctx.db)),
+        // acknowledge / dismiss an alert (false positives included)
+        "resolve_alert" => {
+            let id = args["id"].as_i64().ok_or("resolve_alert: missing id")?;
+            let n = ctx.db.resolve_alert(id).map_err(|e| e.to_string())?;
+            if n == 0 {
+                return Err(format!("alert {id} not found"));
+            }
+            Ok(json!({ "resolved": id }))
+        }
         // P1 stub: no single-frame REST endpoint on this firmware yet. Not
         // fatal — the dispatch maps the client error to an error object so the
         // frontend can render a placeholder. P2 will grab a frame via RTSP.

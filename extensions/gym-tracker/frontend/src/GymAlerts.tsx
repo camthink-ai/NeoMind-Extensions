@@ -18,7 +18,7 @@ import { useLang } from './i18n'
 
 const STYLE_ID = 'gym-alerts-styles-v1'
 
-interface AlertItem { ts: number; kind: string; level: string; track_id: number; message: string }
+interface AlertItem { ts: number; kind: string; level: string; track_id: number; message: string; id?: number; resolved?: boolean }
 interface AlertsResp { alerts: AlertItem[] }
 
 export const GymAlerts = forwardRef<HTMLDivElement, ExtensionComponentProps>(
@@ -54,6 +54,11 @@ export const GymAlerts = forwardRef<HTMLDivElement, ExtensionComponentProps>(
       else if (!r.success) setError(r.error || '加载失败')
     }, [extensionId])
 
+    const resolve = useCallback(async (id: number) => {
+      await runExtensionCommand(extensionId, 'resolve_alert', { id })
+      refresh()
+    }, [extensionId, refresh])
+
     useEffect(() => {
       const t = setTimeout(() => { if (mountedRef.current) refresh() }, 300)
       return () => clearTimeout(t)
@@ -64,7 +69,7 @@ export const GymAlerts = forwardRef<HTMLDivElement, ExtensionComponentProps>(
     }, [refresh])
 
     const shown = (items ?? []).filter((a) => !onlyWarn || a.level === 'warn')
-    const warnCount = shown.filter((a) => a.level === 'warn').length
+    const warnCount = shown.filter((a) => a.level === 'warn' && !a.resolved).length
     const fmt = (ts: number) => {
       const d = new Date(ts * 1000)
       return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
@@ -88,10 +93,14 @@ export const GymAlerts = forwardRef<HTMLDivElement, ExtensionComponentProps>(
               </div>
             )}
             {shown.map((a, i) => (
-              <div className={`gym-alerts-row ${a.level}`} key={`${a.ts}-${i}`}>
+              <div className={`gym-alerts-row ${a.level} ${a.resolved ? 'resolved' : ''}`} key={a.id ?? `${a.ts}-${i}`}>
                 <span className={`gym-alerts-dot ${a.level}`} />
                 <span className="gym-alerts-time">{fmt(a.ts)}</span>
                 <span className="gym-alerts-msg">{a.message}</span>
+                {!a.resolved && a.id != null && a.id > 0 && (
+                  <button className="gym-alerts-ack" title="标记已处理/误报"
+                    onClick={() => resolve(a.id!)}>✓</button>
+                )}
               </div>
             ))}
           </div>

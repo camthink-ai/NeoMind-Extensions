@@ -153,6 +153,7 @@ impl Extension for GymTrackerExtension {
             cmd("get_live_state", "Current in-gym tracks (incl. trails)"),
             cmd("get_roi_zones", "List ROI equipment zones"),
             cmd("set_roi_zones", "Replace ROI zones (full set)"),
+            cmd("resolve_alert", "Acknowledge/dismiss a safety alert"),
             cmd("get_device_status", "NE503 device status"),
             cmd("get_snapshot", "Capture one frame (base64 JPEG)"),
             cmd("get_lines", "List crossing lines"),

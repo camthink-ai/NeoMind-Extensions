@@ -31,6 +31,7 @@ interface HistRow { day: number; in: number; out: number; net: number }
 interface Flow {
   days: number
   today: { in: number; out: number; net: number }
+  presence?: { live: number; drift: number }
   history: HistRow[]
 }
 
@@ -115,6 +116,11 @@ export const GymDoorFlow = forwardRef<HTMLDivElement, ExtensionComponentProps>(
             <span className="gym-ov-badge">
               {flow ? `${t('netIn')} ${flow.today.net >= 0 ? '+' : ''}${flow.today.net}` : '…'}
             </span>
+            {flow?.presence && Math.abs(flow.presence.drift) > 1 && (
+              <span className="gym-ov-badge warn" title={`Live tracking shows ${flow.presence.live} in gym — door counters drifted by ${flow.presence.drift}`}>
+                ⚠ {flow.presence.live} live
+              </span>
+            )}
           </div>
 
           <div className="gym-door-body">

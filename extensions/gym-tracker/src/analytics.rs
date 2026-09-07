@@ -86,6 +86,8 @@ struct Inner {
     heat_day: i64,
     workouts: HashMap<i64, WorkoutTracker>,
     alerts: VecDeque<Alert>,
+    /// alerts not yet flushed to alerts_log.
+    alerts_unsaved: u32,
     /// per-track fall-rule state: (lying_since, alerted)
     lying: HashMap<i64, (f64, bool)>,
     /// per-(track,zone) long-occupancy alerted flag
@@ -165,6 +167,7 @@ impl Analytics {
                 heat_day,
                 workouts: Default::default(),
                 alerts: Default::default(),
+                alerts_unsaved: 0,
                 lying: Default::default(),
                 long_occ: Default::default(),
                 pending_feet: Default::default(),
@@ -176,10 +179,23 @@ impl Analytics {
         }
     }
 
-    /// Recent alerts, newest first (for the Gym·Alerts card).
-    pub fn alerts_snapshot(&self) -> serde_json::Value {
-        let g = self.inner.lock();
-        let rows: Vec<&Alert> = g.alerts.iter().rev().collect();
+    /// Recent alerts for the Gym·Alerts card — persisted history
+    /// (unresolved first) merged with anything not yet flushed.
+    pub fn alerts_snapshot(&self, db: &Db) -> serde_json::Value {
+        let mut rows = db.list_alerts(60);
+        {
+            let g = self.inner.lock();
+            if g.alerts_unsaved > 0 {
+                for a in g.alerts.iter().skip(g.alerts.len() - g.alerts_unsaved as usize) {
+                    rows.push(serde_json::json!({
+                        "id": (-1 - a.track_id),  // ephemeral: no row id yet
+                        "ts": a.ts, "kind": a.kind, "level": a.level,
+                        "track_id": a.track_id, "message": a.message,
+                        "resolved": false,
+                    }));
+                }
+            }
+        }
         serde_json::json!({ "alerts": rows })
     }
 
@@ -295,6 +311,18 @@ impl Analytics {
     /// dirty crossing counters (they flip rarely — always worth a write).
     /// Called opportunistically from the command path (polls are frequent).
     pub fn maybe_save(&self, db: &Db) {
+        // new alerts persist immediately — the in-memory ring resets on
+        // every reload and hid the fall history
+        {
+            let mut g = self.inner.lock();
+            if g.alerts_unsaved > 0 {
+                for a in g.alerts.iter().skip(g.alerts.len() - g.alerts_unsaved as usize) {
+                    let _ = db.insert_alert(a.ts, a.kind, a.level, a.track_id, &a.message);
+                }
+                g.alerts_unsaved = 0;
+            }
+        }
+        db.prune_alerts(30);
         // foot samples ride every flush (poll cadence); prune old rows
         // opportunistically — the DELETE is indexed and cheap.
         {
@@ -940,6 +968,7 @@ impl Inner {
         if self.alerts.len() >= ALERT_CAP {
             self.alerts.pop_front();
         }
+        self.alerts_unsaved += 1;
         self.alerts.push_back(a);
     }
 
@@ -968,8 +997,11 @@ impl Inner {
     }
 
     fn persist_workout(db: &Db, w: &WorkoutTracker) {
-        let ended = chrono::Utc::now().timestamp();
-        let dur = (ended as f64 - w.started_at).max(0.0) as i64;
+        // ended_at = LAST SEEN, not close time: close_expired_workouts
+        // fires one TTL after the person left — wall-clock close inflated
+        // every session's duration by the TTL
+        let ended = w.last_seen as i64;
+        let dur = (w.last_seen - w.started_at).max(0.0) as i64;
         let _ = db.upsert_session(
             &w.session_id,
             w.member_id.as_deref(),

@@ -159,7 +159,7 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
             <div className="gym-eq-state">
               <DumbbellIcon />
               <span className="gym-eq-state-text">
-                No zones — draw ROI zones in Gym · Live
+                未配置器械分区——在 Gym · Monitor 的编辑模式中绘制（当前看到的是未统计状态，不是故障）
               </span>
             </div>
           ) : (

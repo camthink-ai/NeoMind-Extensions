@@ -10,7 +10,8 @@ import {
   ExtensionComponentProps,
   injectStyles,
   runExtensionCommand,
-  fetchExtensionUiConfig
+  fetchExtensionUiConfig,
+  fetchZones,
 } from './common'
 import STYLES from './styles.css?raw'
 import { useLang } from './i18n'
@@ -39,6 +40,7 @@ export const GymEquipmentRank = forwardRef<HTMLDivElement, ExtensionComponentPro
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
 
     const [rows, setRows] = useState<EquipRow[] | null>(null)
+    const [noZones, setNoZones] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const mountedRef = useRef(true)
     useEffect(() => {
@@ -47,6 +49,10 @@ export const GymEquipmentRank = forwardRef<HTMLDivElement, ExtensionComponentPro
     }, [])
 
     const refresh = useCallback(async () => {
+      // differentiate 'no usage yet' from 'zones not configured'
+      fetchZones(extensionId).then((z: { success: boolean; data?: { zones?: unknown[] } }) => {
+        if (mountedRef.current && z.success && z.data) setNoZones((z.data.zones ?? []).length === 0)
+      })
       const r = await runExtensionCommand<Summary>(extensionId, 'get_workout_summary', {})
       if (!mountedRef.current) return
       if (r.success && r.data) setRows(r.data.equipment ?? [])
@@ -77,7 +83,11 @@ export const GymEquipmentRank = forwardRef<HTMLDivElement, ExtensionComponentPro
           <div className="gym-rank-body">
             {error && <div className="gym-rank-empty">{error}</div>}
             {!error && rows && top.length === 0 && (
-              <div className="gym-rank-empty">{t('noUsageToday')}</div>
+              <div className="gym-rank-empty">
+                {noZones
+                  ? <span className="gym-empty-warn">⚠ 未配置器械分区——在 Monitor 编辑模式中绘制分区后，此处开始统计</span>
+                  : t('noUsageToday')}
+              </div>
             )}
             {top.map((r, i) => (
               <div className="gym-rank-row" key={r.zone_id + i}>

@@ -99,6 +99,18 @@ impl Db {
                 started_at INTEGER, ended_at INTEGER,
                 PRIMARY KEY(session_id, exercise));
             CREATE TABLE IF NOT EXISTS kv_settings (key TEXT PRIMARY KEY, value TEXT);
+            -- Safety alerts (fall-suspect, occupancy) PERSIST across
+            -- restarts: a wiped alert log after every reload made the
+            -- GymAlerts card claim 一切正常 over a history of falls.
+            CREATE TABLE IF NOT EXISTS alerts_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts REAL NOT NULL,
+                kind TEXT NOT NULL,
+                level TEXT NOT NULL,
+                track_id INTEGER NOT NULL,
+                message TEXT NOT NULL,
+                resolved INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER);
             -- P4: per-member embedding LIBRARY. members.embedding stays as the
             -- primary (first) sample; this table holds the additional samples
             -- accumulated over sessions/outfits so matching takes the min
@@ -469,6 +481,64 @@ impl Db {
                 },
             )
             .unwrap_or((0, 0))
+    }
+
+    /// Append an alert (called from push_alert via maybe_save flush).
+    pub fn insert_alert(
+        &self,
+        ts: f64,
+        kind: &str,
+        level: &str,
+        track_id: i64,
+        message: &str,
+    ) -> Result<(), rusqlite::Error> {
+        self.conn.lock().execute(
+            "INSERT INTO alerts_log(ts,kind,level,track_id,message,created_at)
+             VALUES(?1,?2,?3,?4,?5,?6)",
+            params![ts, kind, level, track_id, message, now_secs()],
+        )?;
+        Ok(())
+    }
+
+    /// Newest-first persisted alerts, unresolved first, capped.
+    pub fn list_alerts(&self, limit: i64) -> Vec<serde_json::Value> {
+        self.conn
+            .lock()
+            .prepare(
+                "SELECT id, ts, kind, level, track_id, message, resolved
+                 FROM alerts_log ORDER BY resolved ASC, id DESC LIMIT ?1",
+            )
+            .and_then(|mut stmt| {
+                let rows = stmt.query_map(params![limit], |r| {
+                    Ok(serde_json::json!({
+                        "id": r.get::<_, i64>(0)?,
+                        "ts": r.get::<_, f64>(1)?,
+                        "kind": r.get::<_, String>(2)?,
+                        "level": r.get::<_, String>(3)?,
+                        "track_id": r.get::<_, i64>(4)?,
+                        "message": r.get::<_, String>(5)?,
+                        "resolved": r.get::<_, i64>(6)? != 0,
+                    }))
+                })?;
+                rows.collect::<Result<Vec<_>, _>>()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Mark an alert resolved (acknowledged / false positive).
+    pub fn resolve_alert(&self, id: i64) -> Result<usize, rusqlite::Error> {
+        Ok(self
+            .conn
+            .lock()
+            .execute("UPDATE alerts_log SET resolved=1 WHERE id=?1", params![id])?)
+    }
+
+    /// Prune resolved alerts older than `days`.
+    pub fn prune_alerts(&self, days: i64) {
+        let _ = self.conn.lock().execute(
+            "DELETE FROM alerts_log WHERE resolved=1 AND ts < ?1",
+            params![chrono::Utc::now().timestamp() as f64 - (days * 86400) as f64],
+        );
     }
 
     /// Per-exercise totals for one member since `since`: (exercise, sets,
@@ -913,12 +983,25 @@ impl Db {
     }
 
     pub fn delete_member(&self, id: &str) -> Result<usize, rusqlite::Error> {
-        let conn = self.conn.lock();
+        let mut conn = self.conn.lock();
+        let _ = conn.execute("BEGIN", []);
+        // history stays (traffic analytics), but anonymized: sessions keep
+        // their member_name snapshot, member_id cleared so the report
+        // stops listing the deleted member as a ghost row
+        let _ = conn.execute(
+            "UPDATE sessions SET member_id=NULL WHERE member_id=?1",
+            params![id],
+        );
+        let _ = conn.execute(
+            "UPDATE exercise_usage SET member_id=NULL WHERE member_id=?1",
+            params![id],
+        );
         conn.execute(
             "DELETE FROM member_embeddings WHERE member_id=?1",
             params![id],
         )?;
         let n = conn.execute("DELETE FROM members WHERE id=?1", params![id])?;
+        let _ = conn.execute("COMMIT", []);
         Ok(n)
     }
 }

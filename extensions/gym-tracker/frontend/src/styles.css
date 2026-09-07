@@ -1972,3 +1972,18 @@ button.gym-ov-tg {
 /* equipment bars keep their track (data viz) but the row unboxes */
 .gym-sum-eqrow { padding: 1px 0; }
 /* timeline rows stay (they ARE data) */
+
+/* alerts card: acknowledge + resolved rows */
+.gym-alerts-row.resolved { opacity: .45; }
+.gym-alerts-ack {
+  margin-left: auto; flex-shrink: 0;
+  width: 20px; height: 20px; border-radius: 6px;
+  font-size: 11px; cursor: pointer; line-height: 1;
+  color: var(--muted-foreground, #a1a1aa);
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+}
+.gym-alerts-ack:hover { color: var(--primary, #22c55e); border-color: var(--primary, #22c55e); }
+
+/* empty-state warning tone (config missing, not just no data) */
+.gym-empty-warn { color: var(--color-warning, #f59e0b); }
