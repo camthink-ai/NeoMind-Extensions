@@ -61,7 +61,7 @@ import { GymSelect } from './GymSelect'
 const STYLE_ID = 'gym-monitor-styles-v1'
 
 type Status = 'idle' | 'connecting' | 'streaming' | 'error'
-type EditKind = 'zones' | 'lines' | 'members'
+type EditKind = 'zones' | 'lines' | 'members' | 'exclude'
 
 const KPT_MIN_SCORE = 0.2
 
@@ -366,7 +366,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
   // P4: member being merged — holds the src id while the user picks dst
   const [merging, setMerging] = useState<string | null>(null)
 
-    const [showTrails, setShowTrails] = useState(config?.showTrails !== false)
+    const [showTrails, setShowTrails] = useState(false)
     const [showBoxes, setShowBoxes] = useState(config?.showBoxes !== false)
     const [showPose, setShowPose] = useState(config?.showSkeleton !== false)
     const [showZones, setShowZones] = useState(true)
@@ -1035,29 +1035,36 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         for (const z of zonesRef.current) {
           const poly = z.polygon
           if (!poly || poly.length < 3) continue
-          const count = tracks.filter((t) => inZone(t, poly)).length
-          const occupied = count > 0
-          const editing = modeRef.current === 'edit' && editKindRef.current === 'zones'
+          const isExcl = z.equipment_type === 'exclusion'
+          const count = isExcl ? 0 : tracks.filter((t) => inZone(t, poly)).length
+          const occupied = !isExcl && count > 0
+          const editing =
+            modeRef.current === 'edit' &&
+            (editKindRef.current === 'zones' || editKindRef.current === 'exclude')
 
           ctx.beginPath()
           poly.forEach((p, i) =>
             i === 0 ? ctx.moveTo(X(p[0]), Y(p[1])) : ctx.lineTo(X(p[0]), Y(p[1]))
           )
           ctx.closePath()
-          ctx.fillStyle = occupied
-            ? 'rgba(34, 197, 94, 0.22)'
-            : editing
-              ? 'rgba(148, 163, 184, 0.16)'
-              : 'rgba(148, 163, 184, 0.07)'
+          ctx.fillStyle = isExcl
+            ? 'rgba(239, 68, 68, 0.10)'
+            : occupied
+              ? 'rgba(34, 197, 94, 0.22)'
+              : editing
+                ? 'rgba(148, 163, 184, 0.16)'
+                : 'rgba(148, 163, 184, 0.07)'
           ctx.fill()
           ctx.lineWidth = editing ? 2.5 : 2
           const sel = editing && selZoneRef.current === z.id
-          ctx.strokeStyle = occupied
-            ? 'rgba(34, 197, 94, 0.95)'
-            : sel
-              ? '#3b82f6'
-              : 'rgba(148, 163, 184, 0.7)'
-          if (z.enabled === false || z.enabled === 0) ctx.setLineDash([6, 5])
+          ctx.strokeStyle = isExcl
+            ? 'rgba(239, 68, 68, 0.75)'
+            : occupied
+              ? 'rgba(34, 197, 94, 0.95)'
+              : sel
+                ? '#3b82f6'
+                : 'rgba(148, 163, 184, 0.7)'
+          if (isExcl || z.enabled === false || z.enabled === 0) ctx.setLineDash([6, 5])
           ctx.stroke()
           ctx.setLineDash([])
 
@@ -1461,7 +1468,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         else start({ kind: 'line-move', lineId: hit.line.id, orig: [[...hit.line.a], [...hit.line.b]] as [number[], number[]], nx0: nx, ny0: ny, snap: cloneLines(linesRef.current) })
         return
       }
-      if (editKindRef.current !== 'zones') return
+      if (editKindRef.current !== 'zones' && editKindRef.current !== 'exclude') return
 
       // draft point handles first (they sit on top while drawing)
       const d = draftRef.current
@@ -1567,7 +1574,11 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     }, [])
 
     const onCanvasDblClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (modeRef.current !== 'edit' || editKindRef.current !== 'zones') return
+      if (
+        modeRef.current !== 'edit' ||
+        (editKindRef.current !== 'zones' && editKindRef.current !== 'exclude')
+      )
+        return
       const { cx, cy } = pointerPos(e)
       const hit = hitZoneHandle(cx, cy)
       if (hit?.kind !== 'vertex') return
@@ -1640,12 +1651,13 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
 
     const closeDraft = useCallback(() => {
       if (draft.length < 3) return
+      const excl = editKindRef.current === 'exclude'
       setZones((zs) => [
         ...zs,
         {
           id: crypto.randomUUID(),
-          name: `Zone ${zs.length + 1}`,
-          equipment_type: 'equipment',
+          name: excl ? `无效区 ${zs.filter((z) => z.equipment_type === 'exclusion').length + 1}` : `Zone ${zs.length + 1}`,
+          equipment_type: excl ? 'exclusion' : 'equipment',
           polygon: draft,
           enabled: true,
           isNew: true,
@@ -1875,6 +1887,9 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     }, [sourceUrl, fps, outputWidth])
 
     const dirty = zones.some((z) => z.isNew) || lines.some((l) => l.isNew)
+    // exclusion zones share storage with equipment zones but are filters
+    const eqZones = zones.filter((z) => z.equipment_type === 'exclusion')
+    const opZones = zones.filter((z) => z.equipment_type !== 'exclusion')
     const editing = mode === 'edit'
 
     return (
@@ -1888,11 +1903,9 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
               <span className="gym-ov-flex" />
               {!editing && (
                 <>
-                  {([[ 'trails', showTrails, setShowTrails, '轨迹'],
-                     ['boxes', showBoxes, setShowBoxes, '框'],
+                  {([[ 'boxes', showBoxes, setShowBoxes, '框'],
                      ['pose', showPose, setShowPose, '骨架'],
                      ['zones', showZones, setShowZones, '分区'],
-                     ['heat', showHeatmap, setShowHeatmap, '热力'],
                      ['mosaic', mosaic, setMosaic, '打码']] as const).map(
                     ([key, on, set, label]) => (
                       <button key={key} className={`gym-ov-tg ${on ? 'on' : ''}`}
@@ -1905,15 +1918,15 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
               {editing && (
                 <>
                   <span className="gym-ov-editkind">
-                    {editKind === 'zones' ? '分区管理' : '计数线管理'}
+                    {editKind === 'zones' ? '分区管理' : editKind === 'exclude' ? '无效区管理' : '计数线管理'}
                   </span>
                   <span className="gym-ov-tb-sep" />
                   <button className="gym-ov-tg" onClick={undo}
                     disabled={editKind === 'lines' ? draftLine.length === 0 : draft.length === 0}
                     title="撤销当前草稿的上一个点">撤销</button>
-                  {editKind === 'zones' && (
+                  {(editKind === 'zones' || editKind === 'exclude') && (
                     <button className="gym-ov-tg" onClick={closeDraft} disabled={draft.length < 3}
-                      title="把当前点串闭合为分区">闭合{draft.length}</button>
+                      title="把当前点串闭合为区域">闭合{draft.length}</button>
                   )}
                   <span className="gym-ov-flex" />
                   <button className={`gym-ov-tg ${listOpen ? 'on' : ''}`} onClick={() => setListOpen(!listOpen)}
@@ -1964,9 +1977,11 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
               <div className="gym-ov-edit-tip">
                 {editKind === 'zones'
                   ? '拖顶点调形状 · 拖空心中点加点 · 区内拖动整体移动 · 双击顶点删除 · 点击空白画新分区'
-                  : editKind === 'lines'
-                    ? '拖端点/线身调整 · 点击两点画计数线（a→b 为方向基准，↑=向左穿入）'
-                    : `会员库（${members.length} 人）——点击条目展开编辑，回车保存改名；新人自动录入编号`}
+                  : editKind === 'exclude'
+                    ? '圈出镜子/无人区等无效区域——区域内的检测将被完全忽略（不跟踪、不计数、不入库）'
+                    : editKind === 'lines'
+                      ? '拖端点/线身调整 · 点击两点画计数线（a→b 为方向基准，↑=向左穿入）'
+                      : `会员库（${members.length} 人）——点击条目展开编辑，回车保存改名；新人自动录入编号`}
               </div>
             )}
             {!editing && register && (
@@ -2009,11 +2024,15 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                   onClick={() => { setEditKind('lines'); setDraft([]); setSelZoneId(null); setSelMemberId(null) }}>
                   计数线管理<span className="gym-ov-drawtab-n">{lines.length}</span>
                 </button>
+                <button className={`gym-ov-drawtab ${editKind === 'exclude' ? 'on' : ''}`}
+                  onClick={() => { setEditKind('exclude'); setDraftLine([]); setSelLineId(null); setSelMemberId(null) }}>
+                  无效区<span className="gym-ov-drawtab-n">{zones.filter((z) => z.equipment_type === 'exclusion').length}</span>
+                </button>
               </div>
               {editKind === 'zones'
-                ? (zones.length === 0
+                ? (opZones.length === 0
                     ? [<span key="e" className="gym-ov-zonelist-empty">还没有分区——在画面上点出第一块器械区</span>]
-                    : zones.map((z, i) => (
+                    : opZones.map((z, i) => (
                         <div key={z.id} className="gym-ov-rowwrap">
                           <div
                             className={`gym-ov-zonerow ${selZoneId === z.id ? 'sel' : ''}`}
@@ -2048,7 +2067,31 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                           )}
                         </div>
                       )))
-                : (editKind === 'lines'
+                : (editKind === 'exclude'
+                    ? (eqZones.length === 0
+                        ? [<span key="e" className="gym-ov-zonelist-empty">还没有无效区——圈出镜子/无人区，区域内的检测将被忽略</span>]
+                        : eqZones.map((z, i) => (
+                            <div key={z.id} className="gym-ov-rowwrap">
+                              <div
+                                className={`gym-ov-zonerow ${selZoneId === z.id ? 'sel' : ''}`}
+                                onClick={() => setSelZoneId(selZoneId === z.id ? null : z.id)}>
+                                <span className="gym-ov-zoneidx excl">{i + 1}</span>
+                                <span className="gym-ov-zonename">{z.name || '无效区'}</span>
+                                <span className="gym-ov-typetag">检测忽略</span>
+                              </div>
+                              {selZoneId === z.id && (
+                                <div className="gym-ov-rowins">
+                                  <input className="gym-ov-input name" value={z.name}
+                                    onChange={(e) =>
+                                      setZones((zs) => zs.map((x) => (x.id === z.id ? { ...x, name: e.target.value } : x)))
+                                    } />
+                                  <button className="gym-ov-btn danger"
+                                    onClick={() => { deletedRef.current.zone = true; setZones((zs) => zs.filter((x) => x.id !== z.id)); setSelZoneId(null) }}>删除</button>
+                                </div>
+                              )}
+                            </div>
+                          )))
+                    : (editKind === 'lines'
                     ? (lines.length === 0
                         ? [<span key="e" className="gym-ov-zonelist-empty">还没有计数线——在画面上点两点画出出入口线</span>]
                         : lines.map((l, i) => {
@@ -2128,7 +2171,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                                 </div>
                               )}
                             </div>
-                          ))))}
+                          )))))}
             </div>
           )}
         </div>
