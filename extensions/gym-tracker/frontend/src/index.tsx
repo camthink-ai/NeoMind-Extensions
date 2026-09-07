@@ -21,9 +21,9 @@ import { GymEquipmentRank } from './GymEquipmentRank'
 import { GymMemberReport } from './GymMemberReport'
 import { GymAlerts } from './GymAlerts'
 import { GymDoorFlow } from './GymDoorFlow'
-import { GymActivityMap } from './GymActivityMap'
+import { GymTrailsCard, GymHeatCard } from './GymActivityMap'
 
-export { GymLiveState, GymEquipmentGrid, GymTrafficChart, GymVideoOverlay, GymWorkoutSummary, GymEquipmentRank, GymMemberReport, GymAlerts, GymDoorFlow, GymActivityMap }
+export { GymLiveState, GymEquipmentGrid, GymTrafficChart, GymVideoOverlay, GymWorkoutSummary, GymEquipmentRank, GymMemberReport, GymAlerts, GymDoorFlow, GymTrailsCard, GymHeatCard }
 export type { ExtensionComponentProps, DataSource } from './common'
 
-export default { GymLiveState, GymEquipmentGrid, GymTrafficChart, GymVideoOverlay, GymWorkoutSummary, GymEquipmentRank, GymMemberReport, GymAlerts, GymDoorFlow, GymActivityMap }
+export default { GymLiveState, GymEquipmentGrid, GymTrafficChart, GymVideoOverlay, GymWorkoutSummary, GymEquipmentRank, GymMemberReport, GymAlerts, GymDoorFlow, GymTrailsCard, GymHeatCard }
