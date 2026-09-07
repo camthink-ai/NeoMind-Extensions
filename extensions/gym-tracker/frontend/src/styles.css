@@ -1933,3 +1933,12 @@ button.gym-ov-tg {
   padding-bottom: 10px; margin-bottom: 4px;
   border-bottom: 1px solid var(--border, #232323);
 }
+
+/* exercise icon inline with labels */
+.gym-report-exicon {
+  display: inline-flex; align-items: center; margin-right: 6px;
+  color: var(--muted-foreground, #a1a1aa);
+}
+.gym-report-exicon svg { width: 14px; height: 14px; }
+.gym-report-exrow { align-items: center; }
+.gym-history-ex { display: inline-flex; align-items: center; }

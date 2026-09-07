@@ -24,6 +24,7 @@ import { GymSelect } from './GymSelect'
 import { useLang, translator } from './i18n'
 import { GymModal } from './GymDrawer'
 import STYLES from './styles.css?raw'
+import { exIcon } from './ExerciseIcons'
 
 const STYLE_ID = 'gym-report-styles-v1'
 
@@ -219,8 +220,10 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
               <div className="gym-report-exlist">
                 {det.exercises.map((e) => {
                   const maxSec = Math.max(1, ...det.exercises.map((x) => x.duration_sec))
+                  const ExIcon = exIcon(e.exercise)
                   return (
                     <div key={e.exercise} className="gym-report-exrow">
+                      <span className="gym-report-exicon"><ExIcon /></span>
                       <span className="gym-report-exname">{exName(e.exercise)}</span>
                       <div className="gym-report-exbar">
                         <div className="gym-report-exbar-fill" style={{ width: `${Math.max(3, (e.duration_sec / maxSec) * 100)}%` }} />
@@ -280,14 +283,20 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
                           {t('historySum', { m: rows.length })}{reps > 0 ? ` · ${t('timesShort', { n: reps })}` : ''} · {fmtDur(secs)}
                         </span>
                       </div>
-                      {rows.map((r, i) => (
-                        <div key={i} className="gym-history-line">
-                          <span className="gym-history-ex">{exName(r.exercise)}</span>
-                          <span className="gym-history-meta">
-                            {r.reps > 0 ? t('setsReps', { s: r.sets, r: r.reps }) + ' · ' : ''}{fmtDur(r.duration_sec)}
-                          </span>
-                        </div>
-                      ))}
+                      {rows.map((r, i) => {
+                        const HIcon = exIcon(r.exercise)
+                        return (
+                          <div key={i} className="gym-history-line">
+                            <span className="gym-history-ex">
+                              <span className="gym-report-exicon"><HIcon /></span>
+                              {exName(r.exercise)}
+                            </span>
+                            <span className="gym-history-meta">
+                              {r.reps > 0 ? t('setsReps', { s: r.sets, r: r.reps }) + ' · ' : ''}{fmtDur(r.duration_sec)}
+                            </span>
+                          </div>
+                        )
+                      })}
                     </div>
                   )
                 })
