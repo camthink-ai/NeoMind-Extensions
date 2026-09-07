@@ -1441,3 +1441,9 @@
   background: var(--accent, rgba(255, 255, 255, .08));
   color: var(--muted-foreground, #a1a1aa);
 }
+
+/* ---- edit toolbar: grouped layout ---- */
+.gym-ov-tb-sep {
+  width: 1px; height: 14px; margin: 0 4px; flex-shrink: 0;
+  background: var(--border, #2e2e34);
+}
