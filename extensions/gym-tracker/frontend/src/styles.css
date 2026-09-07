@@ -1687,3 +1687,33 @@ button.gym-ov-tg {
 
 /* session chips: slimmer, calmer */
 .gym-sum-session { padding: 4px 8px; margin-bottom: 3px; }
+
+/* ---- 进出场: butterfly layout — in/out oppose from a center axis ---- */
+.gym-door-hist { gap: 3px; }
+.gym-door-hist-head {
+  display: grid; grid-template-columns: 1fr 64px 1fr; gap: 6px;
+  font-size: 10.5px; color: var(--muted-foreground, #a1a1aa);
+  padding: 0 2px 2px;
+}
+.gym-door-hist-head .out { text-align: right; color: #f87171; }
+.gym-door-hist-head .in { text-align: left; color: #4ade80; }
+.gym-door-hist-head .gym-door-hist-mid { text-align: center; }
+.gym-door-hist-row {
+  display: grid; grid-template-columns: 1fr 64px 1fr; gap: 6px;
+  align-items: center; min-height: 20px;
+}
+.gym-door-hist-row .gym-door-hist-mid {
+  font-size: 10.5px; color: var(--muted-foreground, #a1a1aa);
+  text-align: center; white-space: nowrap;
+}
+.gym-door-cell { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.gym-door-cell.out { justify-content: flex-end; flex-direction: row-reverse; }
+.gym-door-cell-v {
+  font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums;
+  color: var(--foreground, #fafafa); min-width: 16px;
+}
+.gym-door-cell.out .gym-door-cell-v { text-align: right; }
+.gym-door-cell.in .gym-door-cell-v { text-align: left; }
+.gym-door-cellbar { height: 12px; border-radius: 3px; min-width: 2px; }
+.gym-door-cellbar.in { background: #4ade80; }
+.gym-door-cellbar.out { background: #f87171; }

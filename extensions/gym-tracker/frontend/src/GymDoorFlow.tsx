@@ -134,18 +134,31 @@ export const GymDoorFlow = forwardRef<HTMLDivElement, ExtensionComponentProps>(
 
             {rows.length > 0 && (
               <div className="gym-door-hist">
+                <div className="gym-door-hist-head">
+                  <span className="gym-door-hist-side out">出场 ↓</span>
+                  <span className="gym-door-hist-mid">日期</span>
+                  <span className="gym-door-hist-side in">进场 ↑</span>
+                </div>
                 {rows.map((r) => (
                   <div key={r.day} className="gym-door-hist-row">
-                    <span className="gym-door-hist-day" title={ceDayLabel(r.day)}>
-                      {ceDayLabel(r.day)}
+                    <div className="gym-door-cell out">
+                      <span className="gym-door-cell-v">{r.out > 0 ? r.out : ''}</span>
+                      <div
+                        className="gym-door-cellbar out"
+                        style={{ width: `${(r.out / maxInOut) * 100}%` }}
+                        title={`出场 ${r.out}`}
+                      />
+                    </div>
+                    <span className="gym-door-hist-mid" title={ceDayLabel(r.day)}>
+                      {ceDayLabel(r.day).replace(' 周', '')}
                     </span>
-                    <div className="gym-door-hist-bars">
-                      <div className="gym-door-bar in" style={{ width: `${(r.in / maxInOut) * 100}%` }}>
-                        {r.in > 0 && <span>{r.in}</span>}
-                      </div>
-                      <div className="gym-door-bar out" style={{ width: `${(r.out / maxInOut) * 100}%` }}>
-                        {r.out > 0 && <span>{r.out}</span>}
-                      </div>
+                    <div className="gym-door-cell in">
+                      <div
+                        className="gym-door-cellbar in"
+                        style={{ width: `${(r.in / maxInOut) * 100}%` }}
+                        title={`进场 ${r.in}`}
+                      />
+                      <span className="gym-door-cell-v">{r.in > 0 ? r.in : ''}</span>
                     </div>
                   </div>
                 ))}
