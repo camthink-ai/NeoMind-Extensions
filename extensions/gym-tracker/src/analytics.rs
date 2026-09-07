@@ -34,6 +34,10 @@ const HEATMAP_COLS: usize = 64;
 const HEATMAP_ROWS: usize = 36;
 /// Persist the heatmap after at least this many dirty frames.
 const HEATMAP_SAVE_EVERY: u64 = 250;
+/// One foot_log sample per track per this many seconds (query grain).
+const FOOT_SAMPLE_SEC: u64 = 2;
+/// foot_log retention window.
+pub const FOOT_LOG_RETAIN_SEC: i64 = 24 * 3600;
 /// Re-arm distance for crossing hysteresis, in normalized units.
 const CROSS_REARM_DIST: f32 = 0.02;
 
@@ -88,6 +92,10 @@ struct Inner {
     lying: HashMap<i64, (f64, bool)>,
     /// per-(track,zone) long-occupancy alerted flag
     long_occ: HashMap<(i64, String), bool>,
+    /// Pending foot_log samples (ts, track_id, x, y) awaiting the poll
+    /// flush; throttled to one per track per FOOT_SAMPLE_SEC.
+    pending_feet: Vec<(i64, i64, f32, f32)>,
+    feet_last: HashMap<i64, u64>,
 }
 
 /// A safety/ops alert pushed to the Gym·Alerts card.
@@ -155,6 +163,8 @@ impl Analytics {
                 alerts: Default::default(),
                 lying: Default::default(),
                 long_occ: Default::default(),
+                pending_feet: Default::default(),
+                feet_last: Default::default(),
             }),
             dirty_frames: AtomicU64::new(0),
             dirty_crossings: AtomicBool::new(false),
@@ -245,6 +255,18 @@ impl Analytics {
             let col = (fx.clamp(0.0, 0.999) * HEATMAP_COLS as f32) as usize;
             let row = (fy.clamp(0.0, 0.999) * HEATMAP_ROWS as f32) as usize;
             g.heat[row * HEATMAP_COLS + col] += 1;
+
+            // time-series foot sample (throttled) for window queries
+            let last = g.feet_last.get(&t.track_id).copied().unwrap_or(0);
+            if f.ts_ns.saturating_sub(last) >= FOOT_SAMPLE_SEC * 1_000_000_000 {
+                g.feet_last.insert(t.track_id, f.ts_ns);
+                g.pending_feet.push((
+                    (f.ts_ns / 1_000_000_000) as i64,
+                    t.track_id,
+                    fx,
+                    fy,
+                ));
+            }
         }
 
         // reap stale trails (frame timestamps are unix nanoseconds)
@@ -262,6 +284,16 @@ impl Analytics {
     /// dirty crossing counters (they flip rarely — always worth a write).
     /// Called opportunistically from the command path (polls are frequent).
     pub fn maybe_save(&self, db: &Db) {
+        // foot samples ride every flush (poll cadence); prune old rows
+        // opportunistically — the DELETE is indexed and cheap.
+        {
+            let mut g = self.inner.lock();
+            if !g.pending_feet.is_empty() {
+                db.insert_foot_log(&g.pending_feet);
+                g.pending_feet.clear();
+            }
+        }
+        db.prune_foot_log(chrono::Utc::now().timestamp() - FOOT_LOG_RETAIN_SEC);
         if self.dirty_crossings.swap(false, Ordering::Relaxed) {
             let g = self.inner.lock();
             for ls in g.lines.iter() {

@@ -1486,3 +1486,10 @@ button.gym-ov-tg {
 }
 .gym-activity-trailhint { margin-left: auto; color: #60a5fa; }
 .gym-ov-zoneidx.excl { background: rgba(239, 68, 68, .18); color: #f87171; }
+
+/* ---- activity cards: timeline bar ---- */
+.gym-timebar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.gym-timebar-spans { display: flex; gap: 4px; }
+.gym-timebar-slider { flex: 1; min-width: 80px; accent-color: var(--primary, #22c55e); height: 20px; }
+.gym-timebar-label { font-size: 11px; color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gym-timebar-label em { font-style: normal; color: var(--muted-foreground, #a1a1aa); margin-left: 6px; }

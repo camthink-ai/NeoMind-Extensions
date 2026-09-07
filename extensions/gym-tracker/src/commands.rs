@@ -487,6 +487,30 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
         }
         // ---- P1: heatmap ----
         "get_heatmap" => Ok(ctx.analytics.get_heatmap()),
+        // ---- time-range activity query (trails + heatmap over a window) ----
+        "get_activity_window" => {
+            let end = args["end"].as_i64().unwrap_or_else(|| chrono::Utc::now().timestamp());
+            let span = args["span_sec"].as_i64().unwrap_or(3600).clamp(60, 24 * 3600);
+            let start = args["start"]
+                .as_i64()
+                .unwrap_or_else(|| end.saturating_sub(span));
+            let grid = ctx.db.activity_grid(start, end);
+            let trails = ctx.db.activity_trails(start, end, 20000);
+            let samples: i64 = ctx
+                .db
+                .activity_trails_count(start, end);
+            Ok(json!({
+                "start": start, "end": end,
+                "cols": 64, "rows": 36,
+                "grid": grid,
+                "samples": samples,
+                "tracks": trails.len(),
+                "trails": trails.iter().map(|(tid, pts)| json!({
+                    "track_id": tid,
+                    "pts": pts.iter().map(|(x, y)| json!({"x": x, "y": y})).collect::<Vec<_>>(),
+                })).collect::<Vec<_>>(),
+            }))
+        }
         // ---- per-member workout detail (exercises / zones / sessions) ----
         "get_member_workout_detail" => {
             let id = args["member_id"].as_str().ok_or("get_member_workout_detail: missing member_id")?;

@@ -134,6 +134,7 @@ impl Extension for GymTrackerExtension {
             cmd("get_heatmap", "Foot-position heatmap grid (today)"),
             cmd("get_workout_summary", "Sessions + equipment usage + reps (today or per member)"),
             cmd("get_member_workout_detail", "Per-member exercises/sets/reps/zones/sessions over N days"),
+            cmd("get_activity_window", "Trails + heatmap over an arbitrary time window (24h log)"),
             cmd("register_member", "Register a live track's embedding as a named member"),
             cmd("list_members", "List registered members"),
             cmd("rename_member", "Fill in / correct a member's name"),
@@ -326,52 +327,102 @@ impl Extension for GymTrackerExtension {
         let sid = session_id.to_string();
         std::thread::spawn(move || {
             let mut seq: u64 = 0;
+            // per-session cursor into the SHARED h264 queue: every session
+            // replays the full stream (see LiveState::h264_since)
+            let mut h264_cursor: u64 = 0;
+            let mut last_jpeg_ts: Option<u64> = None;
             while flag.load(std::sync::atomic::Ordering::SeqCst) {
-                // wake on every incoming preview frame (display rate);
-                // 120 ms timeout keeps a heartbeat when idle
-                let Some((ts_ns, img)) = state.wait_preview(std::time::Duration::from_millis(120))
-                else {
-                    continue;
-                };
+                // Wake on EITHER stream (shared condvar); the timeout is the
+                // idle heartbeat. Do NOT gate on the return value: with the
+                // JPEG fallback suppressed (H.264 healthy) the JPEG cache is
+                // legitimately None forever, and treating that as "nothing
+                // to do" deadlocked the push loop (0 frames, session alive).
+                let _ = state.wait_preview(std::time::Duration::from_millis(120));
                 // evict departed tracks BEFORE snapshotting — otherwise a
                 // person who left lingers in every pushed frame until the
                 // (much slower) REST poll happens to evict, and the Monitor
                 // draws a frozen box for seconds after they're gone
                 let _ = state.evict_expired();
-                let faces = state.snapshot_faces().unwrap_or_default();
-                let tracks = state.snapshot_tracks();
-                let tracks_ts = state.snapshot_tracks_ts();
-                seq += 1;
-                // Binary container `[u32 meta_len BE][meta JSON][JPEG bytes]`
-                // (data_type `application/x-neomind-frame`). On binary-
-                // negotiated sessions the JPEG reaches the browser as raw
-                // bytes — no base64 on either leg. Legacy Text sessions get
-                // this same payload base64-wrapped by the platform; the
-                // Monitor's parser handles both shapes.
-                let meta = serde_json::json!({
-                    // latest tracks at the device clock — the client
-                    // builds its own ts-keyed history from the stream
-                    // (sending the full hist per frame doubled the
-                    // parse cost and stalled the browser at 23 fps)
-                    "tracks": tracks,
-                    "ts_ns": ts_ns,
-                    // TRUE capture time of those track positions — the
-                    // client keys its overlay history by this, not by
-                    // the preview ts (which is one inference-latency ahead)
-                    "tracks_ts": tracks_ts,
-                    "faces": faces,
-                    "present_count": tracks.len(),
-                });
-                let m = PushOutputMessage {
-                    session_id: sid.clone(),
-                    sequence: seq,
-                    data: frame::build_frame_payload(&meta, &img),
-                    data_type: frame::FRAME_DATA_TYPE.to_string(),
-                    timestamp: now_ms(),
-                    metadata: None,
-                };
-                if send_push_output(&m).is_err() {
-                    break; // channel gone — session ended
+
+                // ---- H.264 relay (primary video, zero-CPU on device) ----
+                // PER-SESSION replay from the shared queue — H.264 is
+                // differential; every session must see the FULL stream
+                // (drain semantics split it across concurrent sessions).
+                for s in state.h264_since(h264_cursor) {
+                    h264_cursor = s.seq;
+                    state::push_diag().pushed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let tracks = state.snapshot_tracks();
+                        let meta = serde_json::json!({
+                            "ts_ns": s.ts_ns,
+                            "pts_ns": s.pts_ns,
+                            "key": s.key,
+                            // relay-side sequence (0 when producer omits it) —
+                            // lets the Monitor correlate end-to-end loss
+                            "h264_seq": s.seq,
+                            "w": s.w,
+                            "h": s.h,
+                            // track bundle rides at the relay rate so the
+                            // Monitor's history keeps its cadence even with
+                            // the JPEG fallback slowed to ~2 Hz
+                            "tracks": tracks,
+                            "tracks_ts": state.snapshot_tracks_ts(),
+                            "faces": state.snapshot_faces().unwrap_or_default(),
+                            "present_count": tracks.len(),
+                        });
+                        seq += 1;
+                        let m = PushOutputMessage {
+                            session_id: sid.clone(),
+                            sequence: seq,
+                            data: frame::build_frame_payload(&meta, &s.nalu),
+                            data_type: frame::AVC_DATA_TYPE.to_string(),
+                            timestamp: now_ms(),
+                            metadata: None,
+                        };
+                    if send_push_output(&m).is_err() {
+                        break; // channel gone — session ended
+                    }
+                }
+
+                // ---- JPEG fallback (compat; low rate) ----
+                if let Some((jts, jimg)) = state.snapshot_preview() {
+                    if last_jpeg_ts != Some(jts) {
+                        last_jpeg_ts = Some(jts);
+                        let faces = state.snapshot_faces().unwrap_or_default();
+                        let tracks = state.snapshot_tracks();
+                        let tracks_ts = state.snapshot_tracks_ts();
+                        // Binary container `[u32 meta_len BE][meta JSON][JPEG bytes]`
+                        // (data_type `application/x-neomind-frame`). On binary-
+                        // negotiated sessions the JPEG reaches the browser as raw
+                        // bytes — no base64 on either leg. Legacy Text sessions get
+                        // this same payload base64-wrapped by the platform; the
+                        // Monitor's parser handles both shapes.
+                        let meta = serde_json::json!({
+                            // latest tracks at the device clock — the client
+                            // builds its own ts-keyed history from the stream
+                            // (sending the full hist per frame doubled the
+                            // parse cost and stalled the browser at 23 fps)
+                            "tracks": tracks,
+                            "ts_ns": jts,
+                            // TRUE capture time of those track positions — the
+                            // client keys its overlay history by this, not by
+                            // the preview ts (which is one inference-latency ahead)
+                            "tracks_ts": tracks_ts,
+                            "faces": faces,
+                            "present_count": tracks.len(),
+                        });
+                        seq += 1;
+                        let m = PushOutputMessage {
+                            session_id: sid.clone(),
+                            sequence: seq,
+                            data: frame::build_frame_payload(&meta, &jimg),
+                            data_type: frame::FRAME_DATA_TYPE.to_string(),
+                            timestamp: now_ms(),
+                            metadata: None,
+                        };
+                        if send_push_output(&m).is_err() {
+                            break; // channel gone — session ended
+                        }
+                    }
                 }
             }
         });

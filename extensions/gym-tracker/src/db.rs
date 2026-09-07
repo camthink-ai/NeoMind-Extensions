@@ -72,6 +72,14 @@ impl Db {
             -- Per-line daily crossing counters. The in-memory counters reset
             -- on every extension reload/restart — without this table each
             -- deploy wipes the day's in/out tally mid-shift.
+            -- Timestamped foot samples (2 s per track) powering the
+            -- trails/heatmap TIME-RANGE queries; pruned past 24 h.
+            CREATE TABLE IF NOT EXISTS foot_log (
+                ts INTEGER NOT NULL,
+                track_id INTEGER NOT NULL,
+                x REAL NOT NULL,
+                y REAL NOT NULL);
+            CREATE INDEX IF NOT EXISTS idx_foot_log_ts ON foot_log(ts);
             CREATE TABLE IF NOT EXISTS crossing_day (
                 line_id TEXT NOT NULL, day INTEGER NOT NULL,
                 in_count INTEGER NOT NULL DEFAULT 0, out_count INTEGER NOT NULL DEFAULT 0,
@@ -415,6 +423,109 @@ impl Db {
             ))
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Batch-insert foot samples (ts unix seconds).
+    pub fn insert_foot_log(&self, rows: &[(i64, i64, f32, f32)]) {
+        if rows.is_empty() {
+            return;
+        }
+        let mut conn = self.conn.lock();
+        let _ = conn.execute("BEGIN", []);
+        let mut stmt = match conn
+            .prepare("INSERT INTO foot_log(ts,track_id,x,y) VALUES(?1,?2,?3,?4)")
+        {
+            Ok(s) => s,
+            Err(_) => {
+                let _ = conn.execute("ROLLBACK", []);
+                return;
+            }
+        };
+        for (ts, tid, x, y) in rows {
+            let _ = stmt.execute(params![ts, tid, x, y]);
+        }
+        drop(stmt);
+        let _ = conn.execute("COMMIT", []);
+    }
+
+    /// Drop samples older than `before` (unix seconds).
+    pub fn prune_foot_log(&self, before: i64) {
+        let _ = self
+            .conn
+            .lock()
+            .execute("DELETE FROM foot_log WHERE ts < ?1", params![before]);
+    }
+
+    /// 64×36 heatmap grid aggregated over [start, end] (unix seconds).
+    pub fn activity_grid(&self, start: i64, end: i64) -> Vec<u32> {
+        const COLS: i64 = 64;
+        const ROWS: i64 = 36;
+        let mut grid = vec![0u32; (COLS * ROWS) as usize];
+        let ok = self
+            .conn
+            .lock()
+            .prepare(
+                "SELECT (CAST(MIN(x, 0.9999) * 64 AS INTEGER))
+                       + (CAST(MIN(y, 0.9999) * 36 AS INTEGER)) * 64 AS b,
+                        COUNT(*)
+                 FROM foot_log WHERE ts BETWEEN ?1 AND ?2 GROUP BY b",
+            )
+            .and_then(|mut stmt| {
+                let rows = stmt.query_map(params![start, end], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)? as u32))
+                })?;
+                for row in rows.flatten() {
+                    let (b, n) = row;
+                    if (0 as usize) <= (b as usize) && (b as usize) < grid.len() {
+                        grid[b as usize] = n;
+                    }
+                }
+                Ok(())
+            });
+        match ok {
+            Ok(()) => grid,
+            Err(_) => grid,
+        }
+    }
+
+    /// Row count over the window (for the UI's sample badge).
+    pub fn activity_trails_count(&self, start: i64, end: i64) -> i64 {
+        self.conn
+            .lock()
+            .query_row(
+                "SELECT COUNT(*) FROM foot_log WHERE ts BETWEEN ?1 AND ?2",
+                params![start, end],
+                |r| r.get(0),
+            )
+            .unwrap_or(0)
+    }
+
+    /// Per-track polylines over [start, end], oldest first, capped.
+    pub fn activity_trails(
+        &self,
+        start: i64,
+        end: i64,
+        cap: usize,
+    ) -> Vec<(i64, Vec<(f32, f32)>)> {
+        use std::collections::BTreeMap;
+        let mut by_track: BTreeMap<i64, Vec<(f32, f32)>> = BTreeMap::new();
+        let _ = self
+            .conn
+            .lock()
+            .prepare(
+                "SELECT track_id, x, y FROM foot_log
+                 WHERE ts BETWEEN ?1 AND ?2 ORDER BY ts ASC LIMIT ?3",
+            )
+            .and_then(|mut stmt| {
+                let rows = stmt.query_map(params![start, end, cap as i64], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, f32>(1)?, r.get::<_, f32>(2)?))
+                })?;
+                for (tid, x, y) in rows.flatten() {
+                    by_track.entry(tid).or_default().push((x, y));
+                }
+                Ok(())
+            });
+        by_track.into_iter().collect()
     }
 
     /// Upsert one (session × exercise) accumulation row.

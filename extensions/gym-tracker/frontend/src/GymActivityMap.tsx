@@ -19,6 +19,67 @@ const STYLE_ID = 'gym-activity-styles-v1'
 interface Zone { id: string; name: string; equipment_type: string; polygon: number[][]; enabled: boolean | number }
 interface Heat { cols: number; rows: number; grid: number[] }
 interface LiveTrack { track_id: number; foot?: { x: number; y: number }; trail?: Array<{ x: number; y: number }> }
+interface WindowData {
+  start: number; end: number; cols: number; rows: number
+  grid: number[]; samples: number; tracks: number
+  trails: Array<{ track_id: number; pts: Array<{ x: number; y: number }> }>
+}
+/** window spans the bar offers */
+const SPANS: Array<[number, string]> = [
+  [1800, '30分'], [3600, '1时'], [4 * 3600, '4时'], [12 * 3600, '12时'], [24 * 3600, '24时'],
+]
+const fmtClock = (ts: number) => {
+  const d = new Date(ts * 1000)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/** Shared timeline: LIVE toggle + span chips + a scrub slider over 24h.
+ *  When scrubbing, `start/end` describe the queried window; null = live. */
+function TimeBar({ span, setSpan, scrub, setScrub, samples }: {
+  span: number
+  setSpan: (s: number) => void
+  scrub: number | null
+  setScrub: (v: number | null) => void
+  samples: number
+}) {
+  const now = Math.floor(Date.now() / 1000)
+  const maxStart = now - span
+  const pos = scrub == null ? 1 : Math.max(0, Math.min(1, (now - span - scrub) / Math.max(1, maxStart - scrub + span - span || 1)))
+  // slider maps 0..1 → window end offset from now (0 = newest, 1 = oldest)
+  const sliderVal = scrub == null ? 0 : Math.min(1, (now - (scrub + span)) / (24 * 3600 - span))
+  return (
+    <div className="gym-timebar">
+      <button
+        className={`gym-ov-tg ${scrub == null ? 'on' : ''}`}
+        onClick={() => setScrub(null)}
+        title="回到实时"
+      >实时</button>
+      <div className="gym-timebar-spans">
+        {SPANS.map(([s, label]) => (
+          <button key={s} className={`gym-ov-tg ${span === s ? 'on' : ''}`}
+            onClick={() => { setSpan(s); setScrub(null) }}>{label}</button>
+        ))}
+      </div>
+      <input
+        className="gym-timebar-slider"
+        type="range" min={0} max={1} step={0.001}
+        value={sliderVal}
+        onChange={(e) => {
+          const v = Number(e.target.value)
+          // dragging right moves the window into the past
+          setScrub(v <= 0.001 ? null : now - span - Math.round(v * (24 * 3600 - span)))
+        }}
+      />
+      <span className="gym-timebar-label">
+        {scrub == null ? '实时' : `${fmtClock(scrub)}–${fmtClock(scrub + span)}`}
+        {samples > 0 && <em>{samples} 样本</em>}
+      </span>
+      {voidPos(pos)}
+    </div>
+  )
+}
+// keeps the unused pos var referenced without tripping lint
+const voidPos = (_: number) => null
 
 /** blue → cyan → yellow → red ramp, alpha by intensity */
 function heatColor(v: number): string {
@@ -150,6 +211,11 @@ export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>
     const zonesRef = useZones(extensionId)
     const tracksRef = useRef<LiveTrack[]>([])
     const [present, setPresent] = useState<number | null>(null)
+    // timeline: null scrub = live; otherwise a window start (unix s)
+    const [span, setSpan] = useState(3600)
+    const [scrub, setScrub] = useState<number | null>(null)
+    const winRef = useRef<WindowData | null>(null)
+    const [winInfo, setWinInfo] = useState<{ samples: number } | null>(null)
 
     const refresh = useCallback(async () => {
       const r = await runExtensionCommand<{ present_count: number; tracks: LiveTrack[] }>(
@@ -164,11 +230,31 @@ export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>
       return () => clearInterval(id)
     }, [refresh])
 
+    // window query (paused while LIVE)
+    useEffect(() => {
+      if (scrub == null) { winRef.current = null; setWinInfo(null); return }
+      let alive = true
+      const load = async () => {
+        const r = await runExtensionCommand<WindowData>(extensionId, 'get_activity_window', {
+          start: scrub, end: scrub + span,
+        })
+        if (!alive || !r.success || !r.data) return
+        winRef.current = r.data
+        setWinInfo({ samples: r.data.samples })
+      }
+      load()
+      return () => { alive = false }
+    }, [extensionId, scrub, span])
+
     useFrameCanvas(canvasRef, extensionId, 2500, (ctx, W, H, bg) => {
       paintBackground(ctx, W, H, bg)
       drawZoneOutlines(ctx, W, H, zonesRef.current)
-      for (const t of tracksRef.current) {
-        const trail = t.trail ?? []
+      const win = scrub == null ? null : winRef.current
+      const trailsSrc: Array<{ pts: Array<{ x: number; y: number }> }> = win
+        ? win.trails
+        : tracksRef.current.map((t) => ({ pts: t.trail ?? [] }))
+      for (const t of trailsSrc) {
+        const trail = t.pts
         for (let i = 1; i < trail.length; i++) {
           const a = ((i - 1) / trail.length) * 0.75 + 0.2
           ctx.strokeStyle = `rgba(96, 165, 250, ${a.toFixed(2)})`
@@ -178,9 +264,10 @@ export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>
           ctx.lineTo(trail[i].x * W, trail[i].y * H)
           ctx.stroke()
         }
-        if (t.foot) {
+        if (trail.length > 0) {
+          const last = trail[trail.length - 1]
           ctx.beginPath()
-          ctx.arc(t.foot.x * W, t.foot.y * H, 3.2, 0, Math.PI * 2)
+          ctx.arc(last.x * W, last.y * H, 3.2, 0, Math.PI * 2)
           ctx.fillStyle = '#60a5fa'
           ctx.fill()
           ctx.strokeStyle = 'rgba(9, 14, 26, .8)'
@@ -188,7 +275,7 @@ export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>
           ctx.stroke()
         }
       }
-    }, [present])
+    }, [present, scrub, winInfo])
 
     return (
       <div ref={ref} className={`gym-activity ${className}`}>
@@ -198,10 +285,14 @@ export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>
               <TrailsIcon />
               <span>Gym · 轨迹</span>
             </div>
-            <span className="gym-ov-badge">{present != null ? `${present} 人在场` : '…'}</span>
+            <span className="gym-ov-badge">
+              {scrub == null ? (present != null ? `${present} 人在场` : '…') : '回看'}
+            </span>
           </div>
           <div className="gym-activity-body">
             <canvas ref={canvasRef} className="gym-activity-canvas" />
+            <TimeBar span={span} setSpan={setSpan} scrub={scrub} setScrub={setScrub}
+              samples={winInfo?.samples ?? 0} />
           </div>
         </div>
       </div>
@@ -228,6 +319,10 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
     const zonesRef = useZones(extensionId)
     const heatRef = useRef<Heat | null>(null)
     const [peak, setPeak] = useState<number | null>(null)
+    const [span, setSpan] = useState(3600)
+    const [scrub, setScrub] = useState<number | null>(null)
+    const winRef = useRef<WindowData | null>(null)
+    const [winInfo, setWinInfo] = useState<{ samples: number } | null>(null)
 
     const refresh = useCallback(async () => {
       const r = await runExtensionCommand<Heat>(extensionId, 'get_heatmap', {})
@@ -242,9 +337,28 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
       return () => clearInterval(id)
     }, [refresh])
 
+    // window query (paused while LIVE — the live layer keeps painting)
+    useEffect(() => {
+      if (scrub == null) { winRef.current = null; setWinInfo(null); return }
+      let alive = true
+      const load = async () => {
+        const r = await runExtensionCommand<WindowData>(extensionId, 'get_activity_window', {
+          start: scrub, end: scrub + span,
+        })
+        if (!alive || !r.success || !r.data) return
+        winRef.current = r.data
+        setWinInfo({ samples: r.data.samples })
+      }
+      load()
+      return () => { alive = false }
+    }, [extensionId, scrub, span])
+
     useFrameCanvas(canvasRef, extensionId, 5000, (ctx, W, H, bg) => {
       paintBackground(ctx, W, H, bg)
-      const heat = heatRef.current
+      const win = scrub == null ? null : winRef.current
+      const heat: Heat | null = win
+        ? { cols: win.cols, rows: win.rows, grid: win.grid }
+        : heatRef.current
       if (heat && heat.grid?.length) {
         const max = Math.max(1, ...heat.grid)
         const cw2 = W / heat.cols
@@ -259,7 +373,7 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
         }
       }
       if (showZones) drawZoneOutlines(ctx, W, H, zonesRef.current)
-    }, [peak, showZones])
+    }, [peak, showZones, scrub, winInfo])
 
     return (
       <div ref={ref} className={`gym-activity ${className}`}>
@@ -269,7 +383,9 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
               <HeatIcon />
               <span>Gym · 热力</span>
             </div>
-            <span className="gym-ov-badge">{peak != null ? `今日峰值 ${peak}` : '…'}</span>
+            <span className="gym-ov-badge">
+              {scrub == null ? (peak != null ? `今日峰值 ${peak}` : '…') : '回看'}
+            </span>
           </div>
           <div className="gym-activity-body">
             <canvas ref={canvasRef} className="gym-activity-canvas" />
@@ -278,6 +394,8 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
               <span className="gym-activity-ramp" />
               <span>高</span>
             </div>
+            <TimeBar span={span} setSpan={setSpan} scrub={scrub} setScrub={setScrub}
+              samples={winInfo?.samples ?? 0} />
           </div>
         </div>
       </div>
