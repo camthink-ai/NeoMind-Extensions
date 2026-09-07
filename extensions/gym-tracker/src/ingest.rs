@@ -428,11 +428,13 @@ async fn connect_and_drain(
                                 f
                             };
                             // exclusion areas are filters, never equipment
+                            let excl_owned: Vec<crate::db::Zone> =
+                                excl.iter().map(|z| (*z).clone()).collect();
                             let active: Vec<crate::db::Zone> = zones
                                 .into_iter()
                                 .filter(|z| z.equipment_type != "exclusion")
                                 .collect();
-                            state.apply_frame(&frame);
+                            state.apply_frame_filtered(&frame, &excl_owned);
                             analytics.on_frame(&frame);
                             analytics.on_workout_frame(
                                 &frame, &active, &members, &cfg.identity,

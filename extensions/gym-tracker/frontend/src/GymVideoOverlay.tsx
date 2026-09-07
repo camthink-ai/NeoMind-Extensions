@@ -1286,9 +1286,28 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       // with smoothing off. Runs right after the video layer so every
       // analytics layer (zones/lines/skeletons) renders on top of it.
       const faces = state?.faces ?? []
+      // faces inside 无效区 (mirrors) are reflections, not people — skip
+      // the mosaic there too, same rule the ingest filter uses (foot of
+      // the face box first, box center as fallback)
+      const exclusionZones =
+        modeRef.current !== 'edit'
+          ? zonesRef.current.filter(
+              (z) => z.equipment_type === 'exclusion' && z.polygon && z.polygon.length >= 3
+            )
+          : [] // editor shows raw detections inside exclusion zones
+      const inExclusion = (x: number, y: number) =>
+        exclusionZones.some((z) => pointInPolygon(x, y, z.polygon))
       if (show.mosaic && faces.length > 0) {
         for (const f of faces) {
           if (!f.bbox) continue
+          const fb = f.bbox
+          if (
+            exclusionZones.length > 0 &&
+            (inExclusion(fb.x + fb.w / 2, fb.y + fb.h / 2) ||
+              inExclusion(fb.x + fb.w / 2, fb.y + fb.h * 0.85))
+          ) {
+            continue
+          }
           const pad = MOSAIC_PAD
           const fx = X(Math.max(0, f.bbox.x - f.bbox.w * pad))
           const fy = Y(Math.max(0, f.bbox.y - f.bbox.h * pad))

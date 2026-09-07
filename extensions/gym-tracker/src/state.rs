@@ -24,6 +24,48 @@ struct Entry {
     last_seen: Instant,
 }
 
+/// One hardware-encoded H.264 access unit relayed from the device's
+/// EncodedPublisher (`gym/preview_h264`). `nalu` is Annex-B bytes.
+#[derive(Debug, Clone)]
+pub struct H264Sample {
+    /// Device wall clock at relay time — the jitter-buffer key (same clock
+    /// as the JPEG preview and TrackFrame ts_ns).
+    pub ts_ns: u64,
+    /// Encoder presentation timestamp (for the browser VideoDecoder).
+    pub pts_ns: u64,
+    pub key: bool,
+    pub w: u32,
+    pub h: u32,
+    /// Relay-side monotonic sequence (per relay socket session; 0 when the
+    /// producer doesn't send one). Lets every hop DETECT loss — dropping a
+    /// differential frame corrupts the decode until the next keyframe.
+    pub seq: u64,
+    pub nalu: Arc<Vec<u8>>,
+}
+
+/// Push-pipeline diagnostics (readable via the `get_push_diag` command).
+/// The tracing pipeline is not wired through the isolated runner, so
+/// warns are LOST — these counters are the only reliable loss instrument.
+#[derive(Default)]
+pub struct PushDiag {
+    /// gym/preview_h264 events accepted from the device event bus.
+    pub ingested: std::sync::atomic::AtomicU64,
+    /// Device-seq gaps detected at ingest (frames lost bus→extension).
+    pub ingest_gaps: std::sync::atomic::AtomicU64,
+    /// Frames dropped by the internal 120-deep queue (push starved).
+    pub queue_overflow: std::sync::atomic::AtomicU64,
+    /// Frames handed to send_push_output.
+    pub pushed: std::sync::atomic::AtomicU64,
+}
+
+pub static PUSH_DIAG: std::sync::OnceLock<PushDiag> = std::sync::OnceLock::new();
+
+pub fn push_diag() -> &'static PushDiag {
+    PUSH_DIAG.get_or_init(PushDiag::default)
+}
+
+pub use std::sync::atomic::Ordering as AtomicOrd;
+
 pub struct LiveState {
     ttl: Duration,
     /// A track absent from the latest frame survives this long before
@@ -44,6 +86,12 @@ pub struct LiveState {
     /// bytes) behind an `Arc` — the push thread wakes per frame and must
     /// never copy ~100 KB under the lock.
     preview: RwLock<Option<(u64, Arc<Vec<u8>>)>>,
+    /// Hardware H.264 relay (`gym/preview_h264`): bounded FIFO of access
+    /// units. H.264 is differential — handing the push thread only the
+    /// LATEST sample (the old design, fine for JPEG) silently dropped
+    /// every frame that landed between wakes and corrupted the decode.
+    /// Shares the preview condvar.
+    h264: Mutex<std::collections::VecDeque<H264Sample>>,
     /// Per-track consecutive-unknown counters gating auto-enrollment
     /// (see commands.rs persistence gate).
     unknown_streaks: RwLock<HashMap<i64, u32>>,
@@ -67,6 +115,7 @@ impl LiveState {
             faces: Default::default(),
             frame_img: Default::default(),
             preview: Default::default(),
+            h264: Mutex::new(std::collections::VecDeque::new()),
             tracks_ts: RwLock::new(0),
             unknown_streaks: Default::default(),
             preview_wait: Mutex::new(()),
@@ -81,6 +130,33 @@ impl LiveState {
     /// authoritative-departed: they are pruned once unseen for longer than
     /// the refresh grace (short occlusions — a beat where the device's own
     /// tracker coasts without publishing — survive inside the grace).
+    /// Drop tracks AND faces inside exclusion zones (equipment_type
+    /// 'exclusion'): mirror reflections are not people, so nothing about
+    /// them — boxes, keypoints, mosaics, embeddings — should survive.
+    /// called by apply_frame when the zone set is supplied.
+    pub fn apply_frame_filtered(&self, f: &TrackFrame, excl: &[crate::db::Zone]) {
+        if excl.is_empty() {
+            self.apply_frame(f);
+            return;
+        }
+        let in_excl = |x: f32, y: f32| {
+            excl.iter()
+                .any(|z| crate::geo::point_in_polygon(x, y, &z.polygon))
+        };
+        let mut f2 = f.clone();
+        f2.tracks.retain(|t| {
+            let (cx, cy) = (t.bbox.x + t.bbox.w / 2.0, t.bbox.y + t.bbox.h / 2.0);
+            !(in_excl(t.foot.x, t.foot.y) || in_excl(cx, cy))
+        });
+        f2.faces.retain(|fc| {
+            let b = &fc.bbox;
+            let (cx, cy) = (b.x + b.w / 2.0, b.y + b.h / 2.0);
+            // face box center + lower-quarter point (covers tall boxes)
+            !(in_excl(cx, cy) || in_excl(cx, b.y + b.h * 0.85))
+        });
+        self.apply_frame(&f2);
+    }
+
     pub fn apply_frame(&self, f: &TrackFrame) {
         let now = Instant::now();
         {
@@ -156,6 +232,48 @@ impl LiveState {
     /// Latest display preview from `gym/preview` (JPEG bytes).
     pub fn snapshot_preview(&self) -> Option<(u64, Arc<Vec<u8>>)> {
         self.preview.read().clone()
+    }
+
+    /// Enqueue an H.264 access unit and wake the push thread (shares the
+    /// preview condvar). The queue is bounded; overflow only sheds under a
+    /// pathological producer burst and is counted loudly — silence here
+    /// used to corrupt downstream decodes invisibly.
+    pub fn set_h264(&self, sample: H264Sample) {
+        {
+            let mut q = self.h264.lock();
+            q.push_back(sample);
+            while q.len() > 120 {
+                q.pop_front();
+                tracing::warn!("h264 queue overflow — access unit dropped");
+                push_diag().queue_overflow.fetch_add(1, AtomicOrd::Relaxed);
+            }
+        }
+        let _guard = self.preview_wait.lock();
+        self.preview_cv.notify_all();
+    }
+
+    /// Drain all queued H.264 access units (oldest first, lossless).
+    pub fn drain_h264(&self) -> Vec<H264Sample> {
+        self.h264.lock().drain(..).collect()
+    }
+
+    /// All queued access units with `seq > after_seq`, oldest first —
+    /// PER-SESSION cursor replay. The queue is a global singleton while
+    /// push threads are per-session: draining (the old semantics) let two
+    /// concurrent sessions SPLIT the stream (~15 fps each with 50%
+    /// "loss"); cursor replay hands every session the full stream (the
+    /// sample payload is an Arc — cloning per session is free). A cursor
+    /// older than the queue head jumps to the head (the browser's
+    /// device-seq gap check resyncs its decoder on the next keyframe).
+    pub fn h264_since(&self, after_seq: u64) -> Vec<H264Sample> {
+        let q = self.h264.lock();
+        let mut out = Vec::new();
+        for s in q.iter() {
+            if s.seq > after_seq {
+                out.push(s.clone());
+            }
+        }
+        out
     }
 
     /// Tracks interpolated keyframes around `ts_ns` (for frontend or push).
