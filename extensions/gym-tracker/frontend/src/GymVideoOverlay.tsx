@@ -1891,22 +1891,15 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
               )}
               {editing && (
                 <>
-                  <button className={`gym-ov-tg ${editKind === 'zones' ? 'on' : ''}`}
-                    onClick={() => { setEditKind('zones'); setDraftLine([]); setSelLineId(null); setSelMemberId(null) }}>分区</button>
-                  <button className={`gym-ov-tg ${editKind === 'lines' ? 'on' : ''}`}
-                    onClick={() => { setEditKind('lines'); setDraft([]); setSelZoneId(null); setSelMemberId(null) }}>计数线</button>
-                  <button className={`gym-ov-tg ${editKind === 'members' ? 'on' : ''}`}
-                    onClick={() => { setEditKind('members'); setDraft([]); setDraftLine([]); setSelZoneId(null); setSelLineId(null); loadMembers() }}>会员</button>
-                  {editKind !== 'members' && (
-                    <>
-                      <button className="gym-ov-tg" onClick={undo}
-                        disabled={editKind === 'lines' ? draftLine.length === 0 : draft.length === 0}>撤销</button>
-                      {editKind === 'zones' && (
-                        <button className="gym-ov-tg" onClick={closeDraft} disabled={draft.length < 3}>
-                          闭合{draft.length}
-                        </button>
-                      )}
-                    </>
+                  <span className="gym-ov-editkind">
+                    {editKind === 'zones' ? '分区管理' : '计数线管理'}
+                  </span>
+                  <button className="gym-ov-tg" onClick={undo}
+                    disabled={editKind === 'lines' ? draftLine.length === 0 : draft.length === 0}>撤销</button>
+                  {editKind === 'zones' && (
+                    <button className="gym-ov-tg" onClick={closeDraft} disabled={draft.length < 3}>
+                      闭合{draft.length}
+                    </button>
                   )}
                   <button className={`gym-ov-tg ${listOpen ? 'on' : ''}`} onClick={() => setListOpen(!listOpen)}
                     title="收起/展开右侧列表，留出画面空间">{listOpen ? '隐藏列表' : '列表'}</button>
@@ -1990,6 +1983,16 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
 
           {editing && (
             <div className={`gym-ov-zonelist ${listOpen ? '' : 'closed'}`}>
+              <div className="gym-ov-drawtabs">
+                <button className={`gym-ov-drawtab ${editKind === 'zones' ? 'on' : ''}`}
+                  onClick={() => { setEditKind('zones'); setDraftLine([]); setSelLineId(null); setSelMemberId(null) }}>
+                  分区管理<span className="gym-ov-drawtab-n">{zones.length}</span>
+                </button>
+                <button className={`gym-ov-drawtab ${editKind === 'lines' ? 'on' : ''}`}
+                  onClick={() => { setEditKind('lines'); setDraft([]); setSelZoneId(null); setSelMemberId(null) }}>
+                  计数线管理<span className="gym-ov-drawtab-n">{lines.length}</span>
+                </button>
+              </div>
               {editKind === 'zones'
                 ? (zones.length === 0
                     ? [<span key="e" className="gym-ov-zonelist-empty">还没有分区——在画面上点出第一块器械区</span>]
