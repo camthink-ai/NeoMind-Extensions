@@ -130,6 +130,7 @@ impl Extension for GymTrackerExtension {
             cmd("get_lines", "List crossing lines"),
             cmd("set_lines", "Replace crossing lines (full set)"),
             cmd("get_crossings", "Per-line in/out counters (today)"),
+            cmd("get_crossing_history", "Daily door in/out totals (persisted history)"),
             cmd("get_heatmap", "Foot-position heatmap grid (today)"),
             cmd("get_workout_summary", "Sessions + equipment usage + reps (today or per member)"),
             cmd("register_member", "Register a live track's embedding as a named member"),

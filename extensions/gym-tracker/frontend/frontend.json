@@ -260,6 +260,37 @@
           "description": "只显示警示级（跌倒）告警"
         }
       }
+    },
+    {
+      "name": "GymDoorFlow",
+      "type": "gym-door-flow",
+      "displayName": "Gym · 进出场",
+      "description": "出入口进/出场人数：今日实时 + 按天持久化历史",
+      "icon": "door-open",
+      "defaultSize": {
+        "width": 420,
+        "height": 300
+      },
+      "minSize": {
+        "width": 280,
+        "height": 200
+      },
+      "refreshable": true,
+      "refreshInterval": 10000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "days": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "maximum": 90,
+          "description": "历史天数（含今天）"
+        }
+      }
     }
   ],
   "i18n": {
