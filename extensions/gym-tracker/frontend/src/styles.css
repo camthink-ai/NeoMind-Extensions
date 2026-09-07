@@ -1873,3 +1873,26 @@ button.gym-ov-tg {
   background: var(--secondary, #1e1e22);
   border: 1px solid var(--border, #2e2e34);
 }
+
+/* 运动概况 matches the traffic-card/rank-card shell exactly:
+   card has NO padding — header pads itself, body pads itself */
+.gym-sum-card {
+  padding: 0;
+  background:
+    linear-gradient(var(--card, #171717), var(--card, #171717)),
+    var(--background, #0b0b0d);
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 12px;
+  box-shadow: none;
+}
+.gym-sum-body {
+  flex: 1; min-height: 0; overflow: auto;
+  padding: 10px 14px 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+/* stat cards: plain — no colored accent bars (per feedback) */
+.gym-sum-stat::after { display: none; }
+.gym-sum-stat {
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+}

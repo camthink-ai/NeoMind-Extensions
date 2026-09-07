@@ -277,6 +277,7 @@ export const GymWorkoutSummary =
                 >›</button>
               </div>
             </div>
+            <div className="gym-sum-body">
 
             {error && !summary ? (
               <div className="gym-sum-state">
@@ -411,6 +412,7 @@ export const GymWorkoutSummary =
                 )}
               </>
             )}
+            </div>
           </div>
         </div>
       )
