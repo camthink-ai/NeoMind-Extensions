@@ -49,9 +49,16 @@ function TimeModeSelect({ span, scrub, setSpan, setScrub }: {
       value={value}
       onChange={(e) => {
         const v = e.target.value
-        if (v === 'live') setScrub(null)
-        else if (Number(v) !== span) { setSpan(Number(v)); setScrub(null) }
-        else setScrub(Math.floor(Date.now() / 1000) - span)
+        if (v === 'live') {
+          setScrub(null)
+        } else {
+          // ANY replay span enters replay immediately at the newest window
+          // of that span (the old 'different span → scrub(null)' branch
+          // silently dropped the user back to live)
+          const s = Number(v)
+          setSpan(s)
+          setScrub(Math.floor(Date.now() / 1000) - s)
+        }
       }}
       title="时间范围"
     >
