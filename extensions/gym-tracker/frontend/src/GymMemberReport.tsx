@@ -159,56 +159,85 @@ function MemberDetail({ extensionId, row, mates, days, onClose, onChanged }: {
       {!det && !err && <div className="gym-report-records-empty">记录加载中…</div>}
       {det && (
         <div className="gym-report-records">
-          <div className="gym-report-records-head">
-            近{days}天：{fmtDur(det.total_duration_sec)} · {det.visits} 次到店
-            {row.source === 'auto' && <span className="gym-report-vtag">自动录入</span>}
+          {/* hero stats */}
+          <div className="gym-detail-stats">
+            <div className="gym-detail-stat">
+              <span className="gym-detail-stat-v">{fmtDur(det.total_duration_sec)}</span>
+              <span className="gym-detail-stat-k">总训练时长</span>
+            </div>
+            <div className="gym-detail-stat">
+              <span className="gym-detail-stat-v">{det.visits}</span>
+              <span className="gym-detail-stat-k">到店次数</span>
+            </div>
+            <div className="gym-detail-stat">
+              <span className="gym-detail-stat-v">{det.exercises.length}</span>
+              <span className="gym-detail-stat-k">训练动作</span>
+            </div>
           </div>
-          {det.exercises.length > 0 && (
-            <div className="gym-report-exlist">
-              {det.exercises.map((e) => {
-                const maxSec = Math.max(1, ...det.exercises.map((x) => x.duration_sec))
-                return (
-                  <div key={e.exercise} className="gym-report-exrow">
-                    <span className="gym-report-exname">{exName(e.exercise)}</span>
-                    <div className="gym-report-exbar">
-                      <div className="gym-report-exbar-fill" style={{ width: `${Math.max(3, (e.duration_sec / maxSec) * 100)}%` }} />
+
+          {/* 动作分析 */}
+          <div className="gym-detail-sec">
+            <span className="gym-detail-sec-title">动作分析 <em>近{days}天</em></span>
+            {det.exercises.length > 0 ? (
+              <div className="gym-report-exlist">
+                {det.exercises.map((e) => {
+                  const maxSec = Math.max(1, ...det.exercises.map((x) => x.duration_sec))
+                  return (
+                    <div key={e.exercise} className="gym-report-exrow">
+                      <span className="gym-report-exname">{exName(e.exercise)}</span>
+                      <div className="gym-report-exbar">
+                        <div className="gym-report-exbar-fill" style={{ width: `${Math.max(3, (e.duration_sec / maxSec) * 100)}%` }} />
+                      </div>
+                      <span className="gym-report-exmeta">
+                        {e.reps > 0 && `${e.sets}组·${e.reps}次`}
+                        {e.reps > 0 ? ' · ' : ''}{fmtDur(e.duration_sec)}
+                      </span>
                     </div>
-                    <span className="gym-report-exmeta">
-                      {e.reps > 0 && `${e.sets}组·${e.reps}次`}
-                      {e.reps > 0 ? ' · ' : ''}{fmtDur(e.duration_sec)}
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="gym-report-records-empty">
+                暂无动作识别数据——会员在 mapped 器械区训练后自动累积
+              </div>
+            )}
+          </div>
+
+          {/* 器械分布 */}
+          {det.zones.length > 0 && (
+            <div className="gym-detail-sec">
+              <span className="gym-detail-sec-title">器械分布</span>
+              <div className="gym-report-eq">
+                {det.zones.map((z) => (
+                  <div key={z.zone} className="gym-report-eq-row">
+                    <span className="gym-report-eq-name">{z.zone}</span>
+                    <span className="gym-report-eq-meta">
+                      {fmtDur(z.duration_sec)}{z.reps > 0 ? ` · ${z.reps} 次` : ''}
                     </span>
                   </div>
-                )
-              })}
+                ))}
+              </div>
             </div>
           )}
-          {det.zones.length > 0 && (
-            <div className="gym-report-eq">
-              {det.zones.map((z) => (
-                <div key={z.zone} className="gym-report-eq-row">
-                  <span className="gym-report-eq-name">{z.zone}</span>
-                  <span className="gym-report-eq-meta">
-                    {fmtDur(z.duration_sec)}{z.reps > 0 ? ` · ${z.reps} 次` : ''}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-          {det.sessions.length > 0 && (
-            <div className="gym-report-sessions">
-              {det.sessions.slice(0, 8).map((s) => (
-                <div key={s.id ?? s.started_at} className="gym-report-session">
-                  <span className="gym-report-session-when">{fmtTs(s.started_at)}</span>
-                  <span className="gym-report-session-dur">{fmtDur(s.duration_sec ?? 0)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          {det.visits === 0 && (
-            <div className="gym-report-records-empty">
-              近{days}天没有训练记录（到店即产生一次训练）
-            </div>
-          )}
+
+          {/* 到店记录 */}
+          <div className="gym-detail-sec">
+            <span className="gym-detail-sec-title">到店记录</span>
+            {det.sessions.length > 0 ? (
+              <div className="gym-report-sessions">
+                {det.sessions.slice(0, 8).map((s) => (
+                  <div key={s.id ?? s.started_at} className="gym-report-session">
+                    <span className="gym-report-session-when">{fmtTs(s.started_at)}</span>
+                    <span className="gym-report-session-dur">{fmtDur(s.duration_sec ?? 0)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="gym-report-records-empty">
+                近{days}天没有到店记录
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -258,6 +287,14 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
             </span>
           </div>
           <div className="gym-report-body">
+            {rep && rep.rows.length > 0 && (
+              <div className="gym-report-thead">
+                <span className="gym-report-thead-name">会员</span>
+                <span>到店</span>
+                <span>总时长</span>
+                <span>最近</span>
+              </div>
+            )}
             {error && <div className="gym-rank-empty">{error}</div>}
             {!error && rep && rep.rows.length === 0 && (
               <div className="gym-rank-empty">
@@ -285,15 +322,9 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
                       {m.name}
                       {m.source === 'auto' && <span className="gym-report-vtag">访客</span>}
                     </span>
-                    <span className="gym-report-statcol">
-                      <span className="gym-report-statcol-v accent">{m.visits}</span>
-                      <span className="gym-report-statcol-k">到店</span>
-                    </span>
-                    <span className="gym-report-statcol">
-                      <span className="gym-report-statcol-v">{fmtDur(m.duration_sec)}</span>
-                      <span className="gym-report-statcol-k">总时长</span>
-                    </span>
-                    <span className="gym-report-seen">最近 {fmtTs(m.last_seen)}</span>
+                    <span className="gym-report-cell">{m.visits}<em>次</em></span>
+                    <span className="gym-report-cell">{fmtDur(m.duration_sec)}</span>
+                    <span className="gym-report-cell dim">{fmtTs(m.last_seen)}</span>
                   </div>
                 </div>
               )

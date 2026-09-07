@@ -1717,3 +1717,57 @@ button.gym-ov-tg {
 .gym-door-cellbar { height: 12px; border-radius: 3px; min-width: 2px; }
 .gym-door-cellbar.in { background: #4ade80; }
 .gym-door-cellbar.out { background: #f87171; }
+
+/* ============================================================================
+   v2.13 会员到店: table-like list + structured detail drawer
+   ============================================================================ */
+
+/* list = aligned table: name | visits | duration | last-seen */
+.gym-report-thead {
+  display: grid; grid-template-columns: 1fr 52px 72px 92px; gap: 10px;
+  font-size: 10.5px; color: var(--muted-foreground, #a1a1aa);
+  padding: 0 10px 4px;
+  border-bottom: 1px solid var(--border, #232323);
+}
+.gym-report-thead span:not(.gym-report-thead-name) { text-align: right; }
+.gym-report-row {
+  display: grid; grid-template-columns: 1fr 52px 72px 92px; gap: 10px;
+  align-items: center; font-size: 12px;
+  padding: 7px 10px; border-radius: 10px;
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+  margin-bottom: 4px;
+}
+.gym-report-row:last-child { margin-bottom: 0; }
+.gym-report-row.clickable:hover { border-color: var(--input, #3f3f46); }
+.gym-report-row.sel { border-color: var(--primary, #22c55e); }
+/* numeric cells right-aligned, with the unit dimmed */
+.gym-report-row > .gym-report-cell:nth-child(2),
+.gym-report-row > .gym-report-cell:nth-child(3) { text-align: right; color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; }
+.gym-report-row > .gym-report-cell:nth-child(2) { color: var(--primary, #22c55e); font-weight: 600; }
+.gym-report-row > .gym-report-cell:nth-child(4) { text-align: right; font-size: 11px; color: var(--muted-foreground, #a1a1aa); font-variant-numeric: tabular-nums; }
+.gym-report-cell em { font-style: normal; font-size: 10px; color: var(--muted-foreground, #a1a1aa); margin-left: 2px; }
+
+/* detail drawer: hero stat strip + sections */
+.gym-detail-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+  margin-bottom: 4px;
+}
+.gym-detail-stat {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 10px 12px; border-radius: 12px;
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+}
+.gym-detail-stat:nth-child(1) { border-top: 2px solid #22c55e; }
+.gym-detail-stat:nth-child(2) { border-top: 2px solid #3b82f6; }
+.gym-detail-stat:nth-child(3) { border-top: 2px solid #f59e0b; }
+.gym-detail-stat-v { font-size: 20px; font-weight: 700; color: var(--foreground, #fafafa); line-height: 1.15; font-variant-numeric: tabular-nums; }
+.gym-detail-stat-k { font-size: 10.5px; color: var(--muted-foreground, #a1a1aa); }
+.gym-detail-sec { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.gym-detail-sec-title {
+  font-size: 12px; font-weight: 600; color: var(--foreground, #fafafa);
+  display: flex; align-items: baseline; gap: 6px;
+}
+.gym-detail-sec-title em { font-style: normal; font-size: 10.5px; font-weight: 400; color: var(--muted-foreground, #a1a1aa); }
+.gym-report-detail .gym-report-records { gap: 10px; }
