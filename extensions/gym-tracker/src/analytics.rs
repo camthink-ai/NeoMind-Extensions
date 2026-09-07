@@ -675,6 +675,14 @@ pub struct WorkoutTracker {
     /// ("curling next to the squat rack" is a curl). Timestamp of the
     /// FIRST disagreement in the current streak; None = agreeing/pending.
     disagree_since: Option<f64>,
+    /// Per-EXERCISE accumulation (label → secs/reps/sets). The global
+    /// reps/sets totals mix labels together when the classifier flips;
+    /// this keeps the breakdown the member detail panel shows. Rep/set
+    /// deltas are attributed to the label active when they landed.
+    ex_log: std::collections::BTreeMap<String, (f64, u32, u32)>,
+    ex_last: Option<f64>,
+    last_rep_total: u32,
+    last_set_total: u32,
     dirty: bool,
 }
 
@@ -712,6 +720,10 @@ impl Inner {
                     counter_inited: false,
                     timeline: crate::exercise::PoseTimeline::default(),
                     disagree_since: None,
+                    ex_log: Default::default(),
+                    ex_last: None,
+                    last_rep_total: 0,
+                    last_set_total: 0,
                     dirty: true,
                 });
             w.last_seen = now;
@@ -803,6 +815,25 @@ impl Inner {
                 if w.counter.reps > 0 || w.counter.sets > 0 {
                     w.dirty = true;
                 }
+
+                // per-exercise accrual: time by dwell under the CURRENT
+                // label, rep/set totals by monotonic delta (the global
+                // counters preserve totals across label flips, so deltas
+                // attribute cleanly to whichever label was active)
+                let dt = w.ex_last.map_or(0.0, |t| (now - t).max(0.0));
+                w.ex_last = Some(now);
+                let rep_total = w.reps + w.counter.reps;
+                let set_total = w.sets + w.counter.sets;
+                let entry = w.ex_log.entry(ex.to_string()).or_insert((0.0, 0, 0));
+                entry.0 += dt;
+                if rep_total > w.last_rep_total {
+                    entry.1 += rep_total - w.last_rep_total;
+                }
+                if set_total > w.last_set_total {
+                    entry.2 += set_total - w.last_set_total;
+                }
+                w.last_rep_total = rep_total;
+                w.last_set_total = set_total;
 
                 // ---- alert rules ----
                 // copy the workout data out first so the &mut w borrow ends
@@ -917,6 +948,17 @@ impl Inner {
                 *secs as i64,
                 &w.exercise,
                 (w.reps + w.counter.reps) as i64,
+            );
+        }
+        // per-exercise breakdown (member detail panel)
+        for (label, (secs, reps, sets)) in w.ex_log.iter() {
+            let _ = db.upsert_exercise_usage(
+                &w.session_id,
+                w.member_id.as_deref(),
+                label,
+                *sets as i64,
+                *reps as i64,
+                *secs as i64,
             );
         }
     }

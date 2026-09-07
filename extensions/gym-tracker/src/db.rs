@@ -77,6 +77,19 @@ impl Db {
                 in_count INTEGER NOT NULL DEFAULT 0, out_count INTEGER NOT NULL DEFAULT 0,
                 updated_at INTEGER,
                 PRIMARY KEY(line_id, day));
+            -- Per-EXERCISE accumulation (one row per session × exercise):
+            -- the live tracker classifies every rep into an exercise label
+            -- (zone tier + temporal tier); this keeps the per-label totals
+            -- that equipment_usage's single primary_action column loses.
+            CREATE TABLE IF NOT EXISTS exercise_usage (
+                session_id TEXT NOT NULL,
+                member_id TEXT,
+                exercise TEXT NOT NULL,
+                sets INTEGER NOT NULL DEFAULT 0,
+                reps INTEGER NOT NULL DEFAULT 0,
+                duration_sec INTEGER NOT NULL DEFAULT 0,
+                started_at INTEGER, ended_at INTEGER,
+                PRIMARY KEY(session_id, exercise));
             CREATE TABLE IF NOT EXISTS kv_settings (key TEXT PRIMARY KEY, value TEXT);
             -- P4: per-member embedding LIBRARY. members.embedding stays as the
             -- primary (first) sample; this table holds the additional samples
@@ -375,6 +388,54 @@ impl Db {
             "INSERT INTO heatmap_day(day,grid,updated_at) VALUES(?1,?2,?3)
              ON CONFLICT(day) DO UPDATE SET grid=excluded.grid, updated_at=excluded.updated_at",
             params![day, raw, now_secs()],
+        )?;
+        Ok(())
+    }
+
+    /// Per-exercise totals for one member since `since`: (exercise, sets,
+    /// reps, secs, session_count). The panel's 动作明细 rides this.
+    pub fn member_exercise_stats(
+        &self,
+        member_id: &str,
+        since: i64,
+    ) -> Result<Vec<(String, i64, i64, i64, i64)>, rusqlite::Error> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT exercise, SUM(sets), SUM(reps), SUM(duration_sec), COUNT(DISTINCT session_id)
+             FROM exercise_usage WHERE member_id=?1 AND ended_at>=?2
+             GROUP BY exercise ORDER BY 4 DESC",
+        )?;
+        let rows = stmt.query_map(params![member_id, since], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                r.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                r.get::<_, Option<i64>>(4)?.unwrap_or(0),
+            ))
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Upsert one (session × exercise) accumulation row.
+    #[allow(clippy::too_many_arguments)]
+    pub fn upsert_exercise_usage(
+        &self,
+        session_id: &str,
+        member_id: Option<&str>,
+        exercise: &str,
+        sets: i64,
+        reps: i64,
+        duration_sec: i64,
+    ) -> Result<(), rusqlite::Error> {
+        let now = chrono::Utc::now().timestamp();
+        self.conn.lock().execute(
+            "INSERT INTO exercise_usage(session_id,member_id,exercise,sets,reps,duration_sec,started_at,ended_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?7)
+             ON CONFLICT(session_id,exercise) DO UPDATE SET
+               member_id=excluded.member_id, sets=excluded.sets, reps=excluded.reps,
+               duration_sec=excluded.duration_sec, ended_at=excluded.ended_at",
+            params![session_id, member_id, exercise, sets, reps, duration_sec, now],
         )?;
         Ok(())
     }

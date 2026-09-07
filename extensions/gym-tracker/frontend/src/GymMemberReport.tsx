@@ -35,14 +35,29 @@ interface Report {
   days: number; members_total: number; active_members: number; total_visits: number; rows: ReportRow[]
 }
 
-interface Summary {
-  sessions: Array<{
-    id?: string; member_name?: string; started_at?: number
-    duration_sec?: number; summary?: string
-  }>
-  equipment: Array<{ zone_id: string; duration_sec: number; reps: number; exercise: string }>
-  total_duration_sec: number
+interface ExRow {
+  exercise: string; sets: number; reps: number; duration_sec: number; sessions: number
 }
+interface ZoneRow { zone: string; duration_sec: number; reps: number; exercise: string }
+interface SessionRow { id?: string; started_at?: number; duration_sec?: number }
+interface Detail {
+  days: number; total_duration_sec: number; visits: number
+  exercises: ExRow[]
+  zones: ZoneRow[]
+  sessions: SessionRow[]
+}
+
+/** classifier labels → display names (fallback: the raw label) */
+const EX_NAME: Record<string, string> = {
+  squat: '深蹲', lunge: '弓步', leg_press: '腿举', deadlift: '硬拉',
+  bench_press: '卧推', chest_fly: '夹胸', pushup: '俯卧撑', pullup: '引体向上',
+  row: '划船', lat_pulldown: '高位下拉', curl: '弯举', shoulder_press: '推举',
+  crunch: '卷腹', situp: '仰卧起坐', plank: '平板支撑',
+  treadmill: '跑步机', run: '跑步', walk: '走动', spin_bike: '动感单车', cycling: '骑行',
+  stair_climber: '爬楼', jump_rope: '跳绳', stretch: '拉伸',
+  standing: '站立体息', unknown: '未识别', pending: '识别中…',
+}
+const exName = (e: string) => EX_NAME[e] ?? e
 
 const fmtDur = (s: number) =>
   s >= 3600 ? `${(s / 3600).toFixed(1)} 小时` : `${Math.round(s / 60)} 分钟`
@@ -61,7 +76,7 @@ function MemberDetail({ extensionId, row, mates, days, onClose, onChanged }: {
   onClose: () => void
   onChanged: () => void
 }) {
-  const [sum, setSum] = useState<Summary | null>(null)
+  const [det, setDet] = useState<Detail | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [name, setName] = useState(row.name)
@@ -73,12 +88,11 @@ function MemberDetail({ extensionId, row, mates, days, onClose, onChanged }: {
   }, [])
 
   const load = useCallback(async () => {
-    const dayFrom = Math.floor(Date.now() / 1000) - days * 86400
-    const r = await runExtensionCommand<Summary>(extensionId, 'get_workout_summary', {
-      member_id: row.member_id, day_from: dayFrom,
+    const r = await runExtensionCommand<Detail>(extensionId, 'get_member_workout_detail', {
+      member_id: row.member_id, days,
     })
     if (!mounted.current) return
-    if (r.success && r.data) { setSum(r.data); setErr(null) }
+    if (r.success && r.data) { setDet(r.data); setErr(null) }
     else setErr(r.error || '记录加载失败')
   }, [extensionId, row.member_id, days])
 
@@ -143,37 +157,55 @@ function MemberDetail({ extensionId, row, mates, days, onClose, onChanged }: {
       </div>
 
       {err && <div className="gym-report-records-error">{err}</div>}
-      {!sum && !err && <div className="gym-report-records-empty">记录加载中…</div>}
-      {sum && (
+      {!det && !err && <div className="gym-report-records-empty">记录加载中…</div>}
+      {det && (
         <div className="gym-report-records">
           <div className="gym-report-records-head">
-            近{days}天：{fmtDur(sum.total_duration_sec)} · {sum.sessions.length} 次训练
+            近{days}天：{fmtDur(det.total_duration_sec)} · {det.visits} 次到店
             {row.source === 'auto' && <span className="gym-report-vtag">自动录入</span>}
           </div>
-          {sum.equipment.length > 0 && (
+          {det.exercises.length > 0 && (
+            <div className="gym-report-exlist">
+              {det.exercises.map((e) => {
+                const maxSec = Math.max(1, ...det.exercises.map((x) => x.duration_sec))
+                return (
+                  <div key={e.exercise} className="gym-report-exrow">
+                    <span className="gym-report-exname">{exName(e.exercise)}</span>
+                    <div className="gym-report-exbar">
+                      <div className="gym-report-exbar-fill" style={{ width: `${Math.max(3, (e.duration_sec / maxSec) * 100)}%` }} />
+                    </div>
+                    <span className="gym-report-exmeta">
+                      {e.reps > 0 && `${e.sets}组·${e.reps}次`}
+                      {e.reps > 0 ? ' · ' : ''}{fmtDur(e.duration_sec)}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          {det.zones.length > 0 && (
             <div className="gym-report-eq">
-              {sum.equipment.map((e) => (
-                <div key={e.zone_id} className="gym-report-eq-row">
-                  <span className="gym-report-eq-name">{e.zone_id}</span>
+              {det.zones.map((z) => (
+                <div key={z.zone} className="gym-report-eq-row">
+                  <span className="gym-report-eq-name">{z.zone}</span>
                   <span className="gym-report-eq-meta">
-                    {e.exercise || '—'} · {fmtDur(e.duration_sec)}
-                    {e.reps > 0 ? ` · ${e.reps} 次` : ''}
+                    {fmtDur(z.duration_sec)}{z.reps > 0 ? ` · ${z.reps} 次` : ''}
                   </span>
                 </div>
               ))}
             </div>
           )}
-          {sum.sessions.length > 0 && (
+          {det.sessions.length > 0 && (
             <div className="gym-report-sessions">
-              {sum.sessions.slice(0, 8).map((s, i) => (
-                <div key={s.id ?? i} className="gym-report-session">
+              {det.sessions.slice(0, 8).map((s) => (
+                <div key={s.id ?? s.started_at} className="gym-report-session">
                   <span className="gym-report-session-when">{fmtTs(s.started_at)}</span>
                   <span className="gym-report-session-dur">{fmtDur(s.duration_sec ?? 0)}</span>
                 </div>
               ))}
             </div>
           )}
-          {sum.sessions.length === 0 && (
+          {det.visits === 0 && (
             <div className="gym-report-records-empty">
               近{days}天没有训练记录（到店即产生一次训练）
             </div>

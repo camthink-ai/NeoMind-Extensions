@@ -487,6 +487,42 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
         }
         // ---- P1: heatmap ----
         "get_heatmap" => Ok(ctx.analytics.get_heatmap()),
+        // ---- per-member workout detail (exercises / zones / sessions) ----
+        "get_member_workout_detail" => {
+            let id = args["member_id"].as_str().ok_or("get_member_workout_detail: missing member_id")?;
+            let days = args["days"].as_i64().unwrap_or(7).clamp(1, 90);
+            let since = chrono::Utc::now().timestamp() - days * 86400;
+            let exercises = ctx
+                .db
+                .member_exercise_stats(id, since)
+                .map_err(|e| e.to_string())?;
+            let zones = ctx
+                .db
+                .equipment_stats(Some(id), since)
+                .map_err(|e| e.to_string())?;
+            let sessions = ctx.db.list_sessions(Some(id), since, 500).map_err(|e| e.to_string())?;
+            let total: i64 = sessions
+                .iter()
+                .map(|s| s["duration_sec"].as_i64().unwrap_or(0))
+                .sum();
+            Ok(json!({
+                "days": days,
+                "total_duration_sec": total,
+                "visits": sessions.len(),
+                // 动作明细: label, sets, reps, minutes, session appearances
+                "exercises": exercises.iter().map(|(ex, sets, reps, secs, sess)| json!({
+                    "exercise": ex, "sets": sets, "reps": reps,
+                    "duration_sec": secs, "sessions": sess,
+                })).collect::<Vec<_>>(),
+                "zones": zones.iter().map(|(z, sec, reps, ex)| json!({
+                    "zone": z, "duration_sec": sec, "reps": reps, "exercise": ex,
+                })).collect::<Vec<_>>(),
+                "sessions": sessions.iter().rev().take(20).map(|s| json!({
+                    "id": s["id"], "started_at": s["started_at"],
+                    "duration_sec": s["duration_sec"],
+                })).collect::<Vec<_>>(),
+            }))
+        }
         // ---- P3: member library (body-ReID via osnet embeddings) ----
         // Register the CURRENT embedding of a live track as a named member.
         // Takes the track's latest face.emb from the mirror — the device
