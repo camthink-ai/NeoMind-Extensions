@@ -21,7 +21,7 @@ import {
   fetchExtensionUiConfig
 } from './common'
 import { GymSelect } from './GymSelect'
-import { useLang } from './i18n'
+import { useLang, translator } from './i18n'
 import { GymModal } from './GymDrawer'
 import STYLES from './styles.css?raw'
 
@@ -79,11 +79,12 @@ const fmtTs = (ts?: number) => {
 }
 
 /** Expanded per-member panel: records + management (lives in a GymDrawer). */
-function MemberDetail({ extensionId, row, mates, days, onClose, onChanged }: {
+function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: {
   extensionId: string
   row: ReportRow
   mates: ReportRow[]
   days: number
+  t: ReturnType<typeof translator>
   onClose: () => void
   onChanged: () => void
 }) {
@@ -129,7 +130,7 @@ function MemberDetail({ extensionId, row, mates, days, onClose, onChanged }: {
   }
   const doDelete = async () => {
     if (busy) return
-    if (!window.confirm(`删除会员「${row.name}」？其特征与到店历史将一并移除。`)) return
+    if (!window.confirm(t('deleteConfirm', { name: row.name }))) return
     setBusy(true)
     const r = await deleteMember(extensionId, row.member_id)
     setBusy(false)
@@ -162,7 +163,7 @@ function MemberDetail({ extensionId, row, mates, days, onClose, onChanged }: {
         ) : (
           <button className="gym-ov-btn" disabled={busy || mates.length < 2}
             onClick={() => setMerging(true)}
-            title="把此人的到店与特征并入另一位（同一人换装/重复录入时用）">并入</button>
+            title={t('mergeTip')}>{t('merge')}</button>
         )}
         <button className="gym-ov-btn danger" disabled={busy} onClick={doDelete}>删除</button>
         <span className="gym-detail-window">
@@ -201,7 +202,7 @@ function MemberDetail({ extensionId, row, mates, days, onClose, onChanged }: {
             </div>
             <div className="gym-detail-stat">
               <span className="gym-detail-stat-v">{det.visits}</span>
-              <span className="gym-detail-stat-k">到店次数</span>
+              <span className="gym-detail-stat-k">{t('visitTimes')}</span>
             </div>
             <div className="gym-detail-stat">
               <span className="gym-detail-stat-v">{det.exercises.length}</span>
@@ -225,7 +226,7 @@ function MemberDetail({ extensionId, row, mates, days, onClose, onChanged }: {
                         <div className="gym-report-exbar-fill" style={{ width: `${Math.max(3, (e.duration_sec / maxSec) * 100)}%` }} />
                       </div>
                       <span className="gym-report-exmeta">
-                        {e.reps > 0 && `${e.sets}组·${e.reps}次`}
+                        {e.reps > 0 && t('setsReps', { s: e.sets, r: e.reps })}
                         {e.reps > 0 ? ' · ' : ''}{fmtDur(e.duration_sec)}
                       </span>
                     </div>
@@ -234,7 +235,7 @@ function MemberDetail({ extensionId, row, mates, days, onClose, onChanged }: {
               </div>
             ) : (
               <div className="gym-report-records-empty">
-                暂无动作识别数据——会员在 mapped 器械区训练后自动累积
+                {t('noMotionData')}
               </div>
             )}
           </div>
@@ -248,7 +249,7 @@ function MemberDetail({ extensionId, row, mates, days, onClose, onChanged }: {
                   <div key={z.zone} className="gym-report-eq-row">
                     <span className="gym-report-eq-name">{z.zone}</span>
                     <span className="gym-report-eq-meta">
-                      {fmtDur(z.duration_sec)}{z.reps > 0 ? ` · ${z.reps} 次` : ''}
+                      {fmtDur(z.duration_sec)}{z.reps > 0 ? ` · ${t('timesPlain', { n: z.reps })}` : ''}
                     </span>
                   </div>
                 ))}
@@ -276,14 +277,14 @@ function MemberDetail({ extensionId, row, mates, days, onClose, onChanged }: {
                       <div className="gym-history-day-head">
                         <span className="gym-history-day-date">{ceDay(day)}</span>
                         <span className="gym-history-day-sum">
-                          {rows.length} 项动作{reps > 0 ? ` · ${reps} 次` : ''} · {fmtDur(secs)}
+                          {t('historySum', { m: rows.length })}{reps > 0 ? ` · ${t('timesShort', { n: reps })}` : ''} · {fmtDur(secs)}
                         </span>
                       </div>
                       {rows.map((r, i) => (
                         <div key={i} className="gym-history-line">
                           <span className="gym-history-ex">{exName(r.exercise)}</span>
                           <span className="gym-history-meta">
-                            {r.reps > 0 ? `${r.sets}组·${r.reps}次 · ` : ''}{fmtDur(r.duration_sec)}
+                            {r.reps > 0 ? t('setsReps', { s: r.sets, r: r.reps }) + ' · ' : ''}{fmtDur(r.duration_sec)}
                           </span>
                         </div>
                       ))}
@@ -296,7 +297,7 @@ function MemberDetail({ extensionId, row, mates, days, onClose, onChanged }: {
 
           {/* 到店记录 */}
           <div className="gym-detail-sec">
-            <span className="gym-detail-sec-title">到店记录</span>
+            <span className="gym-detail-sec-title">{t('visitLog')}</span>
             {det.sessions.length > 0 ? (
               <div className="gym-report-sessions">
                 {det.sessions.slice(0, 8).map((s) => (
@@ -308,7 +309,7 @@ function MemberDetail({ extensionId, row, mates, days, onClose, onChanged }: {
               </div>
             ) : (
               <div className="gym-report-records-empty">
-                近{days}天没有到店记录
+                {t('noVisitData', { n: days })}
               </div>
             )}
           </div>
@@ -374,7 +375,7 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
             {error && <div className="gym-rank-empty">{error}</div>}
             {!error && rep && rep.rows.length === 0 && (
               <div className="gym-rank-empty">
-                还没有会员到店记录——注册会员后自动累计（匿名访客不计入）
+                {t('noMemberRecords')}
               </div>
             )}
             {rep && rep.rows.length > 0 && (
@@ -405,15 +406,15 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
                       <div className="gym-mcard-stats">
                         <span className="gym-mcard-stat">
                           <span className="gym-mcard-stat-v accent">{m.visits}</span>
-                          <span className="gym-mcard-stat-k">到店</span>
+                          <span className="gym-mcard-stat-k">{t('visitsShort')}</span>
                         </span>
                         <span className="gym-mcard-stat">
                           <span className="gym-mcard-stat-v">{fmtDur(m.duration_sec)}</span>
-                          <span className="gym-mcard-stat-k">时长</span>
+                          <span className="gym-mcard-stat-k">{t('durationShort')}</span>
                         </span>
                         <span className="gym-mcard-stat">
                           <span className="gym-mcard-stat-v dim">{fmtTs(m.last_seen)}</span>
-                          <span className="gym-mcard-stat-k">最近</span>
+                          <span className="gym-mcard-stat-k">{t('lastShort')}</span>
                         </span>
                       </div>
                     </div>
@@ -438,6 +439,7 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
               }>
               <MemberDetail
                 extensionId={extensionId}
+                t={t}
                 row={m}
                 mates={rep.rows.slice(0, 10)}
                 days={days}
