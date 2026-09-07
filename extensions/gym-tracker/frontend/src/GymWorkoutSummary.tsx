@@ -210,28 +210,22 @@ export const GymWorkoutSummary =
         return Math.max(3600, ...ends)
       }, [lanesMerged])
 
-      // ---- Donut geometry ----
-      const donut = useMemo(() => {
-        const total = equipment.reduce((s, e) => s + e.duration_sec, 0)
-        if (total <= 0) return null
-        const R = 15.9155 // circumference 100 → stroke-dasharray in %
-        const C = 2 * Math.PI * R
-        let acc = 0
-        const segs = equipment.slice(0, 6).map((e, i) => {
-          const frac = e.duration_sec / total
-          const seg = {
-            color: PALETTE[i % PALETTE.length],
-            dash: frac * C,
-            offset: -acc * C,
-            name: e.exercise ? exLabel(e.exercise) : e.zone_id,
-            dur: e.duration_sec,
-            pct: Math.round(frac * 100),
-          }
-          acc += frac
-          return seg
-        })
-        return { segs, total, C, R }
-      }, [equipment])
+      // ---- Equipment share bars ----
+      const eqTotal = useMemo(
+        () => equipment.reduce((s, e) => s + e.duration_sec, 0),
+        [equipment]
+      )
+      const eqRows = useMemo(
+        () => equipment.slice(0, 6).map((e, i) => ({
+          name: e.exercise ? exLabel(e.exercise) : e.zone_id,
+          zone: e.zone_id,
+          dur: e.duration_sec,
+          reps: e.reps,
+          pct: eqTotal > 0 ? Math.round((e.duration_sec / eqTotal) * 100) : 0,
+          color: PALETTE[i % PALETTE.length],
+        })),
+        [equipment, eqTotal]
+      )
 
       const uniqueMembers = new Set(
         sessions.map((s) => s.member_id).filter(Boolean)
@@ -350,61 +344,29 @@ export const GymWorkoutSummary =
                   </div>
                 )}
 
-                {/* Equipment donut + legend */}
-                {donut && (
+                {/* Equipment share bars */}
+                {eqRows.length > 0 && (
                   <div className="gym-sum-section">
                     <div className="gym-sum-section-title">器材使用时长</div>
-                    <div className="gym-sum-donutrow">
-                      <svg
-                        className="gym-sum-donut"
-                        viewBox="0 0 40 40"
-                        role="img"
-                        aria-label="器材使用时长占比"
-                      >
-                        <circle
-                          className="gym-sum-donut-bg"
-                          cx="20" cy="20" r={donut.R}
-                          fill="none" strokeWidth="6"
-                        />
-                        {donut.segs.map((s, i) => (
-                          <circle
-                            key={i}
-                            cx="20" cy="20" r={donut.R}
-                            fill="none"
-                            stroke={s.color}
-                            strokeWidth="6"
-                            strokeDasharray={`${s.dash} ${donut.C - s.dash}`}
-                            strokeDashoffset={s.offset}
-                            transform="rotate(-90 20 20)"
-                          >
-                            <title>{`${s.name} ${fmtDuration(s.dur)} (${s.pct}%)`}</title>
-                          </circle>
-                        ))}
-                        <text
-                          className="gym-sum-donut-total"
-                          x="20" y="19" textAnchor="middle"
-                        >{fmtDuration(donut.total)}</text>
-                        <text
-                          className="gym-sum-donut-sub"
-                          x="20" y="25" textAnchor="middle"
-                        >总计</text>
-                      </svg>
-                      <div className="gym-sum-legend">
-                        {donut.segs.map((s, i) => (
-                          <div className="gym-sum-legrow" key={i}>
-                            <span
-                              className="gym-sum-legdot"
-                              style={{ background: s.color }}
-                            />
-                            <span className="gym-sum-legname" title={s.name}>
-                              {s.name}
-                            </span>
-                            <span className="gym-sum-legval">
-                              {fmtDuration(s.dur)} · {s.pct}%
+                    <div className="gym-sum-eqbars">
+                      {eqRows.map((e) => (
+                        <div className="gym-sum-eqrow" key={e.zone}>
+                          <div className="gym-sum-eqhead">
+                            <span className="gym-sum-eqname" title={e.zone}>{e.name}</span>
+                            <span className="gym-sum-eqval">
+                              {fmtDuration(e.dur)}
+                              {e.reps > 0 ? ` · ${e.reps}次` : ''}
+                              <em>{e.pct}%</em>
                             </span>
                           </div>
-                        ))}
-                      </div>
+                          <div className="gym-sum-eqtrack">
+                            <div
+                              className="gym-sum-eqbar"
+                              style={{ width: `${Math.max(2, e.pct)}%`, background: e.color }}
+                            />
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -424,7 +386,8 @@ export const GymWorkoutSummary =
                             {s.member_name || s.member_id || '访客'}
                           </span>
                           <span className="gym-sum-session-time">
-                            {fmtTime(s.started_at)} 入场
+                            {fmtTime(s.started_at)}
+                            {s.ended_at ? `–${fmtTime(s.ended_at)}` : ''}
                           </span>
                           <span className="gym-sum-session-dur">
                             {fmtDuration(s.duration_sec)}
