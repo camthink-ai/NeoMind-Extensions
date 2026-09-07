@@ -133,6 +133,7 @@ impl Extension for GymTrackerExtension {
             cmd("get_crossing_history", "Daily door in/out totals (persisted history)"),
             cmd("get_heatmap", "Foot-position heatmap grid (today)"),
             cmd("get_workout_summary", "Sessions + equipment usage + reps (today or per member)"),
+            cmd("get_member_workout_detail", "Per-member exercises/sets/reps/zones/sessions over N days"),
             cmd("register_member", "Register a live track's embedding as a named member"),
             cmd("list_members", "List registered members"),
             cmd("rename_member", "Fill in / correct a member's name"),
