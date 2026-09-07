@@ -1371,16 +1371,20 @@
 .gym-drawer-backdrop {
   position: absolute; inset: 0;
   background: rgba(0, 0, 0, .35);
-  opacity: 0; transition: opacity .18s ease;
+  opacity: 0;
 }
 .gym-drawer-root.shown .gym-drawer-backdrop { opacity: 1; }
 .gym-drawer {
-  position: absolute; right: 0; top: 0; bottom: 0;
+  position: absolute; right: 0; top: max(48px, 6vh); bottom: auto;
+  max-height: calc(100vh - 96px);
+  border-radius: 14px 0 0 14px;
   display: flex; flex-direction: column;
   background: var(--popover, #1c1c1f); color: var(--popover-foreground, #fafafa);
   border-left: 1px solid var(--border, #2a2a2a);
   box-shadow: -18px 0 44px -18px rgba(0, 0, 0, .5);
-  transform: translateX(100%); transition: transform .18s ease;
+  /* no transform transition: the animation clock stalls in non-composited
+     webviews (the IAB) and the panel would freeze mid-slide */
+  transform: translateX(100%);
 }
 .gym-drawer-root.shown .gym-drawer { transform: translateX(0); }
 .gym-drawer-head {
@@ -1395,13 +1399,14 @@
 
 /* ---- Monitor edit list: card-anchored right drawer (was below-card) ---- */
 .gym-ov-zonelist {
-  position: absolute; right: 10px; top: 54px; bottom: 10px; width: min(340px, 46%);
+  position: absolute; right: 10px; top: 54px; bottom: auto;
+  max-height: min(600px, calc(100% - 64px));
+  width: min(340px, 46%);
   z-index: 6;
   border-radius: 12px;
   background: var(--popover, #1c1c1f);
   border: 1px solid var(--border, #2a2a2a);
   box-shadow: -12px 0 32px -14px rgba(0, 0, 0, .55);
-  max-height: none;
   padding: 8px 10px;
 }
 .gym-ov-zonelist.closed { display: none; }

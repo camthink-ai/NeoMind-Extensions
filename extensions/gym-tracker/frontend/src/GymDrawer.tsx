@@ -8,6 +8,7 @@
  * GymSelect popup 300 (a dropdown opened INSIDE the drawer must win).
  */
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { injectStyles } from './common'
 import STYLES from './styles.css?raw'
 
@@ -32,11 +33,14 @@ export function GymDrawer({ open, onClose, title, children, width = 380 }: Props
   useEffect(() => {
     if (open) {
       setMounted(true)
-      const r = requestAnimationFrame(() => setShown(true))
-      return () => cancelAnimationFrame(r)
+      // NOT requestAnimationFrame — rAF is paused in non-composited
+      // webviews (the IAB), and the drawer would stay translated off-screen
+      const t = setTimeout(() => setShown(true), 20)
+      return () => clearTimeout(t)
     }
     setShown(false)
-    const t = setTimeout(() => setMounted(false), 200)
+    // no close transition anymore — unmount on the next macrotask is enough
+    const t = setTimeout(() => setMounted(false), 0)
     return () => clearTimeout(t)
   }, [open])
 
@@ -50,12 +54,25 @@ export function GymDrawer({ open, onClose, title, children, width = 380 }: Props
 
   if (!mounted) return null
 
-  return (
+  // Portal to <body>: dashboard grid cells sit under transformed ancestors
+  // (drag-and-drop wrappers), where position:fixed degenerates to
+  // "relative to that card" — the drawer would be clipped/misplaced.
+  if (typeof document === 'undefined') return null
+  return createPortal(
     <div className={`gym-drawer-root ${shown ? 'shown' : ''}`}>
-      <div className="gym-drawer-backdrop" onClick={onClose} />
+      <div
+        className="gym-drawer-backdrop"
+        style={{ opacity: shown ? 1 : 0 }}
+        onClick={onClose}
+      />
       <aside
         className="gym-drawer"
-        style={{ width: `min(${width}px, 92vw)` }}
+        style={{
+          width: `min(${width}px, 92vw)`,
+          // inline transform/opacity: a WKWebView style-matching quirk left
+          // the class-driven transition stuck off-screen — inline wins
+          transform: shown ? 'translateX(0)' : 'translateX(100%)',
+        }}
         role="dialog"
         aria-modal="true"
       >
@@ -65,6 +82,7 @@ export function GymDrawer({ open, onClose, title, children, width = 380 }: Props
         </div>
         <div className="gym-drawer-body">{children}</div>
       </aside>
-    </div>
+    </div>,
+    document.body
   )
 }
