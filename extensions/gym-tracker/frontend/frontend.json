@@ -293,18 +293,18 @@
       }
     },
     {
-      "name": "GymActivityMap",
-      "type": "gym-activity-map",
-      "displayName": "Gym · 轨迹热力",
-      "description": "独立轨迹+热力图：今日足迹热力与最近移动轨迹（无效区自动排除）",
-      "icon": "map",
+      "name": "GymTrailsCard",
+      "type": "gym-trails-card",
+      "displayName": "Gym · 轨迹",
+      "description": "实时轨迹拖尾叠加在摄像头画面上（含分区轮廓参考）",
+      "icon": "route",
       "defaultSize": {
         "width": 420,
-        "height": 340
+        "height": 320
       },
       "minSize": {
         "width": 280,
-        "height": 220
+        "height": 200
       },
       "refreshable": true,
       "refreshInterval": 2000,
@@ -313,16 +313,34 @@
         "extension",
         "extension-command"
       ],
+      "configSchema": {}
+    },
+    {
+      "name": "GymHeatCard",
+      "type": "gym-heat-card",
+      "displayName": "Gym · 热力",
+      "description": "今日足迹热力叠加在摄像头画面上（无效区自动排除）",
+      "icon": "flame",
+      "defaultSize": {
+        "width": 420,
+        "height": 320
+      },
+      "minSize": {
+        "width": 280,
+        "height": 200
+      },
+      "refreshable": true,
+      "refreshInterval": 15000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
       "configSchema": {
-        "heatmap": {
+        "showZones": {
           "type": "boolean",
           "default": true,
-          "description": "显示今日热力叠加"
-        },
-        "trails": {
-          "type": "boolean",
-          "default": true,
-          "description": "显示最近轨迹拖尾"
+          "description": "叠加分区轮廓参考线"
         }
       }
     }
