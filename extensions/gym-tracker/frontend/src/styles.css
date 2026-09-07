@@ -1447,3 +1447,29 @@
   width: 1px; height: 14px; margin: 0 4px; flex-shrink: 0;
   background: var(--border, #2e2e34);
 }
+
+/* ---- uniform control heights: the host page's global button reset
+   (min-height 44px, padding 0 8px) leaks into our widgets and makes
+   inputs/dropdowns/buttons in one row unequal — clamp every control
+   inside our surfaces to a consistent 28px rail ---- */
+.gym-ov-card button.gym-ov-btn,
+.gym-drawer-root button.gym-ov-btn,
+.gym-drawer button.gym-ov-btn {
+  min-height: 0; height: 28px; padding: 0 10px;
+}
+.gym-ov-card button.gym-ov-tg,
+button.gym-ov-tg {
+  min-height: 0;
+}
+.gym-ov-card .gym-sel-trigger,
+.gym-drawer .gym-sel-trigger,
+.gym-ov-rowins .gym-sel-trigger {
+  min-height: 0; height: 28px;
+}
+.gym-ov-card .gym-ov-input,
+.gym-drawer .gym-ov-input,
+.gym-ov-rowins .gym-ov-input,
+.gym-report-detail-manage .gym-ov-input {
+  min-height: 0; height: 28px; box-sizing: border-box;
+}
+.gym-ov-rowins, .gym-report-detail-manage { align-items: center; }
