@@ -53,8 +53,13 @@ export interface Track {
   has_emb?: boolean
   /** Matched member via nearest-L2 over the member library (P3); null = unknown. */
   member?: { id: string; name: string; dist: number; via?: string } | null
-  /** Live workout (P4): classified exercise + rep/zone state. */
-  exercise?: { name: string; reps: number; sets: number; zone: string | null } | null
+  /** Live workout (P4): classified exercise + rep/zone state. `zone_hold`
+   *  = continuous seconds the SAME track has held its current zone — the
+   *  equipment board's BUSY gate (a passer-by must not light a machine). */
+  exercise?: {
+    name: string; reps: number; sets: number; zone: string | null
+    zone_hold?: number
+  } | null
 }
 
 export interface LiveState {
