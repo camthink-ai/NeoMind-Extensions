@@ -230,7 +230,9 @@ export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>
       return () => clearInterval(id)
     }, [refresh])
 
-    // window query (paused while LIVE)
+    // window query while scrubbing. Re-runs periodically: a scrubbed
+    // window that ends "now" keeps filling as samples land, and an empty
+    // (pre-deployment) window must still re-check. 5 s cadence.
     useEffect(() => {
       if (scrub == null) { winRef.current = null; setWinInfo(null); return }
       let alive = true
@@ -243,7 +245,8 @@ export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>
         setWinInfo({ samples: r.data.samples })
       }
       load()
-      return () => { alive = false }
+      const id = setInterval(load, 5000)
+      return () => { alive = false; clearInterval(id) }
     }, [extensionId, scrub, span])
 
     useFrameCanvas(canvasRef, extensionId, 2500, (ctx, W, H, bg) => {
@@ -290,7 +293,15 @@ export const GymTrailsCard = forwardRef<HTMLDivElement, ExtensionComponentProps>
             </span>
           </div>
           <div className="gym-activity-body">
-            <canvas ref={canvasRef} className="gym-activity-canvas" />
+            <div className="gym-activity-stagewrap">
+              <canvas ref={canvasRef} className="gym-activity-canvas" />
+              {scrub != null && (winInfo?.samples ?? 0) === 0 && (
+                <div className="gym-activity-empty">
+                  该时段没有足迹记录
+                  <small>足迹日志自今天起累积；拖回最右侧查看实时</small>
+                </div>
+              )}
+            </div>
             <TimeBar span={span} setSpan={setSpan} scrub={scrub} setScrub={setScrub}
               samples={winInfo?.samples ?? 0} />
           </div>
@@ -337,7 +348,8 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
       return () => clearInterval(id)
     }, [refresh])
 
-    // window query (paused while LIVE — the live layer keeps painting)
+    // window query while scrubbing (5 s re-check so windows ending "now"
+    // fill in and empty windows recover once data lands)
     useEffect(() => {
       if (scrub == null) { winRef.current = null; setWinInfo(null); return }
       let alive = true
@@ -350,7 +362,8 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
         setWinInfo({ samples: r.data.samples })
       }
       load()
-      return () => { alive = false }
+      const id = setInterval(load, 5000)
+      return () => { alive = false; clearInterval(id) }
     }, [extensionId, scrub, span])
 
     useFrameCanvas(canvasRef, extensionId, 5000, (ctx, W, H, bg) => {
@@ -388,7 +401,15 @@ export const GymHeatCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
             </span>
           </div>
           <div className="gym-activity-body">
+            <div className="gym-activity-stagewrap">
             <canvas ref={canvasRef} className="gym-activity-canvas" />
+            {scrub != null && (winInfo?.samples ?? 0) === 0 && (
+              <div className="gym-activity-empty">
+                该时段没有足迹记录
+                <small>足迹日志自今天起累积；拖回最右侧查看实时</small>
+              </div>
+            )}
+            </div>
             <div className="gym-activity-legend">
               <span>低</span>
               <span className="gym-activity-ramp" />
