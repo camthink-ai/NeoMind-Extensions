@@ -1323,3 +1323,30 @@
 .gym-door-bar.in { background: #4ade80; }
 .gym-door-bar.out { background: #f87171; color: #1f0b0b; }
 .gym-door-bar span { line-height: 1; }
+
+/* ---- GymMemberReport: row wrapper + expanded member detail ---- */
+.gym-report-rowwrap { display: flex; flex-direction: column; }
+.gym-report-row.clickable { cursor: pointer; padding: 4px 4px; border-radius: 8px; }
+.gym-report-row.clickable:hover { background: color-mix(in oklab, var(--secondary, #26262b) 55%, transparent); }
+.gym-report-row.sel { background: color-mix(in oklab, var(--secondary, #26262b) 80%, transparent); }
+.gym-report-detail {
+  display: flex; flex-direction: column; gap: 8px;
+  margin: 2px 0 6px 36px; padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+}
+.gym-report-detail-manage { display: flex; align-items: center; gap: 6px; }
+.gym-report-detail-manage .gym-ov-input.name { flex: 1; min-width: 0; }
+.gym-report-detail-flex { flex: 1; }
+.gym-report-records { display: flex; flex-direction: column; gap: 6px; }
+.gym-report-records-head { font-size: 12px; color: var(--foreground, #fafafa); display: flex; gap: 6px; align-items: center; }
+.gym-report-records-empty { font-size: 11px; color: var(--muted-foreground, #a1a1aa); }
+.gym-report-records-error { font-size: 11px; color: var(--destructive, #ef4444); }
+.gym-report-eq { display: flex; flex-direction: column; gap: 3px; }
+.gym-report-eq-row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.gym-report-eq-name { color: var(--foreground, #fafafa); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gym-report-eq-meta { color: var(--muted-foreground, #a1a1aa); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gym-report-sessions { display: flex; flex-direction: column; gap: 2px; max-height: 120px; overflow: auto; }
+.gym-report-session { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted-foreground, #a1a1aa); font-variant-numeric: tabular-nums; }
+.gym-report-session-dur { color: var(--foreground, #d4d4d8); }
