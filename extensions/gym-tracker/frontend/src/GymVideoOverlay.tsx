@@ -1566,8 +1566,20 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         const st = crossingsRef.current.find((s) => s.line_id === ln.id)
         const editing = modeRef.current === 'edit' && editKindRef.current === 'lines'
 
+        // Per-line hue from the shared palette (line name hash) so
+        // multiple counting lines are visually distinguishable at a glance
+        let hue = 36
+        try {
+          let h = 0
+          for (const c of ln.name) h = (h * 31 + c.charCodeAt(0)) >>> 0
+          hue = h % 360
+        } catch { /* keep default */ }
+        const lineCol = `hsla(${hue}, 85%, 58%, 0.9)`
+        const lineColSolid = `hsla(${hue}, 85%, 58%, 0.95)`
+        const badgeBg = `hsla(${hue}, 70%, 24%, 0.88)`
+
         ctx.lineWidth = editing ? 3 : 2.5
-        ctx.strokeStyle = 'rgba(245, 158, 11, 0.9)'
+        ctx.strokeStyle = lineCol
         ctx.setLineDash([10, 6])
         ctx.beginPath()
         ctx.moveTo(ax, ay)
@@ -1577,7 +1589,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         // direction arrow at midpoint (a→b)
         const mx = (ax + bx) / 2, my = (ay + by) / 2
         const ang = Math.atan2(by - ay, bx - ax)
-        ctx.fillStyle = 'rgba(245, 158, 11, 0.95)'
+        ctx.fillStyle = lineColSolid
         ctx.beginPath()
         ctx.moveTo(mx + Math.cos(ang) * 9, my + Math.sin(ang) * 9)
         ctx.lineTo(mx + Math.cos(ang + 2.5) * 7, my + Math.sin(ang + 2.5) * 7)
@@ -1594,7 +1606,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           }
           ctx.beginPath()
           ctx.arc(px, py, (editing ? 3.4 : 3.2) * S, 0, Math.PI * 2)
-          ctx.fillStyle = 'rgba(245, 158, 11, 0.95)'
+          ctx.fillStyle = lineColSolid
           ctx.fill()
         }
         // count badge above midpoint
@@ -1604,9 +1616,9 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         const off = 26
         const nx = Math.sin(ang), ny = -Math.cos(ang) // normal
         const bxPos = mx + nx * off, byPos = my + ny * off
-        ctx.fillStyle = 'rgba(120, 53, 15, 0.85)'
+        ctx.fillStyle = badgeBg
         ctx.fillRect(bxPos - tw / 2, byPos - 9, tw, 18)
-        ctx.fillStyle = '#fef3c7'
+        ctx.fillStyle = `hsla(${hue}, 90%, 88%, 1)`
         ctx.textAlign = 'center'
         ctx.fillText(label, bxPos, byPos + 3.5)
         ctx.textAlign = 'left'
