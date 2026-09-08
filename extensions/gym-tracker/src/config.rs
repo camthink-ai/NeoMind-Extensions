@@ -124,7 +124,7 @@ impl Default for IdentityCfg {
             // between unrelated probes; tune live with the exposed distances.
             match_threshold: 40.0,
             auto_capture_unknown: true,
-            unknown_prefix: "未知会员".into(),
+            unknown_prefix: "Member".into(),
             auto_capture_distance: 600.0,
             append_confidence: 250.0,
             append_min_dist: 150.0,

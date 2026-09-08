@@ -183,7 +183,7 @@ export const GymWorkoutSummary =
         const map = new Map<string, MemberLane>()
         for (const s of sessions) {
           const key = s.member_id || `anon:${s.id}`
-          const name = s.member_name?.trim() || (s.member_id ? s.member_id : '访客')
+          const name = s.member_name?.trim() || (s.member_id ? s.member_id : t('visitor'))
           let lane = map.get(key)
           if (!lane) {
             lane = { key, name, color: '', total: 0, blocks: [] }
@@ -213,7 +213,7 @@ export const GymWorkoutSummary =
         const blocks = anon.flatMap((l) => l.blocks)
         return [
           ...rest,
-          { key: 'anon', name: `访客 ×${anon.length}`, color: PALETTE[9], total, blocks },
+          { key: 'anon', name: `${t('visitor')} ×${anon.length}`, color: PALETTE[9], total, blocks },
         ]
       }, [lanes])
 
@@ -368,7 +368,7 @@ export const GymWorkoutSummary =
                             <span className="gym-sum-eqname" title={e.zone}>{e.name}</span>
                             <span className="gym-sum-eqval">
                               {fmtDuration(e.dur)}
-                              {e.reps > 0 ? ` · ${e.reps}次` : ''}
+                              {e.reps > 0 ? ` · ${e.reps}` : ''}
                               <em>{e.pct}%</em>
                             </span>
                           </div>
@@ -396,7 +396,7 @@ export const GymWorkoutSummary =
                             aria-hidden="true"
                           />
                           <span className="gym-sum-session-name">
-                            {s.member_name || s.member_id || '访客'}
+                            {s.member_name || s.member_id || t('visitor')}
                           </span>
                           <span className="gym-sum-session-time">
                             {fmtTime(s.started_at)}

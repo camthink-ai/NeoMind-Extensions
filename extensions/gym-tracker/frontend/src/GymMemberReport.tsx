@@ -71,8 +71,12 @@ const ceDay = (ceDay: number): string => {
   return `${d.getMonth() + 1}/${d.getDate()} 周${['日', '一', '二', '三', '四', '五', '六'][d.getDay()]}`
 }
 
-const fmtDur = (s: number) =>
-  s >= 3600 ? `${(s / 3600).toFixed(1)} 小时` : `${Math.round(s / 60)} 分钟`
+/** Lang-aware duration via the shared translator */
+type Translator = ReturnType<typeof translator>
+const durFmt = (t: Translator, s: number): string =>
+  s >= 3600
+    ? t('hoursFmt', { v: (s / 3600).toFixed(1) })
+    : t('minutesFmt', { v: Math.round(s / 60) })
 const fmtTs = (ts?: number) => {
   if (!ts) return '—'
   const d = new Date(ts * 1000)
@@ -198,7 +202,7 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
           {/* hero stats */}
           <div className="gym-detail-stats">
             <div className="gym-detail-stat">
-              <span className="gym-detail-stat-v">{fmtDur(det.total_duration_sec)}</span>
+              <span className="gym-detail-stat-v">{durFmt(t, det.total_duration_sec)}</span>
               <span className="gym-detail-stat-k">总训练时长</span>
             </div>
             <div className="gym-detail-stat">
@@ -230,7 +234,7 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
                       </div>
                       <span className="gym-report-exmeta">
                         {e.reps > 0 && t('setsReps', { s: e.sets, r: e.reps })}
-                        {e.reps > 0 ? ' · ' : ''}{fmtDur(e.duration_sec)}
+                        {e.reps > 0 ? ' · ' : ''}{durFmt(t, e.duration_sec)}
                       </span>
                     </div>
                   )
@@ -252,7 +256,7 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
                   <div key={z.zone} className="gym-report-eq-row">
                     <span className="gym-report-eq-name">{z.zone}</span>
                     <span className="gym-report-eq-meta">
-                      {fmtDur(z.duration_sec)}{z.reps > 0 ? ` · ${t('timesPlain', { n: z.reps })}` : ''}
+                      {durFmt(t, z.duration_sec)}{z.reps > 0 ? ` · ${t('timesPlain', { n: z.reps })}` : ''}
                     </span>
                   </div>
                 ))}
@@ -280,7 +284,7 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
                       <div className="gym-history-day-head">
                         <span className="gym-history-day-date">{ceDay(day)}</span>
                         <span className="gym-history-day-sum">
-                          {t('historySum', { m: rows.length })}{reps > 0 ? ` · ${t('timesShort', { n: reps })}` : ''} · {fmtDur(secs)}
+                          {t('historySum', { m: rows.length })}{reps > 0 ? ` · ${t('timesShort', { n: reps })}` : ''} · {durFmt(t, secs)}
                         </span>
                       </div>
                       {rows.map((r, i) => {
@@ -292,7 +296,7 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
                               {exName(r.exercise)}
                             </span>
                             <span className="gym-history-meta">
-                              {r.reps > 0 ? t('setsReps', { s: r.sets, r: r.reps }) + ' · ' : ''}{fmtDur(r.duration_sec)}
+                              {r.reps > 0 ? t('setsReps', { s: r.sets, r: r.reps }) + ' · ' : ''}{durFmt(t, r.duration_sec)}
                             </span>
                           </div>
                         )
@@ -312,7 +316,7 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
                 {det.sessions.slice(0, 8).map((s) => (
                   <div key={s.id ?? s.started_at} className="gym-report-session">
                     <span className="gym-report-session-when">{fmtTs(s.started_at)}</span>
-                    <span className="gym-report-session-dur">{fmtDur(s.duration_sec ?? 0)}</span>
+                    <span className="gym-report-session-dur">{durFmt(t, s.duration_sec ?? 0)}</span>
                   </div>
                 ))}
               </div>
@@ -409,7 +413,7 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
                         )}
                         <span className="gym-mcard-name">
                           {m.name}
-                          {m.source === 'auto' && <span className="gym-report-vtag">访客</span>}
+                          {m.source === 'auto' && <span className="gym-report-vtag">{t('visitor')}</span>}
                         </span>
                       </div>
                       <div className="gym-mcard-stats">
@@ -418,7 +422,7 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
                           <span className="gym-mcard-stat-k">{t('visitsShort')}</span>
                         </span>
                         <span className="gym-mcard-stat">
-                          <span className="gym-mcard-stat-v">{fmtDur(m.duration_sec)}</span>
+                          <span className="gym-mcard-stat-v">{durFmt(t, m.duration_sec)}</span>
                           <span className="gym-mcard-stat-k">{t('durationShort')}</span>
                         </span>
                         <span className="gym-mcard-stat">
@@ -443,7 +447,7 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
                   {src && <img className="gym-report-avatar" src={src} alt={m.name} />}
                   {m.name}
-                  {m.source === 'auto' && <span className="gym-report-vtag">访客</span>}
+                  {m.source === 'auto' && <span className="gym-report-vtag">{t('visitor')}</span>}
                 </span>
               }>
               <MemberDetail

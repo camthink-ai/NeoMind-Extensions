@@ -59,6 +59,9 @@ const zh = {
   trailsTitle: '轨迹', heatTitle: '热力', todayPeak: '今日峰值',
   low: '低', high: '高', samples: '样本',
   noFootprint: '该时段没有足迹记录',
+  hoursFmt: '{v} 小时', minutesFmt: '{v} 分钟',
+  hoursShort: '{v}h', minutesShort: '{v}m',
+  unnamedMember: '未命名', unnamedZone: '未命名分区', unnamedLine: '未命名计数线',
   footprintNote: '足迹日志自启用起累积；拖回最右侧查看实时',
   replaySuffix: '回看',
 }
@@ -107,6 +110,9 @@ const en: Partial<Dict> = {
   trailsTitle: 'Trails', heatTitle: 'Heatmap', todayPeak: 'Peak today',
   low: 'Low', high: 'High', samples: 'samples',
   noFootprint: 'No footprints in this window',
+  hoursFmt: '{v} h', minutesFmt: '{v} min',
+  hoursShort: '{v}h', minutesShort: '{v}m',
+  unnamedMember: 'Unnamed', unnamedZone: 'Unnamed zone', unnamedLine: 'Unnamed line',
   footprintNote: 'Footprint log accumulates from activation; drag right for live',
   replaySuffix: ' replay',
 }
