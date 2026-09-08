@@ -898,6 +898,7 @@ mod tests {
             pose: None,
             face: None,
             vel: None,
+            ex: None,
         }
     }
 

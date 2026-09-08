@@ -68,6 +68,22 @@ pub struct Track {
     /// the frame-level ts applies to every track.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ts: Option<u64>,
+    /// Exercise analytics bundle from the device's exercise engine
+    /// (rep FSM + windowed joint-angle statistics): reps, squat depth,
+    /// left/right symmetry, tempo. Present only on newer producers and
+    /// only for tracks with enough window data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ex: Option<ExerciseMetrics>,
+}
+
+/// Windowed exercise metrics riding on a track (see device exercise.py).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExerciseMetrics {
+    pub reps: u32,
+    pub depth_deg: Option<f32>,
+    pub symmetry_deg: Option<f32>,
+    pub tempo_hz: Option<f32>,
+    pub knee_min_deg: Option<f32>,
 }
 
 /// One frame of `gym/track` events published by the NE503 device-app.

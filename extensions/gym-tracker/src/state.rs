@@ -349,6 +349,7 @@ mod tests {
                 pose: None,
                 face: None,
                 vel: None,
+                ex: None,
             }],
             faces: vec![],
             img_b64: None,

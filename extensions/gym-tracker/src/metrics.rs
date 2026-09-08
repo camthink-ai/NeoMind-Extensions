@@ -272,6 +272,7 @@ mod tests {
         Track {
             track_id: tid,
             ts: None,
+            ex: None,
             bbox: Bbox {
                 x,
                 y,

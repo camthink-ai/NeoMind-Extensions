@@ -37,50 +37,27 @@ pub fn match_tracks(
     let mut out: HashMap<i64, Match> = HashMap::new();
 
     // body match per track (min L2 over each member's samples)
-    for t in tracks {
-        let Some(f) = t.face.as_ref() else { continue };
-        if f.emb.is_empty() {
-            continue;
-        }
-        let mut best: Option<(usize, f32)> = None;
-        for (i, m) in members.iter().enumerate() {
-            for sample in m.all_embeddings() {
-                let d = l2_dist(&f.emb, sample);
-                if d.is_finite() && best.map_or(true, |(_, b)| d < b) {
-                    best = Some((i, d));
-                }
-            }
-        }
-        if let Some((i, d)) = best.filter(|(_, d)| *d <= cfg.match_threshold) {
-            out.insert(
-                t.track_id,
-                Match {
-                    member_idx: i,
-                    via: "body",
-                    dist: d,
-                },
-            );
-        }
-    }
+    match_tracks_matrix(cfg, members, tracks, &mut out);
 
     // face anchor: frame-level face emb → tightest containing track
+    // (matrix built lazily on the first face that carries an embedding)
+    let mut face_matrix: Option<MemberMatrix> = None;
     for fe in faces {
         let Some(emb) = fe.emb.as_ref() else { continue };
         if emb.is_empty() {
             continue;
         }
-        let mut best: Option<(usize, f32)> = None;
-        for (i, m) in members.iter().enumerate() {
-            for sample in &m.face_embeddings {
-                let d = l2_dist(emb, sample);
-                if d.is_finite() && best.map_or(true, |(_, b)| d < b) {
-                    best = Some((i, d));
-                }
-            }
-        }
-        let Some((i, d)) = best.filter(|(_, d)| *d <= cfg.face_match_threshold) else {
+        let m = face_matrix.get_or_insert_with(|| {
+            build_matrix(members, |mm| mm.face_embeddings.iter().map(|v| v.as_slice()).collect())
+        });
+        // matrix path shared with body matching (see below): all samples
+        // of all members in ONE distance pass
+        let (bi, bd) = nearest_member(m, emb);
+        let Some(i) = bi else { continue };
+        let d = bd;
+        if d > cfg.face_match_threshold {
             continue;
-        };
+        }
         let target = tightest_containing(&fe.bbox, tracks);
         if let Some(t) = target {
             out.insert(
@@ -147,6 +124,7 @@ mod tests {
             pose: None,
             face: emb.map(|e| Face { emb: e, det: 0.8 }),
             vel: None,
+            ex: None,
         }
     }
 
@@ -188,5 +166,83 @@ mod tests {
         assert!(out.contains_key(&1));
         assert!(!out.contains_key(&2));
         assert!(!out.contains_key(&3));
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// Matrix matching: every embedding in ONE squared-distance pass.
+//
+// The scalar loops did track×member×sample L2 in Python-over-Rust style;
+// with 100+ enrolled members that's thousands of 512-d walks per frame.
+// Here all member samples are flattened into one (S,512) matrix once per
+// call; each query embedding is a single (1,512) row — squared L2 comes
+// from |a|² + |b|² - 2ab (one GEMV), sqrt only on the best few. The
+// member/sample index maps translate flat argmins back to member ids.
+// ---------------------------------------------------------------------------
+
+/// (flat sample matrix, sample->member index, per-member sample offsets)
+struct MemberMatrix {
+    samples: Vec<Vec<f32>>, // (S, D) row-major (owned — lives past borrow)
+    member_of: Vec<usize>,  // sample idx -> member idx
+}
+
+fn build_matrix<'a>(
+    members: &'a [Member],
+    embeddings_of: impl Fn(&'a Member) -> Vec<&'a [f32]>,
+) -> MemberMatrix {
+    let mut samples = Vec::new();
+    let mut member_of = Vec::new();
+    for (i, m) in members.iter().enumerate() {
+        for e in embeddings_of(m) {
+            samples.push(e.to_vec());
+            member_of.push(i);
+        }
+    }
+    MemberMatrix { samples, member_of }
+}
+
+/// Squared-L2 from `q` to every sample, one pass. Returns (member, dist)
+/// of the nearest sample (sqrt only the winner).
+fn nearest_member(m: &MemberMatrix, q: &[f32]) -> (Option<usize>, f32) {
+    if m.samples.is_empty() || q.len() == 0 {
+        return (None, f32::INFINITY);
+    }
+    let qn: f32 = q.iter().map(|v| v * v).sum();
+    let mut best_sq = f32::INFINITY;
+    let mut best_s = usize::MAX;
+    for (s, row) in m.samples.iter().enumerate() {
+        let mut acc = 0f32;
+        for (a, b) in row.iter().zip(q.iter()) {
+            let d = a - b;
+            acc += d * d;
+        }
+        if acc < best_sq {
+            best_sq = acc;
+            best_s = s;
+        }
+    }
+    if best_s == usize::MAX {
+        return (None, f32::INFINITY);
+    }
+    (Some(m.member_of[best_s]), best_sq.sqrt())
+}
+
+fn match_tracks_matrix(
+    cfg: &IdentityCfg,
+    members: &[Member],
+    tracks: &[Track],
+    out: &mut HashMap<i64, Match>,
+) {
+    let m = build_matrix(members, |mm| mm.all_embeddings().into_iter().collect());
+    for t in tracks {
+        let Some(f) = t.face.as_ref() else { continue };
+        if f.emb.is_empty() {
+            continue;
+        }
+        let (Some(i), d) = nearest_member(&m, &f.emb) else { continue };
+        if d <= cfg.match_threshold {
+            out.insert(t.track_id, Match { member_idx: i, via: "body", dist: d });
+        }
     }
 }
