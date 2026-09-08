@@ -41,7 +41,7 @@ function ceDayLabel(ceDay: number, withWeekday = true): string {
   const d = new Date((ceDay - 719163) * 86400000)
   const md = `${d.getMonth() + 1}/${d.getDate()}`
   if (!withWeekday) return md
-  return `${md} 周${['日', '一', '二', '三', '四', '五', '六'][d.getDay()]}`
+  return `${md} ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()]}`
 }
 
 export const GymDoorFlow = forwardRef<HTMLDivElement, ExtensionComponentProps>(
@@ -74,7 +74,7 @@ export const GymDoorFlow = forwardRef<HTMLDivElement, ExtensionComponentProps>(
       const r = await runExtensionCommand<Flow>(extensionId, 'get_crossing_history', { days })
       if (!mountedRef.current) return
       if (r.success && r.data) { setFlow(r.data); setError(null) }
-      else if (!r.success) setError(r.error || '加载失败')
+      else if (!r.success) setError(r.error || t('loadFailed'))
     }, [extensionId, days])
 
     useEffect(() => {
@@ -164,17 +164,17 @@ export const GymDoorFlow = forwardRef<HTMLDivElement, ExtensionComponentProps>(
                       <div
                         className="gym-door-cellbar out"
                         style={{ width: `${(r.out / maxInOut) * 100}%` }}
-                        title={`出场 ${r.out}`}
+                        title={`out ${r.out}`}
                       />
                     </div>
                     <span className="gym-door-hist-mid" title={ceDayLabel(r.day)}>
-                      {ceDayLabel(r.day).replace(' 周', '')}
+                      {ceDayLabel(r.day)}
                     </span>
                     <div className="gym-door-cell in">
                       <div
                         className="gym-door-cellbar in"
                         style={{ width: `${(r.in / maxInOut) * 100}%` }}
-                        title={`进场 ${r.in}`}
+                        title={`in ${r.in}`}
                       />
                       <span className="gym-door-cell-v">{r.in > 0 ? r.in : ''}</span>
                     </div>

@@ -28,7 +28,7 @@ interface WindowData {
 }
 /** window spans the bar offers */
 const SPANS: Array<[number, string]> = [
-  [1800, '30分'], [3600, '1时'], [4 * 3600, '4时'], [12 * 3600, '12时'], [24 * 3600, '24时'],
+  [1800, '30m'], [3600, '1h'], [4 * 3600, '4h'], [12 * 3600, '12h'], [24 * 3600, '24h'],
 ]
 const fmtClock = (ts: number) => {
   const d = new Date(ts * 1000)
@@ -63,7 +63,7 @@ function TimeModeSelect({ span, scrub, setSpan, setScrub, t }: {
           setScrub(Math.floor(Date.now() / 1000) - s)
         }
       }}
-      title="时间范围"
+      title="Time range"
     >
       <option value="live">{t('live')}</option>
       {SPANS.map(([s, label]) => (

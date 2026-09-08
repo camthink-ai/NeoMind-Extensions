@@ -56,7 +56,7 @@ export const GymEquipmentRank = forwardRef<HTMLDivElement, ExtensionComponentPro
       const r = await runExtensionCommand<Summary>(extensionId, 'get_workout_summary', {})
       if (!mountedRef.current) return
       if (r.success && r.data) setRows(r.data.equipment ?? [])
-      else if (!r.success) setError(r.error || '加载失败')
+      else if (!r.success) setError(r.error || t('loadFailed'))
     }, [extensionId])
 
     useEffect(() => {
@@ -85,7 +85,7 @@ export const GymEquipmentRank = forwardRef<HTMLDivElement, ExtensionComponentPro
             {!error && rows && top.length === 0 && (
               <div className="gym-rank-empty">
                 {noZones
-                  ? <span className="gym-empty-warn">⚠ 未配置器械分区——在 Monitor 编辑模式中绘制分区后，此处开始统计</span>
+                  ? <span className="gym-empty-warn">⚠ No equipment zones configured — draw zones in Monitor's edit mode to start tracking</span>
                   : t('noUsageToday')}
               </div>
             )}
@@ -96,7 +96,7 @@ export const GymEquipmentRank = forwardRef<HTMLDivElement, ExtensionComponentPro
                   <div className="gym-rank-bar" style={{ width: `${Math.max(3, (r.duration_sec / max) * 100)}%` }} />
                 </div>
                 <span className="gym-rank-val">{fmt(r.duration_sec)}</span>
-                {r.reps > 0 && <span className="gym-rank-reps">{r.reps}次</span>}
+                {r.reps > 0 && <span className="gym-rank-reps">{r.reps}</span>}
               </div>
             ))}
           </div>

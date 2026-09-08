@@ -51,7 +51,7 @@ export const GymAlerts = forwardRef<HTMLDivElement, ExtensionComponentProps>(
       const r = await runExtensionCommand<AlertsResp>(extensionId, 'get_alerts', {})
       if (!mountedRef.current) return
       if (r.success && r.data) setItems(r.data.alerts ?? [])
-      else if (!r.success) setError(r.error || '加载失败')
+      else if (!r.success) setError(r.error || t('loadFailed'))
     }, [extensionId])
 
     const resolve = useCallback(async (id: number) => {
@@ -98,7 +98,7 @@ export const GymAlerts = forwardRef<HTMLDivElement, ExtensionComponentProps>(
                 <span className="gym-alerts-time">{fmt(a.ts)}</span>
                 <span className="gym-alerts-msg">{a.message}</span>
                 {!a.resolved && a.id != null && a.id > 0 && (
-                  <button className="gym-alerts-ack" title="标记已处理/误报"
+                  <button className="gym-alerts-ack" title={t('markHandled')}
                     onClick={() => resolve(a.id!)}>✓</button>
                 )}
               </div>

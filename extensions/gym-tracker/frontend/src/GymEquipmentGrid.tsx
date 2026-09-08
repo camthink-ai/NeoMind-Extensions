@@ -159,7 +159,7 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
             <div className="gym-eq-state">
               <DumbbellIcon />
               <span className="gym-eq-state-text">
-                未配置器械分区——在 Gym · Monitor 的编辑模式中绘制（当前看到的是未统计状态，不是故障）
+                No equipment zones configured — draw zones in Gym · Monitor edit mode (this is unconfigured, not a fault)
               </span>
             </div>
           ) : (

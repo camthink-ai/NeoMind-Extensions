@@ -55,6 +55,15 @@ interface Detail {
 }
 
 /** classifier labels → display names (fallback: the raw label) */
+const EX_NAME_EN: Record<string, string> = {
+  squat: 'Squat', lunge: 'Lunge', leg_press: 'Leg press', deadlift: 'Deadlift',
+  bench_press: 'Bench press', chest_fly: 'Chest fly', pushup: 'Push-up', pullup: 'Pull-up',
+  row: 'Row', lat_pulldown: 'Lat pulldown', curl: 'Curl', shoulder_press: 'Shoulder press',
+  crunch: 'Crunch', situp: 'Sit-up', plank: 'Plank',
+  treadmill: 'Treadmill', run: 'Run', walk: 'Walk', spin_bike: 'Spin bike', cycling: 'Cycling',
+  stair_climber: 'Stair climber', jump_rope: 'Jump rope', stretch: 'Stretch',
+  standing: 'Standing', unknown: 'Unknown', pending: 'Detecting…',
+}
 const EX_NAME: Record<string, string> = {
   squat: '深蹲', lunge: '弓步', leg_press: '腿举', deadlift: '硬拉',
   bench_press: '卧推', chest_fly: '夹胸', pushup: '俯卧撑', pullup: '引体向上',
@@ -64,11 +73,16 @@ const EX_NAME: Record<string, string> = {
   stair_climber: '爬楼', jump_rope: '跳绳', stretch: '拉伸',
   standing: '站立体息', unknown: '未识别', pending: '识别中…',
 }
-const exName = (e: string) => EX_NAME[e] ?? e
+const exNameZh = (e: string) => EX_NAME[e] ?? e
+const exNameEn = (e: string) => EX_NAME_EN[e] ?? e
+/** pick by the ACTIVE product language (en default) */
+let exNameLang: 'zh' | 'en' = 'en'
+const exName = (e: string) => (exNameLang === 'zh' ? exNameZh(e) : exNameEn(e))
 /** CE days (chrono num_days_from_ce) → "M/D 周X" */
 const ceDay = (ceDay: number): string => {
   const d = new Date((ceDay - 719163) * 86400000)
-  return `${d.getMonth() + 1}/${d.getDate()} 周${['日', '一', '二', '三', '四', '五', '六'][d.getDay()]}`
+  const wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()]
+  return `${d.getMonth() + 1}/${d.getDate()} ${wd}`
 }
 
 /** Lang-aware duration via the shared translator */
@@ -112,7 +126,7 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
     })
     if (!mounted.current) return
     if (r.success && r.data) { setDet(r.data); setErr(null) }
-    else setErr(r.error || '记录加载失败')
+    else setErr(r.error || t('loadFailed'))
   }, [extensionId, row.member_id, days, allHist])
 
   useEffect(() => { load() }, [load])
@@ -148,17 +162,17 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
         <input
           className="gym-ov-input name"
           value={name}
-          placeholder="会员姓名"
+          placeholder={t('memberNamePh')}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') doRename() }}
         />
         <button className="gym-ov-btn" disabled={busy || !name.trim() || name.trim() === row.name}
-          onClick={doRename} title="回车也可保存">改名</button>
+          onClick={doRename} title={t('enterToSave')}>{t('rename')}</button>
         {merging ? (
           <GymSelect
             value=""
             autoOpen
-            placeholder="并入哪位会员？"
+            placeholder={t('mergeIntoPh')}
             onClose={() => setMerging(false)}
             onChange={doMerge}
             options={mates
@@ -170,32 +184,32 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
             onClick={() => setMerging(true)}
             title={t('mergeTip')}>{t('merge')}</button>
         )}
-        <button className="gym-ov-btn danger" disabled={busy} onClick={doDelete}>删除</button>
+        <button className="gym-ov-btn danger" disabled={busy} onClick={doDelete}>{t('del')}</button>
         <span className="gym-detail-window">
           <button className={`gym-ov-tg ${!allHist ? 'on' : ''}`}
-            onClick={() => setAllHist(false)}>近{days}天</button>
+            onClick={() => setAllHist(false)}>{t('lastNDays', { n: days })}</button>
           <button className={`gym-ov-tg ${allHist ? 'on' : ''}`}
-            onClick={() => setAllHist(true)}>全部历史</button>
+            onClick={() => setAllHist(true)}>{t('allHistory')}</button>
         </span>
       </div>
 
       {err && <div className="gym-report-records-error">{err}</div>}
-      {!det && !err && <div className="gym-report-records-empty">记录加载中…</div>}
+      {!det && !err && <div className="gym-report-records-empty">{t('recordsLoading')}</div>}
       {det && (
         <div className="gym-report-records">
           {/* identity samples: how this member is recognized */}
           {det.identity && (
             <div className="gym-identity-strip">
               <span className="gym-identity-item">
-                <b>{det.identity.body_samples}</b> 人体 ReID 样本
+                <b>{det.identity.body_samples}</b> {t('bodyReidSamples')}
               </span>
               <span className="gym-identity-item">
-                <b>{det.identity.face_samples}</b> 人脸样本
+                <b>{det.identity.face_samples}</b> {t('faceSamples')}
               </span>
               <span className="gym-identity-item dim">
                 {det.identity.face_samples > 0
-                  ? '人脸识别 + 人体 ReID 双通道'
-                  : '人体 ReID 识别中（人脸样本待采集）'}
+                  ? t('dualChannel')
+                  : t('reidOnly')}
               </span>
             </div>
           )}
@@ -203,7 +217,7 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
           <div className="gym-detail-stats">
             <div className="gym-detail-stat">
               <span className="gym-detail-stat-v">{durFmt(t, det.total_duration_sec)}</span>
-              <span className="gym-detail-stat-k">总训练时长</span>
+              <span className="gym-detail-stat-k">{t('totalDuration')}</span>
             </div>
             <div className="gym-detail-stat">
               <span className="gym-detail-stat-v">{det.visits}</span>
@@ -211,14 +225,14 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
             </div>
             <div className="gym-detail-stat">
               <span className="gym-detail-stat-v">{det.exercises.length}</span>
-              <span className="gym-detail-stat-k">训练动作</span>
+              <span className="gym-detail-stat-k">{t('trainedMoves')}</span>
             </div>
           </div>
 
-          {/* 动作分析 */}
+          {/* {t('motionAnalysis')} */}
           <div className="gym-detail-sec">
             <span className="gym-detail-sec-title">
-              动作分析 <em>{allHist ? '全部历史' : `近${days}天`}</em>
+              {t('motionAnalysis')} <em>{allHist ? t('allHistory') : t('lastNDays', { n: days })}</em>
             </span>
             {det.exercises.length > 0 ? (
               <div className="gym-report-exlist">
@@ -247,10 +261,10 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
             )}
           </div>
 
-          {/* 器械分布 */}
+          {/* {t('equipDist')} */}
           {det.zones.length > 0 && (
             <div className="gym-detail-sec">
-              <span className="gym-detail-sec-title">器械分布</span>
+              <span className="gym-detail-sec-title">{t('equipDist')}</span>
               <div className="gym-report-eq">
                 {det.zones.map((z) => (
                   <div key={z.zone} className="gym-report-eq-row">
@@ -268,7 +282,7 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
           {allHist && (det.daily?.length ?? 0) > 0 && (
             <div className="gym-detail-sec">
               <span className="gym-detail-sec-title">
-                健身历史 <em>按天 · {new Set(det.daily!.map((d) => d.day)).size} 天有训练</em>
+                {t('fitnessHistory')} <em>{t('byDay')} · {new Set(det.daily!.map((d) => d.day)).size} {t('daysTrained')}</em>
               </span>
               {(() => {
                 const byDay = new Map<number, DailyRow[]>()
@@ -308,7 +322,7 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
             </div>
           )}
 
-          {/* 到店记录 */}
+          {/* {t('visitLog')} */}
           <div className="gym-detail-sec">
             <span className="gym-detail-sec-title">{t('visitLog')}</span>
             {det.sessions.length > 0 ? (
@@ -346,7 +360,8 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
       })
       return () => { alive = false }
     }, [extensionId])
-    const { t } = useLang(config as Record<string, unknown>, gLang)
+    const { t, lang } = useLang(config as Record<string, unknown>, gLang)
+    exNameLang = lang
 
     useEffect(() => injectStyles(STYLE_ID, STYLES), [])
 
@@ -363,7 +378,7 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
       const r = await runExtensionCommand<Report>(extensionId, 'get_member_report', { days })
       if (!mountedRef.current) return
       if (r.success && r.data) setRep(r.data)
-      else if (!r.success) setError(r.error || '加载失败')
+      else if (!r.success) setError(r.error || t('loadFailed'))
     }, [extensionId, days])
 
     useEffect(() => {
@@ -401,7 +416,7 @@ export const GymMemberReport = forwardRef<HTMLDivElement, ExtensionComponentProp
                       key={m.member_id}
                       className={`gym-mcard clickable ${open ? 'sel' : ''}`}
                       onClick={() => setOpenId(open ? null : m.member_id)}
-                      title={open ? undefined : '点击查看健身记录与管理'}
+                      title={open ? undefined : t('mergeTip')}
                     >
                       <div className="gym-mcard-head">
                         {src ? (

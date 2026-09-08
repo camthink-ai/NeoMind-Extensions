@@ -1251,26 +1251,29 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       let img: HTMLImageElement | ImageBitmap | VideoFrame | null = null
       if (buf.length > 0) {
         const newest = buf[buf.length - 1].t
-        const gap = Math.max(0, newest - lastTracksTsRef.current)
+        // SIGNED gap: video tag minus newest track ts. NEGATIVE means the
+        // track timeline runs AHEAD of the video tags — i.e. video tags
+        // carry the relay-READ time while the pixels are (encode depth)
+        // older. Clamping to 0 (the old behavior) swallowed that depth and
+        // drew boxes for "tag time" on pixels from "tag minus depth" —
+        // the box-vs-person offset on the 4K stream (~1.35 s measured).
+        const gap = newest - lastTracksTsRef.current
         const gw = gapWinRef.current
         gw.push(gap)
         if (gw.length > 90) gw.shift()
-        // PURE-INTERPOLATION MODE: delay from the rolling window MAX of
-        // the video-vs-tracks gap (+ small margin), not an EMA. The gap
-        // swings by up to one inference PERIOD (2 Hz cadence ⇒ ±240 ms
-        // around its mean); an EMA-based delay sits mid-range and leaves
-        // half-period extrapolation windows — the residual "box trails
-        // person" users saw. Window-max guarantees the playhead is behind
-        // the newest track sample essentially every frame: pure two-sample
-        // interpolation, sub-pixel error, no velocity guessing. The cap must
-        // sit ABOVE the steady-state gap or it forces the playhead AHEAD of
-        // the newest track sample into clamped extrapolation — measured
-        // steady gap with the 4K H.264 relay + 2.2 Hz track pipeline is
-        // 1.05–2.1 s (rolling max ≈ 2.1), so a 1.2 s cap left the playhead
-        // up to 0.9 s ahead of track-now and boxes slid off walkers every
-        // ~1 s cycle. 2.6 s covers the operating point with margin and
-        // still bounds the dead-track-stream case.
-        const delay = Math.min(2.6, Math.max(0.05, Math.max(...gw) + 0.05))
+        // PURE-INTERPOLATION MODE, pixel-time aligned. Two components:
+        // (1) max gap over the window + margin — waits for the slowest
+        //     recent track data (covers inference cadence swings);
+        // (2) the MAGNITUDE of the negative median — the video pipeline's
+        //     tag-vs-pixel lag (encode depth). The playhead must sit at
+        //     the shown frame's TRUE capture moment, not its (lagging)
+        //     tag, or boxes lead the person by the whole encode depth.
+        // Floor 0.05 s; cap bounds a dead track stream.
+        const maxGap = Math.max(...gw)
+        const sorted = [...gw].sort((a, b) => a - b)
+        const medGap = sorted[Math.floor(sorted.length / 2)] ?? 0
+        const delay = Math.min(3.2, Math.max(0.05,
+          maxGap + 0.05 + Math.max(0, -medGap)))
         delayEstRef.current = delay
         let want = newest - delay
         // don't visibly rewind when a burst of old frames lands late
@@ -1335,7 +1338,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       // with smoothing off. Runs right after the video layer so every
       // analytics layer (zones/lines/skeletons) renders on top of it.
       const faces = state?.faces ?? []
-      // faces inside 无效区 (mirrors) are reflections, not people — skip
+      // faces inside Exclusion (mirrors) are reflections, not people — skip
       // the mosaic there too, same rule the ingest filter uses (foot of
       // the face box first, box center as fallback)
       const exclusionZones =
@@ -2042,7 +2045,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         ...zs,
         {
           id: crypto.randomUUID(),
-          name: excl ? `无效区 ${zs.filter((z) => z.equipment_type === 'exclusion').length + 1}` : `Zone ${zs.length + 1}`,
+          name: excl ? `Exclusion ${zs.filter((z) => z.equipment_type === 'exclusion').length + 1}` : `Zone ${zs.length + 1}`,
           equipment_type: excl ? 'exclusion' : 'equipment',
           polygon: draft,
           enabled: true,
@@ -2093,7 +2096,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         setSavedFlash(Date.now())
         loadMembers()
       } else {
-        setRegister((s) => (s ? { ...s, busy: false, msg: r.error || '注册失败' } : s))
+        setRegister((s) => (s ? { ...s, busy: false, msg: r.error || 'Register failed' } : s))
       }
     }, [register, extensionId, loadMembers, cropAvatar])
 
@@ -2117,7 +2120,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       // callback is declared before the derived const)
       const dirtyNow =
         zonesRef.current.some((z) => z.isNew) || linesRef.current.some((l) => l.isNew)
-      if (dirtyNow && !window.confirm('有未保存的修改，确定放弃并退出编辑？')) return
+      if (dirtyNow && !window.confirm('Discard unsaved changes and exit editing?')) return
       await Promise.all([loadZones(), loadLines()])
       deletedRef.current = { zone: false, line: false }
       setDraft([]); setDraftLine([]); setSelZoneId(null); setSelLineId(null); setSelMemberId(null)
@@ -2285,7 +2288,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             <div className="gym-ov-compact">
               <span className={`gym-ov-dot ${status === 'streaming' ? 'on' : status === 'connecting' ? 'wait' : 'off'}`} />
               <span className="gym-ov-metric">{videoFps}fps</span>
-              <span className="gym-ov-metric">{present}人</span>
+              <span className="gym-ov-metric">{present}</span>
               <span className="gym-ov-flex" />
               {!editing && (
                 <>
@@ -2303,31 +2306,31 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
               {editing && (
                 <>
                   <span className="gym-ov-editkind">
-                    {editKind === 'zones' ? '分区管理' : editKind === 'exclude' ? '无效区管理' : '计数线管理'}
+                    {editKind === 'zones' ? t('zoneManage') : editKind === 'exclude' ? t('excludeManage') : t('lineManage')}
                   </span>
                   <span className="gym-ov-tb-sep" />
                   <button className="gym-ov-tg" onClick={undo}
                     disabled={editKind === 'lines' ? draftLine.length === 0 : draft.length === 0}
-                    title="撤销当前草稿的上一个点">撤销</button>
+                    title="Undo last draft point">{t('undo')}</button>
                   {(editKind === 'zones' || editKind === 'exclude') && (
                     <button className="gym-ov-tg" onClick={closeDraft} disabled={draft.length < 3}
-                      title="把当前点串闭合为区域">闭合{draft.length}</button>
+                      title="Close the point loop">{t('closePoly')}{draft.length}</button>
                   )}
                   <span className="gym-ov-flex" />
                   <button className={`gym-ov-tg ${listOpen ? 'on' : ''}`} onClick={() => setListOpen(!listOpen)}
-                    title="收起/展开右侧列表，留出画面空间">{listOpen ? '隐藏列表' : '列表'}</button>
+                    title="Toggle the side list">{listOpen ? '隐藏列表' : '列表'}</button>
                   <span className="gym-ov-tb-sep" />
                   <button className="gym-ov-tg" onClick={cancelEdit}
-                    title="丢弃未保存的修改，回到查看模式">取消</button>
+                    title="Discard unsaved changes, back to view">{t('cancel')}</button>
                   <button className="gym-ov-tg" onClick={save} disabled={saving}
-                    title="保存到服务器，继续编辑">{saving ? '…' : dirty ? '保存*' : '保存'}</button>
+                    title="Save to server, keep editing">{saving ? '…' : dirty ? `${t('save')}*` : t('save')}</button>
                   <button className="gym-ov-tg gym-ov-tg-save" onClick={async () => {
                     // 完成 = save & exit; on failure stay in the editor so
                     // the edit isn't silently lost
                     const ok = await save()
                     if (!ok) return
                     setMode('view'); setDraft([]); setDraftLine([]); setSelZoneId(null); setSelLineId(null); setSelMemberId(null)
-                  }} disabled={saving} title="保存并返回查看模式">{saving ? '保存中…' : '完成'}</button>
+                  }} disabled={saving} title="Save and return to view">{saving ? '…' : t('done')}</button>
                 </>
               )}
             </div>
@@ -2361,23 +2364,23 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             {editing && (
               <div className="gym-ov-edit-tip">
                 {editKind === 'zones'
-                  ? '拖顶点调形状 · 拖空心中点加点 · 区内拖动整体移动 · 双击顶点删除 · 点击空白画新分区'
+                  ? 'Drag vertices to reshape · drag hollow midpoints to add · drag inside to move · double-click a vertex to delete · click empty space to draw a new zone'
                   : editKind === 'exclude'
-                    ? '圈出镜子/无人区等无效区域——区域内的检测将被完全忽略（不跟踪、不计数、不入库）'
+                    ? 'Outline mirrors / no-go areas — detections inside are fully ignored (no tracking, no counting, no enrollment)'
                     : editKind === 'lines'
-                      ? '拖端点/线身调整 · 点击两点画计数线（a→b 为方向基准，↑=向左穿入）'
-                      : `会员库（${members.length} 人）——点击条目展开编辑，回车保存改名；新人自动录入编号`}
+                      ? 'Drag endpoints/body to adjust · click two points to draw a line (a→b sets direction, ↑ = leftward crossing)'
+                      : `Member library (${members.length}) — click a row to expand; Enter saves renames; newcomers auto-enrolled`}
               </div>
             )}
             {!editing && register && (
               <div className="gym-ov-register">
                 <span className="gym-ov-register-title">
-                  注册会员 · 轨迹 #{register.trackId}
+                  Register member · track #{register.trackId}
                 </span>
                 <input
                   className="gym-ov-input name"
                   autoFocus
-                  placeholder="会员姓名"
+                  placeholder="Member name"
                   value={register.name}
                   onChange={(e) =>
                     setRegister((r) => (r ? { ...r, name: e.target.value } : r))
@@ -2391,8 +2394,8 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                   className="gym-ov-btn primary"
                   disabled={!register.name.trim() || register.busy}
                   onClick={submitRegister}
-                >{register.busy ? '注册中…' : '注册'}</button>
-                <button className="gym-ov-btn" onClick={() => setRegister(null)}>取消</button>
+                >{register.busy ? '…' : 'Save'}</button>
+                <button className="gym-ov-btn" onClick={() => setRegister(null)}>Cancel</button>
                 {register.msg && <span className="gym-ov-register-err">{register.msg}</span>}
               </div>
             )}
@@ -2403,27 +2406,27 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
               <div className="gym-ov-drawtabs">
                 <button className={`gym-ov-drawtab ${editKind === 'zones' ? 'on' : ''}`}
                   onClick={() => { setEditKind('zones'); setDraftLine([]); setSelLineId(null); setSelMemberId(null) }}>
-                  分区管理<span className="gym-ov-drawtab-n">{zones.length}</span>
+                  Zones<span className="gym-ov-drawtab-n">{zones.length}</span>
                 </button>
                 <button className={`gym-ov-drawtab ${editKind === 'lines' ? 'on' : ''}`}
                   onClick={() => { setEditKind('lines'); setDraft([]); setSelZoneId(null); setSelMemberId(null) }}>
-                  计数线管理<span className="gym-ov-drawtab-n">{lines.length}</span>
+                  Lines<span className="gym-ov-drawtab-n">{lines.length}</span>
                 </button>
                 <button className={`gym-ov-drawtab ${editKind === 'exclude' ? 'on' : ''}`}
                   onClick={() => { setEditKind('exclude'); setDraftLine([]); setSelLineId(null); setSelMemberId(null) }}>
-                  无效区<span className="gym-ov-drawtab-n">{zones.filter((z) => z.equipment_type === 'exclusion').length}</span>
+                  Excl<span className="gym-ov-drawtab-n">{zones.filter((z) => z.equipment_type === 'exclusion').length}</span>
                 </button>
               </div>
               {editKind === 'zones'
                 ? (opZones.length === 0
-                    ? [<span key="e" className="gym-ov-zonelist-empty">还没有分区——在画面上点出第一块器械区</span>]
+                    ? [<span key="e" className="gym-ov-zonelist-empty">No zones yet — click on the video to draw your first equipment zone</span>]
                     : opZones.map((z, i) => (
                         <div key={z.id} className="gym-ov-rowwrap">
                           <div
                             className={`gym-ov-zonerow ${selZoneId === z.id ? 'sel' : ''}`}
                             onClick={() => setSelZoneId(selZoneId === z.id ? null : z.id)}>
                             <span className="gym-ov-zoneidx">{i + 1}</span>
-                            <span className="gym-ov-zonename">{z.name || '未命名分区'}</span>
+                            <span className="gym-ov-zonename">{z.name || 'Unnamed zone'}</span>
                             <span className="gym-ov-typetag">
                               {EQUIPMENT_PRESETS.find(([, v]) => v === z.equipment_type)?.[0] ?? z.equipment_type}
                             </span>
@@ -2448,22 +2451,22 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                                 ]}
                               />
                               <button className="gym-ov-btn danger"
-                                onClick={() => { deletedRef.current.zone = true; setZones((zs) => zs.filter((x) => x.id !== z.id)); setSelZoneId(null) }}>删除</button>
+                                onClick={() => { deletedRef.current.zone = true; setZones((zs) => zs.filter((x) => x.id !== z.id)); setSelZoneId(null) }}>Delete</button>
                             </div>
                           )}
                         </div>
                       )))
                 : (editKind === 'exclude'
                     ? (eqZones.length === 0
-                        ? [<span key="e" className="gym-ov-zonelist-empty">还没有无效区——圈出镜子/无人区，区域内的检测将被忽略</span>]
+                        ? [<span key="e" className="gym-ov-zonelist-empty">No exclusions yet — outline mirrors/dead zones to ignore detections there</span>]
                         : eqZones.map((z, i) => (
                             <div key={z.id} className="gym-ov-rowwrap">
                               <div
                                 className={`gym-ov-zonerow ${selZoneId === z.id ? 'sel' : ''}`}
                                 onClick={() => setSelZoneId(selZoneId === z.id ? null : z.id)}>
                                 <span className="gym-ov-zoneidx excl">{i + 1}</span>
-                                <span className="gym-ov-zonename">{z.name || '无效区'}</span>
-                                <span className="gym-ov-typetag">检测忽略</span>
+                                <span className="gym-ov-zonename">{z.name || 'Exclusion'}</span>
+                                <span className="gym-ov-typetag">ignored</span>
                               </div>
                               {selZoneId === z.id && (
                                 <div className="gym-ov-rowins">
@@ -2472,14 +2475,14 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                                       setZones((zs) => zs.map((x) => (x.id === z.id ? { ...x, name: e.target.value } : x)))
                                     } />
                                   <button className="gym-ov-btn danger"
-                                    onClick={() => { deletedRef.current.zone = true; setZones((zs) => zs.filter((x) => x.id !== z.id)); setSelZoneId(null) }}>删除</button>
+                                    onClick={() => { deletedRef.current.zone = true; setZones((zs) => zs.filter((x) => x.id !== z.id)); setSelZoneId(null) }}>Delete</button>
                                 </div>
                               )}
                             </div>
                           )))
                     : (editKind === 'lines'
                     ? (lines.length === 0
-                        ? [<span key="e" className="gym-ov-zonelist-empty">还没有计数线——在画面上点两点画出出入口线</span>]
+                        ? [<span key="e" className="gym-ov-zonelist-empty">No counting lines yet — click two points to draw a door line</span>]
                         : lines.map((l, i) => {
                             const st = crossings.find((s) => s.line_id === l.id)
                             return (
@@ -2487,7 +2490,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                                 <div className={`gym-ov-zonerow ${selLineId === l.id ? 'sel' : ''}`}
                                   onClick={() => setSelLineId(selLineId === l.id ? null : l.id)}>
                                   <span className="gym-ov-zoneidx line">{i + 1}</span>
-                                  <span className="gym-ov-zonename">{l.name || '未命名计数线'}</span>
+                                  <span className="gym-ov-zonename">{l.name || 'Unnamed line'}</span>
                                   <span className="gym-ov-linecount">
                                     ↑{st?.in_count ?? 0} ↓{st?.out_count ?? 0}
                                   </span>
@@ -2499,14 +2502,14 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                                         setLines((ls) => ls.map((x) => (x.id === l.id ? { ...x, name: e.target.value } : x)))
                                       } />
                                     <button className="gym-ov-btn danger"
-                                      onClick={() => { deletedRef.current.line = true; setLines((ls) => ls.filter((x) => x.id !== l.id)); setSelLineId(null) }}>删除</button>
+                                      onClick={() => { deletedRef.current.line = true; setLines((ls) => ls.filter((x) => x.id !== l.id)); setSelLineId(null) }}>Delete</button>
                                   </div>
                                 )}
                               </div>
                             )
                           }))
                     : (members.length === 0
-                        ? [<span key="e" className="gym-ov-zonelist-empty">会员库为空——新人入画会自动录入特征；也可在查看模式点击人物注册</span>]
+                        ? [<span key="e" className="gym-ov-zonelist-empty">Member library empty — newcomers auto-enroll; or click a person in view mode to register</span>]
                         : members.map((m, i) => (
                             <div key={m.id} className="gym-ov-rowwrap">
                               <div className={`gym-ov-zonerow ${selMemberId === m.id ? 'sel' : ''}`}
@@ -2517,9 +2520,9 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                                 ) : (
                                   <span className="gym-ov-zoneidx member">{i + 1}</span>
                                 )}
-                                <span className="gym-ov-zonename">{m.name || '未命名'}</span>
+                                <span className="gym-ov-zonename">{m.name || 'Unnamed'}</span>
                                 <span className="gym-ov-typetag">
-                                  {m.source === 'auto' ? '自动' : '手动'} · {m.samples ?? 1}样本
+                                  {m.source === 'auto' ? 'auto' : 'manual'} · {m.samples ?? 1} samples
                                 </span>
                               </div>
                               {selMemberId === m.id && (
@@ -2541,7 +2544,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                                     <GymSelect
                                       value=""
                                       autoOpen
-                                      placeholder="并入哪位会员？"
+                                      placeholder="Merge into which member?"
                                       onClose={() => setMerging(null)}
                                       onChange={(v) => { if (v) doMerge(v) }}
                                       options={members
@@ -2549,11 +2552,11 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                                         .map((x) => ({ value: x.id, label: x.name }))}
                                     />
                                   ) : (
-                                    <button className="gym-ov-btn" title="把此人的特征并入另一位会员（换装确认）"
-                                      onClick={() => { setMerging(m.id); setSavedFlash(0) }}>并入</button>
+                                    <button className="gym-ov-btn" title="Merge this person into another member (outfit change)"
+                                      onClick={() => { setMerging(m.id); setSavedFlash(0) }}>Merge</button>
                                   )}
                                   <button className="gym-ov-btn danger"
-                                    onClick={() => { removeMember(m.id); setSelMemberId(null) }}>删除</button>
+                                    onClick={() => { removeMember(m.id); setSelMemberId(null) }}>Delete</button>
                                 </div>
                               )}
                             </div>

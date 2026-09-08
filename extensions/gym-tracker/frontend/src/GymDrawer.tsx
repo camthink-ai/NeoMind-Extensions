@@ -78,7 +78,7 @@ export function GymDrawer({ open, onClose, title, children, width = 380 }: Props
       >
         <div className="gym-drawer-head">
           <span className="gym-drawer-title">{title}</span>
-          <button className="gym-ov-btn" onClick={onClose}>关闭</button>
+          <button className="gym-ov-btn" onClick={onClose}>Close</button>
         </div>
         <div className="gym-drawer-body">{children}</div>
       </aside>
@@ -113,7 +113,7 @@ export function GymModal({ open, onClose, title, children, width = 900 }: {
       <div className="gym-modal" style={{ width: `min(${width}px, 94vw)` }} role="dialog" aria-modal="true">
         <div className="gym-drawer-head">
           <span className="gym-drawer-title">{title}</span>
-          <button className="gym-ov-btn" onClick={onClose}>关闭</button>
+          <button className="gym-ov-btn" onClick={onClose}>Close</button>
         </div>
         <div className="gym-drawer-body">{children}</div>
       </div>

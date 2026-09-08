@@ -155,7 +155,7 @@ export const GymWorkoutSummary =
         )
         if (!mountedRef.current) return
         if (res.success && res.data) { setSummary(res.data); setError(null) }
-        else setError(res.error || '加载概况失败')
+        else setError(res.error || t('loadSummaryFail'))
         setLoading(false)
       }, [extensionId, since])
 
@@ -264,7 +264,7 @@ export const GymWorkoutSummary =
                 <button
                   className="gym-sum-navbtn"
                   onClick={() => setDay(new Date(day.getTime() - DAY_MS))}
-                  aria-label="前一天"
+                  aria-label={t('prevDay')}
                 >‹</button>
                 <span className="gym-sum-day">
                   {isToday ? t('today') : fmtDay(day)}
@@ -273,7 +273,7 @@ export const GymWorkoutSummary =
                   className="gym-sum-navbtn"
                   disabled={since >= today}
                   onClick={() => setDay(new Date(day.getTime() + DAY_MS))}
-                  aria-label="后一天"
+                  aria-label={t('nextDay')}
                 >›</button>
               </div>
             </div>
@@ -282,12 +282,12 @@ export const GymWorkoutSummary =
             {error && !summary ? (
               <div className="gym-sum-state">
                 <span className="gym-sum-state-text">{error}</span>
-                <button className="gym-live-retry" onClick={refresh}>重试</button>
+                <button className="gym-live-retry" onClick={refresh}>{t('retryBtn')}</button>
               </div>
             ) : loading && !summary ? (
               <div className="gym-sum-state">
                 <div className="gym-live-spinner" />
-                <span className="gym-sum-state-text">加载中…</span>
+                <span className="gym-sum-state-text">{t('loadingDots')}</span>
               </div>
             ) : sessions.length === 0 && equipment.length === 0 ? (
               <div className="gym-sum-state">
