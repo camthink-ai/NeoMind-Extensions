@@ -1269,11 +1269,16 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         //     the shown frame's TRUE capture moment, not its (lagging)
         //     tag, or boxes lead the person by the whole encode depth.
         // Floor 0.05 s; cap bounds a dead track stream.
-        const maxGap = Math.max(...gw)
+        // P90 delay policy: track the 90th-percentile gap + margin instead
+        // of the window MAX. With the time domains unified (p50 gap now
+        // ~137 ms) the max was a rare 400 ms outlier forcing EVERY frame
+        // to wait ~0.45 s; p90 cuts the display latency to ~0.25 s and the
+        // brief spikes past p90 extrapolate along per-track velocity —
+        // well-behaved now that vel quality and ts domains are fixed.
         const sorted = [...gw].sort((a, b) => a - b)
-        const medGap = sorted[Math.floor(sorted.length / 2)] ?? 0
-        const delay = Math.min(3.2, Math.max(0.05,
-          maxGap + 0.05 + Math.max(0, -medGap)))
+        const p90 = sorted[Math.floor(sorted.length * 0.9)]
+          ?? sorted[sorted.length - 1] ?? 0
+        const delay = Math.min(3.2, Math.max(0.05, p90 + 0.08))
         delayEstRef.current = delay
         let want = newest - delay
         // don't visibly rewind when a burst of old frames lands late
