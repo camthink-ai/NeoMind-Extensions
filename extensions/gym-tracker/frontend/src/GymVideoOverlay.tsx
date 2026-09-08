@@ -606,6 +606,10 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     const zonesRef = useRef<DraftZone[]>([])
     const linesRef = useRef<DraftLine[]>([])
     const crossingsRef = useRef<LineStats[]>([])
+    // crossing flash: line_id -> { lastIn, lastOut, flash: 'in'|'out', at }
+    // the line glows green (in) / red (out) for ~2.5s after a counted
+    // crossing, then decays back to its neutral per-line hue
+    const lineFlashRef = useRef<Map<string, { lastIn: number; lastOut: number; dir: 'in' | 'out'; at: number }>>(new Map())
     const draftRef = useRef<number[][]>([])
     const draftLineRef = useRef<number[][]>([])
     const modeRef = useRef<'view' | 'edit'>('view')
@@ -635,7 +639,22 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
 
     useEffect(() => { zonesRef.current = zones }, [zones])
     useEffect(() => { linesRef.current = lines }, [lines])
-    useEffect(() => { crossingsRef.current = crossings }, [crossings])
+    useEffect(() => {
+      crossingsRef.current = crossings
+      const now = performance.now()
+      for (const st of crossings) {
+        let f = lineFlashRef.current.get(st.line_id)
+        if (!f) {
+          f = { lastIn: st.in_count, lastOut: st.out_count, dir: 'in', at: 0 }
+          lineFlashRef.current.set(st.line_id, f)
+          continue
+        }
+        if (st.in_count > f.lastIn) { f.dir = 'in'; f.at = now; }
+        if (st.out_count > f.lastOut) { f.dir = 'out'; f.at = now; }
+        f.lastIn = st.in_count
+        f.lastOut = st.out_count
+      }
+    }, [crossings])
     useEffect(() => { draftRef.current = draft }, [draft])
     useEffect(() => { draftLineRef.current = draftLine }, [draftLine])
     useEffect(() => { modeRef.current = mode }, [mode])
@@ -1574,8 +1593,26 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           for (const c of ln.name) h = (h * 31 + c.charCodeAt(0)) >>> 0
           hue = h % 360
         } catch { /* keep default */ }
-        const lineCol = `hsla(${hue}, 85%, 58%, 0.9)`
-        const lineColSolid = `hsla(${hue}, 85%, 58%, 0.95)`
+        // flash decay: crossing (in=green/out=red) glows for 2.5 s then
+        // eases back to the line's neutral hue — the line ACKS each event
+        let lineCol = `hsla(${hue}, 85%, 58%, 0.9)`
+        let lineColSolid = `hsla(${hue}, 85%, 58%, 0.95)`
+        const flashHue = 140  // green for in
+        const outHue = 0      // red for out
+        const fl = lineFlashRef.current.get(ln.id)
+        if (fl && fl.at > 0) {
+          const age = (performance.now() - fl.at) / 2500
+          if (age < 1) {
+            const k = Math.max(0, 1 - age)          // 1 → 0 decay
+            const target = fl.dir === 'in' ? flashHue : outHue
+            // hue lerp via shortest arc
+            let dh = ((target - hue + 540) % 360) - 180
+            const mixedHue = (hue + dh * k + 360) % 360
+            const sat = 85, light = 58 + 8 * k
+            lineCol = `hsla(${mixedHue}, ${sat}%, ${light}%, ${0.9 + 0.1 * k})`
+            lineColSolid = `hsla(${mixedHue}, ${sat}%, ${light + 4}%, 0.95)`
+          }
+        }
         const badgeBg = `hsla(${hue}, 70%, 24%, 0.88)`
 
         ctx.lineWidth = editing ? 3 : 2.5
