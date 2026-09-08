@@ -158,39 +158,44 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
 
   return (
     <div className="gym-report-detail">
-      <div className="gym-report-detail-manage">
-        <input
-          className="gym-ov-input name"
-          value={name}
-          placeholder={t('memberNamePh')}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') doRename() }}
-        />
-        <button className="gym-ov-btn" disabled={busy || !name.trim() || name.trim() === row.name}
-          onClick={doRename} title={t('enterToSave')}>{t('rename')}</button>
-        {merging ? (
-          <GymSelect
-            value=""
-            autoOpen
-            placeholder={t('mergeIntoPh')}
-            onClose={() => setMerging(false)}
-            onChange={doMerge}
-            options={mates
-              .filter((m) => m.member_id !== row.member_id)
-              .map((m) => ({ value: m.member_id, label: m.name }))}
+      <div className="gym-detail-manage">
+        <div className="gym-detail-manage-row">
+          <input
+            className="gym-ov-input name"
+            value={name}
+            placeholder={t('memberNamePh')}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') doRename() }}
           />
-        ) : (
-          <button className="gym-ov-btn" disabled={busy || mates.length < 2}
-            onClick={() => setMerging(true)}
-            title={t('mergeTip')}>{t('merge')}</button>
-        )}
-        <button className="gym-ov-btn danger" disabled={busy} onClick={doDelete}>{t('del')}</button>
-        <span className="gym-detail-window">
-          <button className={`gym-ov-tg ${!allHist ? 'on' : ''}`}
-            onClick={() => setAllHist(false)}>{t('lastNDays', { n: days })}</button>
-          <button className={`gym-ov-tg ${allHist ? 'on' : ''}`}
-            onClick={() => setAllHist(true)}>{t('allHistory')}</button>
-        </span>
+          {merging ? (
+            <GymSelect
+              value=""
+              autoOpen
+              placeholder={t('mergeIntoPh')}
+              onClose={() => setMerging(false)}
+              onChange={doMerge}
+              options={mates
+                .filter((m) => m.member_id !== row.member_id)
+                .map((m) => ({ value: m.member_id, label: m.name }))}
+            />
+          ) : (
+            <button className="gym-ov-btn" disabled={busy || mates.length < 2}
+              onClick={() => setMerging(true)}
+              title={t('mergeTip')}>{t('merge')}</button>
+          )}
+          <button className="gym-ov-btn" disabled={busy || !name.trim() || name.trim() === row.name}
+            onClick={doRename} title={t('enterToSave')}>{t('rename')}</button>
+          <button className="gym-ov-btn danger" disabled={busy} onClick={doDelete}>{t('del')}</button>
+        </div>
+        <div className="gym-detail-manage-row scope">
+          <span className="gym-detail-manage-label">Range</span>
+          <span className="gym-detail-window">
+            <button className={`gym-ov-tg ${!allHist ? 'on' : ''}`}
+              onClick={() => setAllHist(false)}>{t('lastNDays', { n: days })}</button>
+            <button className={`gym-ov-tg ${allHist ? 'on' : ''}`}
+              onClick={() => setAllHist(true)}>{t('allHistory')}</button>
+          </span>
+        </div>
       </div>
 
       {err && <div className="gym-report-records-error">{err}</div>}
