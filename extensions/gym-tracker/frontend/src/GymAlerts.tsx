@@ -85,6 +85,9 @@ export const GymAlerts = forwardRef<HTMLDivElement, ExtensionComponentProps>(
             </span>
           </div>
           <div className="gym-alerts-body">
+            {items === null && !error && (
+              <div className="gym-loading"><div className="gym-live-spinner" /></div>
+            )}
             {error && <div className="gym-rank-empty">{error}</div>}
             {!error && shown.length === 0 && (
               <div className="gym-alerts-empty">

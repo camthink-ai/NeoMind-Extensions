@@ -81,6 +81,13 @@ export const GymEquipmentRank = forwardRef<HTMLDivElement, ExtensionComponentPro
             <span className="gym-ov-badge">{rows ? `${rows.length} {t('units')}` : '…'}</span>
           </div>
           <div className="gym-rank-body">
+            {rows === null && !error && (
+              <div className="gym-skel">
+                {[92, 76, 84, 60].map((w, i) => (
+                  <div key={i} className={`gym-skel-row${i % 2 ? ' w60' : ''}`} style={{ width: `${w}%` }} />
+                ))}
+              </div>
+            )}
             {error && <div className="gym-rank-empty">{error}</div>}
             {!error && rows && top.length === 0 && (
               <div className="gym-rank-empty">

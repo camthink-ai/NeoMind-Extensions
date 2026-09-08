@@ -124,6 +124,9 @@ export const GymDoorFlow = forwardRef<HTMLDivElement, ExtensionComponentProps>(
           </div>
 
           <div className="gym-door-body">
+            {flow === null && !error && (
+              <div className="gym-loading"><div className="gym-live-spinner" /></div>
+            )}
             {error && <div className="gym-rank-empty">{error}</div>}
             {!error && flow && (
               <div className="gym-door-today">
