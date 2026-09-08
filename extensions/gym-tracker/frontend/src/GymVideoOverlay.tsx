@@ -2350,19 +2350,22 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                   )}
                   <span className="gym-ov-flex" />
                   <button className={`gym-ov-tg ${listOpen ? 'on' : ''}`} onClick={() => setListOpen(!listOpen)}
-                    title="Toggle the side list">{listOpen ? '隐藏列表' : '列表'}</button>
+                    title="Toggle the side list">{listOpen ? 'Hide' : 'List'}</button>
                   <span className="gym-ov-tb-sep" />
                   <button className="gym-ov-tg" onClick={cancelEdit}
                     title="Discard unsaved changes, back to view">{t('cancel')}</button>
-                  <button className="gym-ov-tg" onClick={save} disabled={saving}
-                    title="Save to server, keep editing">{saving ? '…' : dirty ? `${t('save')}*` : t('save')}</button>
+                  {/* ONE commit action: Done = save & exit (Save-and-stay
+                      duplicated it — customers read two save buttons as
+                      confusion, not as a power feature). The * marker on
+                      Done flags unsaved edits. */}
                   <button className="gym-ov-tg gym-ov-tg-save" onClick={async () => {
-                    // 完成 = save & exit; on failure stay in the editor so
-                    // the edit isn't silently lost
+                    // on failure stay in the editor so the edit isn't lost
                     const ok = await save()
                     if (!ok) return
                     setMode('view'); setDraft([]); setDraftLine([]); setSelZoneId(null); setSelLineId(null); setSelMemberId(null)
-                  }} disabled={saving} title="Save and return to view">{saving ? '…' : t('done')}</button>
+                  }} disabled={saving} title="Save and return to view">
+                    {saving ? '…' : dirty ? `${t('done')} •` : t('done')}
+                  </button>
                 </>
               )}
             </div>
