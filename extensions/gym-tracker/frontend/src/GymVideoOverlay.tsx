@@ -2162,7 +2162,32 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     const save = useCallback(async (): Promise<boolean> => {
       setSaving(true)
       try {
-        const zonePayload = zones.map((z) => ({
+        // AUTO-CLOSE pending drafts ≥3 pts: 'I finished clicking, now
+        // save' — a separate Close button first was busywork. Built from
+        // REFS (draft/zones refs are written in lockstep with state) so
+        // the fresh zone rides THIS save without async-state races.
+        // <3-point stubs drop silently as before.
+        let zonesNow = zonesRef.current
+        if (draftRef.current.length >= 3) {
+          const poly = [...draftRef.current]
+          const excl = editKindRef.current === 'exclude'
+          const fresh = {
+            id: crypto.randomUUID(),
+            name: excl
+              ? `Exclusion ${zonesNow.filter((z: DraftZone) => z.equipment_type === 'exclusion').length + 1}`
+              : `Zone ${zonesNow.length + 1}`,
+            equipment_type: excl ? 'exclusion' : 'equipment',
+            polygon: poly,
+            enabled: true as const,
+            isNew: true,
+          }
+          zonesNow = [...zonesNow, fresh]
+          zonesRef.current = zonesNow
+          setZones(zonesNow)
+          setDraft([])
+          draftRef.current = []
+        }
+        const zonePayload = zonesNow.map((z) => ({
           id: z.id,
           name: z.name.trim() || `Zone ${z.id.slice(0, 4)}`,
           equipment_type: z.equipment_type,
@@ -2344,10 +2369,6 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                   <button className="gym-ov-tg" onClick={undo}
                     disabled={editKind === 'lines' ? draftLine.length === 0 : draft.length === 0}
                     title="Undo last draft point">{t('undo')}</button>
-                  {(editKind === 'zones' || editKind === 'exclude') && (
-                    <button className="gym-ov-tg" onClick={closeDraft} disabled={draft.length < 3}
-                      title="Close the point loop">{t('closePoly')}{draft.length}</button>
-                  )}
                   <span className="gym-ov-flex" />
                   <button className={`gym-ov-tg ${listOpen ? 'on' : ''}`} onClick={() => setListOpen(!listOpen)}
                     title="Toggle the side list">{listOpen ? 'Hide' : 'List'}</button>
@@ -2364,7 +2385,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                     if (!ok) return
                     setMode('view'); setDraft([]); setDraftLine([]); setSelZoneId(null); setSelLineId(null); setSelMemberId(null)
                   }} disabled={saving} title="Save and return to view">
-                    {saving ? '…' : dirty ? `${t('done')} •` : t('done')}
+                    {saving ? '…' : dirty || draft.length > 0 || draftLine.length > 0 ? `${t('done')} •` : t('done')}
                   </button>
                 </>
               )}
