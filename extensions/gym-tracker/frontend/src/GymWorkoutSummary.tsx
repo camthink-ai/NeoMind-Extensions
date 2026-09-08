@@ -67,31 +67,58 @@ function fmtTime(ts: number | null | undefined): string {
   })
 }
 
-const EXERCISE_ZH: Record<string, string> = {
-  treadmill_run: '跑步机',
-  walk: '步行',
-  run: '跑步',
-  squat: '深蹲',
-  lunge: '弓步',
-  deadlift: '硬拉',
-  bench: '卧推',
-  pushup: '俯卧撑',
-  chest_fly: '飞鸟',
-  crunch: '卷腹',
-  situp: '仰卧起坐',
-  plank: '平板支撑',
-  pullup: '引体向上',
-  shoulder_press: '肩推',
-  bicep_curl: '弯举',
-  lateral_raise: '侧平举',
-  dumbbell_row: '哑铃划船',
-  cycling: '动感单车',
-  rowing: '划船机',
-  elliptical: '椭圆机',
-  standing: '站立',
+// Bilingual labels: EN first (product default), zh available by
+// swapping the pick at the bottom.
+const EXERCISE_LABELS: Record<string, [string, string]> = {
+  treadmill_run: ['Treadmill', '跑步机'],
+  walk: ['Walk', '步行'],
+  run: ['Run', '跑步'],
+  squat: ['Squat', '深蹲'],
+  lunge: ['Lunge', '弓步'],
+  deadlift: ['Deadlift', '硬拉'],
+  bench: ['Bench press', '卧推'],
+  pushup: ['Push-up', '俯卧撑'],
+  chest_fly: ['Chest fly', '飞鸟'],
+  crunch: ['Crunch', '卷腹'],
+  situp: ['Sit-up', '仰卧起坐'],
+  plank: ['Plank', '平板支撑'],
+  pullup: ['Pull-up', '引体向上'],
+  shoulder_press: ['Shoulder press', '肩推'],
+  bicep_curl: ['Bicep curl', '弯举'],
+  lateral_raise: ['Lateral raise', '侧平举'],
+  dumbbell_row: ['Dumbbell row', '哑铃划船'],
+  cycling: ['Cycling', '动感单车'],
+  rowing: ['Rowing', '划船机'],
+  elliptical: ['Elliptical', '椭圆机'],
+  standing: ['Standing', '站立'],
+  // expanded-equipment exercises (2026-09 audit)
+  leg_press: ['Leg press', '腿举'],
+  leg_extension: ['Leg extension', '腿屈伸'],
+  leg_curl: ['Leg curl', '腿弯举'],
+  hip_thrust: ['Hip thrust', '臀推'],
+  incline_bench: ['Incline bench', '上斜卧推'],
+  chest_press: ['Chest press', '坐推胸'],
+  pec_deck: ['Pec deck', '蝴蝶机'],
+  seated_row: ['Seated row', '坐姿划船'],
+  lat_pulldown: ['Lat pulldown', '高位下拉'],
+  preacher_curl: ['Preacher curl', '弯举凳'],
+  triceps_pressdown: ['Triceps pressdown', '三头下压'],
+  roman_chair: ['Roman chair', '罗马椅'],
+  stair_climber: ['Stair climber', '爬楼机'],
+  spin_bike: ['Spin bike', '动感单车'],
+  kettlebell_swing: ['Kettlebell swing', '壶铃摆'],
+  stretch: ['Stretch', '拉伸'],
+  unknown: ['Unknown', '未识别'],
+  pending: ['Detecting…', '识别中…'],
 }
 
-const exLabel = (name: string): string => EXERCISE_ZH[name] ?? name
+/** pick by active lang (module flag set from useLang) */
+let exLabelLang: 'zh' | 'en' = 'en'
+const exLabel = (name: string): string => {
+  const pair = EXERCISE_LABELS[name]
+  if (!pair) return name.replace(/_/g, ' ')
+  return exLabelLang === 'zh' ? pair[1] : pair[0]
+}
 
 /** Distinct lane/donut colors that read on both light & dark themes. */
 const PALETTE = [
@@ -132,7 +159,8 @@ export const GymWorkoutSummary =
         })
         return () => { alive = false }
       }, [extensionId])
-      const { t } = useLang(config as Record<string, unknown>, gLang)
+      const { t, lang } = useLang(config as Record<string, unknown>, gLang)
+      exLabelLang = lang
 
       useEffect(() => injectStyles(STYLE_ID, STYLES), [])
 
