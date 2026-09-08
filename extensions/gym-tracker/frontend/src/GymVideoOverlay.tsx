@@ -719,7 +719,6 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             arr.push({ t: now, bbox: t.bbox, foot: t.foot })
             while (arr.length > 0 && now - arr[0].t > 3) arr.shift()
           }
-          for (const k of [...hist.keys()]) if (!seen.has(k)) hist.delete(k)
         }
       }
       poll()
@@ -877,7 +876,21 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           }
           while (arr.length > 0 && tSec - arr[0].t > 3) arr.shift()
         }
-        for (const k of [...hist.keys()]) if (!seen.has(k)) hist.delete(k)
+        // OCCLUSION GRACE: the device holds a lost person's track for
+        // ~5.6 s (max_missed=45 @8 Hz + resurrect 60) expecting them back
+        // with the SAME id. Evicting on the first frame without the id
+        // made the box vanish on every brief detector dropout — keep
+        // unseen ids 3 s past their newest sample (sampleAt extrapolates
+        // with vel meanwhile).
+        {
+          const nowS = tracksTs > 0 ? tracksTs : tsNs / 1e6
+          for (const k of [...hist.keys()]) {
+            if (seen.has(k)) continue
+            const h = hist.get(k)
+            const lastT = h && h.length ? h[h.length - 1].t : 0
+            if (nowS - lastT > 3) hist.delete(k)
+          }
+        }
       } else {
         const nowH = performance.now() / 1000
         const seen = new Set<number>()
