@@ -56,6 +56,9 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
     // BUSY requires the SAME person (track) holding the zone this long —
     // raw presence only warms the cell. 5 s default per the gym's ask.
     const busySec = Math.min(600, Math.max(5, Number(config?.busySec) || 5))
+    // release delay: a latched-busy zone goes idle only after this many
+    // seconds WITHOUT a warm signal (detection dropout tolerance)
+    const idleSec = Math.min(600, Math.max(5, Number(config?.idleSec) || 60))
     // global ui.language from the EXTENSION config (card lang overrides)
     const [gLang, setGLang] = useState<string | undefined>(undefined)
     useEffect(() => {
@@ -99,36 +102,50 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
       return () => clearInterval(id)
     }, [refresh])
 
+    // LATCHED busy state per zone: once a zone goes busy it STAYS busy
+    // until nobody has been inside for idleSec (default 60s) — detection
+    // dropouts (occlusion behind a machine, a missed frame batch) made
+    // the raw signal flicker occupied↔idle while the person never left.
+    const busyLatchRef = useRef<Map<string, { busy: boolean; lastSeenBusy: number }>>(new Map())
     const views = useMemo<ZoneView[]>(() => {
       if (!zones) return []
       const tracks = state?.tracks ?? []
+      const now = Date.now()
       return zones
         .filter((z) => (z.enabled === true || z.enabled === 1) && z.equipment_type !== 'exclusion')
         .map((zone) => {
           const inZone = tracks.filter(
             (t) => t.foot && pointInPolygon(t.foot.x, t.foot.y, zone.polygon)
           )
-          // busy = someone has HELD this zone past the threshold (the
-          // extension reports continuous dwell per track); merely being
-          // inside only counts as "warm" so passers-by never flip a
-          // machine to busy on their way through
           const holding = inZone.filter(
             (t) =>
               t.exercise?.zone === zone.id &&
               (t.exercise?.zone_hold ?? 0) >= busySec
           )
           const count = inZone.length
+          // warm signal NOW (someone holding past the dwell gate)
+          const warmBusy = holding.length > 0
+          // latch: busy latches ON immediately, releases only after
+          // idleSec of no warm signal
+          const latch = busyLatchRef.current.get(zone.id) ?? { busy: false, lastSeenBusy: 0 }
+          if (warmBusy) {
+            latch.busy = true
+            latch.lastSeenBusy = now
+          } else if (latch.busy && now - latch.lastSeenBusy > idleSec * 1000) {
+            latch.busy = false
+          }
+          busyLatchRef.current.set(zone.id, latch)
           return {
             zone,
             count,
-            occupied: holding.length > 0,
-            warm: count > 0 && holding.length === 0,
+            occupied: latch.busy,
+            warm: count > 0 && !warmBusy,
             holding: holding.length,
           }
         })
         .filter((v) => showIdle || v.occupied)
         .sort((a, b) => a.zone.name.localeCompare(b.zone.name))
-    }, [zones, state, showIdle, busySec])
+    }, [zones, state, showIdle, busySec, idleSec])
 
     const occupiedCount = views.filter((v) => v.occupied).length
     const totalInZones = views.reduce((s, v) => s + v.count, 0)

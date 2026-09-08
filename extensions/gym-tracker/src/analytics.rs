@@ -933,7 +933,7 @@ impl Inner {
                             level: "warn",
                             track_id: t.track_id,
                             message: format!(
-                                "疑似跌倒/躺卧：轨迹 #{} 躯干倾斜 {:.0}° 持续超过 {} 秒",
+                                "Fall suspect: track #{} torso tilt {:.0}\u{00b0} sustained over {}s",
                                 t.track_id, torso_deg.unwrap_or(0.0), LYING_SUSTAIN_SEC as u32
                             ),
                         });
@@ -958,7 +958,7 @@ impl Inner {
                             level: "info",
                             track_id: t.track_id,
                             message: format!(
-                                "{} 连续占用超过 {} 分钟（轨迹 #{}）",
+                                "{} occupied over {} min (track #{})",
                                 zname,
                                 (LONG_OCCUPANCY_SEC / 60.0) as u32,
                                 t.track_id
