@@ -90,6 +90,27 @@ export const GymTrafficChart = forwardRef<HTMLDivElement, ExtensionComponentProp
       return { peak, avg }
     }, [points])
 
+    // hover readout: pointer position → nearest metric point
+    const plotRef = useRef<HTMLDivElement>(null)
+    const [hover, setHover] = useState<{ x: number; idx: number } | null>(null)
+    const onPlotMove = useCallback((e: React.PointerEvent) => {
+      const el = plotRef.current
+      if (!el || !points || points.length < 2) return
+      const rect = el.getBoundingClientRect()
+      const fx = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
+      const ts = points.map((p) => p.timestamp)
+      const t0 = Math.min(...ts), t1 = Math.max(...ts)
+      const want = t0 + fx * (t1 - t0)
+      // nearest point (binary-search-ish linear scan is fine ≤ 1440 pts)
+      let best = 0, bd = Infinity
+      for (let i = 0; i < ts.length; i++) {
+        const d = Math.abs(ts[i] - want)
+        if (d < bd) { bd = d; best = i }
+      }
+      setHover({ x: fx, idx: best })
+    }, [points])
+    const onPlotLeave = useCallback(() => setHover(null), [])
+
     // SVG geometry — padded plot area inside a 100×40 viewBox, scaled by CSS.
     const W = 100
     const H = 40
@@ -152,7 +173,12 @@ export const GymTrafficChart = forwardRef<HTMLDivElement, ExtensionComponentProp
                 </span>
               </div>
             ) : (
-              <div className="gym-traffic-plot">
+              <div
+                className="gym-traffic-plot"
+                ref={plotRef}
+                onPointerMove={path ? onPlotMove : undefined}
+                onPointerLeave={path ? onPlotLeave : undefined}
+              >
                 <svg
                   className="gym-traffic-svg"
                   viewBox={`0 0 ${W} ${H}`}
@@ -166,7 +192,32 @@ export const GymTrafficChart = forwardRef<HTMLDivElement, ExtensionComponentProp
                     path.coords.map(([cx, cy], i) => (
                       <circle key={i} className="gym-traffic-pt" cx={cx} cy={cy} r="0.5" />
                     ))}
+                  {hover && path.coords[hover.idx] && (
+                    <>
+                      <line
+                        className="gym-traffic-xhair"
+                        x1={path.coords[hover.idx][0]} y1={0}
+                        x2={path.coords[hover.idx][0]} y2={H - 6}
+                      />
+                      <circle
+                        className="gym-traffic-hover-pt"
+                        cx={path.coords[hover.idx][0]}
+                        cy={path.coords[hover.idx][1]} r={1.2}
+                      />
+                    </>
+                  )}
                 </svg>
+                {hover && points[hover.idx] && (
+                  <div
+                    className="gym-traffic-tip"
+                    style={{
+                      left: `${Math.min(86, Math.max(2, path.coords[hover.idx][0]))}%`,
+                    }}
+                  >
+                    <b>{points[hover.idx].value}</b>
+                    <span>{formatTick(points[hover.idx].timestamp)}</span>
+                  </div>
+                )}
                 <div className="gym-traffic-ticks">
                   {path.ticks.map((t, i) => (
                     <span key={i} style={{ left: `${t.x}%` }}>{t.label}</span>
