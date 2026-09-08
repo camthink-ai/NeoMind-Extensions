@@ -349,12 +349,14 @@ function sampleAt(hist: HistEntry[], target: number, kptMin: number):
       const s = Math.max(1e-6, span)
       const [vx, vy] = b.vel
       // express the device velocity as an equivalent factor: where the
-      // last span's slope would land vs. vel*span — blend 70/30 toward
-      // the device value (span slope carries the newest acceleration)
+      // last span's slope would land vs. vel*span — blend 55/45: the
+      // device EMA runs ~78% of true speed on walkers (measured) and a
+      // 70/30 blend left boxes visibly trailing; the span slope carries
+      // the newest acceleration at the cost of some noise
       const slopeX = (b.bbox.x - a.bbox.x) / s
       const slopeY = (b.bbox.y - a.bbox.y) / s
-      const bx = 0.3 * slopeX + 0.7 * vx
-      const by = 0.3 * slopeY + 0.7 * vy
+      const bx = 0.45 * slopeX + 0.55 * vx
+      const by = 0.45 * slopeY + 0.55 * vy
       const cx0 = b.bbox.x + b.bbox.w / 2
       const cy0 = b.bbox.y + b.bbox.h / 2
       const ex = Math.min(0.15, Math.max(-0.15, bx * beyond))
