@@ -1374,9 +1374,20 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           const octx = off.getContext('2d')
           if (!octx) continue
           octx.imageSmoothingEnabled = true
-          // source rect is in REAL backing-store pixels (virtual × K); the
-          // transform scales only the destination rect
-          octx.drawImage(canvas, fx * K, fy * K, fw * K, fh * K, 0, 0, sw, sh)
+          // source the downsample from the CURRENT FRAME IMAGE, not the
+          // main canvas: reading from `canvas` forces a GPU→CPU readback
+          // per face per frame at display rate (the browser mosaic's whole
+          // cost); the frame img (ImageBitmap/VideoFrame) is GPU-resident,
+          // so bitmap→tiny-canvas→canvas stays on the GPU. Coords map from
+          // the normalized face box through the source dims (iw/ih) with
+          // the same letterbox layout the video itself used.
+          if (img && iw > 0) {
+            octx.drawImage(img, fb.x * iw, fb.y * ih,
+                           fb.w * (1 + pad * 2) * iw, fb.h * (1 + pad * 2) * ih,
+                           0, 0, sw, sh)
+          } else {
+            octx.drawImage(canvas, fx * K, fy * K, fw * K, fh * K, 0, 0, sw, sh)
+          }
           ctx.imageSmoothingEnabled = false
           ctx.drawImage(off, 0, 0, sw, sh, fx, fy, fw, fh)
           ctx.imageSmoothingEnabled = true
