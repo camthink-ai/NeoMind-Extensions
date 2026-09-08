@@ -1269,16 +1269,21 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         //     the shown frame's TRUE capture moment, not its (lagging)
         //     tag, or boxes lead the person by the whole encode depth.
         // Floor 0.05 s; cap bounds a dead track stream.
-        // P90 delay policy: track the 90th-percentile gap + margin instead
-        // of the window MAX. With the time domains unified (p50 gap now
-        // ~137 ms) the max was a rare 400 ms outlier forcing EVERY frame
-        // to wait ~0.45 s; p90 cuts the display latency to ~0.25 s and the
-        // brief spikes past p90 extrapolate along per-track velocity —
-        // well-behaved now that vel quality and ts domains are fixed.
+        // LATENCY POLICY (widget config `latency`, default 'live'):
+        //   live     p50 + 50 ms  — chase realtime (~0.2 s display lag);
+        //            spikes past p50 extrapolate along per-track velocity
+        //   balanced p90 + 80 ms  — ~0.25 s, rare extrapolation
+        //   smooth   max  + 50 ms — never extrapolate (~0.45 s)
+        // Safe to chase now: time domains are unified (same capture clock
+        // on both streams) and velocity quality is fixed — extrapolation
+        // during spikes is smooth instead of the old stutter.
+        const latMode = String(config?.latency ?? 'live')
+        const pct = latMode === 'smooth' ? 1.0 : (latMode === 'balanced' ? 0.9 : 0.5)
+        const marg = latMode === 'balanced' ? 0.08 : 0.05
         const sorted = [...gw].sort((a, b) => a - b)
-        const p90 = sorted[Math.floor(sorted.length * 0.9)]
-          ?? sorted[sorted.length - 1] ?? 0
-        const delay = Math.min(3.2, Math.max(0.05, p90 + 0.08))
+        const target = sorted[Math.min(sorted.length - 1,
+          Math.floor(sorted.length * pct))] ?? 0
+        const delay = Math.min(3.2, Math.max(0.05, target + marg))
         delayEstRef.current = delay
         let want = newest - delay
         // don't visibly rewind when a burst of old frames lands late
