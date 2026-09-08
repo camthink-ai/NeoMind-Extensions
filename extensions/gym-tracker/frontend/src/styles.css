@@ -1987,3 +1987,48 @@ button.gym-ov-tg {
 
 /* empty-state warning tone (config missing, not just no data) */
 .gym-empty-warn { color: var(--color-warning, #f59e0b); }
+
+/* ============================================================================
+   v2.17 member modal: exercise tiles + visit bar chart
+   ============================================================================ */
+
+/* exercise grid: responsive tiles replacing the weak vertical list */
+.gym-exgrid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+.gym-extile {
+  display: flex; flex-direction: column; gap: 5px;
+  padding: 12px 14px 10px;
+  border-radius: 14px;
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+}
+.gym-extile-head { display: flex; align-items: center; justify-content: space-between; }
+.gym-extile-icon { color: var(--muted-foreground, #a1a1aa); }
+.gym-extile-icon svg { width: 20px; height: 20px; }
+.gym-extile-pct {
+  font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums;
+  color: var(--foreground, #fafafa);
+}
+.gym-extile-name {
+  font-size: 12.5px; font-weight: 600; color: var(--foreground, #fafafa);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gym-extile-bar { height: 4px; border-radius: 2px; background: var(--secondary, #2a2a31); overflow: hidden; }
+.gym-extile-bar-fill { height: 100%; border-radius: 2px; background: var(--primary, #22c55e); }
+.gym-extile-nums { display: flex; align-items: baseline; gap: 3px; margin-top: 2px; }
+.gym-extile-nums b { font-size: 16px; font-weight: 700; color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; }
+.gym-extile-nums i { font-style: normal; font-size: 10px; color: var(--muted-foreground, #a1a1aa); margin-right: 5px; }
+.gym-extile-dur { font-size: 11px; color: var(--muted-foreground, #a1a1aa); }
+
+/* visits: horizontal bar chart rows */
+.gym-vischart { display: flex; flex-direction: column; gap: 7px; }
+.gym-vis-row-grid { display: grid; grid-template-columns: 44px 1fr 64px; gap: 10px; align-items: center; }
+.gym-vischart .gym-vis-row { display: grid; grid-template-columns: 44px 1fr 64px; gap: 10px; align-items: center; }
+.gym-vis-day { display: flex; flex-direction: column; align-items: center; line-height: 1.1; }
+.gym-vis-day b { font-size: 15px; font-weight: 700; color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; }
+.gym-vis-day i { font-style: normal; font-size: 9px; color: var(--muted-foreground, #a1a1aa); text-transform: uppercase; letter-spacing: .04em; }
+.gym-vis-track { height: 14px; border-radius: 7px; background: var(--secondary, #1e1e22); overflow: hidden; }
+.gym-vis-fill { height: 100%; border-radius: 7px; background: linear-gradient(90deg, color-mix(in oklab, var(--primary, #22c55e) 60%, transparent), var(--primary, #22c55e)); }
+.gym-vis-dur { font-size: 11.5px; color: var(--foreground, #e4e4e7); text-align: right; font-variant-numeric: tabular-nums; }

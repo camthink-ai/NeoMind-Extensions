@@ -235,21 +235,28 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
               {t('motionAnalysis')} <em>{allHist ? t('allHistory') : t('lastNDays', { n: days })}</em>
             </span>
             {det.exercises.length > 0 ? (
-              <div className="gym-report-exlist">
+              <div className="gym-exgrid">
                 {det.exercises.map((e) => {
-                  const maxSec = Math.max(1, ...det.exercises.map((x) => x.duration_sec))
                   const ExIcon = exIcon(e.exercise)
+                  const pct = Math.round((e.duration_sec / Math.max(1, det.total_duration_sec)) * 100)
                   return (
-                    <div key={e.exercise} className="gym-report-exrow">
-                      <span className="gym-report-exicon"><ExIcon /></span>
-                      <span className="gym-report-exname">{exName(e.exercise)}</span>
-                      <div className="gym-report-exbar">
-                        <div className="gym-report-exbar-fill" style={{ width: `${Math.max(3, (e.duration_sec / maxSec) * 100)}%` }} />
+                    <div key={e.exercise} className="gym-extile" title={`${e.sessions} sessions`}>
+                      <div className="gym-extile-head">
+                        <span className="gym-extile-icon"><ExIcon /></span>
+                        <span className="gym-extile-pct">{pct}%</span>
                       </div>
-                      <span className="gym-report-exmeta">
-                        {e.reps > 0 && t('setsReps', { s: e.sets, r: e.reps })}
-                        {e.reps > 0 ? ' · ' : ''}{durFmt(t, e.duration_sec)}
-                      </span>
+                      <span className="gym-extile-name">{exName(e.exercise)}</span>
+                      <div className="gym-extile-bar">
+                        <div className="gym-extile-bar-fill" style={{ width: `${Math.max(4, pct)}%` }} />
+                      </div>
+                      <div className="gym-extile-nums">
+                        {e.reps > 0 ? (
+                          <><b>{e.reps}</b><i>reps</i><b>{e.sets}</b><i>sets</i></>
+                        ) : (
+                          <><b>{e.sessions}</b><i>sessions</i></>
+                        )}
+                      </div>
+                      <span className="gym-extile-dur">{durFmt(t, e.duration_sec)}</span>
                     </div>
                   )
                 })}
@@ -325,16 +332,29 @@ function MemberDetail({ extensionId, row, mates, days, t, onClose, onChanged }: 
           {/* {t('visitLog')} */}
           <div className="gym-detail-sec">
             <span className="gym-detail-sec-title">{t('visitLog')}</span>
-            {det.sessions.length > 0 ? (
-              <div className="gym-report-sessions">
-                {det.sessions.slice(0, 8).map((s) => (
-                  <div key={s.id ?? s.started_at} className="gym-report-session">
-                    <span className="gym-report-session-when">{fmtTs(s.started_at)}</span>
-                    <span className="gym-report-session-dur">{durFmt(t, s.duration_sec ?? 0)}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
+            {det.sessions.length > 0 ? (() => {
+              const maxDur = Math.max(1, ...det.sessions.map((s) => s.duration_sec ?? 0))
+              return (
+                <div className="gym-vischart">
+                  {det.sessions.slice(0, 10).map((s) => {
+                    const d = new Date((s.started_at ?? 0) * 1000)
+                    const wd = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()]
+                    return (
+                      <div key={s.id ?? s.started_at} className="gym-vis-row"
+                        title={`${d.getMonth() + 1}/${d.getDate()} · ${durFmt(t, s.duration_sec ?? 0)}`}>
+                        <span className="gym-vis-day">
+                          <b>{d.getDate()}</b><i>{wd}</i>
+                        </span>
+                        <div className="gym-vis-track">
+                          <div className="gym-vis-fill" style={{ width: `${Math.max(5, ((s.duration_sec ?? 0) / maxDur) * 100)}%` }} />
+                        </div>
+                        <span className="gym-vis-dur">{durFmt(t, s.duration_sec ?? 0)}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })() : (
               <div className="gym-report-records-empty">
                 {t('noVisitData', { n: days })}
               </div>
