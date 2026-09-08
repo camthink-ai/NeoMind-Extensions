@@ -131,6 +131,12 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
           if (warmBusy) {
             latch.busy = true
             latch.lastSeenBusy = now
+          } else if (latch.busy && count > 0) {
+            // far-field tolerance: a person detected but whose dwell never
+            // re-crosses busySec (sparse tile detections) still SUSTAINS
+            // the latch — presence refreshes the release timer without
+            // needing the full dwell gate every cycle
+            latch.lastSeenBusy = now
           } else if (latch.busy && now - latch.lastSeenBusy > idleSec * 1000) {
             latch.busy = false
           }
