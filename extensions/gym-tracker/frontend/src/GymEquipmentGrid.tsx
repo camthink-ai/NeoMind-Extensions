@@ -29,6 +29,8 @@ interface ZoneView {
   count: number
   /** dwell-gated: someone held the zone past busySec */
   occupied: boolean
+  /** latched busy, nobody detected — inside the idleSec release window */
+  releasing: boolean
   /** people present but nobody held past busySec yet */
   warm: boolean
   holding: number
@@ -141,10 +143,15 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
             latch.busy = false
           }
           busyLatchRef.current.set(zone.id, latch)
+          // releasing = latched busy but NO live person detected: the
+          // 60s release window. Visually distinct from active busy so
+          // "0 on gear + green cell" never reads as a bug
+          const releasing = latch.busy && count === 0
           return {
             zone,
             count,
             occupied: latch.busy,
+            releasing,
             warm: count > 0 && !warmBusy,
             holding: holding.length,
           }
@@ -187,19 +194,17 @@ export const GymEquipmentGrid = forwardRef<HTMLDivElement, ExtensionComponentPro
             </div>
           ) : (
             <div className="gym-eq-grid">
-              {views.map(({ zone, count, occupied, warm }) => (
+              {views.map(({ zone, count, occupied, releasing, warm }) => (
                 <div
                   key={zone.id}
-                  className={`gym-eq-cell ${occupied ? 'busy' : warm ? 'warm' : 'idle'}`}
+                  className={`gym-eq-cell ${occupied ? (releasing ? 'releasing' : 'busy') : warm ? 'warm' : 'idle'}`}
                   title={
                     occupied
-                      ? t('busy')
-                      : warm
-                        ? t('idle')
-                        : t('idle')
+                      ? (releasing ? 'Occupied (grace) — no detection, releasing soon' : t('busy'))
+                      : t('idle')
                   }
                 >
-                  <span className={`gym-eq-dot ${occupied ? 'on' : warm ? 'warm' : ''}`} />
+                  <span className={`gym-eq-dot ${occupied ? (releasing ? 'releasing' : 'on') : warm ? 'warm' : ''}`} />
                   <div className="gym-eq-cell-body">
                     <span className="gym-eq-zone-name" title={zone.name}>
                       {zone.name}

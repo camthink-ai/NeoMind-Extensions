@@ -2072,3 +2072,10 @@ button.gym-ov-tg {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+/* latched busy with no live detection — the idleSec grace window */
+.gym-eq-cell.releasing {
+  border-color: rgba(34, 197, 94, .25);
+  background: rgba(34, 197, 94, .03);
+}
+.gym-eq-dot.releasing { background: rgba(34, 197, 94, .35); box-shadow: none; }
