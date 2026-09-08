@@ -2095,3 +2095,15 @@ button.gym-ov-tg {
 }
 .gym-traffic-tip b { font-size: 14px; font-weight: 700; color: var(--primary, #22c55e); }
 .gym-traffic-tip span { color: var(--muted-foreground, #a1a1aa); }
+
+/* the host button reset (min-height 44) also leaks into the MODAL — the
+   equal-height rail missed it (card/drawer only). Clamp it here too. */
+.gym-modal .gym-detail-manage-row .gym-ov-btn {
+  min-height: 0; height: 28px; padding: 0 10px; box-sizing: border-box;
+}
+.gym-modal .gym-detail-manage-row .gym-ov-input {
+  height: 28px; box-sizing: border-box;
+}
+.gym-modal .gym-detail-manage-row .gym-sel-trigger {
+  min-height: 0; height: 28px;
+}
