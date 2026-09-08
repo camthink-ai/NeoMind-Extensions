@@ -79,24 +79,52 @@ const MOSAIC_PAD = 0.12
 // Zone equipment presets — canonical equipment_type values that hit the
 // exercise-classification map in exercise.rs (zone_exercise). Chinese
 // labels for the editor; values feed analytics.
-const EQUIPMENT_PRESETS: Array<[string, string]> = [
-  ['跑步机', 'treadmill'],
-  ['椭圆机', 'elliptical'],
-  ['动感单车', 'spin_bike'],
-  ['划船机', 'rowing'],
-  ['爬楼机', 'stair_climber'],
-  ['深蹲架', 'squat_rack'],
-  ['卧推凳', 'bench'],
-  ['硬拉台', 'deadlift_platform'],
-  ['单杠', 'pullup_bar'],
-  ['龙门架', 'cable_machine'],
-  ['夹胸机', 'chest_fly_machine'],
-  ['练腿架', 'leg_press'],
-  ['瑜伽垫', 'mat'],
-  ['壶铃区', 'kettlebell'],
-  ['哑铃区', 'dumbbell'],
-  ['自由重量', 'free_weights'],
-  ['其他', 'equipment'],
+// Equipment presets — bilingual labels [en, zh] with the backend type
+// key. Coverage audited against a full-service gym floor:
+// cardio (7), legs (5), chest (5), back (4), shoulders/arms (4),
+// core (3), functional (4) + generic fallbacks.
+const EQUIPMENT_PRESETS: Array<[string, string, string]> = [
+  // — cardio —
+  ['Treadmill · 跑步机', 'treadmill', 'cardio'],
+  ['Elliptical · 椭圆机', 'elliptical', 'cardio'],
+  ['Spin bike · 动感单车', 'spin_bike', 'cardio'],
+  ['Rowing machine · 划船机', 'rowing', 'cardio'],
+  ['Stair climber · 爬楼机', 'stair_climber', 'cardio'],
+  ['Air bike · 风阻单车', 'air_bike', 'cardio'],
+  ['Recumbent bike · 卧式单车', 'recumbent_bike', 'cardio'],
+  // — legs —
+  ['Squat rack · 深蹲架', 'squat_rack', 'legs'],
+  ['Leg press · 练腿架', 'leg_press', 'legs'],
+  ['Leg extension · 腿屈伸机', 'leg_extension', 'legs'],
+  ['Leg curl · 腿弯举机', 'leg_curl', 'legs'],
+  ['Hip thrust · 臀推机', 'hip_thrust', 'legs'],
+  // — chest —
+  ['Bench press · 卧推凳', 'bench', 'chest'],
+  ['Incline bench · 上斜卧推', 'incline_bench', 'chest'],
+  ['Chest fly machine · 夹胸机', 'chest_fly_machine', 'chest'],
+  ['Chest press machine · 坐推胸机', 'chest_press', 'chest'],
+  ['Pec deck · 蝴蝶机', 'pec_deck', 'chest'],
+  // — back —
+  ['Pull-up bar · 单杠', 'pullup_bar', 'back'],
+  ['Cable machine · 龙门架', 'cable_machine', 'back'],
+  ['Lat pulldown · 高位下拉', 'lat_pulldown', 'back'],
+  ['Seated row · 坐姿划船机', 'seated_row', 'back'],
+  // — shoulders / arms —
+  ['Shoulder press machine · 肩推机', 'shoulder_press_machine', 'shoulders'],
+  ['Lateral raise machine · 侧平举机', 'lateral_raise_machine', 'shoulders'],
+  ['Preacher curl · 弯举凳', 'preacher_curl', 'arms'],
+  ['Triceps pressdown · 三头下压机', 'triceps_pressdown', 'arms'],
+  // — core —
+  ['Mat / yoga · 瑜伽垫', 'mat', 'core'],
+  ['Roman chair · 罗马椅', 'roman_chair', 'core'],
+  ['Sit-up bench · 卷腹凳', 'situp_bench', 'core'],
+  // — functional / free weights —
+  ['Deadlift platform · 硬拉台', 'deadlift_platform', 'functional'],
+  ['Kettlebell zone · 壶铃区', 'kettlebell', 'functional'],
+  ['Dumbbell zone · 哑铃区', 'dumbbell', 'functional'],
+  ['Free weights · 自由重量', 'free_weights', 'functional'],
+  ['Smith machine · 史密斯机', 'smith_machine', 'functional'],
+  ['Other · 其他', 'equipment', 'other'],
 ]
 
 // ---- overlay/video time alignment ----
@@ -2369,6 +2397,10 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                   <button className="gym-ov-tg" onClick={undo}
                     disabled={editKind === 'lines' ? draftLine.length === 0 : draft.length === 0}
                     title="Undo last draft point">{t('undo')}</button>
+                  {(editKind === 'zones' || editKind === 'exclude') && draft.length >= 3 && (
+                    <button className="gym-ov-tg" onClick={closeDraft}
+                      title="Close the point loop and keep drawing">{t('closePoly')}</button>
+                  )}
                   <span className="gym-ov-flex" />
                   <button className={`gym-ov-tg ${listOpen ? 'on' : ''}`} onClick={() => setListOpen(!listOpen)}
                     title="Toggle the side list">{listOpen ? 'Hide' : 'List'}</button>

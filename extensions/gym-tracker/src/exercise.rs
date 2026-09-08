@@ -92,6 +92,22 @@ pub fn zone_exercise(equipment_type: &str) -> Option<(&'static str, bool)> {
         "stair_climber" | "stairmaster" => Some(("stair_climber", true)),
         "mat" | "yoga_mat" | "crunch_mat" => Some(("crunch", false)),
         "kettlebell" => Some(("kettlebell_swing", false)),
+        // expanded 2026-09 coverage audit: each new preset maps to its
+        // dominant exercise so zones drawn with them count reps/time
+        // instead of falling to the temporal-only tier
+        "air_bike" | "recumbent_bike" => Some(("spin_bike", true)),
+        "leg_extension" => Some(("leg_extension", false)),
+        "leg_curl" => Some(("leg_curl", false)),
+        "hip_thrust" => Some(("hip_thrust", false)),
+        "incline_bench" => Some(("bench_press", false)),
+        "chest_press" | "pec_deck" => Some(("chest_fly", false)),
+        "seated_row" => Some(("seated_row", false)),
+        "shoulder_press_machine" => Some(("shoulder_press", false)),
+        "lateral_raise_machine" => Some(("lateral_raise", false)),
+        "preacher_curl" => Some(("bicep_curl", false)),
+        "triceps_pressdown" => Some(("triceps_pressdown", false)),
+        "roman_chair" | "situp_bench" => Some(("situp", false)),
+        "smith_machine" => Some(("squat", false)),
         // NOTE: dumbbell / free_weights zones are deliberately NOT mapped —
         // one pair of dumbbells hosts curls, presses, raises, rows, flyes…
         // The exercise comes from the temporal pose tier; the zone only
