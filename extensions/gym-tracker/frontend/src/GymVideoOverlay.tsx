@@ -1280,8 +1280,11 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         // on both streams) and velocity quality is fixed — extrapolation
         // during spikes is smooth instead of the old stutter.
         const latMode = String(config?.latency ?? 'live')
-        const pct = latMode === 'smooth' ? 1.0 : (latMode === 'balanced' ? 0.9 : 0.5)
-        const marg = latMode === 'balanced' ? 0.08 : 0.05
+        // p50 left 31% of frames extrapolating (gap p90=269 vs delay=191
+        // under full load) — extrapolation undershoots walkers and reads
+        // as trailing; p75 cuts that share to ~15% at +30 ms latency
+        const pct = latMode === 'smooth' ? 1.0 : (latMode === 'balanced' ? 0.9 : 0.75)
+        const marg = latMode === 'balanced' ? 0.08 : 0.045
         const sorted = [...gw].sort((a, b) => a - b)
         const target = sorted[Math.min(sorted.length - 1,
           Math.floor(sorted.length * pct))] ?? 0
