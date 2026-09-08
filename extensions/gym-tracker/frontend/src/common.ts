@@ -99,6 +99,8 @@ export const FRAME_DATA_TYPE = 'application/x-neomind-frame'
 
 /** data_type of hardware-H.264 relay frames (Annex-B access units). */
 export const AVC_DATA_TYPE = 'video/avc'
+/** tracks/faces-only bundle (change-driven; video frames carry no tracks). */
+export const TRACKS_DATA_TYPE = 'application/x-neomind-tracks'
 
 export interface Zone {
   id: string

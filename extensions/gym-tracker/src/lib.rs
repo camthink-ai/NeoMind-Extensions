@@ -383,26 +383,24 @@ impl Extension for GymTrackerExtension {
                 // PER-SESSION replay from the shared queue — H.264 is
                 // differential; every session must see the FULL stream
                 // (drain semantics split it across concurrent sessions).
+                // tracks/faces ride their OWN change-driven frames (see
+                // TRACKS_DATA_TYPE below) — cloning + serializing the full
+                // bundle into EVERY 30 fps video frame was 4-6x redundant
+                // (track data changes at the ~7 Hz publish rate) and the
+                // extension's single hottest allocation path
+                let mut last_tracks_push = std::time::Instant::now()
+                    - std::time::Duration::from_millis(1000);
                 for s in state.h264_since(h264_cursor) {
                     h264_cursor = s.seq;
                     state::push_diag().pushed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let tracks = state.snapshot_tracks();
                         let meta = serde_json::json!({
                             "ts_ns": s.ts_ns,
                             "pts_ns": s.pts_ns,
                             "key": s.key,
-                            // relay-side sequence (0 when producer omits it) —
-                            // lets the Monitor correlate end-to-end loss
                             "h264_seq": s.seq,
                             "w": s.w,
                             "h": s.h,
-                            // track bundle rides at the relay rate so the
-                            // Monitor's history keeps its cadence even with
-                            // the JPEG fallback slowed to ~2 Hz
-                            "tracks": tracks,
-                            "tracks_ts": state.snapshot_tracks_ts(),
-                            "faces": state.snapshot_faces().unwrap_or_default(),
-                            "present_count": tracks.len(),
+                            "present_count": state.present_count(),
                         });
                         seq += 1;
                         let m = PushOutputMessage {
@@ -415,6 +413,35 @@ impl Extension for GymTrackerExtension {
                         };
                     if send_push_output(&m).is_err() {
                         break; // channel gone — session ended
+                    }
+                    // tracks-only frame, rate-limited to 15 Hz and only
+                    // after the bundle changed (position/tick compare)
+                    if last_tracks_push.elapsed() >= std::time::Duration::from_millis(66) {
+                        last_tracks_push = std::time::Instant::now();
+                        let tracks = state.snapshot_tracks();
+                        let tts = state.snapshot_tracks_ts();
+                        let tmeta = serde_json::json!({
+                            // ts_ns = the bundle's own frame ts — the Monitor's
+                            // applyTrackMeta gates its whole history update
+                            // on this field being present
+                            "ts_ns": tts,
+                            "tracks": tracks,
+                            "tracks_ts": tts,
+                            "faces": state.snapshot_faces().unwrap_or_default(),
+                            "present_count": state.present_count(),
+                        });
+                        seq += 1;
+                        let tm = PushOutputMessage {
+                            session_id: sid.clone(),
+                            sequence: seq,
+                            data: frame::build_frame_payload(&tmeta, &[]),
+                            data_type: frame::TRACKS_DATA_TYPE.to_string(),
+                            timestamp: now_ms(),
+                            metadata: None,
+                        };
+                        if send_push_output(&tm).is_err() {
+                            break;
+                        }
                     }
                 }
 

@@ -41,6 +41,7 @@ import {
   FrameBundle,
   FRAME_DATA_TYPE,
   AVC_DATA_TYPE,
+  TRACKS_DATA_TYPE,
   fetchHeatmap,
   fetchLines,
   fetchLiveState,
@@ -1031,6 +1032,11 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
               } else if (parsed && parsed.meta?.data_type === AVC_DATA_TYPE) {
                 const frame = parseFrameContainer(parsed.payload)
                 if (frame) handleH264Frame(frame.bundle as unknown as Record<string, any>, frame.jpeg, parsed.seq)
+              } else if (parsed && parsed.meta?.data_type === TRACKS_DATA_TYPE) {
+                // tracks/faces bundle on its own change-driven frame — feeds
+                // the SAME history path the video-frame bundle used to
+                const frame = parseFrameContainer(parsed.payload)
+                if (frame) applyTrackMeta(frame.bundle as unknown as FrameBundle)
               }
               return
             }

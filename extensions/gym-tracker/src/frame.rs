@@ -20,6 +20,9 @@ pub const FRAME_DATA_TYPE: &str = "application/x-neomind-frame";
 /// format; the blob is one Annex-B access unit, the meta carries decoder
 /// hints (pts_ns/key/w/h) plus the usual track bundle fields.
 pub const AVC_DATA_TYPE: &str = "video/avc";
+/// tracks/faces-only bundle frame (change-driven, ~15 Hz cap) — the video
+/// relay frames carry no track payload anymore
+pub const TRACKS_DATA_TYPE: &str = "application/x-neomind-tracks";
 
 /// Encode meta + blob into one payload.
 pub fn build_frame_payload(meta: &serde_json::Value, blob: &[u8]) -> Vec<u8> {
