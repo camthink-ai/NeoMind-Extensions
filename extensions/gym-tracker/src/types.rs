@@ -84,6 +84,13 @@ pub struct ExerciseMetrics {
     pub symmetry_deg: Option<f32>,
     pub tempo_hz: Option<f32>,
     pub knee_min_deg: Option<f32>,
+    /// Active action classified by the device picker ("squat", "plank", …).
+    /// Absent while the 45-frame window has no confident classification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detected: Option<String>,
+    /// Latest torso lean (deg) — the deadlift/row discriminator channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lean_deg: Option<f32>,
 }
 
 /// One frame of `gym/track` events published by the NE503 device-app.

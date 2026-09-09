@@ -69,6 +69,15 @@ type EditKind = 'zones' | 'lines' | 'members' | 'exclude'
 
 const KPT_MIN_SCORE = 0.2
 
+// Device exercise-engine action ids (exercise.py picker) → overlay labels.
+// Keep in sync with gym-bridge exercise.py's action names.
+const EX_NAMES_ZH: Record<string, string> = {
+  squat: '深蹲', deadlift: '硬拉', lunge: '弓步', legpress: '腿举',
+  legraise: '举腿', curl: '弯举', press: '推举', pullup: '引体',
+  row: '划船', lateral: '侧平举', shrug: '耸肩', crunch: '卷腹',
+  situp: '仰卧起坐', plank: '平板支撑', wallsit: '靠墙静蹲',
+}
+
 // Mosaic cell size in canvas px — coarse enough to obscure identity, fine
 // enough to still read "there is a face here".
 const MOSAIC_CELL = 14
@@ -1757,14 +1766,18 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           const { x, y, w, h } = track.bbox
           drawCorners(X(x), Y(y), w * dw, h * dh,
                       track.member ? HC.member : HC.unknown)
-          // member name when matched (P3) + live exercise/reps (P4)
-          const ex = track.exercise
-            ? track.exercise.reps > 0
-              ? ` ${track.exercise.name}×${track.exercise.reps}`
-              : track.exercise.name !== 'unknown'
-                ? ` ${track.exercise.name}`
-                : ''
-            : ''
+          // member name when matched (P3); device exercise-engine metrics
+          // (0.7.2 ex bundle) take precedence over the zone-based
+          // `exercise` classification when both are present
+          const ex = track.ex
+            ? ''
+            : track.exercise
+              ? track.exercise.reps > 0
+                ? ` ${track.exercise.name}×${track.exercise.reps}`
+                : track.exercise.name !== 'unknown'
+                  ? ` ${track.exercise.name}`
+                  : ''
+              : ''
           const label = track.member?.name
             ? `${track.member.name} · #${track.track_id}${ex}`
             : `#${track.track_id}${ex}`
@@ -1778,6 +1791,32 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           ctx.fillRect(X(x) - 1, Math.max(0, Y(y) - 17), 3, 16)
           ctx.fillStyle = '#ffffff'
           ctx.fillText(label, X(x) + 6, Math.max(11, Y(y) - 5.5))
+          // device exercise-engine chip: action ×count + windowed stats.
+          // Holds (plank/wallsit) count SECONDS — suffix "s" so ×30 reads
+          // as duration, not 30 reps.
+          if (track.ex && (track.ex.reps > 0 || track.ex.detected)) {
+            const act = track.ex.detected
+            const isHold = act === 'plank' || act === 'wallsit'
+            const parts: string[] = []
+            if (act && EX_NAMES_ZH[act]) parts.push(EX_NAMES_ZH[act])
+            if (track.ex.reps > 0) parts.push(`×${track.ex.reps}${isHold ? 's' : ''}`)
+            if (track.ex.depth_deg != null) parts.push(`髋${Math.round(track.ex.depth_deg)}°`)
+            if (track.ex.symmetry_deg != null) parts.push(`±${Math.round(track.ex.symmetry_deg)}°`)
+            if (track.ex.tempo_hz != null && track.ex.tempo_hz > 0)
+              parts.push(`${track.ex.tempo_hz.toFixed(1)}/s`)
+            if (parts.length > 0) {
+              const mLabel = parts.join(' · ')
+              ctx.font = '500 11px system-ui, sans-serif'
+              const mw = ctx.measureText(mLabel).width + 10
+              const my = Math.max(0, Y(y) - 17) + 17
+              ctx.fillStyle = 'rgba(0, 0, 0, 0.72)'
+              ctx.fillRect(X(x) - 1, my, mw + 2, 15)
+              ctx.fillStyle = HC.skeleton
+              ctx.fillRect(X(x) - 1, my, 3, 15)
+              ctx.fillStyle = '#ffe9a8'
+              ctx.fillText(mLabel, X(x) + 6, my + 11)
+            }
+          }
         }
 
         const kpts = track.pose?.kpts

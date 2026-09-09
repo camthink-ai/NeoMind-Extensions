@@ -64,6 +64,18 @@ export interface Track {
     name: string; reps: number; sets: number; zone: string | null
     zone_hold?: number
   } | null
+  /** Device exercise-engine metrics (14-action rep/hold FSM + windowed
+   *  joint-angle stats). Present on 0.7.2+ producers once a track has
+   *  ~8 frames of window data; preferred over `exercise` when both exist. */
+  ex?: {
+    reps: number
+    depth_deg?: number | null
+    symmetry_deg?: number | null
+    tempo_hz?: number | null
+    knee_min_deg?: number | null
+    detected?: string | null
+    lean_deg?: number | null
+  } | null
 }
 
 export interface LiveState {
