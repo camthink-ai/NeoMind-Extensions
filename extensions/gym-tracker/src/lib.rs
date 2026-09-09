@@ -73,6 +73,20 @@ struct Inner {
 
 impl GymTrackerExtension {
     pub fn new() -> Self {
+        // cdylib logging: the runner installs a tracing subscriber for ITS
+        // copy of the tracing crate — our statically-linked copy has its own
+        // (uninitialized) global dispatch, so every tracing::* call in this
+        // dylib was silently dropped (the "log black hole" of 2026-09-09).
+        // Install our own stderr subscriber: the platform captures the
+        // runner's fd 2 into the extension log ring buffer, exposed at
+        // GET /api/extensions/{id}/logs.
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_target(true)
+            .with_ansi(false)
+            .with_writer(std::io::stderr)
+            .compact()
+            .try_init();
         Self {
             inner: RwLock::new(None),
         }
