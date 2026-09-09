@@ -257,6 +257,12 @@ impl LiveState {
         self.h264.lock().drain(..).collect()
     }
 
+    /// Oldest queued access unit's seq (0 when empty) — the LIVE-EDGE JOIN
+    /// point for fresh push sessions (see lib.rs start_push).
+    pub fn h264_head_seq(&self) -> u64 {
+        self.h264.lock().front().map(|s| s.seq).unwrap_or(0)
+    }
+
     /// All queued access units with `seq > after_seq`, oldest first —
     /// PER-SESSION cursor replay. The queue is a global singleton while
     /// push threads are per-session: draining (the old semantics) let two

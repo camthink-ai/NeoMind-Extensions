@@ -151,6 +151,7 @@ impl Extension for GymTrackerExtension {
         vec![
             cmd("get_frame", "Latest producer frame (JPEG preview) + its tracks — single-source Monitor rendering"),
             cmd("get_live_state", "Current in-gym tracks (incl. trails)"),
+            cmd("get_ingest_diag", "Ingest liveness trace: login/WS/frame stamps + topic counters"),
             cmd("get_roi_zones", "List ROI equipment zones"),
             cmd("set_roi_zones", "Replace ROI zones (full set)"),
             cmd("resolve_alert", "Acknowledge/dismiss a safety alert"),
@@ -362,9 +363,13 @@ impl Extension for GymTrackerExtension {
         let sid = session_id.to_string();
         std::thread::spawn(move || {
             let mut seq: u64 = 0;
-            // per-session cursor into the SHARED h264 queue: every session
-            // replays the full stream (see LiveState::h264_since)
-            let mut h264_cursor: u64 = 0;
+            // per-session cursor into the SHARED h264 queue — LIVE-EDGE JOIN:
+            // start at the queue HEAD, not seq 0. Full-history replay floods
+            // a fresh session (consumer-too-slow → the server's 2s stall
+            // killer → reconnect → replay again = flap loop). The browser's
+            // device-seq gap check resyncs its decoder on the next keyframe
+            // (≤1 GOP), so live-edge join costs one GOP of video.
+            let mut h264_cursor: u64 = state.h264_head_seq().saturating_sub(1);
             let mut last_jpeg_ts: Option<u64> = None;
             while flag.load(std::sync::atomic::Ordering::SeqCst) {
                 // Wake on EITHER stream (shared condvar); the timeout is the

@@ -120,7 +120,7 @@ pub fn parse_preview_h264(
     Some((ts_ns, pts_ns, key, w, h, seq, nalu))
 }
 
-/// Debug counters for GYM_INGEST_DBG diagnostics.
+/// Debug counters + liveness trace for ingest diagnostics.
 pub static INGEST_COUNTS: std::sync::OnceLock<parking_lot::Mutex<IngestDbg>> =
     std::sync::OnceLock::new();
 #[derive(Default, Clone)]
@@ -129,9 +129,28 @@ pub struct IngestDbg {
     pub topic_counts: std::collections::HashMap<String, u64>,
     pub parsed_ok: u64,
     pub parse_fail: u64,
+    /// Liveness trace — each reconnect-cycle step stamps unix secs. A zeroed
+    /// field = the step never ran; an old early stamp with zeroed later
+    /// fields = exactly where the loop is stuck.
+    pub started_at: u64,
+    pub login_at: u64,
+    pub login_ok: bool,
+    pub ws_connect_at: u64,
+    pub ws_url: String,
+    pub ws_ok: bool,
+    pub last_frame_at: u64,
+    pub cycles: u64,
+    pub last_error: String,
 }
 pub fn ingest_dbg() -> &'static parking_lot::Mutex<IngestDbg> {
     INGEST_COUNTS.get_or_init(|| parking_lot::Mutex::new(IngestDbg::default()))
+}
+
+fn stamp_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Handle returned by `spawn` — call `stop()` to request a graceful shutdown
@@ -216,15 +235,21 @@ fn run_loop(
     rt.block_on(async move {
         let backoff = &cfg.ingest.reconnect_backoff_sec;
         let mut attempt: usize = 0;
+        ingest_dbg().lock().started_at = stamp_now();
         while !stop.load(Ordering::Relaxed) {
+            ingest_dbg().lock().cycles += 1;
             // Cycle 0 reuses the token cached by configure()'s login; every
             // retry re-logins first (cheap REST call, at most once per backoff
             // cycle) so an empty or dead token can't wedge the subscriber.
             let token = match ne.token_string() {
                 Some(t) if attempt == 0 && !t.is_empty() => t,
                 _ => {
-                    let _ = ne.login();
-                    ne.token_string().unwrap_or_default()
+                    let ok = ne.login().is_ok();
+                    let tok = ne.token_string().unwrap_or_default();
+                    let mut g = ingest_dbg().lock();
+                    g.login_at = stamp_now();
+                    g.login_ok = ok && !tok.is_empty();
+                    tok
                 }
             };
             // Primary URL = token verbatim (Bearer prefix on this firmware).
@@ -236,6 +261,7 @@ fn run_loop(
             match connect_and_drain(&analytics, &db, &urls, cfg, state, stop).await {
                 Disconnect::Stop => break,
                 Disconnect::Error(e) => {
+                    ingest_dbg().lock().last_error = e.chars().take(160).collect();
                     tracing::warn!("ingest: wss cycle ended ({e})");
                 }
             }
@@ -295,6 +321,10 @@ async fn connect_and_drain(
         {
             Ok((s, resp)) => {
                 tracing::info!("ingest: wss connected to {url} (status {})", resp.status());
+                let mut g = ingest_dbg().lock();
+                g.ws_connect_at = stamp_now();
+                g.ws_url = url.chars().take(120).collect();
+                g.ws_ok = resp.status().is_success();
                 ws_stream = Some(s);
                 break;
             }
@@ -335,6 +365,7 @@ async fn connect_and_drain(
             msg = ws_stream.next() => match msg {
                 Some(Ok(Message::Text(txt))) => {
                     last_alive = std::time::Instant::now();
+                    ingest_dbg().lock().last_frame_at = stamp_now();
                     tracing::debug!(target: "gym_tracker::ingest::frame", len = txt.len(), "ws text frame");
                     if true { // temp diagnostics: always count topics
                         let topic = serde_json::from_str::<serde_json::Value>(&txt)

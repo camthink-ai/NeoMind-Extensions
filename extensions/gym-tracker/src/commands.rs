@@ -52,6 +52,31 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 "pushed": d.pushed.load(O::Relaxed),
             }));
         }
+        "get_ingest_diag" => {
+            // Ingest liveness trace: where the reconnect loop currently is.
+            // Zeroed stamps = that step never ran (thread dead / config
+            // never spawned it); an old early stamp with zeroed later ones
+            // = the exact step it's stuck on.
+            let d = crate::ingest::ingest_dbg().lock().clone();
+            Ok(json!({
+                "started_at": d.started_at,
+                "cycles": d.cycles,
+                "login_at": d.login_at,
+                "login_ok": d.login_ok,
+                "ws_connect_at": d.ws_connect_at,
+                "ws_url": d.ws_url,
+                "ws_ok": d.ws_ok,
+                "last_frame_at": d.last_frame_at,
+                "frames_total": d.total,
+                "parsed_ok": d.parsed_ok,
+                "parse_fail": d.parse_fail,
+                "topic_counts": d.topic_counts,
+                "last_error": d.last_error,
+                "now": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|x| x.as_secs()).unwrap_or(0),
+            }))
+        }
         "get_live_state" => {
             let workouts = ctx.analytics.workout_snapshot();
             // Evict departed tracks (last_seen past TTL) before reading, so the
