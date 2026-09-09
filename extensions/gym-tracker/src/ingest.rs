@@ -141,6 +141,8 @@ pub struct IngestDbg {
     pub last_frame_at: u64,
     pub cycles: u64,
     pub last_error: String,
+    /// First gym/track raw payload (truncated) — deserialization forensics.
+    pub first_track_payload: String,
 }
 pub fn ingest_dbg() -> &'static parking_lot::Mutex<IngestDbg> {
     INGEST_COUNTS.get_or_init(|| parking_lot::Mutex::new(IngestDbg::default()))
@@ -372,7 +374,13 @@ async fn connect_and_drain(
                             .ok()
                             .and_then(|v| v["topic"].as_str().map(|t| t.chars().take(24).collect::<String>()))
                             .unwrap_or_else(|| "?".into());
-                        ingest_dbg().lock().topic_counts.entry(topic).and_modify(|c| *c += 1).or_insert(1);
+                        {
+                            let mut g = ingest_dbg().lock();
+                            if topic.starts_with("gym/track") && g.first_track_payload.is_empty() {
+                                g.first_track_payload = txt.chars().take(2400).collect();
+                            }
+                            g.topic_counts.entry(topic).and_modify(|c| *c += 1).or_insert(1);
+                        }
                         let n = { let mut g = ingest_dbg().lock(); g.total += 1; g.total };
                         if n % 200 == 0 {
                             let c = ingest_dbg().lock().topic_counts.clone();

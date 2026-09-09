@@ -72,6 +72,7 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 "parse_fail": d.parse_fail,
                 "topic_counts": d.topic_counts,
                 "last_error": d.last_error,
+                "first_track_payload": d.first_track_payload,
                 "now": std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|x| x.as_secs()).unwrap_or(0),
