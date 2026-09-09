@@ -349,6 +349,14 @@ async fn connect_and_drain(
     // 49 min of zero traffic with the socket "open"). Ping every 5 s and
     // force-reconnect after 20 s of silence.
     let mut last_alive = std::time::Instant::now();
+    // DATA-staleness (Text events only) — separate from the keepalive: a
+    // half-dead proxied TCP can still answer Pings while delivering zero
+    // events (the 2026-09-09 zombie: socket "open", pongs flowing, no data
+    // for hours). The camera's bus always carries ≥1 Hz of events while
+    // the app runs, so 90 s of event silence means the pipe is dead —
+    // reconnect. (A legitimately quiet bus — app stopped — also trips
+    // this; the reconnect cycle is cheap and self-limits via backoff.)
+    let mut last_event = std::time::Instant::now();
     let mut last_h264_seq: Option<u64> = None;
     let mut ping = tokio::time::interval(std::time::Duration::from_secs(5));
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -360,6 +368,12 @@ async fn connect_and_drain(
                 if last_alive.elapsed() > std::time::Duration::from_secs(20) {
                     return Disconnect::Error("keepalive timeout (20s silence)".into());
                 }
+                if last_event.elapsed() > std::time::Duration::from_secs(90) {
+                    return Disconnect::Error(
+                        "data staleness (90s without events on a live socket) — \
+                         forcing reconnect".into(),
+                    );
+                }
                 if ws_sink.send(Message::Ping(Vec::new().into())).await.is_err() {
                     return Disconnect::Error("ping send failed".into());
                 }
@@ -367,6 +381,7 @@ async fn connect_and_drain(
             msg = ws_stream.next() => match msg {
                 Some(Ok(Message::Text(txt))) => {
                     last_alive = std::time::Instant::now();
+                    last_event = std::time::Instant::now();
                     ingest_dbg().lock().last_frame_at = stamp_now();
                     tracing::debug!(target: "gym_tracker::ingest::frame", len = txt.len(), "ws text frame");
                     if true { // temp diagnostics: always count topics
