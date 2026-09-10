@@ -212,6 +212,17 @@
           ],
           "default": "en",
           "description": "UI language（en English · zh 中文）"
+        },
+        "latency": {
+          "type": "string",
+          "enum": [
+            "live",
+            "balanced",
+            "smooth"
+          ],
+          "default": "live",
+          "title": "延迟策略 / Latency policy",
+          "description": "视频相对检测数据的缓冲量：live 最跟手（偶尔框略追人）；balanced 折中；smooth 框最稳不追人但整体画面多延迟约 0.2-0.4 秒"
         }
       },
       "category": "custom"
