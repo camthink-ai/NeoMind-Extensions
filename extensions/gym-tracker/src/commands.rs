@@ -68,6 +68,7 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 "ws_ok": d.ws_ok,
                 "last_frame_at": d.last_frame_at,
                 "frames_total": d.total,
+                "h264_no_viewer": d.h264_no_viewer,
                 "parsed_ok": d.parsed_ok,
                 "parse_fail": d.parse_fail,
                 "topic_counts": d.topic_counts,

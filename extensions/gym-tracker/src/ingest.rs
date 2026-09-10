@@ -141,6 +141,9 @@ pub struct IngestDbg {
     pub last_frame_at: u64,
     pub cycles: u64,
     pub last_error: String,
+    /// h264 envelopes skipped because no push session was subscribed
+    /// (on-demand ingest).
+    pub h264_no_viewer: u64,
     /// First gym/track raw payload (truncated) — deserialization forensics.
     pub first_track_payload: String,
 }
@@ -405,6 +408,18 @@ async fn connect_and_drain(
                     if let Some((pts, pimg)) = parse_preview(&txt) {
                         state.set_preview(pts, Arc::new(pimg));
                     } else if let Some((ts, pts, key, w, h, seq, nalu)) = parse_preview_h264(&txt) {
+                        // ON-DEMAND h264: with no push session subscribed,
+                        // ring churn was pure waste — 30 fps parsed and
+                        // immediately dropped by the 120-frame ring's
+                        // overflow (a WARN per dropped frame when nobody
+                        // watched). Live-edge join (sessions start at the
+                        // ring HEAD) means no consumer needs history, so
+                        // skipping ingest while the session map is empty is
+                        // safe; the next session picks up frames that
+                        // arrive AFTER its start_push registered it.
+                        if crate::push_sessions().lock().is_empty() {
+                            ingest_dbg().lock().h264_no_viewer += 1;
+                        } else {
                         // relay seq continuity check: a gap means the
                         // device→platform hop dropped frames (event bus /
                         // relay). Warn loudly — the decoder downstream will
@@ -436,6 +451,7 @@ async fn connect_and_drain(
                             seq,
                             nalu: Arc::new(nalu),
                         });
+                        }
                     } else if serde_json::from_str::<serde_json::Value>(&txt)
                         .ok()
                         .and_then(|v| v["topic"].as_str().map(|t| t == "gym/preview"))
