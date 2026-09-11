@@ -1,6 +1,6 @@
 {
   "id": "yolo-video",
-  "name": "Yolo Video",
+  "name": "YOLO Video",
   "version": "2.7.8",
   "description": "Real-time video stream object detection with YOLOv11, RTSP/camera support, ROI analytics, line crossing, smart capture rules, and MJPEG streaming",
   "author": "NeoMind Team",

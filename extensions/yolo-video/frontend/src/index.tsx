@@ -95,6 +95,19 @@ interface CaptureEvent {
 type StreamMode = 'camera' | 'network'
 type DrawingTool = 'none' | 'roi' | 'line'
 
+// A frame waiting to be decoded and committed to the display canvas.
+// Stats ride with the frame they were computed from, so tags/counts always
+// match the picture on screen.
+interface PendingFrame {
+  data: string            // base64 JPEG
+  seq: number             // monotonic per-session sequence (backend-provided)
+  detections?: Detection[]
+  roiStats?: RoiStat[]
+  lineStats?: LineStat[]
+  fps?: number
+  frameCount?: number
+}
+
 // ============================================================================
 // Constants & Styles
 // ============================================================================
@@ -1025,7 +1038,7 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
   confidenceThreshold = 0.5,
   maxObjects = 20,
   sourceUrl = 'camera://0',
-  fps: fpsProp = 15,
+  fps: fpsProp = 25,
   drawBoxes = true,
   showStats = true,
   variant = 'default',
@@ -1097,10 +1110,16 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
   const lockTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)  // Safety timeout for lock
   const displayCanvasRef = useRef<HTMLCanvasElement>(null)  // Single canvas: frame + overlays
   const videoWrapRef = useRef<HTMLDivElement>(null)
-  const frameImgRef = useRef<HTMLImageElement | null>(null)  // Cached decoded frame
-  // Pending frame data for rAF loop — bypasses React render per frame
-  const pendingFrameRef = useRef<string | null>(null)
+  const frameImgRef = useRef<HTMLImageElement | ImageBitmap | null>(null)  // Decoded frame on canvas
+  // Pending frame for the rAF loop — bypasses React render per frame
+  const pendingFrameRef = useRef<PendingFrame | null>(null)
   const rafIdRef = useRef<number>(0)
+  // Highest frame sequence committed to the canvas. Async decode completion
+  // order is NOT guaranteed — a late-finishing older decode must be
+  // discarded, otherwise the canvas visibly jumps BACK to a stale frame.
+  const lastCommittedSeqRef = useRef(-1)
+  // Fallback counter when a message carries no usable sequence field
+  const seqFallbackRef = useRef(0)
   // Tracks whether the loading overlay has already been dismissed by the
   // first received frame. Subsequent frames are drawn via rAF on canvas —
   // they don't need a React re-render, so we skip setFrameData() after the
@@ -1355,6 +1374,9 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
         switch (msg.type) {
           case 'session_created':
             sessionIdRef.current = msg.session_id
+            // Backend per-session sequence restarts at 0 — reset the commit
+            // guard so fresh frames aren't rejected as "stale".
+            lastCommittedSeqRef.current = -1
             setIsRunning(true)
             setSessionTime(0)
             sessionTimerRef.current = setInterval(() => setSessionTime(t => t + 1), 1000)
@@ -1394,17 +1416,16 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
                 hasFirstFrameRef.current = true
                 setFrameData(msg.data)
               }
-              pendingFrameRef.current = msg.data  // rAF loop handles decode+draw
+              // Queue the frame together with its stats; the rAF loop decodes
+              // and commits them as one unit (single-slot latest-wins).
+              pendingFrameRef.current = {
+                data: msg.data,
+                seq: typeof msg.sequence === 'number' ? msg.sequence : ++seqFallbackRef.current,
+                detections: msg.metadata?.detections,
+                roiStats: msg.metadata?.roi_stats,
+                lineStats: msg.metadata?.line_stats,
+              }
               updateFps()
-              if (msg.metadata?.detections) {
-                setDetections(msg.metadata.detections)
-              }
-              if (msg.metadata?.roi_stats) {
-                setRoiStats(msg.metadata.roi_stats)
-              }
-              if (msg.metadata?.line_stats) {
-                setLineStats(msg.metadata.line_stats)
-              }
               if (msg.metadata?.capture_events && msg.metadata.capture_events.length > 0) {
                 setCaptureEvents(prev => [...msg.metadata.capture_events, ...prev].slice(0, 10))
               }
@@ -1431,25 +1452,17 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
                   hasFirstFrameRef.current = true
                   setFrameData(msg.data)  // dismiss loading overlay
                 }
-                pendingFrameRef.current = msg.data  // rAF loop handles decode+draw
+                // Queue frame + stats as one unit; rAF loop commits them together
+                pendingFrameRef.current = {
+                  data: msg.data,
+                  seq: typeof msg.sequence === 'number' ? msg.sequence : ++seqFallbackRef.current,
+                  detections: msg.metadata?.detections,
+                  roiStats: msg.metadata?.roi_stats,
+                  lineStats: msg.metadata?.line_stats,
+                  fps: msg.metadata?.fps,
+                  frameCount: msg.metadata?.frame_count,
+                }
                 updateFps()
-                if (msg.metadata?.frame_count) {
-                  setFrameCount(msg.metadata.frame_count)
-                } else {
-                  setFrameCount(prev => prev + 1)
-                }
-                if (msg.metadata?.fps) {
-                  setFps(msg.metadata.fps)
-                }
-                if (msg.metadata?.detections) {
-                  setDetections(msg.metadata.detections)
-                }
-                if (msg.metadata?.roi_stats) {
-                  setRoiStats(msg.metadata.roi_stats)
-                }
-                if (msg.metadata?.line_stats) {
-                  setLineStats(msg.metadata.line_stats)
-                }
                 if (msg.metadata?.capture_events && msg.metadata.capture_events.length > 0) {
                   setCaptureEvents(prev => [...msg.metadata.capture_events, ...prev].slice(0, 10))
                 }
@@ -1664,6 +1677,9 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
     setFrameData(null)
     hasFirstFrameRef.current = false
     pendingFrameRef.current = null
+    lastCommittedSeqRef.current = -1
+    const oldFrame = frameImgRef.current
+    if (oldFrame && !(oldFrame instanceof HTMLImageElement)) oldFrame.close()
     frameImgRef.current = null
     setRoiStats([])
     setLineStats([])
@@ -1896,18 +1912,26 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
     const h = ch
 
     // Draw the video frame as background
+    // (frameImgRef may hold an HTMLImageElement or an ImageBitmap — both work
+    // with drawImage; dimensions come from naturalWidth/Height vs width/height)
     const img = frameImgRef.current
-    if (img && img.complete && img.naturalWidth > 0) {
+    let iw = 0, ih = 0
+    if (img instanceof HTMLImageElement) {
+      if (img.complete && img.naturalWidth > 0) { iw = img.naturalWidth; ih = img.naturalHeight }
+    } else if (img) {
+      iw = img.width; ih = img.height
+    }
+    if (img && iw > 0 && ih > 0) {
       // Cover-fit: scale to fill while maintaining aspect ratio
-      const imgAspect = img.naturalWidth / img.naturalHeight
+      const imgAspect = iw / ih
       const canvasAspect = w / h
-      let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight
+      let sx = 0, sy = 0, sw = iw, sh = ih
       if (imgAspect > canvasAspect) {
-        sw = img.naturalHeight * canvasAspect
-        sx = (img.naturalWidth - sw) / 2
+        sw = ih * canvasAspect
+        sx = (iw - sw) / 2
       } else {
-        sh = img.naturalWidth / canvasAspect
-        sy = (img.naturalHeight - sh) / 2
+        sh = iw / canvasAspect
+        sy = (ih - sh) / 2
       }
       ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h)
     }
@@ -2157,21 +2181,49 @@ export const YoloVideoDisplay = forwardRef<HTMLDivElement, ExtensionComponentPro
     }
   }, [rois, lines, roiStats, lineStats, drawingPoints, lineStart, lineEnd, drawingTool])
 
-  // rAF loop: decode pending frame and draw to canvas, bypassing React render
+  // rAF loop: decode the latest pending frame and commit it to the canvas,
+  // bypassing React render. Decode is asynchronous and completion order is
+  // NOT guaranteed — the seq guard discards any decode that finishes after a
+  // newer frame was already committed. Without it the canvas would visibly
+  // jump BACK to a stale frame (the "回退" glitch).
   useEffect(() => {
     let running = true
+    const commit = async (pending: PendingFrame) => {
+      let bitmap: ImageBitmap
+      try {
+        // Decode off the main thread: base64 → Blob → ImageBitmap
+        const bin = atob(pending.data)
+        const bytes = new Uint8Array(bin.length)
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+        bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }))
+      } catch (e) {
+        console.warn('[YOLO] Frame decode failed', e)
+        return
+      }
+      if (!running) { bitmap.close(); return }
+      if (pending.seq < lastCommittedSeqRef.current) {
+        bitmap.close()  // stale decode finishing late — discard
+        return
+      }
+      lastCommittedSeqRef.current = pending.seq
+      const old = frameImgRef.current
+      frameImgRef.current = bitmap
+      if (old && !(old instanceof HTMLImageElement)) old.close()
+      renderCanvas()
+      // Stats are applied with the frame they belong to, so tags/counts
+      // always match the picture currently on the canvas.
+      if (pending.detections) setDetections(pending.detections)
+      if (pending.roiStats) setRoiStats(pending.roiStats)
+      if (pending.lineStats) setLineStats(pending.lineStats)
+      if (pending.fps) setFps(pending.fps)
+      setFrameCount(prev => pending.frameCount ?? prev + 1)
+    }
     const tick = () => {
       if (!running) return
-      const data = pendingFrameRef.current
-      if (data) {
+      const pending = pendingFrameRef.current
+      if (pending) {
         pendingFrameRef.current = null
-        const img = new Image()
-        img.onload = () => {
-          if (!running) return
-          frameImgRef.current = img
-          renderCanvas()
-        }
-        img.src = `data:image/jpeg;base64,${data}`
+        commit(pending)
       }
       rafIdRef.current = requestAnimationFrame(tick)
     }

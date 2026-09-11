@@ -221,7 +221,7 @@ impl Default for StreamConfig {
             source_url: "camera://0".to_string(),
             confidence_threshold: 0.5,
             max_objects: 20,
-            target_fps: 15,
+            target_fps: 25,
             draw_boxes: true,
             rois: Vec::new(),
             lines: Vec::new(),
@@ -441,12 +441,6 @@ pub fn draw_detections(image: &mut image::RgbImage, detections: &[ObjectDetectio
     let img_w = image.width();
     let img_h = image.height();
 
-    // Log first detection for debugging
-    if let Some(first) = detections.first() {
-        eprintln!("[YOLO-Draw] img={}x{} det0: x={:.0} y={:.0} w={:.0} h={:.0} label={}",
-            img_w, img_h, first.bbox.x, first.bbox.y, first.bbox.width, first.bbox.height, first.label);
-    }
-
     for det in detections {
         let color = class_color(det.class_id);
         let image_color = image::Rgb([color.0, color.1, color.2]);
@@ -511,17 +505,64 @@ pub fn draw_detections(image: &mut image::RgbImage, detections: &[ObjectDetectio
     }
 }
 
+/// Stretch-resize an RGB frame to the model's 640x640 input using SIMD
+/// (fast_image_resize). Feeding usls an already-640x640 frame takes its cheap
+/// clone path; letterboxing the full frame inside usls costs ~26ms/frame extra,
+/// and the image crate's Triangle resize is single-threaded.
+/// Returns None only if the source buffer is malformed (caller skips the frame).
+pub fn resize_to_640x640(
+    resizer: &mut fast_image_resize::Resizer,
+    src: &image::RgbImage,
+) -> Option<image::RgbImage> {
+    let src = fast_image_resize::images::Image::from_vec_u8(
+        src.width(),
+        src.height(),
+        src.as_raw().clone(),
+        fast_image_resize::PixelType::U8x3,
+    )
+    .ok()?;
+    let mut dst =
+        fast_image_resize::images::Image::new(640, 640, fast_image_resize::PixelType::U8x3);
+    resizer
+        .resize(
+            &src,
+            &mut dst,
+            &fast_image_resize::ResizeOptions::new().resize_alg(
+                fast_image_resize::ResizeAlg::Convolution(fast_image_resize::FilterType::Bilinear),
+            ),
+        )
+        .ok()?;
+    image::RgbImage::from_raw(640, 640, dst.into_vec())
+}
+
 /// Encode image to JPEG
+///
+/// Primary path is the `jpeg-encoder` crate — substantially faster than the
+/// `image` crate's built-in encoder, which matters at streaming frame rates.
+/// The `image` encoder is kept as a fallback in case the fast path errors.
 pub fn encode_jpeg(image: &image::RgbImage, quality: u8) -> Vec<u8> {
-    let mut buffer = Vec::new();
-    // Use direct encoding to avoid cloning the entire image
-    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality);
-    let _ = encoder.encode(
-        image.as_raw(),
-        image.width(),
-        image.height(),
-        image::ExtendedColorType::Rgb8
-    );
+    let mut buffer = Vec::with_capacity(48 * 1024);
+    let fast = {
+        let mut encoder = jpeg_encoder::Encoder::new(&mut buffer, quality);
+        encoder.set_sampling_factor(jpeg_encoder::SamplingFactor::F_2_2);
+        encoder.encode(
+            image.as_raw(),
+            image.width() as u16,
+            image.height() as u16,
+            jpeg_encoder::ColorType::Rgb,
+        )
+    };
+    if let Err(e) = fast {
+        tracing::warn!("[YOLO-JPEG] fast encoder failed ({}), falling back to image crate", e);
+        buffer.clear();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality);
+        let _ = encoder.encode(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ExtendedColorType::Rgb8
+        );
+    }
     buffer
 }
 
@@ -1907,6 +1948,8 @@ impl Extension for YoloVideoProcessorV2 {
             let frame_duration = std::time::Duration::from_millis(1000 / target_fps as u64);
             let mut reconnect_count = 0u32;
             const MAX_RECONNECT: u32 = 3;
+            // Reusable SIMD resizer for the 640x640 inference pre-scale
+            let mut fir_resizer = fast_image_resize::Resizer::new();
 
             // NOTE: send_push_output is non-blocking at the IPC layer (runner uses a
             // bounded buffer + main mpsc try_send + watch "latest-wins"), so we can
@@ -2015,13 +2058,6 @@ impl Extension for YoloVideoProcessorV2 {
 
                         let (orig_width, orig_height) = (original_image.width(), original_image.height());
 
-                        // Resize to 640x640 for YOLO inference
-                        // Triangle (bilinear) is ~5-10x faster than CatmullRom for real-time video
-                        let inference_image = image::imageops::resize(
-                            &original_image, 640, 640,
-                            image::imageops::FilterType::Triangle,
-                        );
-
                         // Output resolution: cap at 960x540 to accelerate draw/encode.
                         // Keeps 16:9 aspect; if source is smaller, leaves it untouched.
                         const OUT_W: u32 = 960;
@@ -2032,14 +2068,23 @@ impl Extension for YoloVideoProcessorV2 {
                             (orig_width, orig_height)
                         };
 
-                        // Run YOLO detection
+                        // Pre-scale to the model's 640x640 input with SIMD
+                        let inference_image =
+                            match resize_to_640x640(&mut fir_resizer, &original_image) {
+                                Some(img) => img,
+                                None => {
+                                    tracing::warn!("[Stream {}] fast resize failed, skipping frame", sid);
+                                    continue;
+                                }
+                            };
+
+                        // Run YOLO detection on the pre-scaled frame
                         let detections = match processor.get_detector() {
                             Some(detector) if detector.is_loaded() => {
                                 let dets = detector.detect(&inference_image, confidence, max_obj);
-                                eprintln!("[YOLO-Detect] raw detections: {}", dets.len());
                                 if !dets.is_empty() {
                                     // Scale coords directly into output resolution
-                                    // (avoids full-res coordinate path downstream)
+                                    // (compensates the 640x640 stretch)
                                     let scale_x = out_w as f32 / 640.0;
                                     let scale_y = out_h as f32 / 640.0;
                                     let scaled: Vec<_> = dets.into_iter().map(|mut d| {
@@ -2183,10 +2228,11 @@ impl Extension for YoloVideoProcessorV2 {
                                 if elapsed > 0.0 {
                                     s.fps = s.frame_count as f32 / elapsed;
                                 }
-                                if s.frame_count % 30 == 0 {
-                                    s.detected_objects.clear();
-                                    s.last_frame = None;
-                                }
+                                // NOTE: the old "% 30 → clear last_frame/detected_objects"
+                                // memory hack is gone — one cached JPEG (~100KB) and a
+                                // label-keyed counter map are bounded and don't grow per
+                                // frame, and clearing them made get_frame return None
+                                // intermittently.
                             }
                             registry.capture_events_count += capture_events.len() as u64;
                         }
@@ -2459,21 +2505,25 @@ impl Extension for YoloVideoProcessorV2 {
             }
         };
 
-        // CRITICAL: Frame rate control to prevent memory overflow
-        // Drop frames that arrive too quickly (max 10 FPS = 100ms interval)
-        // This gives ONNX Runtime time to release memory between frames
+        // Frame rate control: pace to the stream's target_fps instead of the
+        // old hard-coded 100ms (10 FPS) cap. A 50ms floor (20 FPS ceiling)
+        // matches the frontend's 50ms capture throttle, so the backend never
+        // queues faster than frames actually arrive.
         {
             let mut s = stream.lock();
+            let min_interval_ms = (1000 / s._config.target_fps.max(1) as u64).max(50);
             if let Some(last_time) = s.last_process_time {
                 let elapsed = start.duration_since(last_time);
-                if elapsed.as_millis() < 100 {  // Minimum 100ms between frames (max 10 FPS)
+                if elapsed.as_millis() < min_interval_ms as u128 {  // too soon for target_fps
                     s.dropped_frames += 1;
                     
                     // IMPORTANT: When dropping a frame, return the last valid frame
                     // instead of a skip response. This prevents the frontend from showing
                     // corrupted/blank frames.
-                    eprintln!("[YOLO] Frame {} dropped (too fast: {}ms), total dropped: {}",
-                        chunk.sequence, elapsed.as_millis(), s.dropped_frames);
+                    if s.dropped_frames % 50 == 1 {
+                        eprintln!("[YOLO] Frames dropped (too fast for target_fps), total dropped: {}",
+                            s.dropped_frames);
+                    }
 
                     // Return the last cached frame if available
                     if let Some(ref last_data) = s.last_frame {
@@ -2543,7 +2593,6 @@ impl Extension for YoloVideoProcessorV2 {
         }
 
         // Decode JPEG frame
-        eprintln!("[YOLO] Decoding image, data size: {}", chunk.data.len());
         let img_result = image::load_from_memory(&chunk.data);
         let mut original_image = match img_result {
             Ok(img) => {
@@ -2569,43 +2618,38 @@ impl Extension for YoloVideoProcessorV2 {
         // Store original dimensions for coordinate scaling
         let (orig_width, orig_height) = (original_image.width(), original_image.height());
 
-        // ✨ OPTIMIZATION: Resize in-place for inference to avoid extra allocation
-        // We'll scale detection coordinates back to original size later
-        // Triangle (bilinear) is ~5-10x faster than CatmullRom for real-time video
-        let inference_image = image::imageops::resize(
-            &original_image,
-            640,
-            640,
-            image::imageops::FilterType::Triangle
-        );
-
         // Get configuration from stream
         let (confidence_threshold, max_objects) = {
             let s = stream.lock();
             (s._config.confidence_threshold, s._config.max_objects)
         };
 
-        eprintln!("[YOLO] Running YOLO detection on 640x640, confidence={}, max_objects={}",
-            confidence_threshold, max_objects);
+        // Pre-scale to the model's 640x640 input with SIMD
+        let inference_image = {
+            let mut fir_resizer = fast_image_resize::Resizer::new();
+            match resize_to_640x640(&mut fir_resizer, &original_image) {
+                Some(img) => img,
+                None => {
+                    return Ok(StreamResult::json(
+                        Some(chunk.sequence),
+                        chunk.sequence,
+                        serde_json::json!({"error": "resize failed"}),
+                        start.elapsed().as_secs_f32() * 1000.0,
+                    ).unwrap());
+                }
+            }
+        };
 
-        // Run YOLO detection on resized image
+        // Run YOLO detection on the pre-scaled frame; scale coordinates back
+        // to the original size (compensates the 640x640 stretch)
         let detections = {
             match self.processor.get_detector() {
                 Some(detector) => {
                     if detector.is_loaded() {
-                        eprintln!("[YOLO] Detector loaded: {}, inference size: 640x640",
-                            detector.is_loaded());
-
-                        // Run detection on 640x640 image
                         let dets = detector.detect(&inference_image, confidence_threshold, max_objects);
-
                         if !dets.is_empty() {
-                            eprintln!("[YOLO] YOLO detected {} objects", dets.len());
-
-                            // Scale detection coordinates back to original size
                             let scale_x = orig_width as f32 / 640.0;
                             let scale_y = orig_height as f32 / 640.0;
-
                             let scaled_dets: Vec<_> = dets.into_iter().map(|mut det| {
                                 det.bbox.x *= scale_x;
                                 det.bbox.y *= scale_y;
@@ -2613,38 +2657,26 @@ impl Extension for YoloVideoProcessorV2 {
                                 det.bbox.height *= scale_y;
                                 det
                             }).collect();
-
-                            for (i, det) in scaled_dets.iter().enumerate() {
-                                eprintln!("[YOLO]   Detection {}: {} ({:.2}%) at [{:.1}, {:.1}, {:.1}x{:.1}]",
-                                    i, det.class_name, det.confidence * 100.0,
-                                    det.bbox.x, det.bbox.y, det.bbox.width, det.bbox.height);
-                            }
                             detections_to_object_detection(scaled_dets)
                         } else {
                             // Fallback to simulated detections for demo
-                            eprintln!("[YOLO] No YOLO detections, using fallback");
                             let s = stream.lock();
                             generate_fallback_detections(s.frame_count, max_objects)
                         }
                     } else {
-                        eprintln!("[YOLO] Detector not loaded, using fallback");
                         let s = stream.lock();
                         generate_fallback_detections(s.frame_count, max_objects)
                     }
                 }
                 None => {
-                    eprintln!("[YOLO] Detector init failed, using fallback");
                     let s = stream.lock();
                     generate_fallback_detections(s.frame_count, max_objects)
                 }
             }
         };
 
-        eprintln!("[YOLO] Total detections: {}", detections.len());
-
-        // ✨ OPTIMIZATION: Draw detections directly on original_image (no copy)
-        // Rust move semantics transfer ownership without allocation
-        eprintln!("[YOLO] Drawing detections on original {}x{} image", orig_width, orig_height);
+        // Draw detections directly on original_image (no copy) — Rust move
+        // semantics transfer ownership without allocation
         draw_detections(&mut original_image, &detections);
 
         // ROI counting and line crossing detection (camera mode)
@@ -2669,10 +2701,6 @@ impl Extension for YoloVideoProcessorV2 {
             s.last_detections = detections.clone();
             for det in &detections {
                 *s.detected_objects.entry(det.label.clone()).or_insert(0) += 1;
-            }
-            if s.frame_count % 30 == 0 {
-                s.detected_objects.clear();
-                s.last_frame = None;
             }
 
             let roi_stats = count_roi_detections(&norm_dets, &s._config.rois);
@@ -2748,7 +2776,6 @@ impl Extension for YoloVideoProcessorV2 {
             registry.capture_events_count += capture_events.len() as u64;
         }
 
-        eprintln!("[YOLO] Encoding image to JPEG (quality=75)");
         // Encode result as JPEG with dynamic quality based on processing time
         // Faster processing = higher quality, slower processing = lower quality
         let jpeg_quality = if start.elapsed().as_millis() < 50 {
@@ -2759,7 +2786,6 @@ impl Extension for YoloVideoProcessorV2 {
             65  // Slow processing, reduce quality for speed
         };
         let output_jpeg = encode_jpeg(&original_image, jpeg_quality);
-        eprintln!("[YOLO] Encoded JPEG size: {} bytes, detections: {}", output_jpeg.len(), detections.len());
 
         // Cache last frame for reuse
         {
@@ -2771,7 +2797,6 @@ impl Extension for YoloVideoProcessorV2 {
         {
             let queue = get_or_create_frame_queue(session_id);
             queue.lock().push(output_jpeg.clone());
-            eprintln!("[YOLO] Frame pushed to MJPEG queue for session: {}", session_id);
         }
 
         // Return the processed frame with detections in metadata
@@ -2788,8 +2813,6 @@ impl Extension for YoloVideoProcessorV2 {
             "capture_events": capture_events,
         }));
 
-        eprintln!("[YOLO] Returning result for sequence {}, data size: {}, detections: {}",
-            chunk.sequence, result.data.len(), detections.len());
         Ok(result)
     }
 

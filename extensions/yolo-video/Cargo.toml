@@ -21,6 +21,10 @@ semver = "1"
 base64 = "0.22"
 image = "0.25"
 imageproc = "0.24"
+# Faster JPEG encoder than image's built-in one (SIMD on x86, 4:2:0 subsampling)
+jpeg-encoder = { version = "0.6", features = ["simd"] }
+# SIMD resize for the 640x640 inference pre-scale (same crate usls uses)
+fast_image_resize = "5"
 ab_glyph = "0.2"
 uuid = { version = "1.0", features = ["v4"] }
 parking_lot = "0.12"

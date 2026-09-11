@@ -144,11 +144,31 @@ pub struct IngestDbg {
     /// h264 envelopes skipped because no push session was subscribed
     /// (on-demand ingest).
     pub h264_no_viewer: u64,
+    /// Track-latency decomposition (ms, EMA over recent frames):
+    /// `gap_cam_ms`  = bus envelope timestamp − payload ts_ns  (camera-
+    /// internal: grab→publish through the app + bus hop)
+    /// `gap_bus_ms`  = local arrival − envelope timestamp        (bus→
+    /// platform→extension; cross-clock, treat as ±50ms approximate)
+    pub gap_cam_ms: f64,
+    pub gap_bus_ms: f64,
+    pub gap_n: u64,
     /// First gym/track raw payload (truncated) — deserialization forensics.
     pub first_track_payload: String,
 }
 pub fn ingest_dbg() -> &'static parking_lot::Mutex<IngestDbg> {
     INGEST_COUNTS.get_or_init(|| parking_lot::Mutex::new(IngestDbg::default()))
+}
+
+/// Payload ts_ns out of a gym/track envelope (double-encoded or inline).
+fn frame_ts_hint(raw: &str) -> u64 {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|ev| match &ev["payload"] {
+            serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s).ok(),
+            other => Some(other.clone()),
+        })
+        .and_then(|p| p["ts_ns"].as_u64())
+        .unwrap_or(0)
 }
 
 fn stamp_now() -> u64 {
@@ -460,6 +480,28 @@ async fn connect_and_drain(
                         // A gym/preview that didn't decode (bad base64 / not a
                         // JPEG) is corruption, not a filter miss — count it.
                         ingest_dbg().lock().parse_fail += 1;
+                    }
+                    // latency decomposition on track envelopes (EMA, cheap)
+                    if let Ok(ev) = serde_json::from_str::<serde_json::Value>(&txt) {
+                        if ev["topic"].as_str() == Some("gym/track") {
+                            let env_ts = ev["timestamp_ns"].as_u64().unwrap_or(0);
+                            if env_ts > 0 {
+                                let now = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default().as_nanos() as u64;
+                                let mut g = ingest_dbg().lock();
+                                let a = 0.1;
+                                let cam = (env_ts.saturating_sub(frame_ts_hint(&txt))) as f64 / 1e6;
+                                let bus = now.saturating_sub(env_ts) as f64 / 1e6;
+                                if cam >= 0.0 && cam < 30_000.0 {
+                                    g.gap_cam_ms = if g.gap_n == 0 { cam } else { g.gap_cam_ms * (1.0 - a) + cam * a };
+                                }
+                                if bus >= 0.0 && bus < 30_000.0 {
+                                    g.gap_bus_ms = if g.gap_n == 0 { bus } else { g.gap_bus_ms * (1.0 - a) + bus * a };
+                                }
+                                g.gap_n += 1;
+                            }
+                        }
                     }
                     match parse_event(&txt) {
                         Some(frame) => {

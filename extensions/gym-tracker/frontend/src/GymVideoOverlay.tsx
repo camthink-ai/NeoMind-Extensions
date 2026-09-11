@@ -1532,17 +1532,19 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           const poly = z.polygon
           // POINT ZONE: single-point polygon renders as a crosshair circle
           if (poly && poly.length === 1) {
+            try {
             const [px, py] = poly[0]
             const isExcl = z.equipment_type === 'exclusion'
             const _editing = modeRef.current === 'edit' && (editKindRef.current === 'zones' || editKindRef.current === 'exclude')
             const sel = _editing && selZoneRef.current === z.id
-            const _count = stateRef.current?.tracks.filter((tr: any) => {
-              if (!tr.bbox) return false
+            const _tracks = (stateRef?.current?.tracks ?? []) as any[]
+            const _count = _tracks.filter((tr: any) => {
+              if (!tr?.bbox) return false
               const bcx = tr.bbox.x + tr.bbox.w / 2
               const bcy = tr.bbox.y + tr.bbox.h / 2
               return Math.hypot(bcx - px, bcy - py) < 0.06
             }).length
-            const occupied = !isExcl && (_count ?? 0) > 0
+            const occupied = !isExcl && _count > 0
             const R = 18 * S // coverage radius in canvas px
 
             // coverage circle (dashed)
@@ -1577,6 +1579,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             ctx.textAlign = 'center'
             ctx.fillText(plabel, X(px), Y(py) + R + 12)
             ctx.textAlign = 'left'
+            } catch { /* point-zone rendering must never kill the canvas */ }
             continue
           }
           if (!poly || poly.length < 3) continue

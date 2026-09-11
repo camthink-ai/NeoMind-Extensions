@@ -38,7 +38,7 @@ mod tests {
         let meta = ext.metadata();
 
         assert_eq!(meta.id, "yolo-video");
-        assert_eq!(meta.name, "YOLO Video Processor V2");
+        assert_eq!(meta.name, "YOLO Video");
         // version is a String now — assert the major component like the
         // old semver-struct assertions did.
         let major: u32 = meta
@@ -73,9 +73,10 @@ mod tests {
         let ext = create_extension();
         let meta = ext.metadata();
 
-        // This extension doesn't have config_parameters defined
-        // (uses None in metadata)
-        assert!(meta.config_parameters.is_none() || meta.config_parameters.as_ref().map(|p| p.is_empty()).unwrap_or(true));
+        // The extension exposes `collect_interval` as its config parameter.
+        let params = meta.config_parameters.as_ref().expect("config_parameters should be defined");
+        assert!(!params.is_empty());
+        assert!(params.iter().any(|p| p.name == "collect_interval"));
     }
 
     // ========================================================================
@@ -258,7 +259,7 @@ mod tests {
         assert_eq!(config.source_url, "camera://0");
         assert_eq!(config.confidence_threshold, 0.5);
         assert_eq!(config.max_objects, 20);
-        assert_eq!(config.target_fps, 15);
+        assert_eq!(config.target_fps, 25);
         assert!(config.draw_boxes);
     }
 
