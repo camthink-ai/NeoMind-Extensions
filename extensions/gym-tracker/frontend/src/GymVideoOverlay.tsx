@@ -2569,10 +2569,6 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                   <span className="gym-ov-editkind">
                     {editKind === 'zones' ? t('zoneManage') : editKind === 'exclude' ? t('excludeManage') : t('lineManage')}
                   </span>
-                  <span className="gym-ov-tb-sep" />
-                  <button className="gym-ov-tg" onClick={undo}
-                    disabled={editKind === 'lines' ? draftLine.length === 0 : draft.length === 0}
-                    title="Undo last draft point">{t('undo')}</button>
                   {editKind === 'zones' && (
                     <>
                       <button className="gym-ov-tg" onClick={() => { setPointMode(false); setDraft([]) }}
@@ -2587,6 +2583,10 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                       </button>
                     </>
                   )}
+                  <span className="gym-ov-tb-sep" />
+                  <button className="gym-ov-tg" onClick={undo}
+                    disabled={editKind === 'lines' ? draftLine.length === 0 : draft.length === 0}
+                    title="Undo last draft point">{t('undo')}</button>
                   {(editKind === 'zones' || editKind === 'exclude') && draft.length >= 3 && (
                     <button className="gym-ov-tg" onClick={closeDraft}
                       title="Close the point loop and keep drawing">{t('closePoly')}</button>
