@@ -1530,6 +1530,55 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         }
         for (const z of zonesRef.current) {
           const poly = z.polygon
+          // POINT ZONE: single-point polygon renders as a crosshair circle
+          if (poly && poly.length === 1) {
+            const [px, py] = poly[0]
+            const isExcl = z.equipment_type === 'exclusion'
+            const _editing = modeRef.current === 'edit' && (editKindRef.current === 'zones' || editKindRef.current === 'exclude')
+            const sel = _editing && selZoneRef.current === z.id
+            const _count = stateRef.current?.tracks.filter((tr: any) => {
+              if (!tr.bbox) return false
+              const bcx = tr.bbox.x + tr.bbox.w / 2
+              const bcy = tr.bbox.y + tr.bbox.h / 2
+              return Math.hypot(bcx - px, bcy - py) < 0.06
+            }).length
+            const occupied = !isExcl && (_count ?? 0) > 0
+            const R = 18 * S // coverage radius in canvas px
+
+            // coverage circle (dashed)
+            ctx.beginPath()
+            ctx.arc(X(px), Y(py), R, 0, Math.PI * 2)
+            ctx.fillStyle = occupied ? 'rgba(34,197,94,0.12)' : _editing ? 'rgba(59,130,246,0.14)' : 'rgba(59,130,246,0.10)'
+            ctx.fill()
+            ctx.strokeStyle = sel ? '#3b82f6' : occupied ? 'rgba(34,197,94,0.8)' : 'rgba(59,130,246,0.6)'
+            ctx.lineWidth = _editing ? 2 : 1.5
+            ctx.setLineDash([4, 3])
+            ctx.stroke()
+            ctx.setLineDash([])
+
+            // center dot
+            ctx.beginPath()
+            ctx.arc(X(px), Y(py), 4.5 * S, 0, Math.PI * 2)
+            ctx.fillStyle = sel ? '#3b82f6' : occupied ? '#22c55e' : '#3b82f6'
+            ctx.fill()
+            ctx.beginPath()
+            ctx.arc(X(px), Y(py), 7 * S, 0, Math.PI * 2)
+            ctx.strokeStyle = 'rgba(15,23,42,0.6)'
+            ctx.lineWidth = 1.5 * S
+            ctx.stroke()
+
+            // label below the circle
+            ctx.font = '600 10px system-ui, sans-serif'
+            const plabel = `${z.name}`
+            const pw = ctx.measureText(plabel).width + 8
+            ctx.fillStyle = 'rgba(15,23,42,0.72)'
+            ctx.fillRect(X(px) - pw / 2, Y(py) + R + 2, pw, 14)
+            ctx.fillStyle = '#cbd5e1'
+            ctx.textAlign = 'center'
+            ctx.fillText(plabel, X(px), Y(py) + R + 12)
+            ctx.textAlign = 'left'
+            continue
+          }
           if (!poly || poly.length < 3) continue
           const isExcl = z.equipment_type === 'exclusion'
           const count = isExcl ? 0 : tracks.filter((t) => inZone(t, poly)).length
@@ -2522,17 +2571,29 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                     disabled={editKind === 'lines' ? draftLine.length === 0 : draft.length === 0}
                     title="Undo last draft point">{t('undo')}</button>
                   {editKind === 'zones' && (
-                    <button
-                      className={`gym-ov-drawtab ${pointMode ? 'on' : ''}`}
-                      onClick={() => { setPointMode(!pointMode); setDraft([]) }}
-                      title={pointMode ? 'Point mode ON — click to mark equipment center' : 'Switch to point mode (single click = zone)'}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                        <circle cx="8" cy="8" r="3" fill={pointMode ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5"/>
-                        <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="0.75" strokeDasharray="2 2" opacity={pointMode ? '0.8' : '0.4'}/>
-                      </svg>
-                      {lang === 'zh' ? (pointMode ? '点模式 ON' : '点模式') : (pointMode ? 'Points ON' : 'Points')}
-                    </button>
+                    <div style={{ display: 'inline-flex', gap: '0', marginLeft: '4px', borderRadius: '4px', overflow: 'hidden', border: '1px solid rgba(148,163,184,0.4)' }}>
+                      <button
+                        className={`gym-ov-drawtab ${!pointMode ? 'on' : ''}`}
+                        onClick={() => { setPointMode(false); setDraft([]) }}
+                        title={lang === 'zh' ? '多边形模式：点击添加顶点，双击闭合' : 'Polygon mode: click vertices, double-click to close'}
+                        style={{ borderRadius: '0', fontSize: '10px', padding: '2px 7px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                          <path d="M2 2 L10 3 L9 10 L3 9 Z" stroke="currentColor" strokeWidth="1.3" fill={!pointMode ? 'rgba(59,130,246,0.25)' : 'none'}/>
+                        </svg>
+                        {lang === 'zh' ? '多边形' : 'Poly'}
+                      </button>
+                      <button
+                        className={`gym-ov-drawtab ${pointMode ? 'on' : ''}`}
+                        onClick={() => { setPointMode(true); setDraft([]) }}
+                        title={lang === 'zh' ? '点模式：单击一下 = 标记器械中心（自动分配区域）' : 'Point mode: single click = equipment center zone'}
+                        style={{ borderRadius: '0', fontSize: '10px', padding: '2px 7px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                          <circle cx="6" cy="6" r="2.2" fill={pointMode ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.2"/>
+                          <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="0.7" strokeDasharray="1.5 1.5" opacity={pointMode ? '0.9' : '0.4'}/>
+                        </svg>
+                        {lang === 'zh' ? '点' : 'Pt'}
+                      </button>
+                    </div>
                   )}
                   {(editKind === 'zones' || editKind === 'exclude') && draft.length >= 3 && (
                     <button className="gym-ov-tg" onClick={closeDraft}
