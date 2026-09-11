@@ -2574,29 +2574,18 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                     disabled={editKind === 'lines' ? draftLine.length === 0 : draft.length === 0}
                     title="Undo last draft point">{t('undo')}</button>
                   {editKind === 'zones' && (
-                    <div style={{ display: 'inline-flex', gap: '0', marginLeft: '4px', borderRadius: '4px', overflow: 'hidden', border: '1px solid rgba(148,163,184,0.4)' }}>
-                      <button
-                        className={`gym-ov-drawtab ${!pointMode ? 'on' : ''}`}
-                        onClick={() => { setPointMode(false); setDraft([]) }}
-                        title={lang === 'zh' ? '多边形模式：点击添加顶点，双击闭合' : 'Polygon mode: click vertices, double-click to close'}
-                        style={{ borderRadius: '0', fontSize: '10px', padding: '2px 7px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
-                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-                          <path d="M2 2 L10 3 L9 10 L3 9 Z" stroke="currentColor" strokeWidth="1.3" fill={!pointMode ? 'rgba(59,130,246,0.25)' : 'none'}/>
-                        </svg>
-                        {lang === 'zh' ? '多边形' : 'Poly'}
+                    <>
+                      <button className="gym-ov-tg" onClick={() => { setPointMode(false); setDraft([]) }}
+                        style={{ opacity: pointMode ? 0.5 : 1 }}
+                        title={lang === 'zh' ? '多边形模式：点击添加顶点，双击闭合' : 'Polygon mode: click vertices, double-click to close'}>
+                        {lang === 'zh' ? '▭ 多边形' : '▭ Poly'}
                       </button>
-                      <button
-                        className={`gym-ov-drawtab ${pointMode ? 'on' : ''}`}
-                        onClick={() => { setPointMode(true); setDraft([]) }}
-                        title={lang === 'zh' ? '点模式：单击一下 = 标记器械中心（自动分配区域）' : 'Point mode: single click = equipment center zone'}
-                        style={{ borderRadius: '0', fontSize: '10px', padding: '2px 7px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
-                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-                          <circle cx="6" cy="6" r="2.2" fill={pointMode ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.2"/>
-                          <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="0.7" strokeDasharray="1.5 1.5" opacity={pointMode ? '0.9' : '0.4'}/>
-                        </svg>
-                        {lang === 'zh' ? '点' : 'Pt'}
+                      <button className="gym-ov-tg" onClick={() => { setPointMode(true); setDraft([]) }}
+                        style={{ opacity: pointMode ? 1 : 0.5 }}
+                        title={lang === 'zh' ? '点模式：单击一下 = 标记器械中心' : 'Point mode: single click = zone'}>
+                        {lang === 'zh' ? '◎ 点' : '◎ Pt'}
                       </button>
-                    </div>
+                    </>
                   )}
                   {(editKind === 'zones' || editKind === 'exclude') && draft.length >= 3 && (
                     <button className="gym-ov-tg" onClick={closeDraft}
