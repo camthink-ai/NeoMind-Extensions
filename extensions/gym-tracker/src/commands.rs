@@ -69,6 +69,9 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 "last_frame_at": d.last_frame_at,
                 "frames_total": d.total,
                 "h264_no_viewer": d.h264_no_viewer,
+                "gap_cam_ms": d.gap_cam_ms,
+                "gap_bus_ms": d.gap_bus_ms,
+                "gap_n": d.gap_n,
                 "parsed_ok": d.parsed_ok,
                 "parse_fail": d.parse_fail,
                 "topic_counts": d.topic_counts,
@@ -624,14 +627,20 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 .into_iter()
                 .find(|t| t.track_id == track_id)
                 .ok_or_else(|| format!("track {track_id} not in frame"))?;
-            let emb = track
+            // EMBEDDING FALLBACK: the face embed cycle runs at ~8Hz while
+            // tracks arrive at 10-15Hz — the CURRENT frame often has no
+            // face.emb even though we saw one recently. Use the cached
+            // embedding from the last face-bearing frame.
+            let emb_vec: Vec<f32> = track
                 .face
                 .as_ref()
                 .filter(|f| !f.emb.is_empty())
-                .ok_or("track has no embedding yet — wait a few seconds and retry")?;
+                .map(|f| f.emb.clone())
+                .or_else(|| ctx.state.cached_face_emb(track_id))
+                .ok_or("track has no embedding yet — step closer to the camera so your face is visible, then retry")?;
             let id = format!("member_{}", uuid::Uuid::new_v4().simple());
             ctx.db
-                .insert_member(&id, name, &emb.emb)
+                .insert_member(&id, name, &emb_vec)
                 .map_err(|e| e.to_string())?;
             // seed the FACE library too: a frame-level face emb whose box
             // center falls inside this track's bbox is this person's face.
@@ -656,7 +665,7 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                     .map_err(|e| e.to_string())?;
             }
             Ok(
-                json!({ "member": { "id": id, "name": name, "dim": emb.emb.len(),
+                json!({ "member": { "id": id, "name": name, "dim": emb_vec.len(),
                                    "face": face_emb.is_some() } }),
             )
         }

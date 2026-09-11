@@ -22,6 +22,10 @@ use crate::types::{FaceBox, Track, TrackFrame};
 struct Entry {
     track: Track,
     last_seen: Instant,
+    /// Last-known-good face embedding for this track — persists across
+    /// frames where the face isn't visible (register_member uses this
+    /// when the CURRENT frame's track.face is None).
+    cached_face_emb: Option<Vec<f32>>,
 }
 
 /// One hardware-encoded H.264 access unit relayed from the device's
@@ -162,11 +166,27 @@ impl LiveState {
         {
             let mut g = self.inner.write();
             for t in &f.tracks {
+                // PRESERVE the cached face embedding across frames:
+                // the face embed cycle runs at ~8Hz while tracks arrive
+                // at 10-15Hz — many frames have no face.emb on the wire
+                // even though we SAW one recently. register_member
+                // checks the cache when track.face is None.
+                let cached = g.get(&t.track_id)
+                    .and_then(|e| e.cached_face_emb.clone())
+                    .or_else(|| t.face.as_ref()
+                        .filter(|f| !f.emb.is_empty())
+                        .map(|f| f.emb.clone()));
                 g.insert(
                     t.track_id,
                     Entry {
                         track: t.clone(),
                         last_seen: now,
+                        cached_face_emb: if t.face.as_ref()
+                            .map_or(false, |f| !f.emb.is_empty()) {
+                            Some(t.face.as_ref().unwrap().emb.clone())
+                        } else {
+                            cached
+                        },
                     },
                 );
             }
@@ -310,6 +330,13 @@ impl LiveState {
 
     pub fn present_count(&self) -> usize {
         self.inner.read().len()
+    }
+
+    /// Cached face embedding for a track (from the last frame that had one).
+    /// Returns None if no embedding was ever seen for this track.
+    pub fn cached_face_emb(&self, track_id: i64) -> Option<Vec<f32>> {
+        self.inner.read().get(&track_id)
+            .and_then(|e| e.cached_face_emb.clone())
     }
 
     pub fn snapshot(&self) -> Vec<Track> {
