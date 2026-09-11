@@ -2571,13 +2571,11 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                   </span>
                   {editKind === 'zones' && (
                     <>
-                      <button className="gym-ov-tg" onClick={() => { setPointMode(false); setDraft([]) }}
-                        style={{ opacity: pointMode ? 0.5 : 1 }}
+                      <button className={`gym-ov-tg ${!pointMode ? 'on' : ''}`} onClick={() => { setPointMode(false); setDraft([]) }}
                         title={lang === 'zh' ? '多边形模式：点击添加顶点，双击闭合' : 'Polygon mode: click vertices, double-click to close'}>
                         {lang === 'zh' ? '▭ 多边形' : '▭ Poly'}
                       </button>
-                      <button className="gym-ov-tg" onClick={() => { setPointMode(true); setDraft([]) }}
-                        style={{ opacity: pointMode ? 1 : 0.5 }}
+                      <button className={`gym-ov-tg ${pointMode ? 'on' : ''}`} onClick={() => { setPointMode(true); setDraft([]) }}
                         title={lang === 'zh' ? '点模式：单击一下 = 标记器械中心' : 'Point mode: single click = zone'}>
                         {lang === 'zh' ? '◎ 点' : '◎ Pt'}
                       </button>
