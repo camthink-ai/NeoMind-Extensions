@@ -2523,11 +2523,11 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                     title="Undo last draft point">{t('undo')}</button>
                   {editKind === 'zones' && (
                     <button
-                      className={`gym-ov-tbtn ${pointMode ? 'on' : ''}`}
+                      className={`gym-ov-drawtab ${pointMode ? 'on' : ''}`}
                       onClick={() => { setPointMode(!pointMode); setDraft([]) }}
-                      title={pointMode ? '点模式：单击=标记器械中心' : '切换点模式（单击创建区域）'}
-                      style={{ fontSize: '14px', padding: '2px 8px' }}>
-                      📍
+                      title={pointMode ? '点模式已开：单击视频 = 标记一个器械中心（自动区域分配）' : '切换到点模式：单击即可创建区域（比多边形更简单，适合密集器械区）'}
+                      style={{ fontSize: '11px', padding: '2px 8px', marginLeft: '4px' }}>
+                      {pointMode ? '📍 点模式 ON' : '📍 点模式'}
                     </button>
                   )}
                   {(editKind === 'zones' || editKind === 'exclude') && draft.length >= 3 && (
