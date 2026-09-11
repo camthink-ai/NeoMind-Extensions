@@ -558,6 +558,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
 
     const [zones, setZones] = useState<DraftZone[]>([])
     const [draft, setDraft] = useState<number[][]>([])
+    const [pointMode, setPointMode] = useState(false)
     const [lines, setLines] = useState<DraftLine[]>([])
     const [draftLine, setDraftLine] = useState<number[][]>([])
     const [crossings, setCrossings] = useState<LineStats[]>([])
@@ -620,6 +621,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     // crossing, then decays back to its neutral per-line hue
     const lineFlashRef = useRef<Map<string, { lastIn: number; lastOut: number; dir: 'in' | 'out'; at: number }>>(new Map())
     const draftRef = useRef<number[][]>([])
+    const pointModeRef = useRef(false)
     const draftLineRef = useRef<number[][]>([])
     const modeRef = useRef<'view' | 'edit'>('view')
     const editKindRef = useRef<EditKind>('zones')
@@ -668,6 +670,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
     useEffect(() => { draftLineRef.current = draftLine }, [draftLine])
     useEffect(() => { modeRef.current = mode }, [mode])
     useEffect(() => { editKindRef.current = editKind }, [editKind])
+    useEffect(() => { pointModeRef.current = pointMode }, [pointMode])
     useEffect(() => { showRef.current = { trails: showTrails, boxes: showBoxes, pose: showPose, zones: showZones, heat: showHeatmap, mosaic } }, [showTrails, showBoxes, showPose, showZones, showHeatmap, mosaic])
     useEffect(() => { selZoneRef.current = selZoneId }, [selZoneId])
     useEffect(() => { heatRef.current = heat }, [heat])
@@ -2192,6 +2195,19 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           setLines((ls) => [...ls, line])
           return []
         })
+      } else if (pointModeRef.current && editKindRef.current === 'zones') {
+        // POINT MODE: single click = instant zone at this equipment center
+        setZones((zs) => [
+          ...zs,
+          {
+            id: crypto.randomUUID(),
+            name: `Zone ${zs.length + 1}`,
+            equipment_type: 'equipment',
+            polygon: [p],
+            enabled: true,
+            isNew: true,
+          },
+        ])
       } else {
         // clicks on vertex/midpoint handles are for dragging, not new points
         if (hitZoneHandle(cx, cy)) return
@@ -2498,6 +2514,15 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                   <button className="gym-ov-tg" onClick={undo}
                     disabled={editKind === 'lines' ? draftLine.length === 0 : draft.length === 0}
                     title="Undo last draft point">{t('undo')}</button>
+                  {editKind === 'zones' && (
+                    <button
+                      className={`gym-ov-tbtn ${pointMode ? 'on' : ''}`}
+                      onClick={() => { setPointMode(!pointMode); setDraft([]) }}
+                      title={pointMode ? '点模式：单击=标记器械中心' : '切换点模式（单击创建区域）'}
+                      style={{ fontSize: '14px', padding: '2px 8px' }}>
+                      📍
+                    </button>
+                  )}
                   {(editKind === 'zones' || editKind === 'exclude') && draft.length >= 3 && (
                     <button className="gym-ov-tg" onClick={closeDraft}
                       title="Close the point loop and keep drawing">{t('closePoly')}</button>
