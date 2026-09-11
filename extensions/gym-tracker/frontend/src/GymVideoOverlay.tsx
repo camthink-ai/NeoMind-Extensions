@@ -1550,9 +1550,9 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             // coverage circle (dashed)
             ctx.beginPath()
             ctx.arc(X(px), Y(py), R, 0, Math.PI * 2)
-            ctx.fillStyle = occupied ? 'rgba(34,197,94,0.12)' : _editing ? 'rgba(59,130,246,0.14)' : 'rgba(59,130,246,0.10)'
+            ctx.fillStyle = occupied ? 'rgba(34,197,94,0.22)' : 'rgba(148,163,184,0.07)'
             ctx.fill()
-            ctx.strokeStyle = sel ? '#3b82f6' : occupied ? 'rgba(34,197,94,0.8)' : 'rgba(59,130,246,0.6)'
+            ctx.strokeStyle = occupied ? 'rgba(34,197,94,0.95)' : sel ? '#3b82f6' : 'rgba(148,163,184,0.7)'
             ctx.lineWidth = _editing ? 2 : 1.5
             ctx.setLineDash([4, 3])
             ctx.stroke()
@@ -1561,7 +1561,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             // center dot
             ctx.beginPath()
             ctx.arc(X(px), Y(py), 4.5 * S, 0, Math.PI * 2)
-            ctx.fillStyle = sel ? '#3b82f6' : occupied ? '#22c55e' : '#3b82f6'
+            ctx.fillStyle = occupied ? 'rgba(34,197,94,0.95)' : sel ? '#3b82f6' : 'rgba(148,163,184,0.7)'
             ctx.fill()
             ctx.beginPath()
             ctx.arc(X(px), Y(py), 7 * S, 0, Math.PI * 2)
