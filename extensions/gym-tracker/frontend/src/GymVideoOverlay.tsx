@@ -2525,9 +2525,13 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                     <button
                       className={`gym-ov-drawtab ${pointMode ? 'on' : ''}`}
                       onClick={() => { setPointMode(!pointMode); setDraft([]) }}
-                      title={pointMode ? '点模式已开：单击视频 = 标记一个器械中心（自动区域分配）' : '切换到点模式：单击即可创建区域（比多边形更简单，适合密集器械区）'}
-                      style={{ fontSize: '11px', padding: '2px 8px', marginLeft: '4px' }}>
-                      {pointMode ? '📍 点模式 ON' : '📍 点模式'}
+                      title={pointMode ? 'Point mode ON — click to mark equipment center' : 'Switch to point mode (single click = zone)'}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                        <circle cx="8" cy="8" r="3" fill={pointMode ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5"/>
+                        <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="0.75" strokeDasharray="2 2" opacity={pointMode ? '0.8' : '0.4'}/>
+                      </svg>
+                      {lang === 'zh' ? (pointMode ? '点模式 ON' : '点模式') : (pointMode ? 'Points ON' : 'Points')}
                     </button>
                   )}
                   {(editKind === 'zones' || editKind === 'exclude') && draft.length >= 3 && (
