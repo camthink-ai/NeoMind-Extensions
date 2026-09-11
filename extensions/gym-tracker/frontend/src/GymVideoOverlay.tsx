@@ -77,6 +77,12 @@ const EX_NAMES_ZH: Record<string, string> = {
   row: '划船', lateral: '侧平举', shrug: '耸肩', crunch: '卷腹',
   situp: '仰卧起坐', plank: '平板支撑', wallsit: '靠墙静蹲',
 }
+const EX_NAMES_EN: Record<string, string> = {
+  squat: 'Squat', deadlift: 'Deadlift', lunge: 'Lunge', legpress: 'Leg Press',
+  legraise: 'Leg Raise', curl: 'Curl', press: 'Press', pullup: 'Pull-up',
+  row: 'Row', lateral: 'Lateral Raise', shrug: 'Shrug', crunch: 'Crunch',
+  situp: 'Sit-up', plank: 'Plank', wallsit: 'Wall Sit',
+}
 
 // Mosaic cell size in canvas px — coarse enough to obscure identity, fine
 // enough to still read "there is a face here".
@@ -543,7 +549,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
       })
       return () => { alive = false }
     }, [extensionId])
-    const { t } = useLang(config as Record<string, unknown>, gLang)
+    const { lang, t } = useLang(config as Record<string, unknown>, gLang)
     const fps = Math.min(24, Math.max(1, Number(targetFps) || 10))
     const pollMs = Math.min(5000, Math.max(250, Number(statePollMs) || 600))
 
@@ -1801,9 +1807,10 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
             const act = track.ex.detected
             const isHold = act === 'plank' || act === 'wallsit'
             const parts: string[] = []
-            if (act && EX_NAMES_ZH[act]) parts.push(EX_NAMES_ZH[act])
+            const exName = (lang === 'zh' ? EX_NAMES_ZH[act as string] : EX_NAMES_EN[act as string]) ?? act ?? ''
+            if (exName) parts.push(exName)
             if (track.ex.reps > 0) parts.push(`×${track.ex.reps}${isHold ? 's' : ''}`)
-            if (track.ex.depth_deg != null) parts.push(`髋${Math.round(track.ex.depth_deg)}°`)
+            if (track.ex.depth_deg != null) parts.push(lang === 'zh' ? `髋${Math.round(track.ex.depth_deg)}°` : `D${Math.round(track.ex.depth_deg)}°`)
             if (track.ex.symmetry_deg != null) parts.push(`±${Math.round(track.ex.symmetry_deg)}°`)
             if (track.ex.tempo_hz != null && track.ex.tempo_hz > 0)
               parts.push(`${track.ex.tempo_hz.toFixed(1)}/s`)
