@@ -155,7 +155,11 @@ const PLAY_DELAY = 0.03 // sec
 // velocities. The cap must cover the real inference-to-preview gap
 // (~150-350 ms with the m tile model); below it the overlay clamps and
 // visibly trails the person.
-const EXTRAP_MAX_MS = 0.5 // sec
+const EXTRAP_MAX_MS = 0.3 // sec — beyond this the box FREEZES at its last
+// sample instead of coasting: mid-exercise dropouts (deep squat, bench
+// lie-back) leave a stale velocity pointing into the rep's swing, and a
+// 0.5 s ride along it slid boxes off people ("漂移"). 0.3 s covers the
+// normal 150-250 ms sample gap at the current 4-7 Hz publish rate.
 
 // ---- binary push frames (double-base64 killer) ----
 // Platform wire format, opt-in via init config `{"binary":true}`:
@@ -403,8 +407,8 @@ function sampleAt(hist: HistEntry[], target: number, kptMin: number):
       const by = 0.45 * slopeY + 0.55 * vy
       const cx0 = b.bbox.x + b.bbox.w / 2
       const cy0 = b.bbox.y + b.bbox.h / 2
-      const ex = Math.min(0.15, Math.max(-0.15, bx * beyond))
-      const ey = Math.min(0.15, Math.max(-0.15, by * beyond))
+      const ex = Math.min(0.08, Math.max(-0.08, bx * beyond))
+      const ey = Math.min(0.08, Math.max(-0.08, by * beyond))
       const bbox = {
         x: b.bbox.x + ex,
         y: b.bbox.y + ey,
