@@ -52,6 +52,10 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 "pushed": d.pushed.load(O::Relaxed),
             }));
         }
+        "get_tracker_parity" => {
+            let g = crate::shadow::shadow().lock();
+            Ok(g.1.report())
+        }
         "get_ingest_diag" => {
             // Ingest liveness trace: where the reconnect loop currently is.
             // Zeroed stamps = that step never ran (thread dead / config

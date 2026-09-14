@@ -406,6 +406,74 @@ async fn connect_and_drain(
                     last_alive = std::time::Instant::now();
                     last_event = std::time::Instant::now();
                     ingest_dbg().lock().last_frame_at = stamp_now();
+                    // SHADOW TRACKER (0.9.x migration): the camera dual-
+                    // publishes raw post-dedupe detections on gym/detect;
+                    // the Rust five-signal port consumes them here and
+                    // snapshots its id assignments for parity validation
+                    // against the device's Python tracker (whose ids ride
+                    // gym/track — snapshotted in the parse_event arm).
+                    if txt.contains("\"gym/detect\"") {
+                        if let Ok(ev) = serde_json::from_str::<serde_json::Value>(&txt) {
+                            if ev["topic"].as_str() == Some("gym/detect") {
+                                let payload = ev["payload"].as_str().unwrap_or("");
+                                if let Ok(d) = serde_json::from_str::<serde_json::Value>(payload) {
+                                    let ts_ns = d["ts_ns"].as_u64().unwrap_or(0);
+                                    let mut dets: Vec<crate::shadow::Det> = Vec::new();
+                                    if let Some(arr) = d["dets"].as_array() {
+                                        for dj in arr {
+                                            let kp: Vec<[f32; 3]> = dj["kp"]
+                                                .as_array()
+                                                .map(|a| {
+                                                    a.iter().map(|k| {
+                                                        [k[0].as_f64().unwrap_or(0.0) as f32,
+                                                         k[1].as_f64().unwrap_or(0.0) as f32,
+                                                         k[2].as_f64().unwrap_or(0.0) as f32]
+                                                    }).collect()
+                                                })
+                                                .unwrap_or_default();
+                                            dets.push(crate::shadow::Det {
+                                                src: dj["src"].as_str().unwrap_or("full").into(),
+                                                ts: dj["ts"].as_u64().unwrap_or(ts_ns),
+                                                kp,
+                                            });
+                                        }
+                                    }
+                                    let now = ts_ns as f64 / 1e9;
+                                    let mut g = crate::shadow::shadow().lock();
+                                    let ids = g.0.update(&dets, now);
+                                    // center = visible-kpts bbox center — the
+                                    // SAME metric the py side reports (bbox
+                                    // padding expands symmetrically, center
+                                    // unchanged) so parity matching is honest
+                                    let assigns = ids.iter().enumerate()
+                                        .filter_map(|(i, id)| id.map(|id| {
+                                            let mut x0 = f32::MAX; let mut y0 = f32::MAX;
+                                            let mut x1 = f32::MIN; let mut y1 = f32::MIN; let mut n = 0;
+                                            for k in &dets[i].kp {
+                                                if k[2] > 0.0 {
+                                                    x0 = x0.min(k[0]); y0 = y0.min(k[1]);
+                                                    x1 = x1.max(k[0]); y1 = y1.max(k[1]);
+                                                    n += 1;
+                                                }
+                                            }
+                                            if n > 0 { ((x0 + x1) / 2.0, (y0 + y1) / 2.0, id) } else { (0.0, 0.0, id) }
+                                        }))
+                                        .collect();
+                                    g.1.push_rust(crate::shadow::IdSnap { ts_ns, assigns });
+                                }
+                                // counted + consumed — do not fall through
+                                // to parse_event (it would record a parse
+                                // failure for this valid payload)
+                                {
+                                    let mut g = ingest_dbg().lock();
+                                    g.parsed_ok += 1;
+                                    g.topic_counts.entry("gym/detect".into())
+                                        .and_modify(|c| *c += 1).or_insert(1);
+                                }
+                                continue;
+                            }
+                        }
+                    }
                     tracing::debug!(target: "gym_tracker::ingest::frame", len = txt.len(), "ws text frame");
                     if true { // temp diagnostics: always count topics
                         let topic = serde_json::from_str::<serde_json::Value>(&txt)
@@ -506,6 +574,29 @@ async fn connect_and_drain(
                     match parse_event(&txt) {
                         Some(frame) => {
                             ingest_dbg().lock().parsed_ok += 1;
+                            // py-side id snapshot for the shadow parity
+                            // report (bbox center — same metric as the
+                            // detect-side snapshot)
+                            {
+                                let assigns = frame
+                                    .tracks
+                                    .iter()
+                                    .map(|t| {
+                                        (
+                                            t.bbox.x + t.bbox.w / 2.0,
+                                            t.bbox.y + t.bbox.h / 2.0,
+                                            t.track_id,
+                                        )
+                                    })
+                                    .collect();
+                                crate::shadow::shadow()
+                                    .lock()
+                                    .1
+                                    .push_py(crate::shadow::IdSnap {
+                                        ts_ns: frame.ts_ns,
+                                        assigns,
+                                    });
+                            }
                             // workout pipeline: zones + members fresh per frame
                             // (small tables; keeps set_roi_zones / member edits
                             // live without a cache-invalidation dance)

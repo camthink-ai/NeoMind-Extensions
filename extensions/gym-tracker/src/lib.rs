@@ -29,6 +29,7 @@ mod identity;
 mod ingest;
 pub mod metrics;
 pub mod ne503;
+pub mod shadow;
 pub mod state;
 pub mod tls;
 pub mod types;
@@ -166,6 +167,7 @@ impl Extension for GymTrackerExtension {
             cmd("get_frame", "Latest producer frame (JPEG preview) + its tracks — single-source Monitor rendering"),
             cmd("get_live_state", "Current in-gym tracks (incl. trails)"),
             cmd("get_ingest_diag", "Ingest liveness trace: login/WS/frame stamps + topic counters"),
+            cmd("get_tracker_parity", "Shadow Rust tracker vs device Python tracker: grouping agreement"),
             cmd("get_roi_zones", "List ROI equipment zones"),
             cmd("set_roi_zones", "Replace ROI zones (full set)"),
             cmd("resolve_alert", "Acknowledge/dismiss a safety alert"),
