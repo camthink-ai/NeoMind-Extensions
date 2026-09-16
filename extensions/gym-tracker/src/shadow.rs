@@ -112,6 +112,43 @@ fn bbox_kp(kp: &[[f32; 3]]) -> Option<(f32, f32, f32, f32)> {
     ))
 }
 
+/// Ground-contact estimate (mirrors pose.py foot_point): ankle midpoint
+/// when both visible, a single ankle, else the lowest (max-y) visible
+/// keypoint as a last resort.
+fn foot_kp(kp: &[[f32; 3]]) -> Option<Pt> {
+    match (kp_get(kp, 15), kp_get(kp, 16)) {
+        (Some(a), Some(b)) => Some(Pt {
+            x: (a.x + b.x) / 2.0,
+            y: (a.y + b.y) / 2.0,
+        }),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        _ => kp
+            .iter()
+            .filter(|k| k[2] > 0.0)
+            .max_by(|a, b| a[1].partial_cmp(&b[1]).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|k| Pt { x: k[0], y: k[1] }),
+    }
+}
+
+/// Mean confidence over VISIBLE keypoints (mirrors pose.py pose_score —
+/// the [0,0,0] sentinels are excluded, 0.0 when nothing is visible).
+fn pose_score_kp(kp: &[[f32; 3]]) -> f32 {
+    let mut n = 0u32;
+    let mut s = 0f32;
+    for k in kp {
+        if k[2] > 0.0 {
+            s += k[2];
+            n += 1;
+        }
+    }
+    if n == 0 {
+        0.0
+    } else {
+        s / n as f32
+    }
+}
+
 pub struct ShadowTracker {
     tracks: HashMap<i64, Track>,
     ghosts: HashMap<i64, Ghost>,
@@ -457,6 +494,109 @@ impl ShadowTracker {
     pub fn live_ids(&self) -> Vec<i64> {
         self.tracks.keys().copied().collect()
     }
+
+    /// Per-track velocity in normalized units per SECOND (tracks store
+    /// per-frame vel; `dt_ema` converts — mirrors py tracker.velocities()
+    /// and the Track.vel wire contract in types.rs). Tracks without a
+    /// velocity yet (freshly minted) are absent.
+    pub fn velocities(&self) -> HashMap<i64, (f32, f32)> {
+        if self.dt_ema < 1e-3 {
+            return HashMap::new();
+        }
+        self.tracks
+            .iter()
+            .filter_map(|(tid, tr)| {
+                tr.vel.map(|v| (*tid, (v.x / self.dt_ema, v.y / self.dt_ema)))
+            })
+            .collect()
+    }
+}
+
+// ---- lean mode (GYM_LEAN_TRACK on the extension host) ----
+
+/// Gate read by the ingest gym/detect arm: when ON, the shadow tracker's
+/// output is converted into TrackFrames and fed through the SAME
+/// downstream the gym/track arm uses (exclusion zones + live state +
+/// analytics). Set once from `GYM_LEAN_TRACK` in
+/// `GymTrackerExtension::new`. OFF (default): the shadow tracker runs in
+/// parallel purely for parity validation.
+static LEAN_TRACK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_lean_track(on: bool) {
+    LEAN_TRACK.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn lean_track() -> bool {
+    LEAN_TRACK.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Build a `TrackFrame` (the gym/track wire contract) from one
+/// `gym/detect` frame plus the shadow tracker's `update()` output — the
+/// Rust-side equivalent of the camera's persons→build_track_frame post
+/// path. Geometry mirrors pose.py / frame.py exactly:
+///   - bbox over visible keypoints, 10% pad, clamped to [0,1] (bbox_kp)
+///   - foot = ankle midpoint / single ankle / lowest visible keypoint
+///   - pose score = mean confidence over visible keypoints
+///   - vel = per-SECOND velocity from [`ShadowTracker::velocities`]
+///   - ts = the DETECTION's own capture clock (far-tile dets carry the
+///     older tile-grab stamp — same per-track ts contract as gym/track)
+/// Same quality gate as build_track_frame: dets with <3 visible keypoints
+/// (posters / reflections) never reach the wire. Returns None only on a
+/// dets/ids length mismatch (defensive — `update` returns
+/// `ids.len() == dets.len()`).
+pub fn lean_frame_from_detect(
+    device_id: &str,
+    frame_seq: u64,
+    ts_ns: u64,
+    dets: &[Det],
+    ids: &[Option<i64>],
+    vels: &HashMap<i64, (f32, f32)>,
+    faces: Vec<crate::types::FaceBox>,
+) -> Option<crate::types::TrackFrame> {
+    if dets.len() != ids.len() {
+        return None;
+    }
+    let mut tracks = Vec::with_capacity(dets.len());
+    for (d, id) in dets.iter().zip(ids) {
+        let Some(tid) = *id else { continue };
+        // quality gate: same >=3-visible-keypoints rule as frame.py so the
+        // lean wire cannot carry empty-box tracks the py path would drop
+        if d.kp.iter().filter(|k| k[2] > 0.0).count() < 3 {
+            continue;
+        }
+        let Some((bx, by, bw, bh)) = bbox_kp(&d.kp) else { continue };
+        let Some(f) = foot_kp(&d.kp) else { continue };
+        tracks.push(crate::types::Track {
+            track_id: tid,
+            bbox: crate::types::Bbox {
+                x: bx,
+                y: by,
+                w: bw,
+                h: bh,
+            },
+            foot: crate::types::Point { x: f.x, y: f.y },
+            pose: Some(crate::types::Pose {
+                kpts: d.kp.clone(),
+                score: pose_score_kp(&d.kp),
+            }),
+            // lean detect stream has no per-track embeddings — faces ride
+            // frame-level (see `faces` param)
+            face: None,
+            vel: vels.get(&tid).map(|(vx, vy)| [*vx, *vy]),
+            ts: Some(d.ts),
+            // the device's exercise engine is skipped in lean mode
+            ex: None,
+        });
+    }
+    Some(crate::types::TrackFrame {
+        device_id: device_id.to_string(),
+        frame_seq,
+        ts_ns,
+        tracks,
+        faces,
+        // preview rides gym/preview + gym/preview_h264, unchanged
+        img_b64: None,
+    })
 }
 
 // ---- parity validation ----
@@ -636,5 +776,97 @@ mod tests {
         let set: std::collections::HashSet<i64> =
             ids.iter().filter_map(|x| *x).collect();
         assert_eq!(set.len(), 2, "far-beside-near must mint, not suppress");
+    }
+
+    /// det() plus visible ankles — foot must be the ankle midpoint, and
+    /// the bbox must span the full kp extent (shoulders → ankles).
+    fn lean_det(cx: f32, cy: f32, h: f32, ts: u64) -> Det {
+        let mut kp = vec![[0.0, 0.0, 0.0]; 17];
+        kp[5] = [cx - h * 0.15, cy - h * 0.25, 0.9];
+        kp[6] = [cx + h * 0.15, cy - h * 0.25, 0.9];
+        kp[11] = [cx - h * 0.12, cy + h * 0.25, 0.8];
+        kp[12] = [cx + h * 0.12, cy + h * 0.25, 0.8];
+        kp[15] = [cx - h * 0.10, cy + h * 0.50, 0.7];
+        kp[16] = [cx + h * 0.10, cy + h * 0.50, 0.7];
+        Det { src: "full".into(), ts, kp }
+    }
+
+    #[test]
+    fn lean_frame_from_detect_two_persons_stable_ids() {
+        let near = |x: f32, y: f32| (x - y).abs() < 1e-4;
+        let mut t = ShadowTracker::new();
+        let dets = vec![
+            lean_det(0.3, 0.5, 0.4, 1_000_000_000),
+            lean_det(0.7, 0.5, 0.4, 1_000_000_000),
+        ];
+        let ids1 = t.update(&dets, 1.0);
+        let vels1 = t.velocities();
+        assert!(vels1.is_empty(), "minted tracks carry no velocity yet");
+        let f1 = lean_frame_from_detect(
+            "ne503-001", 1, 1_000_000_000, &dets, &ids1, &vels1, vec![],
+        )
+        .expect("frame from 2-person detect");
+        assert_eq!(f1.device_id, "ne503-001");
+        assert_eq!(f1.frame_seq, 1);
+        assert_eq!(f1.ts_ns, 1_000_000_000);
+        assert!(f1.faces.is_empty());
+        assert!(f1.img_b64.is_none());
+        assert_eq!(f1.tracks.len(), 2);
+        assert_eq!(f1.tracks[0].track_id, 0);
+        assert_eq!(f1.tracks[1].track_id, 1);
+        // geometry vs pose.py: kp extents ±10% pad → x ±0.18h / y −0.325h,
+        // w 0.36h, h 0.90h; foot = ankle midpoint at cy + 0.5h
+        let (cx, cy, h) = (0.3f32, 0.5f32, 0.4f32);
+        let a = &f1.tracks[0];
+        assert!(near(a.bbox.x, cx - 0.18 * h));
+        assert!(near(a.bbox.y, cy - 0.325 * h));
+        assert!(near(a.bbox.w, 0.36 * h));
+        assert!(near(a.bbox.h, 0.90 * h));
+        assert!(near(a.foot.x, cx));
+        assert!(near(a.foot.y, cy + 0.50 * h));
+        let pose = a.pose.as_ref().expect("pose present");
+        assert_eq!(pose.kpts.len(), 17);
+        assert!(near(pose.score, (0.9 + 0.9 + 0.8 + 0.8 + 0.7 + 0.7) / 6.0));
+        assert_eq!(a.ts, Some(1_000_000_000));
+        assert!(a.face.is_none());
+        assert!(a.vel.is_none(), "no velocity on the mint frame");
+
+        // frame 2 (same persons, 0.5 s later): stable ids + vel on the wire
+        let ids2 = t.update(&dets, 1.5);
+        let vels2 = t.velocities();
+        let f2 = lean_frame_from_detect(
+            "ne503-001", 2, 1_500_000_000, &dets, &ids2, &vels2, vec![],
+        )
+        .expect("frame 2");
+        assert_eq!(f2.tracks.len(), 2);
+        for (x, y) in f1.tracks.iter().zip(f2.tracks.iter()) {
+            assert_eq!(x.track_id, y.track_id, "stable ids across frames");
+        }
+        assert!(
+            f2.tracks.iter().all(|tr| tr.vel.is_some()),
+            "matched tracks carry a per-second velocity"
+        );
+    }
+
+    #[test]
+    fn lean_frame_rejects_mismatch_and_gates_sparse_dets() {
+        let mut t = ShadowTracker::new();
+        let dets = vec![det(0.5, 0.5, 0.3)];
+        let ids = t.update(&dets, 1.0);
+        // dets/ids length mismatch → None (defensive contract)
+        assert!(lean_frame_from_detect("d", 1, 0, &dets, &[], &HashMap::new(), vec![]).is_none());
+        assert!(ids.len() == 1); // tracker contract: ids.len() == dets.len()
+
+        // sparse det (<3 visible keypoints) never reaches the wire — same
+        // quality gate as frame.py's build_track_frame
+        let mut sparse = det(0.5, 0.5, 0.3);
+        sparse.kp = vec![[0.0, 0.0, 0.0]; 17];
+        sparse.kp[5] = [0.45, 0.40, 0.9];
+        sparse.kp[6] = [0.55, 0.40, 0.9];
+        let f = lean_frame_from_detect(
+            "d", 2, 0, &[sparse], &[Some(7)], &HashMap::new(), vec![],
+        )
+        .expect("frame builds");
+        assert!(f.tracks.is_empty(), "sparse det gated off the wire");
     }
 }

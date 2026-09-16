@@ -88,6 +88,24 @@ impl GymTrackerExtension {
             .with_writer(std::io::stderr)
             .compact()
             .try_init();
+        // LEAN TRACK (GYM_LEAN_TRACK on the extension host): the camera
+        // publishes raw detections (gym/detect) only, and the ingest
+        // gym/detect arm feeds the shadow tracker's output through the
+        // full gym/track downstream (exclusion zones + live state +
+        // analytics). Read once here — flipping it needs a process
+        // restart (same lifecycle as every other env knob).
+        let lean = std::env::var("GYM_LEAN_TRACK")
+            .map(|v| !matches!(v.trim(), "" | "0" | "false" | "no"))
+            .unwrap_or(false);
+        shadow::set_lean_track(lean);
+        tracing::info!(
+            "gym-tracker: lean track mode {}",
+            if lean {
+                "ON — gym/detect drives the downstream pipeline"
+            } else {
+                "off (shadow parity only)"
+            }
+        );
         Self {
             inner: RwLock::new(None),
         }

@@ -178,6 +178,82 @@ fn stamp_now() -> u64 {
         .unwrap_or(0)
 }
 
+/// The gym/track downstream: exclusion-zone filter → live-state mirror →
+/// analytics. Factored out of the gym/track arm so the lean gym/detect
+/// arm (GYM_LEAN_TRACK) feeds the EXACT same pipeline. Zones + members
+/// are read fresh per frame (small tables; keeps set_roi_zones / member
+/// edits live without a cache-invalidation dance).
+fn process_track_frame(
+    frame: TrackFrame,
+    db: &Arc<crate::db::Db>,
+    state: &Arc<LiveState>,
+    analytics: &Arc<crate::analytics::Analytics>,
+    cfg: &Config,
+) {
+    let zones = db.list_zones().unwrap_or_default();
+    let members = db.list_members().unwrap_or_default();
+    // EXCLUSION zones (mirrors / no-go areas): tracks inside them are
+    // reflections or noise — dropped HERE, before any consumer, so live
+    // state, trails, crossings, heatmap, occupancy and enrollment all
+    // stay clean. Foot first, bbox center as fallback (mirrors the
+    // occupancy rule).
+    let excl: Vec<&crate::db::Zone> = zones
+        .iter()
+        .filter(|z| z.enabled && z.equipment_type == "exclusion")
+        .collect();
+    let frame = if excl.is_empty() {
+        frame
+    } else {
+        let in_excl = |x: f32, y: f32| {
+            excl.iter()
+                .any(|z| crate::geo::point_in_polygon(x, y, &z.polygon))
+        };
+        let mut f = frame;
+        f.tracks.retain(|t| {
+            let (cx, cy) = (t.bbox.x + t.bbox.w / 2.0, t.bbox.y + t.bbox.h / 2.0);
+            !(in_excl(t.foot.x, t.foot.y) || in_excl(cx, cy))
+        });
+        f
+    };
+    // exclusion areas are filters, never equipment
+    let excl_owned: Vec<crate::db::Zone> = excl.iter().map(|z| (*z).clone()).collect();
+    let active: Vec<crate::db::Zone> = zones
+        .into_iter()
+        .filter(|z| z.equipment_type != "exclusion")
+        .collect();
+    state.apply_frame_filtered(&frame, &excl_owned);
+    analytics.on_frame(&frame);
+    analytics.on_workout_frame(&frame, &active, &members, &cfg.identity, cfg.roi.dwell_debounce_sec);
+}
+
+/// Frame-level face boxes out of the lean detect payload's `faces` array
+/// (added by the camera's LEAN_MODE detect publish). The SCRFD 5-pt
+/// landmarks (`lmk5`) are dropped — the FaceBox wire contract carries
+/// bbox/det/emb only. Missing/absent array → empty vec.
+fn parse_detect_faces(d: &serde_json::Value) -> Vec<crate::types::FaceBox> {
+    d["faces"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|f| {
+                    let b = f["bbox"].as_array()?;
+                    let g = |i: usize| b.get(i).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                    Some(crate::types::FaceBox {
+                        bbox: crate::types::Bbox {
+                            x: g(0),
+                            y: g(1),
+                            w: g(2),
+                            h: g(3),
+                        },
+                        det: f["det"].as_f64().unwrap_or(0.0) as f32,
+                        emb: None,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Handle returned by `spawn` — call `stop()` to request a graceful shutdown
 /// of the ingest thread (honored within ~200ms via the runtime's `select!`).
 pub struct IngestHandle {
@@ -429,6 +505,11 @@ async fn connect_and_drain(
                     // snapshots its id assignments for parity validation
                     // against the device's Python tracker (whose ids ride
                     // gym/track — snapshotted in the parse_event arm).
+                    // With GYM_LEAN_TRACK=1 (lean mode) the camera drops
+                    // its Python post path entirely and this arm BECOMES
+                    // the pipeline: the shadow tracker's output is
+                    // converted to a TrackFrame and pushed through the
+                    // same downstream as gym/track (see process_track_frame).
                     if txt.contains("\"gym/detect\"") {
                         if let Ok(ev) = serde_json::from_str::<serde_json::Value>(&txt) {
                             if ev["topic"].as_str() == Some("gym/detect") {
@@ -456,27 +537,58 @@ async fn connect_and_drain(
                                         }
                                     }
                                     let now = ts_ns as f64 / 1e9;
-                                    let mut g = crate::shadow::shadow().lock();
-                                    let ids = g.0.update(&dets, now);
-                                    // center = visible-kpts bbox center — the
-                                    // SAME metric the py side reports (bbox
-                                    // padding expands symmetrically, center
-                                    // unchanged) so parity matching is honest
-                                    let assigns = ids.iter().enumerate()
-                                        .filter_map(|(i, id)| id.map(|id| {
-                                            let mut x0 = f32::MAX; let mut y0 = f32::MAX;
-                                            let mut x1 = f32::MIN; let mut y1 = f32::MIN; let mut n = 0;
-                                            for k in &dets[i].kp {
-                                                if k[2] > 0.0 {
-                                                    x0 = x0.min(k[0]); y0 = y0.min(k[1]);
-                                                    x1 = x1.max(k[0]); y1 = y1.max(k[1]);
-                                                    n += 1;
+                                    // Scoped guard: the shadow lock is
+                                    // released before the lean downstream
+                                    // (DB reads + state + analytics) so
+                                    // get_tracker_parity never queues
+                                    // behind a frame's full processing.
+                                    let lean_frame = {
+                                        let mut g = crate::shadow::shadow().lock();
+                                        let ids = g.0.update(&dets, now);
+                                        // center = visible-kpts bbox center — the
+                                        // SAME metric the py side reports (bbox
+                                        // padding expands symmetrically, center
+                                        // unchanged) so parity matching is honest
+                                        let assigns = ids.iter().enumerate()
+                                            .filter_map(|(i, id)| id.map(|id| {
+                                                let mut x0 = f32::MAX; let mut y0 = f32::MAX;
+                                                let mut x1 = f32::MIN; let mut y1 = f32::MIN; let mut n = 0;
+                                                for k in &dets[i].kp {
+                                                    if k[2] > 0.0 {
+                                                        x0 = x0.min(k[0]); y0 = y0.min(k[1]);
+                                                        x1 = x1.max(k[0]); y1 = y1.max(k[1]);
+                                                        n += 1;
+                                                    }
                                                 }
-                                            }
-                                            if n > 0 { ((x0 + x1) / 2.0, (y0 + y1) / 2.0, id) } else { (0.0, 0.0, id) }
-                                        }))
-                                        .collect();
-                                    g.1.push_rust(crate::shadow::IdSnap { ts_ns, assigns });
+                                                if n > 0 { ((x0 + x1) / 2.0, (y0 + y1) / 2.0, id) } else { (0.0, 0.0, id) }
+                                            }))
+                                            .collect();
+                                        g.1.push_rust(crate::shadow::IdSnap { ts_ns, assigns });
+                                        // LEAN MODE (GYM_LEAN_TRACK): this
+                                        // detect frame is authoritative —
+                                        // convert it into the gym/track wire
+                                        // contract and hand it to the SAME
+                                        // downstream the gym/track arm uses.
+                                        let lean_frame = if crate::shadow::lean_track() {
+                                            let vels = g.0.velocities();
+                                            crate::shadow::lean_frame_from_detect(
+                                                d["device_id"].as_str().unwrap_or(""),
+                                                d["frame_seq"].as_u64().unwrap_or(0),
+                                                ts_ns,
+                                                &dets,
+                                                &ids,
+                                                &vels,
+                                                parse_detect_faces(&d),
+                                            )
+                                        } else {
+                                            None
+                                        };
+                                        (ids, lean_frame)
+                                    };
+                                    let (_ids, lean_frame) = lean_frame;
+                                    if let Some(frame) = lean_frame {
+                                        process_track_frame(frame, db, state, analytics, cfg);
+                                    }
                                 }
                                 // counted + consumed — do not fall through
                                 // to parse_event (it would record a parse
@@ -625,51 +737,10 @@ async fn connect_and_drain(
                                         assigns,
                                     });
                             }
-                            // workout pipeline: zones + members fresh per frame
-                            // (small tables; keeps set_roi_zones / member edits
-                            // live without a cache-invalidation dance)
-                            let zones = db.list_zones().unwrap_or_default();
-                            let members = db.list_members().unwrap_or_default();
-                            // EXCLUSION zones (mirrors / no-go areas): tracks
-                            // inside them are reflections or noise — dropped
-                            // HERE, before any consumer, so live state, trails,
-                            // crossings, heatmap, occupancy and enrollment all
-                            // stay clean. Foot first, bbox center as fallback
-                            // (mirrors the occupancy rule).
-                            let excl: Vec<&crate::db::Zone> = zones
-                                .iter()
-                                .filter(|z| z.enabled && z.equipment_type == "exclusion")
-                                .collect();
-                            let frame = if excl.is_empty() {
-                                frame
-                            } else {
-                                let in_excl = |x: f32, y: f32| {
-                                    excl.iter().any(|z| {
-                                        crate::geo::point_in_polygon(x, y, &z.polygon)
-                                    })
-                                };
-                                let mut f = frame;
-                                f.tracks.retain(|t| {
-                                    let (cx, cy) = (
-                                        t.bbox.x + t.bbox.w / 2.0,
-                                        t.bbox.y + t.bbox.h / 2.0,
-                                    );
-                                    !(in_excl(t.foot.x, t.foot.y) || in_excl(cx, cy))
-                                });
-                                f
-                            };
-                            // exclusion areas are filters, never equipment
-                            let excl_owned: Vec<crate::db::Zone> =
-                                excl.iter().map(|z| (*z).clone()).collect();
-                            let active: Vec<crate::db::Zone> = zones
-                                .into_iter()
-                                .filter(|z| z.equipment_type != "exclusion")
-                                .collect();
-                            state.apply_frame_filtered(&frame, &excl_owned);
-                            analytics.on_frame(&frame);
-                            analytics.on_workout_frame(
-                                &frame, &active, &members, &cfg.identity,
-                                cfg.roi.dwell_debounce_sec);
+                            // Same downstream for BOTH arms (gym/track and
+                            // the lean gym/detect path): exclusion zones →
+                            // live-state mirror → analytics.
+                            process_track_frame(frame, db, state, analytics, cfg);
                         }
                         None => {
                             let topic_is_gym = serde_json::from_str::<serde_json::Value>(&txt)
