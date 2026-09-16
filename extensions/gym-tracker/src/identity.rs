@@ -129,6 +129,27 @@ mod tests {
     }
 
     #[test]
+    fn nearest_member_skips_mismatched_dimension_rows() {
+        // RS-5 (2026-09-16 audit): zip() truncation made empty/short
+        // stored rows score ~0 against any query — they must never match.
+        let m = MemberMatrix {
+            samples: vec![vec![], vec![1.0, 0.0]], // empty + wrong-dim rows
+            member_of: vec![0, 1],
+        };
+        let (i, d) = nearest_member(&m, &[1.0, 0.0, 0.0]);
+        assert_eq!(i, None, "empty/short rows never match");
+        assert!(d.is_infinite());
+        // matched-dimension rows still match
+        let m2 = MemberMatrix {
+            samples: vec![vec![], vec![1.0, 0.0, 0.0]],
+            member_of: vec![0, 1],
+        };
+        let (i, d) = nearest_member(&m2, &[1.0, 0.0, 0.0]);
+        assert_eq!(i, Some(1));
+        assert!(d.abs() < 1e-6);
+    }
+
+    #[test]
     fn face_overrides_body() {
         let cfg = default_identity_for_tests();
         let members = vec![
@@ -212,6 +233,14 @@ fn nearest_member(m: &MemberMatrix, q: &[f32]) -> (Option<usize>, f32) {
     let mut best_sq = f32::INFINITY;
     let mut best_s = usize::MAX;
     for (s, row) in m.samples.iter().enumerate() {
+        // Dimension guard (RS-5, 2026-09-16 audit): zip() silently
+        // TRUNCATES to the shorter side, so an empty or short stored row
+        // (legacy schema / partial write) scored ~0 against ANY query and
+        // hijacked the identity. Mirror db.rs l2_dist semantics: a row
+        // whose length != query length never matches.
+        if row.len() != q.len() {
+            continue;
+        }
         let mut acc = 0f32;
         for (a, b) in row.iter().zip(q.iter()) {
             let d = a - b;
@@ -225,6 +254,7 @@ fn nearest_member(m: &MemberMatrix, q: &[f32]) -> (Option<usize>, f32) {
     if best_s == usize::MAX {
         return (None, f32::INFINITY);
     }
+    let _ = qn; // kept for the planned GEMV form (|a|²+|b|²-2ab); unused here
     (Some(m.member_of[best_s]), best_sq.sqrt())
 }
 

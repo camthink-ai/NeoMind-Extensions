@@ -388,6 +388,23 @@ async fn connect_and_drain(
             biased;
             _ = await_stop(stop) => return Disconnect::Stop,
             _ = ping.tick() => {
+                // PERIODIC PERSISTENCE (RS-3, 2026-09-16 audit): the
+                // heatmap/crossing flush + workout session close used to
+                // ride ONLY the UI's get_live_state poll — dashboard
+                // closed meant nothing persisted for hours and departed
+                // people's sessions never closed. Piggyback the 5 s
+                // keepalive tick (this loop already owns analytics + db +
+                // state) so persistence no longer depends on a viewer.
+                // get_live_state keeps its own calls as belt-and-braces.
+                // Blocking SQLite is fine here: the per-frame arm below
+                // already does DB reads on this same dedicated runtime
+                // thread. Camera clock per RS-4.
+                analytics.maybe_save(db);
+                analytics.close_expired_workouts(
+                    db,
+                    cfg.ingest.track_ttl_sec,
+                    state.camera_now_secs(),
+                );
                 if last_alive.elapsed() > std::time::Duration::from_secs(20) {
                     return Disconnect::Error("keepalive timeout (20s silence)".into());
                 }
@@ -495,6 +512,12 @@ async fn connect_and_drain(
                     }
                     if let Some((pts, pimg)) = parse_preview(&txt) {
                         state.set_preview(pts, Arc::new(pimg));
+                        // counted + consumed — mirrors the gym/detect arm:
+                        // a valid preview envelope is NOT a TrackFrame, so
+                        // the parse_event fallthrough recorded a parse_fail
+                        // for every healthy preview frame (RS-6,
+                        // 2026-09-16 audit) — the counter was pure noise.
+                        continue;
                     } else if let Some((ts, pts, key, w, h, seq, nalu)) = parse_preview_h264(&txt) {
                         // ON-DEMAND h264: with no push session subscribed,
                         // ring churn was pure waste — 30 fps parsed and
@@ -540,6 +563,11 @@ async fn connect_and_drain(
                             nalu: Arc::new(nalu),
                         });
                         }
+                        // consumed likewise — h264 envelopes are not
+                        // TrackFrames either; same RS-6 fallthrough
+                        // pollution (whether ingested or skipped as
+                        // no-viewer, the message is fully handled here).
+                        continue;
                     } else if serde_json::from_str::<serde_json::Value>(&txt)
                         .ok()
                         .and_then(|v| v["topic"].as_str().map(|t| t == "gym/preview"))

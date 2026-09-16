@@ -387,7 +387,20 @@ impl Extension for GymTrackerExtension {
             // (≤1 GOP), so live-edge join costs one GOP of video.
             let mut h264_cursor: u64 = state.h264_head_seq().saturating_sub(1);
             let mut last_jpeg_ts: Option<u64> = None;
-            while flag.load(std::sync::atomic::Ordering::SeqCst) {
+            // 15 Hz tracks rate-limit (RS-7, 2026-09-16 audit): this used
+            // to be declared INSIDE the while body, so every wake reset it
+            // to "1 s ago" and the 66 ms gate passed on EVERY video frame —
+            // the cap never actually applied. Declared here so the elapsed
+            // time survives across wakes.
+            let mut last_tracks_push =
+                std::time::Instant::now() - std::time::Duration::from_millis(1000);
+            // Labeled loop so a dead push channel ends the WHOLE session
+            // (RS-1, 2026-09-16 audit): a plain `break` inside the h264
+            // `for` only skipped to the next wake, where the loop kept
+            // probing the dead channel every 120 ms and the session entry
+            // leaked. The while condition re-reads the flag each iteration,
+            // so stop_push is honored within one wake timeout.
+            'session: while flag.load(std::sync::atomic::Ordering::SeqCst) {
                 // Wake on EITHER stream (shared condvar); the timeout is the
                 // idle heartbeat. Do NOT gate on the return value: with the
                 // JPEG fallback suppressed (H.264 healthy) the JPEG cache is
@@ -409,8 +422,6 @@ impl Extension for GymTrackerExtension {
                 // bundle into EVERY 30 fps video frame was 4-6x redundant
                 // (track data changes at the ~7 Hz publish rate) and the
                 // extension's single hottest allocation path
-                let mut last_tracks_push = std::time::Instant::now()
-                    - std::time::Duration::from_millis(1000);
                 for s in state.h264_since(h264_cursor) {
                     h264_cursor = s.seq;
                     state::push_diag().pushed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -433,7 +444,10 @@ impl Extension for GymTrackerExtension {
                             metadata: None,
                         };
                     if send_push_output(&m).is_err() {
-                        break; // channel gone — session ended
+                        // channel gone — session ended (break the OUTER
+                        // loop too, not just this `for`: RS-1, 2026-09-16
+                        // audit)
+                        break 'session;
                     }
                     // tracks-only frame, rate-limited to 15 Hz and only
                     // after the bundle changed (position/tick compare)
@@ -461,7 +475,7 @@ impl Extension for GymTrackerExtension {
                             metadata: None,
                         };
                         if send_push_output(&tm).is_err() {
-                            break;
+                            break 'session;
                         }
                     }
                 }
@@ -503,19 +517,34 @@ impl Extension for GymTrackerExtension {
                             metadata: None,
                         };
                         if send_push_output(&m).is_err() {
-                            break; // channel gone — session ended
+                            break 'session; // channel gone — session ended
                         }
                     }
                 }
             }
+            // Session over (stop_push flag OR dead channel): take OUR entry
+            // out of the session map (RS-1, 2026-09-16 audit) — a leaked
+            // entry pins its Arc<AtomicBool> forever and, worse, keeps the
+            // h264 ingest gate open (RS-2): the producer keeps filling the
+            // ring for a session nobody is consuming. ptr_eq (not a key
+            // remove): a same-id restart between our exit and here has
+            // already installed a NEW flag — that entry belongs to the new
+            // push thread.
+            push_sessions().lock().retain(|_, f| !Arc::ptr_eq(f, &flag));
         });
         Ok(())
     }
 
     async fn stop_push(&self, session_id: &str) -> Result<()> {
-        if let Some(f) = push_sessions().lock().get(session_id) {
+        // Flip the flag (the push loop notices within one 120 ms wake) AND
+        // remove the entry — entries were never removed before (RS-1,
+        // 2026-09-16 audit): every UI reconnect leaked one, and a leaked
+        // entry held the h264 ingest gate (RS-2) open for a dead session.
+        let mut g = push_sessions().lock();
+        if let Some(f) = g.get(session_id) {
             f.store(false, std::sync::atomic::Ordering::SeqCst);
         }
+        g.remove(session_id);
         Ok(())
     }
 

@@ -979,10 +979,19 @@ impl Inner {
         self.alerts.push_back(a);
     }
 
-    /// Close workouts whose track expired; persist them. Called from
-    /// maybe_save (poll frequency bounds data loss to one poll).
-    pub fn close_expired_workouts(&mut self, db: &Db, ttl_sec: u32) {
-        let now_ts = chrono::Utc::now().timestamp() as f64;
+    /// Close workouts whose track expired; persist them. Called from the
+    /// ingest 5 s tick and get_live_state (belt-and-braces).
+    ///
+    /// `cam_now_ts` — the current time on the CAMERA wall clock (unix
+    /// seconds, from state's latest TrackFrame ts_ns), i.e. the SAME clock
+    /// `w.last_seen` is stamped in. Expiry used to compare LOCAL
+    /// Utc::now() against it (RS-4, 2026-09-16 audit): any camera-clock
+    /// offset (device on another NTP regime / drifted) either closed live
+    /// sessions early or never closed them at all. None → no camera frame
+    /// seen yet → local Utc::now (nothing can be in `workouts` before the
+    /// first frame, so the fallback is trivially safe).
+    pub fn close_expired_workouts(&mut self, db: &Db, ttl_sec: u32, cam_now_ts: Option<f64>) {
+        let now_ts = cam_now_ts.unwrap_or_else(|| chrono::Utc::now().timestamp() as f64);
         let expired: Vec<i64> = self
             .workouts
             .iter()
@@ -1083,8 +1092,12 @@ impl Analytics {
             .on_workout_frame(f, zones, members, idcfg, dwell_debounce_sec);
     }
 
-    pub fn close_expired_workouts(&self, db: &Db, ttl_sec: u32) {
-        self.inner.lock().close_expired_workouts(db, ttl_sec);
+    /// Camera-clock expiry — see [`Inner::close_expired_workouts`]
+    /// (RS-4, 2026-09-16 audit: ttl semantics unchanged).
+    pub fn close_expired_workouts(&self, db: &Db, ttl_sec: u32, cam_now_ts: Option<f64>) {
+        self.inner
+            .lock()
+            .close_expired_workouts(db, ttl_sec, cam_now_ts);
     }
 
     pub fn workout_snapshot(

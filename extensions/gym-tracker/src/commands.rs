@@ -327,10 +327,13 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                 }
             }
             // Opportunistic heatmap persistence + workout record flush /
-            // session close — polls are frequent enough that this bounds
-            // dirty-frame loss to one poll interval.
+            // session close — belt-and-braces alongside the ingest loop's
+            // 5 s tick (RS-3, 2026-09-16 audit): whichever fires first
+            // bounds dirty-frame loss to one interval. Expiry runs on the
+            // CAMERA clock, the one w.last_seen is stamped in (RS-4).
             ctx.analytics.maybe_save(&ctx.db);
-            ctx.analytics.close_expired_workouts(&ctx.db, 15);
+            ctx.analytics
+                .close_expired_workouts(&ctx.db, 15, ctx.state.camera_now_secs());
             Ok(json!({
                 "present_count": ctx.state.present_count(),
                 "tracks": tracks.iter().map(|t| {
@@ -1327,9 +1330,12 @@ mod tests {
         assert_eq!(ex["name"], "treadmill_run", "zone maps to cardio exercise");
         assert_eq!(ex["zone"], "z1");
 
-        // summary after the person departs (close via TTL)
+        // summary after the person departs (close via TTL). Expiry now runs
+        // on the CAMERA clock (RS-4, 2026-09-16 audit): the test frames
+        // ran ts 0..5 s, so "now" = 6 s camera time — one second past the
+        // last sighting, past ttl 0. (Local Utc::now no longer drives it.)
         std::thread::sleep(std::time::Duration::from_millis(20));
-        ctx.analytics.close_expired_workouts(&ctx.db, 0);
+        ctx.analytics.close_expired_workouts(&ctx.db, 0, Some(6.0));
         let sum = handle(&ctx, "get_workout_summary", &json!({ "day_from": 0 })).unwrap();
         assert!(
             sum["visit_count"].as_i64().unwrap() >= 1,

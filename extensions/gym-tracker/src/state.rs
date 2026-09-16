@@ -249,6 +249,15 @@ impl LiveState {
         *self.tracks_ts.read()
     }
 
+    /// Latest CAMERA-frame wall clock as unix seconds (ts_ns / 1e9) — the
+    /// clock that workout `last_seen` stamps live on. None before any
+    /// frame arrives (tracks_ts still 0); callers fall back to local
+    /// Utc::now() then (RS-4, 2026-09-16 audit).
+    pub fn camera_now_secs(&self) -> Option<f64> {
+        let ts = *self.tracks_ts.read();
+        (ts > 0).then(|| ts as f64 / 1e9)
+    }
+
     /// Latest display preview from `gym/preview` (JPEG bytes).
     pub fn snapshot_preview(&self) -> Option<(u64, Arc<Vec<u8>>)> {
         self.preview.read().clone()
@@ -288,9 +297,16 @@ impl LiveState {
     /// push threads are per-session: draining (the old semantics) let two
     /// concurrent sessions SPLIT the stream (~15 fps each with 50%
     /// "loss"); cursor replay hands every session the full stream (the
-    /// sample payload is an Arc — cloning per session is free). A cursor
-    /// older than the queue head jumps to the head (the browser's
-    /// device-seq gap check resyncs its decoder on the next keyframe).
+    /// sample payload is an Arc — cloning per session is free).
+    ///
+    /// SEQ-RESET RECOVERY (RS-8, 2026-09-16 audit): when NOTHING in the
+    /// ring is newer than `after_seq` while the ring's max seq sits BELOW
+    /// it (the producer restarted its relay seq), a plain `seq > after_seq`
+    /// filter starves the session FOREVER — every future frame is also
+    /// "not newer". The stale cursor is jumped instead: samples from the
+    /// NEWEST keyframe onward are returned (the decoder resyncs on it —
+    /// ≤1 GOP of corruption), or the newest sample alone when the ring
+    /// holds no keyframe at all.
     pub fn h264_since(&self, after_seq: u64) -> Vec<H264Sample> {
         let q = self.h264.lock();
         let mut out = Vec::new();
@@ -299,7 +315,22 @@ impl LiveState {
                 out.push(s.clone());
             }
         }
-        out
+        if !out.is_empty() || q.is_empty() {
+            return out;
+        }
+        // cursor at/inside the ring's seq range with nothing newer = fully
+        // caught up (max seq == after_seq) — nothing to do; only a cursor
+        // ABOVE the whole ring means the producer's seq restarted.
+        let max_seq = q.iter().map(|s| s.seq).max().unwrap_or(0);
+        if max_seq >= after_seq {
+            return out;
+        }
+        if let Some(idx) = q.iter().rposition(|s| s.key) {
+            return q.iter().skip(idx).cloned().collect();
+        }
+        // no keyframe in the ring — the newest sample beats an eternity
+        // of nothing (the browser's gap check coasts until the next one)
+        q.back().cloned().into_iter().collect()
     }
 
     /// Tracks interpolated keyframes around `ts_ns` (for frontend or push).
@@ -387,6 +418,63 @@ mod tests {
             faces: vec![],
             img_b64: None,
         }
+    }
+
+    #[test]
+    fn h264_since_stale_cursor_resyncs_on_seq_reset() {
+        // RS-8 (2026-09-16 audit): the producer restarted and its relay seq
+        // landed BELOW a session's cursor — plain `seq > after_seq` filtering
+        // starves that session forever (every new frame is "not newer").
+        let s = LiveState::new(30);
+        let sample = |seq: u64, key: bool| H264Sample {
+            ts_ns: seq,
+            pts_ns: seq,
+            key,
+            w: 8,
+            h: 8,
+            seq,
+            nalu: Arc::new(vec![0, 0, 0, 1, 0x67]),
+        };
+        // ring: seq 100..=110, keyframes at 100 and 106
+        for seq in 100..=110 {
+            s.set_h264(sample(seq, seq == 100 || seq == 106));
+        }
+        // normal path unaffected: cursor 105 → 106..=110, oldest first
+        let normal: Vec<u64> = s.h264_since(105).iter().map(|x| x.seq).collect();
+        assert_eq!(normal, vec![106, 107, 108, 109, 110]);
+
+        // stale cursor (200 > ring max 110): must return NON-EMPTY starting
+        // at the NEWEST keyframe so the decoder resyncs
+        let out = s.h264_since(200);
+        assert!(!out.is_empty(), "stale cursor must resync, not starve");
+        assert!(out[0].key, "resync starts from a keyframe");
+        assert_eq!(out[0].seq, 106);
+        assert_eq!(out.last().unwrap().seq, 110);
+        // and the session's cursor can advance again from there
+        assert!(s.h264_since(out.last().unwrap().seq).is_empty());
+    }
+
+    #[test]
+    fn h264_since_stale_cursor_without_keyframe_returns_last() {
+        let s = LiveState::new(30);
+        let sample = |seq: u64| H264Sample {
+            ts_ns: seq,
+            pts_ns: seq,
+            key: false,
+            w: 8,
+            h: 8,
+            seq,
+            nalu: Arc::new(vec![0, 0, 0, 1, 0x41]),
+        };
+        for seq in 100..=102 {
+            s.set_h264(sample(seq));
+        }
+        let out = s.h264_since(500);
+        assert_eq!(
+            out.iter().map(|x| x.seq).collect::<Vec<_>>(),
+            vec![102],
+            "no keyframe in ring → newest sample alone"
+        );
     }
 
     #[test]
