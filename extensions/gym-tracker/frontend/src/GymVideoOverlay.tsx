@@ -1371,8 +1371,13 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
         // p50 left 31% of frames extrapolating (gap p90=269 vs delay=191
         // under full load) — extrapolation undershoots walkers and reads
         // as trailing; p75 cuts that share to ~15% at +30 ms latency
-        const pct = latMode === 'smooth' ? 1.0 : (latMode === 'balanced' ? 0.9 : 0.75)
-        const marg = latMode === 'balanced' ? 0.08 : 0.045
+        // 2026-09-16: tracks bundles ride at a true 15 Hz since the push
+        // rate cap actually applies (audit RS-7) — the p75+45ms margins
+        // were tuned under the de-facto 30 Hz and left the playhead
+        // straddling the newest sample (box flicker). Widen to cover one
+        // full 66ms track period plus jitter.
+        const pct = latMode === 'smooth' ? 1.0 : (latMode === 'balanced' ? 0.95 : 0.9)
+        const marg = latMode === 'smooth' ? 0.05 : 0.1
         const sorted = [...gw].sort((a, b) => a - b)
         const target = sorted[Math.min(sorted.length - 1,
           Math.floor(sorted.length * pct))] ?? 0
