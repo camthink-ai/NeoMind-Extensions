@@ -237,10 +237,16 @@ impl ShadowTracker {
                 let gate_full = if still[ti] {
                     0.12f32
                 } else {
-                    MAX_DIST + speed[ti] * self.dt_ema * 2.0
+                    // ×3 slope (2026-09-16, mirrors the Python fix): the
+                    // EMA velocity lags a sudden acceleration by 2-3
+                    // frames; at ×2 the gate opened on the STALE speed
+                    // while the walker was already outside it — the
+                    // tracker lost them, a stale box froze at the old
+                    // spot (the "person walked away, box stayed" report)
+                    MAX_DIST + speed[ti] * self.dt_ema * 3.0
                 }
                 .clamp(0.05, 0.6);
-                let gate_tile = (MAX_DIST + speed[ti] * self.dt_ema * 1.5).min(0.20);
+                let gate_tile = (MAX_DIST + speed[ti] * self.dt_ema * 2.0).min(0.20);
                 let gate = if is_tile[di] { gate_tile } else { gate_full };
                 let d_pred = ((dc.x - pred[ti].x).powi(2) + (dc.y - pred[ti].y).powi(2)).sqrt();
                 let d_last = ((dc.x - tlc[ti].x).powi(2) + (dc.y - tlc[ti].y).powi(2)).sqrt();
@@ -251,9 +257,14 @@ impl ShadowTracker {
                 if !(d <= gate && ratio_ok) {
                     continue;
                 }
-                // OCM: displacement vs track velocity direction
+                // OCM: displacement vs track velocity direction — with an
+                // ACCELERATION CARVE-OUT (mirrors the Python fix): when the
+                // observed displacement dwarfs what the lagged velocity
+                // predicts, direction is noise — the penalty was taxing
+                // the walker's TRUE match
                 let mut cost = d;
-                if speed[ti] > 0.03 {
+                let accel = d_last < 2.5 * speed[ti].max(1e-6) * self.dt_ema.max(1e-3);
+                if speed[ti] > 0.03 && accel {
                     let tv = self.tracks[&tids[ti]].vel.unwrap();
                     let disp = (dc.x - tlc[ti].x, dc.y - tlc[ti].y);
                     let dn = (disp.0 * disp.0 + disp.1 * disp.1).sqrt().max(1e-6);
@@ -328,7 +339,11 @@ impl ShadowTracker {
                             {
                                 continue;
                             }
-                            let r = if ltr.still_frames > 15 { 0.35 } else { 0.25 };
+                            // 0.18 for still (mirrors Python fix): flicker
+                            // re-detections land <0.1 from the person; a
+                            // PASSING walker's center is farther — 0.35
+                            // was the walk-by id-theft amplifier
+                            let r = if ltr.still_frames > 15 { 0.18 } else { 0.25 };
                             let d2 = ((dc.x - ltr.last_center.x).powi(2)
                                 + (dc.y - ltr.last_center.y).powi(2))
                                 .sqrt();
