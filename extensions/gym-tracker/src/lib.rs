@@ -418,6 +418,12 @@ impl Extension for GymTrackerExtension {
             // probing the dead channel every 120 ms and the session entry
             // leaked. The while condition re-reads the flag each iteration,
             // so stop_push is honored within one wake timeout.
+            // TRANSIENT vs DEAD channel: a single failed send (WS
+            // backpressure hiccup) must NOT kill a healthy session — the
+            // 2026-09-16 audit fix made send-failure fatal and live
+            // sessions started dying every ~37s (browser reconnect loop,
+            // frozen video). Exit only after N consecutive failures.
+            let mut send_fails: u32 = 0;
             'session: while flag.load(std::sync::atomic::Ordering::SeqCst) {
                 // Wake on EITHER stream (shared condvar); the timeout is the
                 // idle heartbeat. Do NOT gate on the return value: with the
@@ -462,11 +468,17 @@ impl Extension for GymTrackerExtension {
                             metadata: None,
                         };
                     if send_push_output(&m).is_err() {
-                        // channel gone — session ended (break the OUTER
-                        // loop too, not just this `for`: RS-1, 2026-09-16
-                        // audit)
-                        break 'session;
+                        // transient WS backpressure must not kill the
+                        // session (2026-09-16 0fps incident: the audit
+                        // fix made single failures fatal → 37s reconnect
+                        // loop); exit only after 5 consecutive failures
+                        send_fails += 1;
+                        if send_fails >= 5 {
+                            break 'session;
+                        }
+                        continue;
                     }
+                    send_fails = 0;
                     // tracks-only frame, rate-limited to 15 Hz and only
                     // after the bundle changed (position/tick compare)
                     if last_tracks_push.elapsed() >= std::time::Duration::from_millis(66) {
@@ -493,8 +505,11 @@ impl Extension for GymTrackerExtension {
                             metadata: None,
                         };
                         if send_push_output(&tm).is_err() {
-                            break 'session;
+                            send_fails += 1;
+                            if send_fails >= 5 { break 'session; }
+                            continue;
                         }
+                        send_fails = 0;
                     }
                 }
 
@@ -535,8 +550,13 @@ impl Extension for GymTrackerExtension {
                             metadata: None,
                         };
                         if send_push_output(&m).is_err() {
-                            break 'session; // channel gone — session ended
+                            send_fails += 1;
+                            if send_fails >= 5 {
+                                break 'session; // channel truly dead
+                            }
+                            continue;
                         }
+                        send_fails = 0;
                     }
                 }
             }
