@@ -405,13 +405,14 @@ impl Extension for GymTrackerExtension {
             // (≤1 GOP), so live-edge join costs one GOP of video.
             let mut h264_cursor: u64 = state.h264_head_seq().saturating_sub(1);
             let mut last_jpeg_ts: Option<u64> = None;
-            // 15 Hz tracks rate-limit (RS-7, 2026-09-16 audit): this used
-            // to be declared INSIDE the while body, so every wake reset it
-            // to "1 s ago" and the 66 ms gate passed on EVERY video frame —
-            // the cap never actually applied. Declared here so the elapsed
-            // time survives across wakes.
-            let mut last_tracks_push =
-                std::time::Instant::now() - std::time::Duration::from_millis(1000);
+            // RS-7 REVERTED (2026-09-16 flicker bisect): hoisting this
+            // OUTSIDE the loop made the 15Hz cap actually apply, but the
+            // frontend's playhead timing was tuned under the de-facto
+            // 30Hz — at true 15Hz the playhead straddles sample
+            // boundaries and boxes visibly flicker. Restore the reset-
+            // per-wake behavior (tracks ride every video frame ~30Hz).
+            // TODO: re-enable with frontend timing co-tuned.
+            // (outer declaration removed — RS-7 revert)
             // Labeled loop so a dead push channel ends the WHOLE session
             // (RS-1, 2026-09-16 audit): a plain `break` inside the h264
             // `for` only skipped to the next wake, where the loop kept
@@ -431,6 +432,9 @@ impl Extension for GymTrackerExtension {
                 // legitimately None forever, and treating that as "nothing
                 // to do" deadlocked the push loop (0 frames, session alive).
                 let _ = state.wait_preview(std::time::Duration::from_millis(120));
+                // RS-7 revert: reset per-wake so the gate always passes
+                let mut last_tracks_push =
+                    std::time::Instant::now() - std::time::Duration::from_millis(1000);
                 // evict departed tracks BEFORE snapshotting — otherwise a
                 // person who left lingers in every pushed frame until the
                 // (much slower) REST poll happens to evict, and the Monitor
