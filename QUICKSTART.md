@@ -8,9 +8,9 @@
 
 | 扩展 ID | 类型 | 描述 |
 |---------|------|------|
-| `weather-forecast-v2` | Native | 天气预报扩展 |
-| `image-analyzer-v2` | Native | 图像分析扩展 (YOLOv8) |
-| `yolo-video-v2` | Native | 视频处理扩展 (YOLOv11) |
+| `weather-forecast` | Native | 天气预报扩展 |
+| `image-analyzer` | Native | 图像分析扩展 (YOLOv8) |
+| `yolo-video` | Native | 视频处理扩展 (YOLOv11) |
 | `yolo-device-inference` | Native | 设备推理扩展 (YOLOv8) |
 | `wasm-demo` | WASM | WebAssembly 演示扩展 |
 
@@ -35,18 +35,18 @@ extension-name-version.nep  (ZIP archive)
   "format": "neomind-extension-package",
   "format_version": "2.0",
   "abi_version": 3,
-  "id": "weather-forecast-v2",
+  "id": "weather-forecast",
   "name": "Weather Forecast",
   "version": "2.0.0",
-  "sdk_version": "2.0.0",
+  "sdk_version": "0.6.5",
   "type": "native",
   "binaries": {
-    "darwin_aarch64": "binaries/darwin_aarch64/libneomind_extension_weather_forecast_v2.dylib",
-    "darwin_x86_64": "binaries/darwin_x86_64/libneomind_extension_weather_forecast_v2.dylib",
-    "linux_amd64": "binaries/linux_amd64/libneomind_extension_weather_forecast_v2.so",
-    "linux_arm64": "binaries/linux_arm64/libneomind_extension_weather_forecast_v2.so",
-    "windows_amd64": "binaries/windows_amd64/libneomind_extension_weather_forecast_v2.dll",
-    "windows_x86": "binaries/windows_x86/libneomind_extension_weather_forecast_v2.dll"
+    "darwin_aarch64": "binaries/darwin_aarch64/libneomind_extension_weather_forecast.dylib",
+    "darwin_x86_64": "binaries/darwin_x86_64/libneomind_extension_weather_forecast.dylib",
+    "linux_amd64": "binaries/linux_amd64/libneomind_extension_weather_forecast.so",
+    "linux_arm64": "binaries/linux_arm64/libneomind_extension_weather_forecast.so",
+    "windows_amd64": "binaries/windows_amd64/libneomind_extension_weather_forecast.dll",
+    "windows_x86": "binaries/windows_x86/libneomind_extension_weather_forecast.dll"
   },
   "frontend": "frontend/",
   "permissions": [],
@@ -65,10 +65,10 @@ extension-name-version.nep  (ZIP archive)
 
 ### 构建单个扩展
 ```bash
-bash scripts/package.sh -d extensions/weather-forecast-v2
-bash scripts/package.sh -d extensions/image-analyzer-v2
-bash scripts/package.sh -d extensions/yolo-video-v2
-bash scripts/package.sh -d extensions/yolo-device-inference
+./build.sh --single weather-forecast
+./build.sh --single image-analyzer
+./build.sh --single yolo-video
+./build.sh --single yolo-device-inference
 ```
 
 ### 其他命令
@@ -76,13 +76,13 @@ bash scripts/package.sh -d extensions/yolo-device-inference
 ./build.sh --help         # 查看帮助
 ./build.sh --skip-install # 仅构建，不安装
 ./build.sh --debug        # Debug 模式构建
-make list                 # 列出所有扩展
+make help                 # 列出所有扩展
 make clean                # 清理构建产物
 ```
 
 ### 测试 .nep 包
 ```bash
-python3 scripts/test_nep.py dist/weather-forecast-v2-2.0.0.nep
+python3 scripts/test_nep.py dist/weather-forecast-2.0.0.nep
 ```
 
 
@@ -142,19 +142,19 @@ otool -L target/release/libneomind_extension_my_extension.dylib
 neomind health
 
 # 查看扩展日志
-neomind logs --extension weather-forecast-v2
+neomind logs --extension weather-forecast
 
 # 列出已安装扩展
 neomind extension list
 
 # 安装 .nep 包
-neomind extension install weather-forecast-v2-2.0.0.nep
+neomind extension install weather-forecast-2.0.0.nep
 
 # 卸载扩展
-neomind extension uninstall weather-forecast-v2
+neomind extension uninstall weather-forecast
 
 # 验证包
-neomind extension validate weather-forecast-v2-2.0.0.nep
+neomind extension validate weather-forecast-2.0.0.nep
 ```
 
 ### 2. 本地开发安装
@@ -198,7 +198,7 @@ GitHub Actions 自动构建：
 ```
 NeoMind-Extension/
 ├── extensions/
-│   └── */Cargo.toml → neomind-extension-sdk = { path = "../../../NeoMind/crates/neomind-extension-sdk" }
+│   └── */Cargo.toml → neomind-extension-sdk = { workspace = true }
 └── Cargo.toml (workspace)
 ```
 
@@ -211,7 +211,7 @@ NeoMind-Extension/
 ### 受影响的扩展
 
 - `yolo-device-inference` - 38MB+ 二进制 + 200MB+ 模型文件
-- `yolo-video-v2` - 视频处理扩展
+- `yolo-video` - 视频处理扩展
 
 ### 手动加载方法
 

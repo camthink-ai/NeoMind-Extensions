@@ -942,4 +942,8 @@ def _wire_snapshot_branch(tee: Any, stream_id: str) -> None:
 def _default_output() -> Any:
     """Lazy import to avoid circular at module load."""
     from config import OutputConfig
+<<<<<<< Updated upstream
     return OutputConfig(osd=True)
+=======
+    return OutputConfig()
+>>>>>>> Stashed changes

@@ -4,7 +4,7 @@ name: Build .nep Packages V2
 # All extensions run in isolated processes with IPC communication
 # ABI Version: 3
 # Updated: usls 0.1.11 API compatibility
-# v2.7.1 version sync build
+# version-sync build (VERSION file is authoritative)
 
 on:
   push:
@@ -84,7 +84,7 @@ jobs:
 
       - name: Setup workspace structure
         run: |
-          # Move NeoMind to parent directory to match Cargo.toml paths
+          # Historical: workspace used path deps on the NeoMind repo; SDK now comes from crates.io (kept harmless)
           mv NeoMind ../NeoMind
         shell: bash
 
@@ -244,7 +244,7 @@ jobs:
             # Tell bindgen/clang where FFmpeg headers are
             echo "BINDGEN_EXTRA_CLANG_ARGS=-I$($ffmpegDir.FullName)\include" >> $env:GITHUB_ENV
           } else {
-            Write-Host "Skipping FFmpeg for windows_x86 (no shared build available; yolo-video-v2 will not be built)"
+            Write-Host "Skipping FFmpeg for windows_x86 (no shared build available; yolo-video will not be built)"
           }
 
       - name: Setup Node.js
@@ -255,6 +255,16 @@ jobs:
       - name: Show version
         run: |
           echo "Building version: $(cat VERSION)"
+        shell: bash
+
+      # Run the workspace unit tests before packaging (vision-common's pure
+      # logic + vision-hub's pipeline/command tests run on every platform;
+      # ORT-dependent paths are #[ignore]d and run locally).
+      - name: Run unit tests
+        if: runner.os != 'Windows'
+        run: |
+          cargo test -p vision-common --features engine-ort --lib
+          cargo test -p vision-hub --lib
         shell: bash
 
       - name: Build extensions

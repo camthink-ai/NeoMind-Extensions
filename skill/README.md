@@ -235,7 +235,7 @@ With this skill, you can create:
 - Python sidecar pattern (voice / TTS / ASR — HTTP or WebSocket)
 - ChatStream / ChatSession capability integration
 - Marketplace release checklist
-- Real extension examples (23 production extensions categorized)
+- Real extension examples (27 production extensions categorized)
 
 **reference/** (~40KB)
 - `architecture.md` — Process isolation, IPC protocol, ABI v3 FFI symbol table
@@ -364,5 +364,5 @@ MIT License - Same as NeoMind-Extension repository
 
 **Version**: 3.0.0 (SDK v0.6 / ABI v3)
 **Created**: March 3, 2026
-**Last updated**: July 8, 2026 — full rewrite against current SDK + 23 production extensions
+**Last updated**: July 8, 2026 — full rewrite against current SDK; count refreshed to 27 extensions (Aug 2026)
 **Maintained by**: NeoMind Team

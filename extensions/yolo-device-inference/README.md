@@ -14,7 +14,7 @@ This extension provides automatic YOLOv8 object detection on device image data s
 
 1. Build the extension:
    ```bash
-   cd NeoMind-Extension
+   cd NeoMind-Extensions
    ./build.sh
    ```
 
@@ -59,10 +59,10 @@ This extension provides automatic YOLOv8 object detection on device image data s
 
 ## Frontend Component
 
-The extension includes a React component `DeviceBindingCard` for managing bindings:
+The extension includes a React component `DeviceInferenceCard` for managing bindings:
 
 ```tsx
-import { DeviceBindingCard } from '@neomind/yolo-device-inference-frontend';
+// no npm import — the host loads the UMD bundle (DeviceInferenceCard)
 
 <DeviceBindingCard
   executeCommand={handleCommand}

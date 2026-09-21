@@ -1,0 +1,470 @@
+{
+  "id": "gym-tracker",
+  "version": "2.11.0",
+  "entrypoint": "gym-tracker-components.umd.cjs",
+  "components": [
+    {
+      "name": "GymLiveState",
+      "type": "card",
+      "displayName": "Gym · Live",
+      "description": "Current in-gym presence and tracks",
+      "icon": "users",
+      "defaultSize": {
+        "width": 340,
+        "height": 260
+      },
+      "minSize": {
+        "width": 240,
+        "height": 180
+      },
+      "refreshable": true,
+      "refreshInterval": 2000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "maxRows": {
+          "type": "number",
+          "default": 12,
+          "minimum": 4,
+          "maximum": 40,
+          "description": "会员/轨迹列表最多显示行数"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "en",
+            "zh"
+          ],
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
+        }
+      },
+      "category": "custom"
+    },
+    {
+      "name": "GymEquipmentGrid",
+      "type": "gym-equipment-grid",
+      "displayName": "Gym · Equipment",
+      "description": "Equipment-zone occupancy board (computed from live tracks + ROI zones)",
+      "icon": "grid",
+      "defaultSize": {
+        "width": 420,
+        "height": 300
+      },
+      "minSize": {
+        "width": 280,
+        "height": 200
+      },
+      "refreshable": true,
+      "refreshInterval": 2000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "showIdle": {
+          "type": "boolean",
+          "default": true,
+          "description": "显示空闲器械（关闭则只看占用中的）"
+        },
+        "busySec": {
+          "type": "number",
+          "default": 5,
+          "minimum": 5,
+          "maximum": 600,
+          "description": "占用判定阈值（秒）：同一人持续停留该时长才计为占用中"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "en",
+            "zh"
+          ],
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
+        }
+      },
+      "category": "custom"
+    },
+    {
+      "name": "GymTrafficChart",
+      "type": "gym-traffic-chart",
+      "displayName": "Gym · Traffic",
+      "description": "Presence trend over the last N hours (gym.present_count history)",
+      "icon": "line-chart",
+      "defaultSize": {
+        "width": 420,
+        "height": 260
+      },
+      "minSize": {
+        "width": 280,
+        "height": 180
+      },
+      "refreshable": true,
+      "refreshInterval": 30000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "hours": {
+          "type": "number",
+          "default": 6,
+          "description": "Trend window in hours (1-24)",
+          "minimum": 1,
+          "maximum": 24
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "en",
+            "zh"
+          ],
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
+        }
+      },
+      "category": "custom"
+    },
+    {
+      "name": "GymWorkoutSummary",
+      "type": "gym-workout-summary",
+      "displayName": "Gym · 运动概况",
+      "description": "Daily workout analytics: total training time, visits, equipment usage ranking, session list",
+      "icon": "clock",
+      "defaultSize": {
+        "width": 420,
+        "height": 360
+      },
+      "minSize": {
+        "width": 300,
+        "height": 240
+      },
+      "refreshable": true,
+      "refreshInterval": 10000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "lang": {
+          "type": "string",
+          "enum": [
+            "en",
+            "zh"
+          ],
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
+        }
+      },
+      "category": "custom"
+    },
+    {
+      "name": "GymVideoOverlay",
+      "type": "gym-video-overlay",
+      "displayName": "Gym · Monitor",
+      "description": "All-in-one gym monitor: live video + AI overlay (bbox/skeleton) + zone drawing on the real scene + live occupancy badges",
+      "icon": "video",
+      "defaultSize": {
+        "width": 760,
+        "height": 560
+      },
+      "minSize": {
+        "width": 420,
+        "height": 320
+      },
+      "maxSize": {
+        "width": 1400,
+        "height": 1000
+      },
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "showBoxes": {
+          "type": "boolean",
+          "default": true,
+          "description": "默认显示检测框"
+        },
+        "showSkeleton": {
+          "type": "boolean",
+          "default": true,
+          "description": "默认显示骨架关键点"
+        },
+        "showTrails": {
+          "type": "boolean",
+          "default": true,
+          "description": "默认显示运动轨迹"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "en",
+            "zh"
+          ],
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
+        },
+        "latency": {
+          "type": "string",
+          "enum": [
+            "live",
+            "balanced",
+            "smooth"
+          ],
+          "default": "live",
+          "title": "延迟策略 / Latency policy",
+          "description": "视频相对检测数据的缓冲量：live 最跟手（偶尔框略追人）；balanced 折中；smooth 框最稳不追人但整体画面多延迟约 0.2-0.4 秒"
+        }
+      },
+      "category": "custom"
+    },
+    {
+      "name": "GymEquipmentRank",
+      "type": "gym-equipment-rank",
+      "displayName": "Gym · 器械排行",
+      "description": "今日各器械使用时长排行（条形图，含次数）",
+      "icon": "bar-chart",
+      "defaultSize": {
+        "width": 420,
+        "height": 300
+      },
+      "minSize": {
+        "width": 280,
+        "height": 160
+      },
+      "refreshable": true,
+      "refreshInterval": 15000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "topN": {
+          "type": "number",
+          "default": 8,
+          "minimum": 3,
+          "maximum": 20,
+          "description": "显示前 N 台"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "en",
+            "zh"
+          ],
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
+        }
+      }
+    },
+    {
+      "name": "GymMemberReport",
+      "type": "gym-member-report",
+      "displayName": "Gym · 会员周报",
+      "description": "会员到店次数/时长/最近到店（近 N 天）",
+      "icon": "users",
+      "defaultSize": {
+        "width": 420,
+        "height": 300
+      },
+      "minSize": {
+        "width": 280,
+        "height": 160
+      },
+      "refreshable": true,
+      "refreshInterval": 15000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "days": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "maximum": 90,
+          "description": "统计窗口（天）"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "en",
+            "zh"
+          ],
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
+        }
+      }
+    },
+    {
+      "name": "GymAlerts",
+      "type": "gym-alerts",
+      "displayName": "Gym · 告警",
+      "description": "实时安全告警：疑似跌倒、器械久占",
+      "icon": "alert-triangle",
+      "defaultSize": {
+        "width": 420,
+        "height": 260
+      },
+      "minSize": {
+        "width": 280,
+        "height": 160
+      },
+      "refreshable": true,
+      "refreshInterval": 15000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "onlyWarn": {
+          "type": "boolean",
+          "default": false,
+          "description": "只显示警示级（跌倒）告警"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "en",
+            "zh"
+          ],
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
+        }
+      }
+    },
+    {
+      "name": "GymDoorFlow",
+      "type": "gym-door-flow",
+      "displayName": "Gym · 进出场",
+      "description": "出入口进/出场人数：今日实时 + 按天持久化历史",
+      "icon": "door-open",
+      "defaultSize": {
+        "width": 420,
+        "height": 300
+      },
+      "minSize": {
+        "width": 280,
+        "height": 200
+      },
+      "refreshable": true,
+      "refreshInterval": 10000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "days": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "maximum": 90,
+          "description": "历史天数（含今天）"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "en",
+            "zh"
+          ],
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
+        }
+      }
+    },
+    {
+      "name": "GymTrailsCard",
+      "type": "gym-trails-card",
+      "displayName": "Gym · 轨迹",
+      "description": "实时轨迹拖尾叠加在摄像头画面上（含分区轮廓参考）",
+      "icon": "route",
+      "defaultSize": {
+        "width": 420,
+        "height": 320
+      },
+      "minSize": {
+        "width": 280,
+        "height": 200
+      },
+      "refreshable": true,
+      "refreshInterval": 2000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "lang": {
+          "type": "string",
+          "enum": [
+            "en",
+            "zh"
+          ],
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
+        }
+      }
+    },
+    {
+      "name": "GymHeatCard",
+      "type": "gym-heat-card",
+      "displayName": "Gym · 热力",
+      "description": "今日足迹热力叠加在摄像头画面上（无效区自动排除）",
+      "icon": "flame",
+      "defaultSize": {
+        "width": 420,
+        "height": 320
+      },
+      "minSize": {
+        "width": 280,
+        "height": 200
+      },
+      "refreshable": true,
+      "refreshInterval": 15000,
+      "hasDataSource": true,
+      "dataSourceAllowedTypes": [
+        "extension",
+        "extension-command"
+      ],
+      "configSchema": {
+        "showZones": {
+          "type": "boolean",
+          "default": true,
+          "description": "叠加分区轮廓参考线"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "en",
+            "zh"
+          ],
+          "default": "en",
+          "description": "UI language（en English · zh 中文）"
+        }
+      }
+    }
+  ],
+  "i18n": {
+    "defaultLanguage": "en",
+    "supportedLanguages": [
+      "en",
+      "zh"
+    ]
+  },
+  "dependencies": {
+    "react": ">=18.0.0"
+  }
+}

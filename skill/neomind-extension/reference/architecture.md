@@ -153,7 +153,7 @@ still consistent) or calls `reset_instance` to start fresh.
 | Capabilities | Via injected fn ptrs | Via host imports |
 | Typical use | ML inference, bridges, voice | Lightweight utilities |
 
-This skill focuses on native cdylib extensions — that's what 22 of the 23 current
+This skill focuses on native cdylib extensions — that's what 26 of the 27 current
 extensions are. WASM (see `extensions/wasm-demo/`) uses the same `Extension` trait via
 the SDK's `wasm/` feature gate but is otherwise out of scope here.
 

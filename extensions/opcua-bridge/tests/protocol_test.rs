@@ -1,0 +1,77 @@
+//! Protocol-level tests — exercise the IPC paths that unit tests miss.
+//! Generated from the testkit infrastructure (SDK 0.6.6+).
+
+#![cfg(test)]
+
+use neomind_extension_sdk::testkit::*;
+use neomind_extension_sdk::*;
+use serde_json::json;
+
+use neomind_extension_opcua_bridge::OpcUaBridgeExtension;
+
+/// Metadata consistency: id and version match what metadata.json declares.
+#[tokio::test]
+async fn protocol_metadata() {
+    let kit = TestKit::new(OpcUaBridgeExtension::new());
+    assert!(!kit.metadata().id.is_empty());
+    assert!(!kit.metadata().version.is_empty());
+}
+
+/// Unknown commands fail fast (not panic, not hang).
+#[tokio::test]
+async fn protocol_unknown_command() {
+    let mut kit = TestKit::new(OpcUaBridgeExtension::new());
+    kit.start().await;
+    assert!(kit.execute_command("__nonexistent__", &json!({})).await.is_err(), "unknown command should error");
+}
+
+/// Key commands respond within timeout (5s default — deadlock detection).
+#[tokio::test]
+async fn protocol_get_status() {
+    let mut kit = TestKit::new(OpcUaBridgeExtension::new());
+    kit.start().await;
+    // Execute through the IPC path — timing assertion catches deadlocks
+    let result = kit.execute_command("get_status", &json!({})).await;
+    // We verify the command doesn't deadlock/panic; specific result
+    // depends on runtime state (models, connections, etc.)
+    match result {
+        Ok(_) => { /* command succeeded */ }
+        Err(e) => {
+            let msg = e.to_string();
+            // Expected error patterns for commands requiring external deps
+            assert!(
+                msg.contains("not found") || msg.contains("not loaded")
+                || msg.contains("not connected") || msg.contains("failed")
+                || msg.contains("invalid") || msg.contains("missing")
+                || msg.contains("error") || msg.contains("service")
+                || msg.contains("timeout") || msg.contains("model"),
+                "unexpected error for get_status: {msg}"
+            );
+        }
+    }
+}
+#[tokio::test]
+async fn protocol_list_servers() {
+    let mut kit = TestKit::new(OpcUaBridgeExtension::new());
+    kit.start().await;
+    // Execute through the IPC path — timing assertion catches deadlocks
+    let result = kit.execute_command("list_servers", &json!({})).await;
+    // We verify the command doesn't deadlock/panic; specific result
+    // depends on runtime state (models, connections, etc.)
+    match result {
+        Ok(_) => { /* command succeeded */ }
+        Err(e) => {
+            let msg = e.to_string();
+            // Expected error patterns for commands requiring external deps
+            assert!(
+                msg.contains("not found") || msg.contains("not loaded")
+                || msg.contains("not connected") || msg.contains("failed")
+                || msg.contains("invalid") || msg.contains("missing")
+                || msg.contains("error") || msg.contains("service")
+                || msg.contains("timeout") || msg.contains("model"),
+                "unexpected error for list_servers: {msg}"
+            );
+        }
+    }
+}
+

@@ -29,3 +29,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 default = []
 
 # WASM requires panic = abort
+
+[dev-dependencies]
+neomind-extension-sdk = { workspace = true, features = ["testkit"] }

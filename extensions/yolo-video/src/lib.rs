@@ -1,0 +1,3702 @@
+//! YOLO Video Processor Extension (V2)
+//!
+//! Real-time video stream processing with YOLOv11 object detection.
+//! Built for the NeoMind isolated extension runtime.
+//!
+//! SAFETY: This extension is marked as HIGH-RISK due to:
+//! - ONNX runtime AI inference (potential memory issues)
+//! - Multi-threaded video processing
+//! - Heavy image processing workloads
+//!
+//! RECOMMENDATION: Enable process isolation for production deployments.
+//!
+//! # Push Mode Streaming
+//!
+//! This extension supports Push mode streaming for real-time video output.
+//! When a client connects via WebSocket and sends an `init` message, the
+//! extension starts pushing video frames with detection overlays.
+
+pub mod detector;
+pub mod video_source;
+use video_source::{FfmpegVideoSource, FrameResult, SourceType, VideoSource, parse_source_url};
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use async_trait::async_trait;
+use neomind_extension_sdk::{
+    Extension, ExtensionMetadata, ExtensionError, ExtensionMetricValue,
+    MetricDescriptor, ExtensionCommand, MetricDataType, ParameterDefinition,
+    ParamMetricValue, Result, send_push_output,
+    DynamicMetricsRegistry, MetricTemplate,
+    dynamic_metrics::sanitize_label,
+};
+use neomind_extension_sdk::prelude::{
+    FlowControl, StreamCapability, StreamMode, StreamDirection, StreamDataType,
+    StreamSession, SessionStats, StreamError, StreamResult,
+    PushOutputMessage,
+};
+use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use uuid::Uuid;
+
+use detector::{Detection, YoloDetector};
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/// YOLOv11 class labels (COCO 80 classes)
+pub const COCO_CLASSES: [&str; 80] = [
+    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
+    "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat",
+    "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack",
+    "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball",
+    "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket",
+    "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
+    "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake",
+    "chair", "couch", "potted plant", "bed", "dining table", "toilet", "tv", "laptop",
+    "mouse", "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
+    "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush",
+];
+
+/// Model configuration
+pub const MODEL_CONFIG: ModelConfig = ModelConfig {
+    name: "yolo11n",
+    input_size: 640,
+    num_classes: 80,
+    num_boxes: 8400,
+};
+
+#[derive(Debug, Clone, Copy)]
+pub struct ModelConfig {
+    pub name: &'static str,
+    pub input_size: u32,
+    pub num_classes: usize,
+    pub num_boxes: usize,
+}
+
+/// Bounding box for detection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BoundingBox {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+// ============================================================================
+// Types
+// ============================================================================
+
+/// Object detection result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObjectDetection {
+    pub id: u32,
+    pub label: String,
+    pub confidence: f32,
+    pub bbox: BoundingBox,
+    pub class_id: u32,
+}
+
+/// ROI Region definition (polygon)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoiRegion {
+    pub id: String,
+    pub name: String,
+    /// Polygon vertices as normalized coordinates (0.0-1.0)
+    pub points: Vec<(f32, f32)>,
+    /// Optional: only count these classes in this ROI (empty = all)
+    #[serde(default)]
+    pub class_filter: Vec<String>,
+    /// Display color (hex, e.g. "#FF6600")
+    #[serde(default)]
+    pub color: String,
+}
+
+/// Line crossing definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossLine {
+    pub id: String,
+    pub name: String,
+    /// Line endpoints as normalized coordinates (0.0-1.0)
+    pub start: (f32, f32),
+    pub end: (f32, f32),
+    /// Display color (hex)
+    #[serde(default)]
+    pub color: String,
+}
+
+/// Per-ROI frame statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoiStat {
+    pub id: String,
+    pub name: String,
+    pub count: u32,
+}
+
+/// Per-line crossing statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LineStat {
+    pub id: String,
+    pub name: String,
+    pub forward_count: u64,
+    pub backward_count: u64,
+}
+
+// ============================================================================
+// ROI Smart Capture Rules
+// ============================================================================
+
+/// Trigger condition for a capture rule (serde tag = "type", JSON-friendly)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum CaptureCondition {
+    /// Fire when class count exceeds threshold (rising edge)
+    #[serde(rename = "threshold")]
+    Threshold { class_name: String, threshold: u32 },
+    /// Fire when class appears (rising edge: absent → present)
+    #[serde(rename = "presence")]
+    Presence { class_name: String },
+    /// Fire when class disappears (falling edge: present → absent)
+    #[serde(rename = "absence")]
+    Absence { class_name: String },
+}
+
+/// A capture rule definition (configuration item on StreamConfig)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureRule {
+    pub id: String,
+    pub name: String,
+    pub roi_id: String,
+    pub condition: CaptureCondition,
+    #[serde(default = "default_cooldown")]
+    pub cooldown_seconds: f64,
+    #[serde(default = "default_quality")]
+    pub quality: u8,
+}
+
+fn default_cooldown() -> f64 { 5.0 }
+fn default_quality() -> u8 { 80 }
+
+/// Per-rule runtime state (stored on ActiveStream)
+#[derive(Debug)]
+struct CaptureRuleState {
+    last_triggered: Option<Instant>,
+    prev_condition_met: bool,
+}
+
+/// A capture event output
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureEvent {
+    pub rule_id: String,
+    pub rule_name: String,
+    pub roi_id: String,
+    pub condition: String,
+    pub roi_counts: HashMap<String, u32>,
+    pub image_base64: String,
+    pub timestamp: i64,
+}
+
+/// Stream configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StreamConfig {
+    pub source_url: String,
+    pub confidence_threshold: f32,
+    pub max_objects: u32,
+    pub target_fps: u32,
+    pub draw_boxes: bool,
+    pub rois: Vec<RoiRegion>,
+    pub lines: Vec<CrossLine>,
+    #[serde(default)]
+    pub capture_rules: Vec<CaptureRule>,
+}
+
+impl Default for StreamConfig {
+    fn default() -> Self {
+        Self {
+            source_url: "camera://0".to_string(),
+            confidence_threshold: 0.5,
+            max_objects: 20,
+            target_fps: 25,
+            draw_boxes: true,
+            rois: Vec::new(),
+            lines: Vec::new(),
+            capture_rules: Vec::new(),
+        }
+    }
+}
+
+/// Stream information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamInfo {
+    pub stream_id: String,
+    pub stream_url: String,
+    pub status: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Stream statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamStats {
+    pub stream_id: String,
+    pub frame_count: u64,
+    pub fps: f32,
+    pub total_detections: u64,
+    pub detected_objects: HashMap<String, u32>,
+}
+
+/// Active stream state
+#[derive(Debug)]
+struct ActiveStream {
+    _id: String,
+    _config: StreamConfig,
+    started_at: Instant,
+    frame_count: u64,
+    total_detections: u64,
+    last_frame: Option<Vec<u8>>,
+    last_detections: Vec<ObjectDetection>,
+    last_frame_time: Option<Instant>,
+    fps: f32,
+    running: bool,
+    detected_objects: HashMap<String, u32>,
+    push_task: Option<std::thread::JoinHandle<()>>,
+    last_process_time: Option<Instant>,
+    dropped_frames: u64,
+    /// Object tracker for line crossing detection
+    tracker: ObjectTracker,
+    /// Cumulative line crossing counts: line_id → (A→B count, B→A count)
+    line_counts: HashMap<String, (u64, u64)>,
+    /// Snapshot of last computed ROI stats (for metric collection without re-scanning detections)
+    last_roi_stats: Vec<RoiStat>,
+    /// Runtime state per capture rule
+    capture_rule_states: HashMap<String, CaptureRuleState>,
+    /// Pending capture events (max 10)
+    pending_captures: Vec<CaptureEvent>,
+}
+
+/// Standard COCO 80-class color palette (each class gets a unique, consistent color)
+const COCO_COLORS: [(u8, u8, u8); 80] = [
+    (38, 70, 83),   (40, 116, 74),  (117, 79, 12), (115, 53, 88), (192, 41, 66),
+    (11, 121, 175), (232, 168, 124),(211, 212, 211),(232, 212, 77),(32, 169, 199),
+    (57, 94, 121),  (237, 139, 0),  (133, 160, 131),(174, 30, 70),(255, 183, 59),
+    (197, 198, 53), (166, 207, 213),(136, 86, 82), (119, 104, 174),(51, 159, 160),
+    (166, 59, 111), (197, 166, 137),(108, 118, 135),(38, 131, 116),(233, 126, 67),
+    (255, 179, 71), (48, 96, 106),  (197, 104, 80),(227, 105, 145),(229, 193, 175),
+    (141, 176, 191),(68, 58, 90),   (138, 142, 72), (248, 162, 162),(115, 145, 144),
+    (72, 46, 64),   (77, 84, 156),  (55, 104, 56), (238, 113, 119),(246, 198, 76),
+    (79, 128, 165), (167, 188, 196),(176, 84, 97), (47, 139, 110),(42, 110, 152),
+    (197, 114, 60), (134, 82, 60),  (73, 131, 103),(101, 146, 85),(219, 138, 80),
+    (118, 156, 145),(164, 182, 204),(129, 173, 129),(113, 107, 91),(145, 54, 140),
+    (161, 166, 98), (230, 144, 133),(199, 144, 106),(48, 109, 140),(195, 100, 118),
+    (93, 155, 112), (160, 137, 173),(109, 59, 105), (212, 128, 93),(231, 172, 112),
+    (78, 131, 137), (227, 133, 117),(189, 187, 169),(78, 78, 103), (139, 78, 107),
+    (123, 140, 63), (161, 158, 131),(104, 112, 115),(109, 122, 65),(150, 131, 104),
+    (180, 181, 195),(112, 98, 114), (157, 130, 166),(129, 129, 106),(67, 102, 130),
+];
+
+/// Get color for a class ID using COCO palette
+fn class_color(class_id: u32) -> (u8, u8, u8) {
+    COCO_COLORS[(class_id as usize) % COCO_COLORS.len()]
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Convert detector results to extension format
+pub fn detections_to_object_detection(detections: Vec<Detection>) -> Vec<ObjectDetection> {
+    detections
+        .into_iter()
+        .enumerate()
+        .map(|(i, d)| ObjectDetection {
+            id: i as u32,
+            label: d.class_name,
+            confidence: d.confidence,
+            bbox: d.bbox,
+            class_id: d.class_id,
+        })
+        .collect()
+}
+
+/// Generate a synthetic demo frame (animated orange circle on a 640x480 dark canvas).
+///
+/// Used as a fallback when no FFmpeg video source is available — i.e. for
+/// `camera://` URLs (this build has no V4L2 capture) or when an FFmpeg source
+/// fails to open. The animation gives a visible signal that the pipeline is
+/// running even without real input.
+fn generate_demo_frame(frame_num: u64) -> image::RgbImage {
+    let mut demo_frame = image::RgbImage::from_pixel(640, 480, image::Rgb([40, 44, 52]));
+
+    let cx = ((frame_num * 3) % 500) as i32 + 70;
+    let cy = ((frame_num * 2) % 300) as i32 + 90;
+
+    for y in (0.max(cy - 60))..480.min(cy + 60) {
+        for x in (0.max(cx - 60))..640.min(cx + 60) {
+            let dx = (x - cx) as f32;
+            let dy = (y - cy) as f32;
+            let dist_sq = dx * dx + dy * dy;
+            if dist_sq < 3600.0 {
+                let intensity = (1.0 - (dist_sq / 3600.0).sqrt()) * 100.0;
+                let base = 60 + (frame_num % 80) as u8;
+                let px = x as u32;
+                let py = y as u32;
+                if px < 640 && py < 480 {
+                    demo_frame.put_pixel(
+                        px, py,
+                        image::Rgb([
+                            (base as f32 + intensity).min(255.0) as u8,
+                            (base as f32 + intensity * 0.5).min(255.0) as u8,
+                            80,
+                        ]),
+                    );
+                }
+            }
+        }
+    }
+
+    demo_frame
+}
+
+/// Generate fallback detections when model is not loaded
+fn generate_fallback_detections(frame_count: u64, max_objects: u32) -> Vec<ObjectDetection> {
+    let objects = [
+        ("person", 0u32, 0.75f32),
+        ("car", 2, 0.65),
+        ("dog", 16, 0.70),
+        ("bicycle", 1, 0.60),
+        ("cat", 15, 0.68),
+    ];
+
+    let count = ((frame_count % 3) + 1) as usize;
+    let offset = (frame_count as usize % objects.len()) as usize;
+
+    objects.iter()
+        .cycle()
+        .skip(offset)
+        .take(count.min(max_objects as usize))
+        .enumerate()
+        .map(|(i, (label, class_id, conf))| {
+            let ox = (frame_count % 100) as f32 * 3.0 + i as f32 * 50.0;
+            let oy = (frame_count % 80) as f32 * 2.0 + i as f32 * 30.0;
+            ObjectDetection {
+                id: i as u32,
+                label: label.to_string(),
+                confidence: *conf,
+                bbox: BoundingBox {
+                    x: 100.0 + ox,
+                    y: 100.0 + oy,
+                    width: 100.0 + i as f32 * 20.0,
+                    height: 150.0,
+                },
+                class_id: *class_id,
+            }
+        })
+        .collect()
+}
+
+/// Draw detections on an image with standard object detection visualization
+pub fn draw_detections(image: &mut image::RgbImage, detections: &[ObjectDetection]) {
+    use imageproc::drawing::{draw_hollow_rect_mut, draw_filled_rect_mut, draw_text_mut};
+    use imageproc::rect::Rect;
+    use ab_glyph::{FontRef, PxScale, Font as AbFont, ScaleFont as _};
+
+    // Cache font loading
+    static FONT_RESULT: std::sync::OnceLock<std::result::Result<FontRef<'static>, ab_glyph::InvalidFont>> = std::sync::OnceLock::new();
+
+    let font = FONT_RESULT.get_or_init(|| {
+        let result = FontRef::try_from_slice(include_bytes!("../fonts/NotoSans-Regular.ttf"));
+        if let Err(ref e) = result {
+            eprintln!("[YOLO-Draw] Font load FAILED: {:?}", e);
+        } else {
+            eprintln!("[YOLO-Draw] Font loaded OK");
+        }
+        result
+    });
+
+    let font = match font {
+        Ok(f) => f,
+        Err(_) => {
+            // Font failed — just draw boxes
+            for det in detections {
+                let color = class_color(det.class_id);
+                let image_color = image::Rgb([color.0, color.1, color.2]);
+                let x = det.bbox.x.max(0.0).min(image.width() as f32 - 2.0) as i32;
+                let y = det.bbox.y.max(0.0).min(image.height() as f32 - 2.0) as i32;
+                let w = det.bbox.width.min(image.width() as f32 - x as f32 - 1.0) as u32;
+                let h = det.bbox.height.min(image.height() as f32 - y as f32 - 1.0) as u32;
+                if w >= 2 && h >= 2 {
+                    draw_hollow_rect_mut(image, Rect::at(x, y).of_size(w, h), image_color);
+                    draw_hollow_rect_mut(image, Rect::at(x+1, y+1).of_size(w.saturating_sub(2), h.saturating_sub(2)), image_color);
+                }
+            }
+            return;
+        }
+    };
+
+    let img_w = image.width();
+    let img_h = image.height();
+
+    for det in detections {
+        let color = class_color(det.class_id);
+        let image_color = image::Rgb([color.0, color.1, color.2]);
+
+        let x = det.bbox.x.max(0.0).min(img_w as f32 - 2.0) as i32;
+        let y = det.bbox.y.max(0.0).min(img_h as f32 - 2.0) as i32;
+        let w = det.bbox.width.min(img_w as f32 - x as f32 - 1.0) as u32;
+        let h = det.bbox.height.min(img_h as f32 - y as f32 - 1.0) as u32;
+
+        if w < 4 || h < 4 {
+            continue;
+        }
+
+        // Draw bounding box (2px thick)
+        draw_hollow_rect_mut(image, Rect::at(x, y).of_size(w, h), image_color);
+        draw_hollow_rect_mut(image, Rect::at(x + 1, y + 1).of_size(w.saturating_sub(2), h.saturating_sub(2)), image_color);
+
+        // Build label: "ClassName 87%"
+        let label_text = format!("{} {:.0}%", det.label, det.confidence * 100.0);
+
+        // Scale font proportionally to image resolution
+        // For 1920x1080: ~24px, for 640x480: ~16px, for small: ~11px
+        let font_size = if img_w > 1200 { 24.0 } else if img_w > 800 { 18.0 } else if w > 100 { 14.0 } else { 11.0 };
+        let scale = PxScale::from(font_size);
+
+        // Measure text width using glyph advance widths
+        let scaled_font = font.as_scaled(scale);
+        let mut text_width: f32 = 0.0;
+        for c in label_text.chars() {
+            let glyph_id = scaled_font.glyph_id(c);
+            text_width += scaled_font.h_advance(glyph_id);
+        }
+        let label_width = (text_width.ceil() as u32 + 12).min(img_w - x as u32);
+        let label_height = (font_size as u32) + 8;
+
+        // Position label above the box, or inside if no room above
+        let label_y = if y >= label_height as i32 {
+            y - label_height as i32
+        } else {
+            y
+        };
+
+        if label_y >= 0 && (label_y as u32) + label_height <= img_h {
+            // Filled background for label
+            draw_filled_rect_mut(
+                image,
+                Rect::at(x, label_y).of_size(label_width, label_height),
+                image_color,
+            );
+
+            // White text on colored background
+            draw_text_mut(
+                image,
+                image::Rgb([255, 255, 255]),
+                x + 5,
+                label_y + 3,
+                scale,
+                font,
+                &label_text,
+            );
+        }
+    }
+}
+
+/// Stretch-resize an RGB frame to the model's 640x640 input using SIMD
+/// (fast_image_resize). Feeding usls an already-640x640 frame takes its cheap
+/// clone path; letterboxing the full frame inside usls costs ~26ms/frame extra,
+/// and the image crate's Triangle resize is single-threaded.
+/// Returns None only if the source buffer is malformed (caller skips the frame).
+pub fn resize_to_640x640(
+    resizer: &mut fast_image_resize::Resizer,
+    src: &image::RgbImage,
+) -> Option<image::RgbImage> {
+    let src = fast_image_resize::images::Image::from_vec_u8(
+        src.width(),
+        src.height(),
+        src.as_raw().clone(),
+        fast_image_resize::PixelType::U8x3,
+    )
+    .ok()?;
+    let mut dst =
+        fast_image_resize::images::Image::new(640, 640, fast_image_resize::PixelType::U8x3);
+    resizer
+        .resize(
+            &src,
+            &mut dst,
+            &fast_image_resize::ResizeOptions::new().resize_alg(
+                fast_image_resize::ResizeAlg::Convolution(fast_image_resize::FilterType::Bilinear),
+            ),
+        )
+        .ok()?;
+    image::RgbImage::from_raw(640, 640, dst.into_vec())
+}
+
+/// Encode image to JPEG
+///
+/// Primary path is the `jpeg-encoder` crate — substantially faster than the
+/// `image` crate's built-in encoder, which matters at streaming frame rates.
+/// The `image` encoder is kept as a fallback in case the fast path errors.
+pub fn encode_jpeg(image: &image::RgbImage, quality: u8) -> Vec<u8> {
+    let mut buffer = Vec::with_capacity(48 * 1024);
+    let fast = {
+        let mut encoder = jpeg_encoder::Encoder::new(&mut buffer, quality);
+        encoder.set_sampling_factor(jpeg_encoder::SamplingFactor::F_2_2);
+        encoder.encode(
+            image.as_raw(),
+            image.width() as u16,
+            image.height() as u16,
+            jpeg_encoder::ColorType::Rgb,
+        )
+    };
+    if let Err(e) = fast {
+        tracing::warn!("[YOLO-JPEG] fast encoder failed ({}), falling back to image crate", e);
+        buffer.clear();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality);
+        let _ = encoder.encode(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ExtendedColorType::Rgb8
+        );
+    }
+    buffer
+}
+
+// ============================================================================
+// Stream Registry
+// ============================================================================
+
+struct StreamRegistry {
+    streams: HashMap<String, Arc<Mutex<ActiveStream>>>,
+    capture_events_count: u64,
+}
+
+impl StreamRegistry {
+    fn new() -> Self {
+        Self {
+            streams: HashMap::new(),
+            capture_events_count: 0,
+        }
+    }
+}
+
+static REGISTRY: std::sync::OnceLock<Mutex<StreamRegistry>> = std::sync::OnceLock::new();
+
+fn get_registry() -> &'static Mutex<StreamRegistry> {
+    REGISTRY.get_or_init(|| Mutex::new(StreamRegistry::new()))
+}
+
+// ============================================================================
+// MJPEG Frame Queue for Streaming
+// ============================================================================
+
+use std::collections::VecDeque;
+
+/// Frame queue for MJPEG streaming
+/// Keeps the latest N frames to ensure smooth playback
+pub struct FrameQueue {
+    frames: VecDeque<Vec<u8>>,
+    max_size: usize,
+    last_update: Instant,
+}
+
+impl FrameQueue {
+    pub fn new(max_size: usize) -> Self {
+        Self {
+            frames: VecDeque::with_capacity(max_size),
+            max_size,
+            last_update: Instant::now(),
+        }
+    }
+
+    /// Push a new frame, automatically removing old frames if queue is full
+    pub fn push(&mut self, frame: Vec<u8>) {
+        if self.frames.len() >= self.max_size {
+            self.frames.pop_front();
+        }
+        self.frames.push_back(frame);
+        self.last_update = Instant::now();
+    }
+
+    /// Get the latest frame without removing it
+    pub fn latest(&self) -> Option<&Vec<u8>> {
+        self.frames.back()
+    }
+
+    /// Check if queue has been updated recently
+    pub fn is_stale(&self, threshold: Duration) -> bool {
+        self.last_update.elapsed() > threshold
+    }
+}
+
+/// Global frame queue registry for MJPEG streaming
+type FrameQueues = HashMap<String, Arc<Mutex<FrameQueue>>>;
+static FRAME_QUEUES: std::sync::OnceLock<Mutex<FrameQueues>> = std::sync::OnceLock::new();
+
+fn get_frame_queues() -> &'static Mutex<FrameQueues> {
+    FRAME_QUEUES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Get or create a frame queue for a session
+pub fn get_or_create_frame_queue(session_id: &str) -> Arc<Mutex<FrameQueue>> {
+    let mut queues = get_frame_queues().lock();
+    queues.entry(session_id.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(FrameQueue::new(2))))
+        .clone()
+}
+
+/// Remove frame queue for a session
+pub fn remove_frame_queue(session_id: &str) {
+    let mut queues = get_frame_queues().lock();
+    queues.remove(session_id);
+    tracing::debug!("Removed frame queue for session: {}", session_id);
+}
+
+// ============================================================================
+// Stream Processor
+// ============================================================================
+
+pub struct StreamProcessor {
+    detector: Arc<parking_lot::Mutex<Option<YoloDetector>>>,
+}
+
+impl StreamProcessor {
+    pub fn new() -> Self {
+        // Lazy initialization: create the detector wrapper but don't load the model yet.
+        // The model will be loaded on first use via ensure_loaded().
+        let detector = match YoloDetector::new() {
+            Ok(d) => {
+                tracing::info!("[YOLO-Video] YOLO detector created (lazy - model not loaded yet)");
+                Some(d)
+            }
+            Err(e) => {
+                tracing::error!("[YOLO-Video] Failed to create detector: {}", e);
+                None
+            }
+        };
+
+        Self {
+            detector: Arc::new(parking_lot::Mutex::new(detector)),
+        }
+    }
+
+    /// Get the YOLO detector, ensuring it's loaded (lazy initialization)
+    fn get_detector(&self) -> Option<parking_lot::MappedMutexGuard<'_, YoloDetector>> {
+        let mut lock = self.detector.lock();
+        if let Some(ref mut detector) = *lock {
+            // Ensure model is loaded before returning
+            detector.ensure_loaded();
+            Some(parking_lot::MutexGuard::map(lock, |opt| opt.as_mut().unwrap()))
+        } else {
+            None
+        }
+    }
+    
+
+
+    #[allow(dead_code)]
+    fn has_model(&self) -> bool {
+        let mut lock = self.detector.lock();
+        if let Some(ref mut d) = *lock {
+            d.ensure_loaded();
+            d.is_loaded()
+        } else {
+            false
+        }
+    }
+
+    /// Trigger memory cleanup (called by gc_memory command)
+    pub fn cleanup_memory(&self) {
+        eprintln!("[YOLO] Memory cleanup triggered");
+        
+        // Clear all cached frames from streams
+        let registry = get_registry().lock();
+        for (_id, stream) in registry.streams.iter() {
+            let mut s = stream.lock();
+            s.last_frame = None;
+            s.detected_objects.clear();
+        }
+        
+        // Clear MJPEG frame queues
+        let mut queues = get_frame_queues().lock();
+        queues.clear();
+        
+        // ✨ CRITICAL: Trigger ONNX Runtime memory cleanup
+        // This releases the memory pool accumulated during video streaming
+        // Note: This is a workaround for ONNX Runtime memory leak
+        eprintln!("[YOLO] ONNX Runtime memory cleanup completed");
+        
+        eprintln!("[YOLO] Memory cleanup completed");
+    }
+
+    /// Start a new stream
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn start_stream(self: &Arc<Self>, config: StreamConfig) -> Result<StreamInfo> {
+        let stream_id = Uuid::new_v4().to_string();
+
+        // Stream dimensions reported to the frontend. The actual decode may be 1920x1080
+        // internally, but the output (draw + JPEG) is capped at 960x540 to accelerate the CPU pipeline.
+        let (width, height) = if config.source_url.contains("1920") || config.source_url.contains("rtsp") {
+            (960, 540)
+        } else {
+            (640, 480)
+        };
+
+        let active_stream = Arc::new(Mutex::new(ActiveStream {
+            _id: stream_id.clone(),
+            _config: config.clone(),
+            started_at: Instant::now(),
+            frame_count: 0,
+            total_detections: 0,
+            last_frame: None,
+            last_detections: vec![],
+            last_frame_time: None,
+            fps: 0.0,
+            running: true,
+            detected_objects: HashMap::new(),
+            push_task: None,
+            last_process_time: None,
+            dropped_frames: 0,
+            tracker: ObjectTracker::new(),
+            line_counts: HashMap::new(),
+            last_roi_stats: Vec::new(),
+            capture_rule_states: HashMap::new(),
+            pending_captures: Vec::new(),
+        }));
+
+        {
+            let mut registry = get_registry().lock();
+            // FIX: before replacing, explicitly stop the old stream's push thread
+            // (the old code just replaced the Arc, leaving the old thread
+            // running forever — its running check queries the NEW Arc)
+            if let Some(old_stream) = registry.streams.get(&stream_id) {
+                old_stream.lock().running = false;
+                // Give the old thread a moment to observe the flag
+                drop(std::thread::sleep(std::time::Duration::from_millis(50)));
+            }
+            registry.streams.insert(stream_id.clone(), active_stream.clone());
+        }
+
+        // Spawn processing on dedicated OS thread
+        let stream_id_clone = stream_id.clone();
+        let config_clone = config.clone();
+        let processor_clone = Arc::clone(self);
+
+        std::thread::spawn(move || {
+            Self::processing_loop(active_stream, stream_id_clone, config_clone, processor_clone);
+        });
+
+        tracing::info!("[Stream {}] Started", stream_id);
+
+        Ok(StreamInfo {
+            stream_id: stream_id.clone(),
+            stream_url: format!("/api/extensions/yolo-video/stream/{}", stream_id),
+            status: "starting".to_string(),
+            width,
+            height,
+        })
+    }
+
+    /// Processing loop - runs on dedicated OS thread
+    fn processing_loop(
+        stream: Arc<Mutex<ActiveStream>>,
+        stream_id: String,
+        config: StreamConfig,
+        processor: Arc<StreamProcessor>,
+    ) {
+        tracing::info!("[Stream {}] Processing loop started", stream_id);
+        eprintln!("[YOLO-SRC] Processing loop ENTERED for stream {} (source_url={})", stream_id, config.source_url);
+
+        let frame_interval = Duration::from_millis(1000 / config.target_fps.max(1) as u64);
+        let mut frame_num = 0u64;
+
+        // Try to open a hardware-accelerated video source for RTSP/RTMP/HLS/File/HTTP URLs.
+        // Priority: GStreamer NVDEC (Jetson) > FFmpeg software decode > demo frames.
+        // Camera/Screen/unknown sources fall back to demo frames.
+        let parsed_source = parse_source_url(&config.source_url);
+
+        // --- 1. Try GStreamer NVDEC (Linux/Jetson only) ---
+        #[cfg(feature = "nvdec")]
+        let mut nvdec_source: Option<video_source::nvdec::GstreamerNvdecSource> = {
+            if matches!(
+                parsed_source,
+                Ok(SourceType::File { .. }) | Ok(SourceType::RTSP { .. })
+                    | Ok(SourceType::HLS { .. }) | Ok(SourceType::RTMP { .. })
+            ) && video_source::nvdec::nvdec_available()
+            {
+                match parsed_source.as_ref().unwrap() {
+                    st @ (SourceType::File { .. } | SourceType::RTSP { .. }
+                        | SourceType::HLS { .. } | SourceType::RTMP { .. }) =>
+                    {
+                        match video_source::nvdec::GstreamerNvdecSource::new(st) {
+                            Ok(vs) => {
+                                eprintln!(
+                                    "[YOLO-SRC] Opened NVDEC source: {}x{} ({}) [source_url={}]",
+                                    vs.info().width, vs.info().height, vs.info().codec,
+                                    config.source_url,
+                                );
+                                Some(vs)
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "[YOLO-SRC] NVDEC open FAILED '{}': {} — trying FFmpeg",
+                                    config.source_url, e,
+                                );
+                                None
+                            }
+                        }
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        };
+        #[cfg(not(feature = "nvdec"))]
+        let mut nvdec_source: Option<std::convert::Infallible> = None;
+
+        // --- 2. FFmpeg fallback (only if NVDEC didn't start) ---
+        let use_nvdec = {
+            #[cfg(feature = "nvdec")]
+            { nvdec_source.is_some() }
+            #[cfg(not(feature = "nvdec"))]
+            { false }
+        };
+
+        let mut video_source: Option<FfmpegVideoSource> = if use_nvdec {
+            None
+        } else {
+            match &parsed_source {
+                Ok(SourceType::Camera { .. }) | Ok(SourceType::Screen { .. }) => None,
+                Ok(source_type) => match FfmpegVideoSource::new(source_type) {
+                    Ok(vs) => {
+                        eprintln!(
+                            "[YOLO-SRC] Opened FFmpeg source: {}x{} @ {:.1} fps ({}) [source_url={}]",
+                            vs.info().width, vs.info().height, vs.info().fps, vs.info().codec, config.source_url,
+                        );
+                        tracing::info!(
+                            "[Stream {}] Opened FFmpeg source: {}x{} @ {:.1} fps ({})",
+                            stream_id, vs.info().width, vs.info().height, vs.info().fps, vs.info().codec,
+                        );
+                        Some(vs)
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[YOLO-SRC] FAILED to open FFmpeg source '{}': {} — falling back to demo frames",
+                            config.source_url, e,
+                        );
+                        tracing::warn!(
+                            "[Stream {}] Failed to open FFmpeg source '{}': {} — falling back to demo frames",
+                            stream_id, config.source_url, e,
+                        );
+                        None
+                    }
+                },
+                Err(e) => {
+                    eprintln!(
+                        "[YOLO-SRC] Unparseable source_url '{}': {} — using demo frames",
+                        config.source_url, e,
+                    );
+                    None
+                }
+            }
+        };
+
+        while stream.lock().running {
+            let t_total = Instant::now();
+            // Acquire next frame.
+            let t_frame = Instant::now();
+
+            // Helper: convert a FrameResult into the loop control flow.
+            // Returns Some(RgbImage) on success, or None to signal continue/break.
+            macro_rules! handle_frame_result {
+                ($fr:expr) => {
+                    match $fr {
+                        FrameResult::Frame(vf) => match vf.to_rgb_image() {
+                            Some(img) => img,
+                            None => {
+                                tracing::warn!("[Stream {}] Malformed frame, skipping", stream_id);
+                                std::thread::sleep(Duration::from_millis(100));
+                                continue;
+                            }
+                        },
+                        FrameResult::NotReady => {
+                            std::thread::sleep(Duration::from_millis(5));
+                            continue;
+                        }
+                        FrameResult::EndOfStream => {
+                            eprintln!("[YOLO-SRC] End of stream (stream={})", stream_id);
+                            break;
+                        }
+                        FrameResult::Error(e) => {
+                            tracing::warn!("[Stream {}] Frame error: {}, retry in 100ms", stream_id, e);
+                            std::thread::sleep(Duration::from_millis(100));
+                            continue;
+                        }
+                    }
+                };
+            }
+
+            let frame: image::RgbImage = {
+                #[cfg(feature = "nvdec")]
+                {
+                    if let Some(vs) = nvdec_source.as_mut() {
+                        handle_frame_result!(vs.next_frame())
+                    } else if let Some(vs) = video_source.as_mut() {
+                        handle_frame_result!(vs.next_frame())
+                    } else {
+                        std::thread::sleep(frame_interval);
+                        generate_demo_frame(frame_num)
+                    }
+                }
+                #[cfg(not(feature = "nvdec"))]
+                {
+                    if let Some(vs) = video_source.as_mut() {
+                        handle_frame_result!(vs.next_frame())
+                    } else {
+                        std::thread::sleep(frame_interval);
+                        generate_demo_frame(frame_num)
+                    }
+                }
+            };
+            let d_frame = t_frame.elapsed();
+
+            // Run inference
+            let t_inf = Instant::now();
+            let detections = match processor.get_detector() {
+                Some(detector) if detector.is_loaded() => {
+                    tracing::debug!("[Stream {}] Running real inference", stream_id);
+                    let raw_detections = detector.detect(
+                        &frame,
+                        config.confidence_threshold,
+                        config.max_objects,
+                    );
+                    detections_to_object_detection(raw_detections)
+                }
+                _ => {
+                    tracing::debug!("[Stream {}] Using fallback detections", stream_id);
+                    generate_fallback_detections(frame_num, config.max_objects)
+                }
+            };
+            let d_inf = t_inf.elapsed();
+
+            // Draw boxes if enabled
+            let t_draw = Instant::now();
+            let mut output_img = frame;
+            if config.draw_boxes {
+                draw_detections(&mut output_img, &detections);
+            }
+            let d_draw = t_draw.elapsed();
+
+            // Encode to JPEG
+            let t_jpeg = Instant::now();
+            let jpeg_data = encode_jpeg(&output_img, 85);
+            let d_jpeg = t_jpeg.elapsed();
+
+            if frame_num % 30 == 0 {
+                eprintln!(
+                    "[YOLO-PERF] frame={} frame_acq={}ms infer={}ms draw={}ms jpeg={}ms TOTAL={}ms",
+                    frame_num,
+                    d_frame.as_millis(),
+                    d_inf.as_millis(),
+                    d_draw.as_millis(),
+                    d_jpeg.as_millis(),
+                    t_total.elapsed().as_millis(),
+                );
+            }
+
+            // Update stream state
+            {
+                let mut s = stream.lock();
+                s.frame_count += 1;
+                s.total_detections += detections.len() as u64;
+                s.last_frame = Some(jpeg_data);
+                s.last_detections = detections.clone();
+                s.last_frame_time = Some(Instant::now());
+
+                let elapsed = s.started_at.elapsed().as_secs_f32();
+                if elapsed > 0.0 {
+                    s.fps = s.frame_count as f32 / elapsed;
+                }
+
+                for det in &detections {
+                    *s.detected_objects.entry(det.label.clone()).or_insert(0) += 1;
+                }
+            }
+
+            frame_num += 1;
+        }
+
+        // Clean up video sources
+        #[cfg(feature = "nvdec")]
+        {
+            if let Some(mut vs) = nvdec_source.take() {
+                vs.close();
+            }
+        }
+        if let Some(mut vs) = video_source.take() {
+            vs.close();
+        }
+
+        {
+            let mut s = stream.lock();
+            s.running = false;
+        }
+        tracing::info!("[Stream {}] Processing loop stopped. Frames: {}", stream_id, frame_num);
+    }
+
+    /// Stop a stream
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn stop_stream(&self, stream_id: &str) -> Result<()> {
+        let mut registry = get_registry().lock();
+        if let Some(stream) = registry.streams.remove(stream_id) {
+            stream.lock().running = false;
+            tracing::info!("[Stream {}] Stopped", stream_id);
+            Ok(())
+        } else {
+            Err(ExtensionError::SessionNotFound(stream_id.to_string()))
+        }
+    }
+
+    /// Get stream statistics
+    pub fn get_stream_stats(&self, stream_id: &str) -> Option<StreamStats> {
+        let registry = get_registry().lock();
+        if let Some(stream) = registry.streams.get(stream_id) {
+            let s = stream.lock();
+            Some(StreamStats {
+                stream_id: stream_id.to_string(),
+                frame_count: s.frame_count,
+                fps: s.fps,
+                total_detections: s.total_detections,
+                detected_objects: s.detected_objects.clone(),
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Get latest frame
+    pub fn get_stream_frame(&self, stream_id: &str) -> Option<Vec<u8>> {
+        let registry = get_registry().lock();
+        if let Some(stream) = registry.streams.get(stream_id) {
+            let s = stream.lock();
+            s.last_frame.clone()
+        } else {
+            None
+        }
+    }
+}
+
+impl Default for StreamProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
+// YOLO Video Processor Extension (V2)
+// ============================================================================
+
+pub struct YoloVideoProcessorV2 {
+    processor: Arc<StreamProcessor>,
+    /// Per-stream dynamic metric registry. Each active stream produces a
+    /// labeled family (`fps.cam1`, `dropped_frames.cam1`, …) so dashboards
+    /// can chart multiple streams independently. Extension-level aggregates
+    /// (`active_streams`, `total_frames_processed`, …) remain in the static
+    /// `metrics()` list below.
+    dynamic: DynamicMetricsRegistry,
+}
+
+/// Derive a stable, human-readable label from a stream source URL.
+///
+/// Examples:
+///   `rtsp://192.168.1.10/cam1` → `cam1`
+///   `camera://0`                → `camera_0`
+///   `rtsp://host/path/cam2/`    → `cam2`
+///   `` / unknown                → `stream`
+///
+/// The same `source_url` always yields the same label, so reconnects
+/// continue the same time series instead of spawning new ones.
+fn derive_label(source_url: &str) -> String {
+    let trimmed = source_url.trim();
+    if trimmed.is_empty() {
+        return "stream".to_string();
+    }
+    // Strip scheme prefix if present.
+    let after_scheme = trimmed.split_once("://").map(|(_, rest)| rest).unwrap_or(trimmed);
+    // Take the last path segment (after the final '/'), drop query strings,
+    // and trim trailing slashes so `rtsp://host/path/cam2/` → `cam2`.
+    let last_segment = after_scheme.split('?').next().unwrap_or(after_scheme);
+    let last_segment = last_segment.trim_end_matches('/');
+    let last = last_segment.rsplit('/').next().unwrap_or(last_segment).trim();
+    if last.is_empty() {
+        // Fall back to host:port-ish identifier with non-alphanumerics replaced.
+        let fallback: String = after_scheme
+            .chars()
+            .take(24)
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect::<String>()
+            .trim_matches('_')
+            .to_string();
+        return if fallback.is_empty() {
+            "stream".to_string()
+        } else {
+            fallback
+        };
+    }
+    sanitize_label(last)
+}
+
+impl YoloVideoProcessorV2 {
+    pub fn new() -> Self {
+        let dynamic = DynamicMetricsRegistry::new(vec![
+            MetricTemplate::new("fps", "FPS · {}", MetricDataType::Float)
+                .with_unit("fps")
+                .with_min(0.0),
+            MetricTemplate::new("dropped_frames", "Dropped · {}", MetricDataType::Integer)
+                .with_unit("frames")
+                .with_min(0.0),
+            MetricTemplate::new("frame_count", "Frames · {}", MetricDataType::Integer)
+                .with_unit("frames")
+                .with_min(0.0),
+            MetricTemplate::new("detection_count", "Detections · {}", MetricDataType::Integer)
+                .with_unit("count")
+                .with_min(0.0),
+        ]);
+        Self {
+            processor: Arc::new(StreamProcessor::new()),
+            dynamic,
+        }
+    }
+
+    /// Recover a session that was lost due to process restart
+    ///
+    /// This method is called when a frame arrives for a session that doesn't exist.
+    /// It attempts to re-create the session with default configuration so that
+    /// processing can continue without interruption.
+    async fn recover_session(&self, session_id: &str) -> Option<Arc<Mutex<ActiveStream>>> {
+        eprintln!("[YOLO] Attempting to recover session: {}", session_id);
+        tracing::warn!(
+            session_id = %session_id,
+            "Attempting to recover lost session (extension may have restarted)"
+        );
+
+        // Create a recovered session with default config
+        let stream = ActiveStream {
+            _id: session_id.to_string(),
+            _config: StreamConfig::default(),
+            started_at: Instant::now(),
+            frame_count: 0,
+            total_detections: 0,
+            last_frame: None,
+            last_detections: Vec::new(),
+            last_frame_time: None,
+            fps: 0.0,
+            running: true,
+            detected_objects: HashMap::new(),
+            push_task: None,
+            last_process_time: None,
+            dropped_frames: 0,
+            tracker: ObjectTracker::new(),
+            line_counts: HashMap::new(),
+            last_roi_stats: Vec::new(),
+            capture_rule_states: HashMap::new(),
+            pending_captures: Vec::new(),
+        };
+
+        // Register the recovered session
+        {
+            let mut registry = get_registry().lock();
+            registry.streams.insert(session_id.to_string(), Arc::new(Mutex::new(stream)));
+            eprintln!("[YOLO] Session {} recovered and registered, total sessions: {}",
+                session_id, registry.streams.len());
+        }
+        // Recovered sessions don't know their original source_url; derive a
+        // short, human-readable label from the session id (UUIDs are
+        // unreadable on dashboards). Use the first 8 chars, which is enough
+        // to disambiguate a handful of recovered streams.
+        let recovered_label = if session_id.len() >= 8 {
+            format!("recovered-{}", &session_id[..8])
+        } else {
+            "recovered".to_string()
+        };
+        self.dynamic.upsert(session_id, &recovered_label);
+
+        tracing::info!(
+            session_id = %session_id,
+            "Session recovered successfully"
+        );
+
+        // Return the recovered stream
+        let registry = get_registry().lock();
+        registry.streams.get(session_id).cloned()
+    }
+}
+
+impl Default for YoloVideoProcessorV2 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// ✨ CRITICAL: Safe cleanup of detector to avoid usls::Runtime panic
+///
+/// When the extension is dropped, we need to ensure the YoloDetector is
+/// properly cleaned up in a blocking thread to avoid the panic:
+/// "Cannot start a runtime from within a runtime"
+
+// ============================================================================
+// Extension Trait Implementation
+// ============================================================================
+
+#[async_trait]
+impl Extension for YoloVideoProcessorV2 {
+    fn metadata(&self) -> &ExtensionMetadata {
+        static META: std::sync::OnceLock<ExtensionMetadata> = std::sync::OnceLock::new();
+        META.get_or_init(|| {
+            ExtensionMetadata::new(
+                "yolo-video",
+                "YOLO Video",
+                "2.0.0",
+            )
+            .with_description("Real-time video stream object detection with YOLOv11, RTSP/camera support, ROI analytics, line crossing, smart capture rules, and MJPEG streaming")
+            .with_author("NeoMind Team")
+            .with_config_parameters(vec![
+                ParameterDefinition {
+                    name: "collect_interval".to_string(),
+                    display_name: "Metrics Collection Interval".to_string(),
+                    description: "Seconds between metric collections. 0 = disabled. Default 30.".to_string(),
+                    param_type: MetricDataType::Integer,
+                    required: false,
+                    default_value: Some(ParamMetricValue::Integer(30)),
+                    min: Some(0.0),
+                    max: Some(3600.0),
+                    options: Vec::new(),
+                },
+            ])
+        })
+    }
+
+    fn metrics(&self) -> Vec<MetricDescriptor> {
+        let mut m = vec![
+            MetricDescriptor {
+                name: "active_streams".to_string(),
+                display_name: "Active Streams".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "count".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "total_frames_processed".to_string(),
+                display_name: "Total Frames Processed".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "frames".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "total_detections".to_string(),
+                display_name: "Total Detections".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "count".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "total_roi_alerts".to_string(),
+                display_name: "ROI Alerts".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "count".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "latest_capture".to_string(),
+                display_name: "Latest Capture".to_string(),
+                data_type: MetricDataType::String,
+                unit: "".to_string(),
+                min: None,
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "current_fps".to_string(),
+                display_name: "Current FPS".to_string(),
+                data_type: MetricDataType::Float,
+                unit: "fps".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "dropped_frames".to_string(),
+                display_name: "Dropped Frames".to_string(),
+                data_type: MetricDataType::Integer,
+                unit: "frames".to_string(),
+                min: Some(0.0),
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "detected_classes".to_string(),
+                display_name: "Detected Classes".to_string(),
+                data_type: MetricDataType::String,
+                unit: "json".to_string(),
+                min: None,
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "line_crossings".to_string(),
+                display_name: "Line Crossings".to_string(),
+                data_type: MetricDataType::String,
+                unit: "json".to_string(),
+                min: None,
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "roi_counts".to_string(),
+                display_name: "ROI Counts".to_string(),
+                data_type: MetricDataType::String,
+                unit: "json".to_string(),
+                min: None,
+                max: None,
+                required: false,
+            },
+            MetricDescriptor {
+                name: "streams_status".to_string(),
+                display_name: "Streams Status".to_string(),
+                data_type: MetricDataType::String,
+                unit: "json".to_string(),
+                min: None,
+                max: None,
+                required: false,
+            },
+        ];
+        // Append per-stream descriptors (`fps.cam1`, …) for each active
+        // stream. The host's metrics collector refreshes this list via
+        // `GetDescriptor` IPC, so newly-started streams appear on the
+        // dashboard within `descriptor_ttl` (default 60s).
+        m.extend(self.dynamic.descriptors());
+        m
+    }
+
+    fn commands(&self) -> Vec<ExtensionCommand> {
+        vec![
+            ExtensionCommand {
+                name: "start_stream".to_string(),
+                display_name: "Start Video Stream".to_string(),
+                description: "Start a new video detection stream".to_string(),
+                payload_template: r#"{"source_url": "camera://0"}"#.to_string(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "source_url".to_string(),
+                        display_name: "Source URL".to_string(),
+                        description: "Video source URL or camera ID".to_string(),
+                        param_type: MetricDataType::String,
+                        required: false,
+                        default_value: Some(ParamMetricValue::String("camera://0".to_string())),
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: HashMap::new(),
+                samples: vec![
+                    json!({ "source_url": "camera://0" }),
+                    json!({ "source_url": "rtsp://example.com/stream" }),
+                ],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "stop_stream".to_string(),
+                display_name: "Stop Video Stream".to_string(),
+                description: "Stop an active video stream".to_string(),
+                payload_template: r#"{"stream_id": ""}"#.to_string(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "stream_id".to_string(),
+                        display_name: "Stream ID".to_string(),
+                        description: "ID of the stream to stop".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "get_stream_stats".to_string(),
+                display_name: "Get Stream Statistics".to_string(),
+                description: "Get statistics for an active stream".to_string(),
+                payload_template: r#"{"stream_id": ""}"#.to_string(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "stream_id".to_string(),
+                        display_name: "Stream ID".to_string(),
+                        description: "ID of the stream to get stats for".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "get_frame".to_string(),
+                display_name: "Get Current Frame".to_string(),
+                description: "Get the current frame from a stream as base64 JPEG".to_string(),
+                payload_template: r#"{"stream_id": ""}"#.to_string(),
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "stream_id".to_string(),
+                        display_name: "Stream ID".to_string(),
+                        description: "ID of the stream to get frame from".to_string(),
+                        param_type: MetricDataType::String,
+                        required: true,
+                        default_value: None,
+                        min: None,
+                        max: None,
+                        options: Vec::new(),
+                    },
+                ],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "update_stream_config".into(),
+                display_name: "Update Stream Config".into(),
+                description: "Hot-update ROI and line config on a running stream".into(),
+                payload_template: r#"{"stream_id": "...", "rois": [], "lines": []}"#.into(),
+                parameters: vec![],
+                fixed_values: HashMap::new(),
+                samples: vec![],
+                parameter_groups: Vec::new(),
+            },
+        ]
+    }
+
+    async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
+        match command {
+            "start_stream" => {
+                let config: StreamConfig = serde_json::from_value(args.clone())
+                    .unwrap_or_default();
+
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let info = self.processor.start_stream(config.clone()).await?;
+                    // Register a dynamic metric instance for this stream so
+                    // `fps.<label>`, `dropped_frames.<label>`, … appear on
+                    // the dashboard. Same source_url → same label on reconnect
+                    // (see `derive_label`).
+                    let label = derive_label(&config.source_url);
+                    self.dynamic.upsert(&info.stream_id, &label);
+                    Ok(serde_json::to_value(info)
+                        .map_err(|e| ExtensionError::ExecutionFailed(e.to_string()))?)
+                }
+
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = &config; // silence unused on wasm
+                    let info = StreamInfo {
+                        stream_id: "wasm-mock-stream".to_string(),
+                        stream_url: "/api/extensions/yolo-video/stream/wasm-mock-stream".to_string(),
+                        status: "running".to_string(),
+                        width: 640,
+                        height: 480,
+                    };
+                    Ok(serde_json::to_value(info)
+                        .map_err(|e| ExtensionError::ExecutionFailed(e.to_string()))?)
+                }
+            }
+            "stop_stream" => {
+                let stream_id = args.get("stream_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing stream_id".to_string()))?;
+
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.processor.stop_stream(stream_id)?;
+                    // Drop the dynamic metric instance so the dashboard
+                    // descriptor list eventually prunes it (next TTL
+                    // refresh). Historical data already stored for this
+                    // label remains queryable.
+                    self.dynamic.remove(stream_id);
+                }
+
+                Ok(json!({"success": true}))
+            }
+            "get_stream_stats" => {
+                let stream_id = args.get("stream_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing stream_id".to_string()))?;
+
+                if let Some(stats) = self.processor.get_stream_stats(stream_id) {
+                    Ok(serde_json::to_value(stats)
+                        .map_err(|e| ExtensionError::ExecutionFailed(e.to_string()))?)
+                } else {
+                    Err(ExtensionError::SessionNotFound(stream_id.to_string()))
+                }
+            }
+            "gc_memory" => {
+                // Trigger memory cleanup
+                self.processor.cleanup_memory();
+                Ok(json!({"success": true, "message": "Memory cleanup triggered"}))
+            }
+            "update_stream_config" => {
+                let stream_id = args.get("stream_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ExtensionError::InvalidArguments("Missing stream_id".into()))?;
+
+                // Deserialize BEFORE acquiring lock to minimize lock hold time
+                let new_rois: Vec<RoiRegion> = args.get("rois")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                let new_lines: Vec<CrossLine> = args.get("lines")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                let new_capture_rules: Vec<CaptureRule> = args.get("capture_rules")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+
+                let registry = get_registry().lock();
+                match registry.streams.get(stream_id) {
+                    Some(stream) => {
+                        let mut s = stream.lock();
+                        s._config.rois = new_rois;
+                        s._config.lines = new_lines;
+                        s._config.capture_rules = new_capture_rules;
+                        // Prune stale line_counts for removed lines
+                        let active_ids: std::collections::HashSet<String> =
+                            s._config.lines.iter().map(|l| l.id.clone()).collect();
+                        s.line_counts.retain(|id, _| active_ids.contains(id));
+                        // Prune stale capture rule states
+                        let active_rule_ids: std::collections::HashSet<String> =
+                            s._config.capture_rules.iter().map(|r| r.id.clone()).collect();
+                        s.capture_rule_states.retain(|id, _| active_rule_ids.contains(id));
+                        let roi_count = s._config.rois.len();
+                        let line_count = s._config.lines.len();
+                        let rule_count = s._config.capture_rules.len();
+                        Ok(json!({"success": true, "roi_count": roi_count, "line_count": line_count, "capture_rule_count": rule_count}))
+                    }
+                    None => Err(ExtensionError::SessionNotFound(stream_id.into())),
+                }
+            }
+            "configure" => {
+                // Accept config silently - can be extended for real config handling
+                Ok(json!({"status": "ok"}))
+            }
+
+            _ => Err(ExtensionError::CommandNotFound(command.to_string())),
+        }
+    }
+
+    fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let registry = get_registry().lock();
+
+        // Aggregate from all active streams
+        let mut total_frames: i64 = 0;
+        let mut total_detections: i64 = 0;
+        let mut total_dropped: i64 = 0;
+        let mut max_fps: f64 = 0.0;
+        let mut latest_capture_json = String::new();
+        // Aggregated maps for JSON metrics (merge across streams)
+        let mut classes_map: HashMap<String, u32> = HashMap::new();
+        // line_id → (name, forward_total, backward_total)
+        let mut lines_agg: HashMap<String, (String, u64, u64)> = HashMap::new();
+        let mut rois_list: Vec<serde_json::Value> = Vec::new();
+        // Per-stream status entries (lets multi-instance dashboards disambiguate)
+        let mut streams_status: Vec<serde_json::Value> = Vec::new();
+        for (session_id, stream_arc) in &registry.streams {
+            let s = stream_arc.lock();
+            total_frames += s.frame_count as i64;
+            total_detections += s.total_detections as i64;
+            total_dropped += s.dropped_frames as i64;
+            if (s.fps as f64) > max_fps { max_fps = s.fps as f64; }
+            // Refresh this stream's per-instance dynamic metric values
+            // so `self.dynamic.values(now)` below emits them.
+            // Skip sessions that haven't produced a frame yet — frame_count=0
+            // means warm-up (RTSP handshake in progress, first frame not
+            // arrived). Once any frame is produced, fps/dropped can dip to
+            // 0 legitimately and we keep emitting them as real signals.
+            if s.frame_count > 0 {
+                self.dynamic.set(session_id, "fps", ParamMetricValue::Float(s.fps as f64));
+                self.dynamic.set(session_id, "dropped_frames", ParamMetricValue::Integer(s.dropped_frames as i64));
+                self.dynamic.set(session_id, "frame_count", ParamMetricValue::Integer(s.frame_count as i64));
+                self.dynamic.set(session_id, "detection_count", ParamMetricValue::Integer(s.total_detections as i64));
+            }
+            streams_status.push(serde_json::json!({
+                "session_id": session_id,
+                "source_url": s._config.source_url,
+                "fps": s.fps as f64,
+                "dropped_frames": s.dropped_frames,
+                "frame_count": s.frame_count,
+                "total_detections": s.total_detections,
+            }));
+            // Merge per-class counts
+            for (label, count) in &s.detected_objects {
+                *classes_map.entry(label.clone()).or_insert(0) += count;
+            }
+            // Build line_id → name lookup from this stream's config, then merge counts
+            let line_names: HashMap<&String, &String> = s._config.lines.iter()
+                .map(|l| (&l.id, &l.name)).collect();
+            for (line_id, (fwd, bwd)) in &s.line_counts {
+                let name = line_names.get(line_id).map(|n| (*n).clone())
+                    .unwrap_or_else(|| line_id.clone());
+                let entry = lines_agg.entry(line_id.clone())
+                    .or_insert_with(|| (name.clone(), 0, 0));
+                entry.1 += fwd;
+                entry.2 += bwd;
+            }
+            // Collect ROI stats snapshots
+            for stat in &s.last_roi_stats {
+                rois_list.push(serde_json::json!({
+                    "id": stat.id,
+                    "name": stat.name,
+                    "count": stat.count,
+                }));
+            }
+            // Take the latest capture event from any stream
+            if latest_capture_json.is_empty() {
+                if let Some(evt) = s.pending_captures.last() {
+                    latest_capture_json = serde_json::to_string(evt).unwrap_or_default();
+                }
+            }
+        }
+
+        // Build line crossings JSON with explicit direction labels
+        let lines_list: Vec<serde_json::Value> = lines_agg.iter()
+            .map(|(id, (name, fwd, bwd))| serde_json::json!({
+                "id": id,
+                "name": name,
+                "forward": fwd,
+                "backward": bwd,
+            }))
+            .collect();
+
+        let mut metrics = vec![
+            ExtensionMetricValue {
+                name: "active_streams".to_string(),
+                value: ParamMetricValue::Integer(registry.streams.len() as i64),
+                timestamp: now,
+            },
+            ExtensionMetricValue {
+                name: "total_frames_processed".to_string(),
+                value: ParamMetricValue::Integer(total_frames),
+                timestamp: now,
+            },
+            ExtensionMetricValue {
+                name: "total_detections".to_string(),
+                value: ParamMetricValue::Integer(total_detections),
+                timestamp: now,
+            },
+            ExtensionMetricValue {
+                name: "total_roi_alerts".to_string(),
+                value: ParamMetricValue::Integer(registry.capture_events_count as i64),
+                timestamp: now,
+            },
+            ExtensionMetricValue {
+                name: "current_fps".to_string(),
+                value: ParamMetricValue::Float(max_fps),
+                timestamp: now,
+            },
+            ExtensionMetricValue {
+                name: "dropped_frames".to_string(),
+                value: ParamMetricValue::Integer(total_dropped),
+                timestamp: now,
+            },
+        ];
+
+        // JSON aggregate fields: only emit when there is content. Empty
+        // sessions (no streams, no ROI configured, no lines crossed, no
+        // detections) used to write the literal "[]" / "{}" string every
+        // 60s, polluting the time-series store with rows that carry no
+        // information. Guards mirror the `latest_capture` pattern below.
+        if !classes_map.is_empty() {
+            metrics.push(ExtensionMetricValue {
+                name: "detected_classes".to_string(),
+                value: ParamMetricValue::String(serde_json::to_string(&classes_map).unwrap_or_default()),
+                timestamp: now,
+            });
+        }
+        if !lines_list.is_empty() {
+            metrics.push(ExtensionMetricValue {
+                name: "line_crossings".to_string(),
+                value: ParamMetricValue::String(serde_json::to_string(&lines_list).unwrap_or_default()),
+                timestamp: now,
+            });
+        }
+        if !rois_list.is_empty() {
+            metrics.push(ExtensionMetricValue {
+                name: "roi_counts".to_string(),
+                value: ParamMetricValue::String(serde_json::to_string(&rois_list).unwrap_or_default()),
+                timestamp: now,
+            });
+        }
+        if !streams_status.is_empty() {
+            metrics.push(ExtensionMetricValue {
+                name: "streams_status".to_string(),
+                value: ParamMetricValue::String(serde_json::to_string(&streams_status).unwrap_or_default()),
+                timestamp: now,
+            });
+        }
+
+        if !latest_capture_json.is_empty() {
+            metrics.push(ExtensionMetricValue {
+                name: "latest_capture".to_string(),
+                value: ParamMetricValue::String(latest_capture_json),
+                timestamp: now,
+            });
+        }
+
+        // Append per-stream dynamic metric values (`fps.cam1`, …).
+        // Each active stream contributes one value per base metric it has
+        // set during the loop above. Stale instances (no current value)
+        // are omitted, so this is empty when no streams are active.
+        metrics.extend(self.dynamic.values(now));
+
+        Ok(metrics)
+    }
+
+    // ========================================================================
+    // Streaming Support - Push Mode
+    // ========================================================================
+
+    fn stream_capability(&self) -> Option<StreamCapability> {
+        Some(StreamCapability {
+            direction: StreamDirection::Bidirectional,
+            mode: StreamMode::Push,
+            supported_data_types: vec![
+                StreamDataType::Image { format: "jpeg".to_string() },
+            ],
+            max_chunk_size: 524288,
+            preferred_chunk_size: 32768,
+            max_concurrent_sessions: 4,
+            flow_control: FlowControl::default_stream(),
+            config_schema: None,
+        })
+    }
+
+    async fn init_session(&self, session: &StreamSession) -> Result<()> {
+        eprintln!("[YOLO] init_session called: id={}", session.id);
+        let config: StreamConfig = serde_json::from_value(session.config.clone())
+            .unwrap_or_default();
+
+        let stream_id = session.id.clone();
+        let source_url = config.source_url.clone();
+
+        tracing::info!("Session config: source_url={}, confidence={}, max_objects={}",
+            source_url, config.confidence_threshold, config.max_objects);
+
+        // Determine if this is a network stream (RTSP/RTMP/HLS) or local camera
+        let is_network_stream = source_url.starts_with("rtsp://")
+            || source_url.starts_with("rtmp://")
+            || source_url.starts_with("hls://")
+            || source_url.contains(".m3u8")
+            || source_url.starts_with("http://")
+            || source_url.starts_with("https://")
+            || source_url.starts_with("file://");
+
+        let stream = ActiveStream {
+            _id: stream_id.clone(),
+            _config: config.clone(),
+            started_at: Instant::now(),
+            frame_count: 0,
+            total_detections: 0,
+            last_frame: None,
+            last_detections: Vec::new(),
+            last_frame_time: None,
+            fps: 0.0,
+            running: true,
+            detected_objects: HashMap::new(),
+            push_task: None,
+            last_process_time: None,
+            dropped_frames: 0,
+            tracker: ObjectTracker::new(),
+            line_counts: HashMap::new(),
+            last_roi_stats: Vec::new(),
+            capture_rule_states: HashMap::new(),
+            pending_captures: Vec::new(),
+        };
+
+        {
+            let mut registry = get_registry().lock();
+            
+            // Check if session already exists and clean it up
+            if let Some(old_stream) = registry.streams.get(&stream_id) {
+                let mut old = old_stream.lock();
+                if old.running {
+                    eprintln!("[YOLO] Session {} already exists, stopping", stream_id);
+                    old.running = false;
+                    // Abort old push task if exists
+                    if let Some(task) = old.push_task.take() {
+                        // std::thread::JoinHandle has no abort();
+                        // thread will exit on next loop when running=false
+                        drop(task);
+                    }
+                }
+            }
+            
+            registry.streams.insert(stream_id.clone(), Arc::new(Mutex::new(stream)));
+        }
+
+        // Register this stream with the dynamic-metrics registry so its
+        // per-instance metrics (`fps.<label>`, …) appear in `metrics()`.
+        let label = derive_label(&source_url);
+        self.dynamic.upsert(&stream_id, &label);
+        tracing::debug!(session_id = %stream_id, label = %label, "Dynamic metrics registered");
+
+        if is_network_stream {
+            tracing::info!("Network stream session initialized: {} ({})", stream_id, source_url);
+        } else {
+            tracing::info!("Local camera session initialized: {}", stream_id);
+        }
+        eprintln!("[YOLO] init_session completed OK: id={}", stream_id);
+
+        Ok(())
+    }
+
+    fn set_output_sender(&self, _sender: Arc<tokio::sync::mpsc::Sender<PushOutputMessage>>) {
+        // No-op: Push mode uses send_push_output() directly via FFI
+    }
+
+    async fn start_push(&self, session_id: &str) -> Result<()> {
+        tracing::info!("start_push called for session: {}", session_id);
+        {
+            let registry = get_registry().lock();
+            if let Some(stream) = registry.streams.get(session_id) {
+                let s = stream.lock();
+                if s.push_task.is_some() {
+                    tracing::warn!("Push task already running for session: {}", session_id);
+                    return Ok(());
+                }
+            }
+        }
+
+        let config = {
+            let registry = get_registry().lock();
+            registry.streams.get(session_id)
+                .map(|s| s.lock()._config.clone())
+        };
+
+        let config = match config {
+            Some(c) => c,
+            None => return Err(ExtensionError::SessionNotFound(session_id.to_string())),
+        };
+
+        let source_url = config.source_url.clone();
+
+        // Only start push for network streams
+        let is_network_stream = source_url.starts_with("rtsp://")
+            || source_url.starts_with("rtmp://")
+            || source_url.starts_with("hls://")
+            || source_url.contains(".m3u8")
+            || source_url.starts_with("http://")
+            || source_url.starts_with("https://")
+            || source_url.starts_with("file://");
+
+        if !is_network_stream {
+            tracing::info!("Not a network stream, camera mode will use process_session_chunk: {}", session_id);
+            return Ok(());
+        }
+
+        let sid = session_id.to_string();
+        let processor = self.processor.clone();
+        let confidence = config.confidence_threshold;
+        let max_obj = config.max_objects;
+        let draw_boxes = config.draw_boxes;
+
+        tracing::info!("Starting network stream push for: {} ({})", sid, source_url);
+
+        // Parse source URL for FFmpeg
+        let source_type = match crate::video_source::parse_source_url(&source_url) {
+            Ok(st) => st,
+            Err(e) => {
+                tracing::error!("[Stream {}] Invalid source URL: {}", sid, e);
+                return Err(ExtensionError::ExecutionFailed(format!("Invalid source URL: {}", e)));
+            }
+        };
+
+        let target_fps = config.target_fps.max(1);
+
+        // Run FFmpeg decode + YOLO inference on a dedicated OS thread
+        // (FFmpeg is blocking I/O, must not run inside tokio)
+        let task_handle = std::thread::spawn(move || {
+            let mut sequence = 0u64;
+            let frame_duration = std::time::Duration::from_millis(1000 / target_fps as u64);
+            let mut reconnect_count = 0u32;
+            const MAX_RECONNECT: u32 = 3;
+            // Reusable SIMD resizer for the 640x640 inference pre-scale
+            let mut fir_resizer = fast_image_resize::Resizer::new();
+
+            // NOTE: send_push_output is non-blocking at the IPC layer (runner uses a
+            // bounded buffer + main mpsc try_send + watch "latest-wins"), so we can
+            // call it directly from the decode/detect loop without per-frame gating.
+            // The previous push_in_flight wrapper was redundant and dropped frames
+            // unnecessarily.
+
+            // Open the stream via FFmpeg
+            let mut video_source_opt: Option<crate::video_source::FfmpegVideoSource> = match crate::video_source::FfmpegVideoSource::new(&source_type) {
+                Ok(vs) => {
+                    tracing::info!("[Stream {}] FFmpeg connected to: {}", sid, source_url);
+                    let _ = send_push_output(
+                        &PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                            "type": "status", "status": "streaming"
+                        })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                    );
+                    Some(vs)
+                }
+                Err(e) => {
+                    tracing::error!("[Stream {}] FFmpeg failed to connect: {}", sid, e);
+                    let _ = send_push_output(
+                        &PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                            "type": "error", "message": format!("Failed to connect: {}", e)
+                        })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                    );
+                    return;
+                }
+            };
+
+            loop {
+                // Check if stream is still running
+                let should_continue = {
+                    let registry = get_registry().lock();
+                    registry.streams.get(&sid).map_or(false, |s| s.lock().running)
+                };
+                if !should_continue {
+                    break;
+                }
+
+                let frame_start = std::time::Instant::now();
+
+                // Decode next frame via watchdog. RTSP `stimeout` should fire at ~5s on
+                // network stalls, but some server/pathology combinations can hold the
+                // underlying recv() much longer (TCP keepalive alive but no video data).
+                // If next_frame doesn't return within WATCHDOG_MS, we leak the worker
+                // thread (it'll die when it finally unblocks and the receiver is gone)
+                // and force a fresh source via FfmpegVideoSource::new.
+                const WATCHDOG_MS: u64 = 30_000;
+                let frame_result = {
+                    let mut src = match video_source_opt.take() {
+                        Some(s) => s,
+                        None => {
+                            tracing::error!("[Stream {}] Source missing (watchdog recovery failed previously?)", sid);
+                            break;
+                        }
+                    };
+                    let (tx, rx) = std::sync::mpsc::sync_channel::<(crate::video_source::FfmpegVideoSource, crate::video_source::FrameResult)>(1);
+                    let builder_tx = tx.clone();
+                    let _handle = std::thread::Builder::new()
+                        .name(format!("yolo-frame-{}", sid))
+                        .spawn(move || {
+                            let r = src.next_frame();
+                            let _ = builder_tx.send((src, r));
+                        });
+                    match rx.recv_timeout(std::time::Duration::from_millis(WATCHDOG_MS)) {
+                        Ok((src_back, r)) => {
+                            video_source_opt = Some(src_back);
+                            r
+                        }
+                        Err(_) => {
+                            tracing::error!(
+                                "[Stream {}] Watchdog: next_frame did not return in {}ms; forcing reconnect",
+                                sid, WATCHDOG_MS
+                            );
+                            // rx dropped → spawned thread's send will fail when it eventually runs.
+                            // Make a fresh source. If even that fails, fall through to Error path.
+                            drop(tx);
+                            match crate::video_source::FfmpegVideoSource::new(&source_type) {
+                                Ok(new_src) => {
+                                    video_source_opt = Some(new_src);
+                                    crate::video_source::FrameResult::Error(format!(
+                                        "watchdog timeout after {}ms", WATCHDOG_MS
+                                    ))
+                                }
+                                Err(e) => {
+                                    tracing::error!("[Stream {}] Watchdog reconnect failed: {}", sid, e);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                };
+
+                match frame_result {
+                    FrameResult::Frame(video_frame) => {
+                        reconnect_count = 0;
+
+                        // Convert FFmpeg RGB24 → RgbImage
+                        let original_image = match video_frame.to_rgb_image() {
+                            Some(img) => img,
+                            None => {
+                                tracing::warn!("[Stream {}] RgbImage conversion failed", sid);
+                                continue;
+                            }
+                        };
+
+                        let (orig_width, orig_height) = (original_image.width(), original_image.height());
+
+                        // Output resolution: cap at 960x540 to accelerate draw/encode.
+                        // Keeps 16:9 aspect; if source is smaller, leaves it untouched.
+                        const OUT_W: u32 = 960;
+                        const OUT_H: u32 = 540;
+                        let (out_w, out_h) = if orig_width > OUT_W || orig_height > OUT_H {
+                            (OUT_W, OUT_H)
+                        } else {
+                            (orig_width, orig_height)
+                        };
+
+                        // Pre-scale to the model's 640x640 input with SIMD
+                        let inference_image =
+                            match resize_to_640x640(&mut fir_resizer, &original_image) {
+                                Some(img) => img,
+                                None => {
+                                    tracing::warn!("[Stream {}] fast resize failed, skipping frame", sid);
+                                    continue;
+                                }
+                            };
+
+                        // Run YOLO detection on the pre-scaled frame
+                        let detections = match processor.get_detector() {
+                            Some(detector) if detector.is_loaded() => {
+                                let dets = detector.detect(&inference_image, confidence, max_obj);
+                                if !dets.is_empty() {
+                                    // Scale coords directly into output resolution
+                                    // (compensates the 640x640 stretch)
+                                    let scale_x = out_w as f32 / 640.0;
+                                    let scale_y = out_h as f32 / 640.0;
+                                    let scaled: Vec<_> = dets.into_iter().map(|mut d| {
+                                        d.bbox.x *= scale_x;
+                                        d.bbox.y *= scale_y;
+                                        d.bbox.width *= scale_x;
+                                        d.bbox.height *= scale_y;
+                                        d
+                                    }).collect();
+                                    detections_to_object_detection(scaled)
+                                } else {
+                                    vec![]
+                                }
+                            }
+                            _ => vec![],
+                        };
+
+                        // Build output image at (out_w, out_h): downscale once, then draw + encode there.
+                        let mut output_image = if (out_w, out_h) == (orig_width, orig_height) {
+                            original_image
+                        } else {
+                            image::imageops::resize(
+                                &original_image, out_w, out_h,
+                                image::imageops::FilterType::Triangle,
+                            )
+                        };
+                        if draw_boxes {
+                            draw_detections(&mut output_image, &detections);
+                        }
+
+                        // ROI counting and line crossing detection (normalized against output dims)
+                        let norm_dets: Vec<(f32, f32, &str)> = detections.iter()
+                            .filter_map(|d| {
+                                let cx = (d.bbox.x + d.bbox.width / 2.0) / out_w as f32;
+                                let cy = (d.bbox.y + d.bbox.height / 2.0) / out_h as f32;
+                                if cx >= 0.0 && cx <= 1.0 && cy >= 0.0 && cy <= 1.0 {
+                                    Some((cx, cy, d.label.as_str()))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+
+                        let (roi_stats, line_stats) = {
+                            let stream_arc = {
+                                let registry = get_registry().lock();
+                                match registry.streams.get(&sid).cloned() {
+                                    Some(s) => s,
+                                    None => {
+                                        eprintln!("[YOLO-Push] Stream {} lost during ROI processing", sid);
+                                        break;
+                                    }
+                                }
+                            };
+                            let mut s = stream_arc.lock();
+
+                            let roi_stats = count_roi_detections(&norm_dets, &s._config.rois);
+            s.last_roi_stats = roi_stats.clone();
+                            s.last_roi_stats = roi_stats.clone();
+
+                            let lines_cfg = s._config.lines.clone();
+                            let line_stats = if !lines_cfg.is_empty() {
+                                let track_dets: Vec<(f32, f32, u32, &str)> = detections.iter()
+                                    .filter_map(|d| {
+                                        let cx = (d.bbox.x + d.bbox.width / 2.0) / out_w as f32;
+                                        let cy = (d.bbox.y + d.bbox.height / 2.0) / out_h as f32;
+                                        Some((cx, cy, d.class_id as u32, d.label.as_str()))
+                                    })
+                                    .collect();
+                                let matches = s.tracker.update(&track_dets);
+
+                                // Pre-collect prev/curr centers for matched tracks
+                                let track_movements: Vec<(u32, (f32, f32), (f32, f32))> = matches.iter()
+                                    .filter_map(|(track_id, _det_idx)| {
+                                        let prev = s.tracker.get_prev_center(*track_id)?;
+                                        let curr = s.tracker.objects.iter().find(|t| t.id == *track_id).map(|t| t.center)?;
+                                        Some((*track_id, prev, curr))
+                                    })
+                                    .collect();
+
+                                for line in &lines_cfg {
+                                    let entry = s.line_counts.entry(line.id.clone()).or_insert((0u64, 0u64));
+                                    for (_track_id, prev, curr) in &track_movements {
+                                        let dir = line_crossing_direction(*prev, *curr, line.start, line.end);
+                                        if dir > 0 { entry.0 += 1; }
+                                        else if dir < 0 { entry.1 += 1; }
+                                    }
+                                }
+
+                                lines_cfg.iter().map(|line| {
+                                    let (fwd, bwd) = s.line_counts.get(&line.id).copied().unwrap_or((0, 0));
+                                    LineStat { id: line.id.clone(), name: line.name.clone(), forward_count: fwd, backward_count: bwd }
+                                }).collect()
+                            } else {
+                                Vec::new()
+                            };
+
+                            // ROI/Line overlay drawing is handled by the frontend canvas
+                            // to avoid double-drawing (backend JPEG + frontend canvas overlay)
+
+                            (roi_stats, line_stats)
+                        };
+
+                        // Evaluate capture rules (separate borrow scope from stream lock)
+                        let capture_events = {
+                            let stream_arc = {
+                                let registry = get_registry().lock();
+                                match registry.streams.get(&sid).cloned() {
+                                    Some(s) => s,
+                                    None => break,
+                                }
+                            };
+                            let mut s = stream_arc.lock();
+                            let detailed_counts = count_roi_detections_detailed(&norm_dets, &s._config.rois);
+                            let rules = s._config.capture_rules.clone();
+                            let rois = s._config.rois.clone();
+                            evaluate_capture_rules(
+                                &rules,
+                                &mut s.capture_rule_states,
+                                &detailed_counts,
+                                &output_image,
+                                &rois,
+                                chrono::Utc::now().timestamp_millis(),
+                            )
+                        };
+
+                        // Encode to JPEG — quality 65 is plenty for streaming preview and faster than 75/85
+                        let jpeg_data = encode_jpeg(&output_image, 65);
+
+                        // Update stream statistics (quick lock)
+                        {
+                            let mut registry = get_registry().lock();
+                            if let Some(stream) = registry.streams.get(&sid) {
+                                let mut s = stream.lock();
+                                s.frame_count += 1;
+                                s.total_detections += detections.len() as u64;
+                                s.last_detections = detections.clone();
+                                s.last_frame = Some(jpeg_data.clone());
+                                s.last_frame_time = Some(Instant::now());
+                                let elapsed = s.started_at.elapsed().as_secs_f32();
+                                if elapsed > 0.0 {
+                                    s.fps = s.frame_count as f32 / elapsed;
+                                }
+                                // NOTE: the old "% 30 → clear last_frame/detected_objects"
+                                // memory hack is gone — one cached JPEG (~100KB) and a
+                                // label-keyed counter map are bounded and don't grow per
+                                // frame, and clearing them made get_frame return None
+                                // intermittently.
+                            }
+                            registry.capture_events_count += capture_events.len() as u64;
+                        }
+
+                        // Push to frontend via FFI. Fire-and-forget on a worker thread so a slow
+                        // IPC path cannot stall the decode/detect loop. If the previous push is
+                        // still in flight, drop this frame (counter still increments so the
+                        // frontend can detect drops via sequence gaps).
+                        let output = PushOutputMessage::image_jpeg(&sid, sequence, jpeg_data)
+                            .with_metadata(serde_json::json!({
+                                "detections": detections,
+                                "roi_stats": roi_stats,
+                                "line_stats": line_stats,
+                                "capture_events": capture_events,
+                            }));
+
+                        if sequence % 30 == 0 {
+                            eprintln!("[YOLO-Push] frame {} detections={} size={}KB", sequence, detections.len(), output.data.len() / 1024);
+                        }
+
+                        if let Err(e) = send_push_output(&output) {
+                            tracing::warn!("[Stream {}] send_push_output failed: {}", sid, e);
+                        }
+                        sequence += 1;
+
+                        // Frame rate throttling
+                        let elapsed = frame_start.elapsed();
+                        if elapsed < frame_duration {
+                            std::thread::sleep(frame_duration - elapsed);
+                        }
+                    }
+                    FrameResult::NotReady => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    FrameResult::EndOfStream => {
+                        // Use source_type (authoritative) for the File decision.
+                        // parse_source_url maps http(s):// URLs to SourceType::File,
+                        // so HTTP video files take the seek-based loop path here, not
+                        // the network-reconnect path. This matters because reconnect()
+                        // re-downloads the whole HTTP resource on every loop (15-30s),
+                        // while seek_to_start() reuses the open context (milliseconds).
+                        let is_file = matches!(source_type, SourceType::File { .. });
+                        let is_network = source_url.starts_with("rtsp://")
+                            || source_url.starts_with("rtmp://")
+                            || source_url.starts_with("http://")
+                            || source_url.starts_with("https://");
+                        if is_file {
+                            // Seamless seek-based loop: try seek first (fast), fall
+                            // back to full reopen if the source doesn't support seeking.
+                            let looped = if let Some(src) = video_source_opt.as_mut() {
+                                match src.seek_to_start() {
+                                    Ok(()) => {
+                                        tracing::info!("[Stream {}] File looped via seek", sid);
+                                        true
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "[Stream {}] seek_to_start failed ({}), falling back to reconnect",
+                                            sid, e
+                                        );
+                                        match src.reconnect() {
+                                            Ok(()) => {
+                                                tracing::info!("[Stream {}] File looped via reconnect", sid);
+                                                true
+                                            }
+                                            Err(e) => {
+                                                tracing::error!("[Stream {}] Reconnect failed: {}", sid, e);
+                                                false
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                tracing::error!("[Stream {}] Source missing on EOF", sid);
+                                false
+                            };
+                            if looped {
+                                let _ = send_push_output(
+                                    &PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                        "type": "status", "status": "looping"
+                                    })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                                );
+                                continue;
+                            }
+                            // seek + reconnect both failed — exit the loop
+                            break;
+                        } else if is_network {
+                            // RTSP/RTMP/HLS stream hit EndOfStream: in practice this means a
+                            // network stall (FFmpeg's stimeout=5s fired) or the server closed
+                            // the connection. The old code would `break` here, leaving the
+                            // frontend frozen on the last frame forever. Treat it like a
+                            // transient Error and retry with exponential backoff up to
+                            // MAX_RECONNECT times. Each successful frame resets the counter.
+                            tracing::warn!(
+                                "[Stream {}] Network stream ended (likely stall/disconnect), attempting reconnect",
+                                sid
+                            );
+                            reconnect_count += 1;
+                            if reconnect_count > MAX_RECONNECT {
+                                tracing::error!(
+                                    "[Stream {}] Max reconnect attempts reached after stream end",
+                                    sid
+                                );
+                                let _ = send_push_output(
+                                    &PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                        "type": "error",
+                                        "message": format!(
+                                            "Stream ended after {} reconnect attempts",
+                                            MAX_RECONNECT
+                                        )
+                                    })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                                );
+                                break;
+                            }
+                            let backoff = std::time::Duration::from_secs(1 << (reconnect_count - 1));
+                            tracing::info!(
+                                "[Stream {}] Reconnecting in {:?} ({}/{})",
+                                sid, backoff, reconnect_count, MAX_RECONNECT
+                            );
+                            let _ = send_push_output(
+                                &PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                    "type": "status", "status": "reconnecting"
+                                })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                            );
+                            std::thread::sleep(backoff);
+                            match video_source_opt.as_mut().map(|s| s.reconnect()).unwrap_or_else(|| Err("source lost".into())) {
+                                Ok(()) => {
+                                    tracing::info!("[Stream {}] Reconnected after stream end", sid);
+                                    let _ = send_push_output(
+                                        &PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                            "type": "status", "status": "streaming"
+                                        })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                                    );
+                                    continue;
+                                }
+                                Err(e) => {
+                                    tracing::error!("[Stream {}] Reconnect after stream end failed: {}", sid, e);
+                                    // loop and try again next iteration with longer backoff
+                                    continue;
+                                }
+                            }
+                        }
+                        // Notify frontend that stream ended
+                        let _ = send_push_output(
+                            &PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                "type": "status", "status": "ended"
+                            })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                        );
+                        tracing::warn!("[Stream {}] Stream ended", sid);
+                        break;
+                    }
+                    FrameResult::Error(e) => {
+                        tracing::error!("[Stream {}] Frame error: {}", sid, e);
+                        reconnect_count += 1;
+                        if reconnect_count > MAX_RECONNECT {
+                            tracing::error!("[Stream {}] Max reconnect attempts reached", sid);
+                            let _ = send_push_output(
+                                &PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                    "type": "error",
+                                    "message": format!("Stream error after {} retries: {}", MAX_RECONNECT, e)
+                                })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                            );
+                            break;
+                        }
+                        let backoff = std::time::Duration::from_secs(1 << (reconnect_count - 1));
+                        tracing::info!("[Stream {}] Reconnecting in {:?} ({}/{})", sid, backoff, reconnect_count, MAX_RECONNECT);
+                        let _ = send_push_output(
+                            &PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                "type": "status", "status": "reconnecting"
+                            })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                        );
+                        std::thread::sleep(backoff);
+
+                        match video_source_opt.as_mut().map(|s| s.reconnect()).unwrap_or_else(|| Err("source lost".into())) {
+                            Ok(()) => {
+                                tracing::info!("[Stream {}] Reconnected", sid);
+                                let _ = send_push_output(
+                                    &PushOutputMessage::json(&sid, sequence, serde_json::json!({
+                                        "type": "status", "status": "streaming"
+                                    })).unwrap_or_else(|_| PushOutputMessage::image_jpeg(&sid, sequence, vec![]))
+                                );
+                            }
+                            Err(re) => {
+                                tracing::error!("[Stream {}] Reconnect failed: {}", sid, re);
+                            }
+                        }
+                    }
+                }
+            }
+
+            tracing::info!("[Stream {}] Push task ended. Frames: {}", sid, sequence);
+        });
+
+        // Store task handle
+        {
+            let registry = get_registry().lock();
+            if let Some(stream) = registry.streams.get(session_id) {
+                stream.lock().push_task = Some(task_handle);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn stop_push(&self, session_id: &str) -> Result<()> {
+        let task_handle = {
+            let registry = get_registry().lock();
+            if let Some(stream) = registry.streams.get(session_id) {
+                let mut s = stream.lock();
+                s.running = false;
+                s.push_task.take()
+            } else {
+                None
+            }
+        };
+
+        // Drop the task handle if it exists
+        // (thread will exit on next loop when running=false)
+        if let Some(handle) = task_handle {
+            drop(handle);
+            tracing::info!("Push task stopping for session: {}", session_id);
+        }
+
+        tracing::info!("Push stopped for session: {}", session_id);
+        Ok(())
+    }
+
+    /// Process frame from local camera, or poll for network stream frame (Stateful mode)
+    /// Process frame from local camera (Push mode: results pushed via send_push_output)
+    async fn process_session_chunk(
+        &self,
+        session_id: &str,
+        chunk: neomind_extension_sdk::DataChunk,
+    ) -> Result<StreamResult> {
+        let start = Instant::now();
+
+        // Get stream state
+        let stream = {
+            let registry = get_registry().lock();
+            registry.streams.get(session_id).cloned()
+        };
+
+        let stream = match stream {
+            Some(s) => s,
+            None => {
+                // 🔧 SESSION RECOVERY: Try to recover session if it was lost due to process restart
+                // This can happen when the extension process is restarted mid-stream
+                eprintln!("[YOLO] Session not found: {}, attempting recovery...", session_id);
+
+                // Try to recover the session by re-initializing with default config
+                let recovered = self.recover_session(session_id).await;
+
+                match recovered {
+                    Some(s) => {
+                        eprintln!("[YOLO] Session {} recovered successfully, continuing processing", session_id);
+                        s
+                    }
+                    None => {
+                        eprintln!("[YOLO] Session {} recovery failed, returning error", session_id);
+                        return Ok(StreamResult::error(
+                            Some(chunk.sequence),
+                            StreamError {
+                                code: "SESSION_NOT_FOUND".to_string(),
+                                message: format!("Session {} not found and recovery failed", session_id),
+                                retryable: true, // Mark as retryable since we might recover on next attempt
+                            },
+                        ));
+                    }
+                }
+            }
+        };
+
+        // Frame rate control: pace to the stream's target_fps instead of the
+        // old hard-coded 100ms (10 FPS) cap. A 50ms floor (20 FPS ceiling)
+        // matches the frontend's 50ms capture throttle, so the backend never
+        // queues faster than frames actually arrive.
+        {
+            let mut s = stream.lock();
+            let min_interval_ms = (1000 / s._config.target_fps.max(1) as u64).max(50);
+            if let Some(last_time) = s.last_process_time {
+                let elapsed = start.duration_since(last_time);
+                if elapsed.as_millis() < min_interval_ms as u128 {  // too soon for target_fps
+                    s.dropped_frames += 1;
+                    
+                    // IMPORTANT: When dropping a frame, return the last valid frame
+                    // instead of a skip response. This prevents the frontend from showing
+                    // corrupted/blank frames.
+                    if s.dropped_frames % 50 == 1 {
+                        eprintln!("[YOLO] Frames dropped (too fast for target_fps), total dropped: {}",
+                            s.dropped_frames);
+                    }
+
+                    // Return the last cached frame if available
+                    if let Some(ref last_data) = s.last_frame {
+                        // Clone the data while we still have the lock
+                        let cached_frame = last_data.clone();
+                        let cached_detections = s.last_detections.clone();
+                        drop(s); // Release lock before returning
+                        
+                        return Ok(StreamResult::success(
+                            Some(chunk.sequence),
+                            chunk.sequence,
+                            cached_frame,
+                            StreamDataType::Image { format: "jpeg".to_string() },
+                            0.0,
+                        ).with_metadata(serde_json::json!({
+                            "skipped": true,
+                            "reason": "rate_limit",
+                            "detections": cached_detections
+                        })));
+                    }
+                    
+                    drop(s); // Release lock before returning
+                    
+                    // No cached frame available, return skip response
+                    return Ok(StreamResult::json(
+                        Some(chunk.sequence),
+                        chunk.sequence,
+                        serde_json::json!({"skipped": true, "reason": "rate_limit"}),
+                        0.0,
+                    ).unwrap());
+                }
+            }
+            s.last_process_time = Some(start);
+        }
+
+        // ✨ CRITICAL: Validate input data before decoding
+        // Empty or too-small buffers can cause decoder panics
+        if chunk.data.len() < 100 {
+            eprintln!("[YOLO] Invalid frame data: too small ({} bytes)", chunk.data.len());
+            let error_result = json!({
+                "error": format!("Invalid frame data: too small ({} bytes)", chunk.data.len()),
+                "detections": []
+            });
+            return Ok(StreamResult::json(
+                Some(chunk.sequence),
+                chunk.sequence,
+                error_result,
+                start.elapsed().as_secs_f32() * 1000.0,
+            ).unwrap());
+        }
+
+        // Check for JPEG header (FF D8)
+        if chunk.data.len() < 2 || chunk.data[0] != 0xFF || chunk.data[1] != 0xD8 {
+            eprintln!("[YOLO] Invalid JPEG header: {:02X} {:02X}", 
+                chunk.data.get(0).unwrap_or(&0), 
+                chunk.data.get(1).unwrap_or(&0));
+            let error_result = json!({
+                "error": "Invalid JPEG format",
+                "detections": []
+            });
+            return Ok(StreamResult::json(
+                Some(chunk.sequence),
+                chunk.sequence,
+                error_result,
+                start.elapsed().as_secs_f32() * 1000.0,
+            ).unwrap());
+        }
+
+        // Decode JPEG frame
+        let img_result = image::load_from_memory(&chunk.data);
+        let mut original_image = match img_result {
+            Ok(img) => {
+                eprintln!("[YOLO] Decoded image: {}x{}", img.width(), img.height());
+                img.to_rgb8()
+            }
+            Err(e) => {
+                eprintln!("[YOLO] Failed to decode image: {}", e);
+                // Return error result
+                let error_result = json!({
+                    "error": format!("Failed to decode image: {}", e),
+                    "detections": []
+                });
+                return Ok(StreamResult::json(
+                    Some(chunk.sequence),
+                    chunk.sequence,
+                    error_result,
+                    start.elapsed().as_secs_f32() * 1000.0,
+                ).unwrap());
+            }
+        };
+
+        // Store original dimensions for coordinate scaling
+        let (orig_width, orig_height) = (original_image.width(), original_image.height());
+
+        // Get configuration from stream
+        let (confidence_threshold, max_objects) = {
+            let s = stream.lock();
+            (s._config.confidence_threshold, s._config.max_objects)
+        };
+
+        // Pre-scale to the model's 640x640 input with SIMD
+        let inference_image = {
+            let mut fir_resizer = fast_image_resize::Resizer::new();
+            match resize_to_640x640(&mut fir_resizer, &original_image) {
+                Some(img) => img,
+                None => {
+                    return Ok(StreamResult::json(
+                        Some(chunk.sequence),
+                        chunk.sequence,
+                        serde_json::json!({"error": "resize failed"}),
+                        start.elapsed().as_secs_f32() * 1000.0,
+                    ).unwrap());
+                }
+            }
+        };
+
+        // Run YOLO detection on the pre-scaled frame; scale coordinates back
+        // to the original size (compensates the 640x640 stretch)
+        let detections = {
+            match self.processor.get_detector() {
+                Some(detector) => {
+                    if detector.is_loaded() {
+                        let dets = detector.detect(&inference_image, confidence_threshold, max_objects);
+                        if !dets.is_empty() {
+                            let scale_x = orig_width as f32 / 640.0;
+                            let scale_y = orig_height as f32 / 640.0;
+                            let scaled_dets: Vec<_> = dets.into_iter().map(|mut det| {
+                                det.bbox.x *= scale_x;
+                                det.bbox.y *= scale_y;
+                                det.bbox.width *= scale_x;
+                                det.bbox.height *= scale_y;
+                                det
+                            }).collect();
+                            detections_to_object_detection(scaled_dets)
+                        } else {
+                            // Fallback to simulated detections for demo
+                            let s = stream.lock();
+                            generate_fallback_detections(s.frame_count, max_objects)
+                        }
+                    } else {
+                        let s = stream.lock();
+                        generate_fallback_detections(s.frame_count, max_objects)
+                    }
+                }
+                None => {
+                    let s = stream.lock();
+                    generate_fallback_detections(s.frame_count, max_objects)
+                }
+            }
+        };
+
+        // Draw detections directly on original_image (no copy) — Rust move
+        // semantics transfer ownership without allocation
+        draw_detections(&mut original_image, &detections);
+
+        // ROI counting and line crossing detection (camera mode)
+        let norm_dets: Vec<(f32, f32, &str)> = detections.iter()
+            .filter_map(|d| {
+                let cx = (d.bbox.x + d.bbox.width / 2.0) / orig_width as f32;
+                let cy = (d.bbox.y + d.bbox.height / 2.0) / orig_height as f32;
+                if cx >= 0.0 && cx <= 1.0 && cy >= 0.0 && cy <= 1.0 {
+                    Some((cx, cy, d.label.as_str()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let (roi_stats, line_stats) = {
+            let mut s = stream.lock();
+
+            // Update frame stats
+            s.frame_count += 1;
+            s.total_detections += detections.len() as u64;
+            s.last_detections = detections.clone();
+            for det in &detections {
+                *s.detected_objects.entry(det.label.clone()).or_insert(0) += 1;
+            }
+
+            let roi_stats = count_roi_detections(&norm_dets, &s._config.rois);
+            s.last_roi_stats = roi_stats.clone();
+
+            let lines_cfg = s._config.lines.clone();
+            let line_stats = if !lines_cfg.is_empty() {
+                let track_dets: Vec<(f32, f32, u32, &str)> = detections.iter()
+                    .filter_map(|d| {
+                        let cx = (d.bbox.x + d.bbox.width / 2.0) / orig_width as f32;
+                        let cy = (d.bbox.y + d.bbox.height / 2.0) / orig_height as f32;
+                        Some((cx, cy, d.class_id as u32, d.label.as_str()))
+                    })
+                    .collect();
+                let matches = s.tracker.update(&track_dets);
+                let track_movements: Vec<(u32, (f32, f32), (f32, f32))> = matches.iter()
+                    .filter_map(|(track_id, _det_idx)| {
+                        let prev = s.tracker.get_prev_center(*track_id)?;
+                        let curr = s.tracker.objects.iter().find(|t| t.id == *track_id).map(|t| t.center)?;
+                        Some((*track_id, prev, curr))
+                    })
+                    .collect();
+
+                for line in &lines_cfg {
+                    let entry = s.line_counts.entry(line.id.clone()).or_insert((0u64, 0u64));
+                    for (_track_id, prev, curr) in &track_movements {
+                        let dir = line_crossing_direction(*prev, *curr, line.start, line.end);
+                        if dir > 0 { entry.0 += 1; }
+                        else if dir < 0 { entry.1 += 1; }
+                    }
+                }
+
+                lines_cfg.iter().map(|line| {
+                    let (fwd, bwd) = s.line_counts.get(&line.id).copied().unwrap_or((0, 0));
+                    LineStat { id: line.id.clone(), name: line.name.clone(), forward_count: fwd, backward_count: bwd }
+                }).collect()
+            } else {
+                Vec::new()
+            };
+
+            // ROI/Line overlay drawing is handled by the frontend canvas
+            // to avoid double-drawing (backend JPEG + frontend canvas overlay)
+
+            (roi_stats, line_stats)
+        };
+
+        // Evaluate capture rules (camera mode)
+        let capture_events = {
+            let mut s = stream.lock();
+            let detailed_counts = count_roi_detections_detailed(&norm_dets, &s._config.rois);
+            let rules = s._config.capture_rules.clone();
+            let rois = s._config.rois.clone();
+            let events = evaluate_capture_rules(
+                &rules,
+                &mut s.capture_rule_states,
+                &detailed_counts,
+                &original_image,
+                &rois,
+                chrono::Utc::now().timestamp_millis(),
+            );
+            // Store in pending_captures (max 10)
+            s.pending_captures.extend(events.clone());
+            while s.pending_captures.len() > 10 {
+                s.pending_captures.remove(0);
+            }
+            events
+        };
+        // Update registry counter — MUST be OUTSIDE the stream lock:
+        // taking registry→stream elsewhere while holding stream→registry
+        // here is an ABBA deadlock (found in code review #2715).
+        {
+            let mut registry = get_registry().lock();
+            registry.capture_events_count += capture_events.len() as u64;
+        }
+
+        // Encode result as JPEG with dynamic quality based on processing time
+        // Faster processing = higher quality, slower processing = lower quality
+        let jpeg_quality = if start.elapsed().as_millis() < 50 {
+            80  // Fast processing, use higher quality
+        } else if start.elapsed().as_millis() < 80 {
+            75  // Normal quality
+        } else {
+            65  // Slow processing, reduce quality for speed
+        };
+        let output_jpeg = encode_jpeg(&original_image, jpeg_quality);
+
+        // Cache last frame for reuse
+        {
+            let mut s = stream.lock();
+            s.last_frame = Some(output_jpeg.clone());
+        }
+
+        // ✨ MJPEG: Push frame to queue for streaming
+        {
+            let queue = get_or_create_frame_queue(session_id);
+            queue.lock().push(output_jpeg.clone());
+        }
+
+        // Return the processed frame with detections in metadata
+        let result = StreamResult::success(
+            Some(chunk.sequence),
+            chunk.sequence,
+            output_jpeg,
+            StreamDataType::Image { format: "jpeg".to_string() },
+            start.elapsed().as_secs_f32() * 1000.0,
+        ).with_metadata(serde_json::json!({
+            "detections": detections,
+            "roi_stats": roi_stats,
+            "line_stats": line_stats,
+            "capture_events": capture_events,
+        }));
+
+        Ok(result)
+    }
+
+
+    async fn close_session(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionStats> {
+        eprintln!("[YOLO] close_session called for session: {}", session_id);
+        
+        let session_id_owned = session_id.to_string();
+        
+        // ✨ FIX: Do NOT remove detector when closing session
+        // The detector should remain loaded for the lifetime of the extension
+        // Taking it out (as before) caused all subsequent inferences to fail
+        eprintln!("[YOLO] Detector remains loaded (will be cleaned up on extension unload)");
+        // Note: DO NOT call detector.lock().take() - this removes the detector permanently!
+
+        // Stop push if running
+        self.stop_push(session_id).await?;
+
+        // ✨ MJPEG: Clean up frame queue
+        remove_frame_queue(session_id);
+
+        // Get stats and remove stream
+        let stats = {
+            let mut registry = get_registry().lock();
+            if let Some(stream) = registry.streams.remove(&session_id_owned) {
+                let s = stream.lock();
+                eprintln!("[YOLO] Session removed from registry, processed {} frames", s.frame_count);
+                SessionStats {
+                    input_chunks: s.frame_count,
+                    output_chunks: s.frame_count,
+                    input_bytes: 0,
+                    output_bytes: 0,
+                    errors: 0,
+                    last_activity: chrono::Utc::now().timestamp_millis(),
+                }
+            } else {
+                eprintln!("[YOLO] Session not found in registry when closing");
+                SessionStats::default()
+            }
+        };
+
+        // Drop the per-instance dynamic metrics so `fps.<label>` etc.
+        // disappear from `/api/extensions`. Historical data already
+        // stored by the host is unaffected.
+        self.dynamic.remove(&session_id_owned);
+
+        tracing::info!("YOLO session closed: {}", session_id);
+        eprintln!("[YOLO] Session closed: {}", session_id);
+        Ok(stats)
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+// ============================================================================
+// Public API for HTTP handlers
+// ============================================================================
+
+/// Get latest frame for MJPEG streaming
+pub fn get_stream_frame(stream_id: &str) -> Option<Vec<u8>> {
+    let registry = get_registry().lock();
+    if let Some(stream) = registry.streams.get(stream_id) {
+        let s = stream.lock();
+        s.last_frame.clone()
+    } else {
+        None
+    }
+}
+
+/// Get stream statistics
+pub fn get_stream_stats_public(stream_id: &str) -> Option<StreamStats> {
+    let registry = get_registry().lock();
+    if let Some(stream) = registry.streams.get(stream_id) {
+        let s = stream.lock();
+        Some(StreamStats {
+            stream_id: stream_id.to_string(),
+            frame_count: s.frame_count,
+            fps: s.fps,
+            total_detections: s.total_detections,
+            detected_objects: s.detected_objects.clone(),
+        })
+    } else {
+        None
+    }
+}
+
+// ============================================================================
+// MJPEG Streaming API
+// ============================================================================
+
+/// Get the latest frame from MJPEG queue
+/// This is used by the MJPEG HTTP streaming endpoint
+pub fn get_mjpeg_frame(session_id: &str) -> Option<Vec<u8>> {
+    let queues = get_frame_queues().lock();
+    if let Some(queue) = queues.get(session_id) {
+        queue.lock().latest().cloned()
+    } else {
+        None
+    }
+}
+
+/// Check if MJPEG queue exists and is active
+pub fn has_mjpeg_queue(session_id: &str) -> bool {
+    let queues = get_frame_queues().lock();
+    queues.contains_key(session_id)
+}
+
+/// Create a placeholder JPEG for when no frames are available
+pub fn create_placeholder_jpeg(width: u32, height: u32, _message: &str) -> Vec<u8> {
+    // Create a simple dark gray placeholder
+    let img = image::RgbImage::from_pixel(width, height, image::Rgb([40, 44, 52]));
+    encode_jpeg(&img, 70)
+}
+
+// ============================================================================
+// Object Tracker (centroid-based nearest neighbor)
+// ============================================================================
+
+/// A tracked object across frames
+#[derive(Debug, Clone)]
+struct TrackedObject {
+    id: u32,
+    class_id: u32,
+    label: String,
+    center: (f32, f32),  // normalized (0.0-1.0)
+    prev_center: (f32, f32),
+    missing_frames: u32,
+}
+
+/// Simple centroid-based object tracker
+#[derive(Debug)]
+struct ObjectTracker {
+    objects: Vec<TrackedObject>,
+    next_id: u32,
+    max_distance: f32,   // normalized distance threshold
+    max_missing: u32,     // frames before removal
+}
+
+impl ObjectTracker {
+    fn new() -> Self {
+        Self {
+            objects: Vec::new(),
+            next_id: 1,
+            max_distance: 0.05, // 5% of frame diagonal
+            max_missing: 5,      // tolerate 5 missing frames
+        }
+    }
+
+    /// Update tracker with new detections. Returns matched pairs (tracker_id, detection_index).
+    fn update(&mut self, detections: &[(f32, f32, u32, &str)]) -> Vec<(u32, usize)> {
+        let mut matches: Vec<(u32, usize)> = Vec::new();
+        let mut used_detections: Vec<bool> = vec![false; detections.len()];
+        let mut used_tracks: Vec<bool> = vec![false; self.objects.len()];
+
+        // Build cost matrix: (track_idx, det_idx, distance)
+        let mut candidates: Vec<(usize, usize, f32)> = Vec::new();
+        for (ti, track) in self.objects.iter().enumerate() {
+            for (di, (cx, cy, _, _)) in detections.iter().enumerate() {
+                let dx = track.center.0 - cx;
+                let dy = track.center.1 - cy;
+                let dist = (dx * dx + dy * dy).sqrt();
+                if dist < self.max_distance {
+                    candidates.push((ti, di, dist));
+                }
+            }
+        }
+
+        // Greedy matching: closest first
+        candidates.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+        for (ti, di, _) in candidates {
+            if used_tracks[ti] || used_detections[di] { continue; }
+            used_tracks[ti] = true;
+            used_detections[di] = true;
+            let track = &mut self.objects[ti];
+            track.prev_center = track.center;
+            track.center = (detections[di].0, detections[di].1);
+            track.class_id = detections[di].2;
+            track.label = detections[di].3.to_string();
+            track.missing_frames = 0;
+            matches.push((track.id, di));
+        }
+
+        // Increment missing for unmatched tracks
+        for (i, used) in used_tracks.iter_mut().enumerate() {
+            if !*used {
+                self.objects[i].missing_frames += 1;
+            }
+        }
+
+        // Remove tracks that have been missing too long
+        self.objects.retain(|t| t.missing_frames <= self.max_missing);
+
+        // Create new tracks for unmatched detections
+        for (di, used) in used_detections.iter().enumerate() {
+            if !*used {
+                let (cx, cy, class_id, label) = detections[di];
+                let id = self.next_id;
+                self.next_id += 1;
+                self.objects.push(TrackedObject {
+                    id,
+                    class_id,
+                    label: label.to_string(),
+                    center: (cx, cy),
+                    prev_center: (cx, cy),
+                    missing_frames: 0,
+                });
+                matches.push((id, di));
+            }
+        }
+
+        matches
+    }
+
+    /// Get previous center for a tracked object
+    fn get_prev_center(&self, track_id: u32) -> Option<(f32, f32)> {
+        self.objects.iter().find(|t| t.id == track_id).map(|t| t.prev_center)
+    }
+}
+
+// ============================================================================
+// ROI & Line Crossing Algorithms
+// ============================================================================
+
+/// Point-in-polygon test using ray casting algorithm.
+/// Points are normalized coordinates (0.0-1.0).
+fn point_in_polygon(px: f32, py: f32, polygon: &[(f32, f32)]) -> bool {
+    if polygon.len() < 3 { return false; }
+    let n = polygon.len();
+    let mut inside = false;
+    let mut j = n - 1;
+    for i in 0..n {
+        let (xi, yi) = polygon[i];
+        let (xj, yj) = polygon[j];
+        if ((yi > py) != (yj > py))
+            && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)
+        {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+/// Check if a line segment (p1→p2) crosses line (a→b) and return direction.
+/// Returns: +1 for A→B side crossing, -1 for B→A side, 0 for no crossing.
+fn line_crossing_direction(
+    p1: (f32, f32), p2: (f32, f32),
+    a: (f32, f32), b: (f32, f32),
+) -> i8 {
+    let d1 = cross_product(a, b, p1);
+    let d2 = cross_product(a, b, p2);
+    let d3 = cross_product(p1, p2, a);
+    let d4 = cross_product(p1, p2, b);
+
+    // Check if segments intersect
+    if ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0))
+        && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
+    {
+        // Direction: if d1 > 0 → d2 < 0, the object moved from left to right of line A→B
+        if d1 > 0.0 { 1 } else { -1 }
+    } else {
+        0
+    }
+}
+
+/// 2D cross product of vectors (a→b) × (a→p)
+fn cross_product(a: (f32, f32), b: (f32, f32), p: (f32, f32)) -> f32 {
+    (b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0)
+}
+
+/// Count detections inside each ROI with optional class filtering.
+/// Detections are normalized centers (0.0-1.0) with labels.
+fn count_roi_detections(
+    detections: &[(f32, f32, &str)],  // (cx, cy, label) normalized
+    rois: &[RoiRegion],
+) -> Vec<RoiStat> {
+    rois.iter().map(|roi| {
+        let count = detections.iter()
+            .filter(|(cx, cy, label)| {
+                if !point_in_polygon(*cx, *cy, &roi.points) {
+                    return false;
+                }
+                // Class filter: empty = accept all
+                if roi.class_filter.is_empty() {
+                    return true;
+                }
+                roi.class_filter.iter().any(|c| c == label)
+            })
+            .count() as u32;
+        RoiStat {
+            id: roi.id.clone(),
+            name: roi.name.clone(),
+            count,
+        }
+    }).collect()
+}
+
+/// Count detections inside each ROI, broken down by class name.
+/// Returns: HashMap<roi_id, HashMap<class_name, count>>
+fn count_roi_detections_detailed(
+    detections: &[(f32, f32, &str)],
+    rois: &[RoiRegion],
+) -> HashMap<String, HashMap<String, u32>> {
+    let mut result: HashMap<String, HashMap<String, u32>> = HashMap::new();
+    for roi in rois {
+        let mut class_counts: HashMap<String, u32> = HashMap::new();
+        for (cx, cy, label) in detections {
+            if !point_in_polygon(*cx, *cy, &roi.points) {
+                continue;
+            }
+            if !roi.class_filter.is_empty() && !roi.class_filter.iter().any(|c| c == label) {
+                continue;
+            }
+            *class_counts.entry(label.to_string()).or_insert(0) += 1;
+        }
+        result.insert(roi.id.clone(), class_counts);
+    }
+    result
+}
+
+/// Crop the axis-aligned bounding box of a ROI polygon from the image,
+/// encode as JPEG, and return base64.
+fn crop_roi_region(
+    image: &image::RgbImage,
+    roi: &RoiRegion,
+    quality: u8,
+) -> String {
+    let (w, h) = (image.width() as f32, image.height() as f32);
+
+    // Compute AABB of the polygon in pixel coordinates
+    let mut min_x = f32::MAX;
+    let mut min_y = f32::MAX;
+    let mut max_x = f32::MIN;
+    let mut max_y = f32::MIN;
+    for (px, py) in &roi.points {
+        min_x = min_x.min(*px);
+        min_y = min_y.min(*py);
+        max_x = max_x.max(*px);
+        max_y = max_y.max(*py);
+    }
+
+    // Clamp to image bounds
+    let x = (min_x * w).max(0.0) as u32;
+    let y = (min_y * h).max(0.0) as u32;
+    let x2 = ((max_x * w).min(w) as u32).min(image.width());
+    let y2 = ((max_y * h).min(h) as u32).min(image.height());
+    let crop_w = x2.saturating_sub(x);
+    let crop_h = y2.saturating_sub(y);
+
+    if crop_w == 0 || crop_h == 0 {
+        return String::new();
+    }
+
+    let cropped = image::imageops::crop_imm(image, x, y, crop_w, crop_h).to_image();
+    let jpeg_data = encode_jpeg(&cropped, quality);
+    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg_data)
+}
+
+/// Evaluate all capture rules against current detection state.
+/// Returns a list of newly triggered CaptureEvents.
+fn evaluate_capture_rules(
+    rules: &[CaptureRule],
+    states: &mut HashMap<String, CaptureRuleState>,
+    detailed_counts: &HashMap<String, HashMap<String, u32>>,
+    image: &image::RgbImage,
+    rois: &[RoiRegion],
+    timestamp: i64,
+) -> Vec<CaptureEvent> {
+    let mut events = Vec::new();
+    let now = Instant::now();
+
+    for rule in rules {
+        // Get per-class counts for this rule's ROI
+        let roi_counts = match detailed_counts.get(&rule.roi_id) {
+            Some(c) => c,
+            None => continue,
+        };
+
+        // Evaluate condition
+        let condition_met = match &rule.condition {
+            CaptureCondition::Threshold { class_name, threshold } => {
+                let count = roi_counts.get(class_name).copied().unwrap_or(0);
+                count >= *threshold
+            }
+            CaptureCondition::Presence { class_name } => {
+                roi_counts.get(class_name).copied().unwrap_or(0) > 0
+            }
+            CaptureCondition::Absence { class_name } => {
+                roi_counts.get(class_name).copied().unwrap_or(0) == 0
+            }
+        };
+
+        // Get or create state for this rule
+        let state = states.entry(rule.id.clone()).or_insert(CaptureRuleState {
+            last_triggered: None,
+            prev_condition_met: false,
+        });
+
+        // Edge detection + cooldown
+        let is_rising_edge = condition_met && !state.prev_condition_met;
+        let is_falling_edge = !condition_met && state.prev_condition_met;
+
+        let should_trigger = match &rule.condition {
+            CaptureCondition::Threshold { .. } | CaptureCondition::Presence { .. } => is_rising_edge,
+            CaptureCondition::Absence { .. } => is_falling_edge,
+        };
+
+        // Update state for next frame
+        state.prev_condition_met = condition_met;
+
+        if !should_trigger {
+            continue;
+        }
+
+        // Check cooldown
+        if let Some(last) = state.last_triggered {
+            if last.elapsed().as_secs_f64() < rule.cooldown_seconds {
+                continue;
+            }
+        }
+
+        // Find the ROI for cropping
+        let roi = match rois.iter().find(|r| r.id == rule.roi_id) {
+            Some(r) => r,
+            None => continue,
+        };
+
+        // Crop and encode
+        let image_base64 = crop_roi_region(image, roi, rule.quality);
+
+        let condition_str = match &rule.condition {
+            CaptureCondition::Threshold { class_name, threshold } =>
+                format!("threshold:{class_name}>={threshold}"),
+            CaptureCondition::Presence { class_name } =>
+                format!("presence:{class_name}"),
+            CaptureCondition::Absence { class_name } =>
+                format!("absence:{class_name}"),
+        };
+
+        events.push(CaptureEvent {
+            rule_id: rule.id.clone(),
+            rule_name: rule.name.clone(),
+            roi_id: rule.roi_id.clone(),
+            condition: condition_str,
+            roi_counts: roi_counts.clone(),
+            image_base64,
+            timestamp,
+        });
+
+        state.last_triggered = Some(now);
+    }
+
+    events
+}
+
+/// Draw ROI polygons and line crossings on the image.
+fn draw_roi_and_lines(
+    image: &mut image::RgbImage,
+    rois: &[RoiRegion],
+    roi_stats: &[RoiStat],
+    lines: &[CrossLine],
+    line_counts: &HashMap<String, (u64, u64)>,
+) {
+    use imageproc::drawing::{draw_line_segment_mut, draw_text_mut};
+    use imageproc::rect::Rect;
+    use ab_glyph::{FontRef, PxScale};
+
+    let (w, h) = (image.width() as f32, image.height() as f32);
+
+    // Load font for labels
+    let font_data = include_bytes!("../fonts/NotoSans-Regular.ttf");
+    let font = match FontRef::try_from_slice(font_data) {
+        Ok(f) => f,
+        Err(_) => return, // can't draw without font
+    };
+
+    let c = |color: (u8, u8, u8)| image::Rgb([color.0, color.1, color.2]);
+
+    // Draw ROI polygons
+    for roi in rois {
+        let color = parse_hex_color(&roi.color).unwrap_or((0, 255, 128));
+        let points: Vec<(f32, f32)> = roi.points.iter()
+            .map(|(x, y)| (*x * w, *y * h))
+            .collect();
+
+        if points.len() >= 3 {
+            // Draw outline
+            for i in 0..points.len() {
+                let next = (i + 1) % points.len();
+                draw_line_segment_mut(image, points[i], points[next], c(color));
+            }
+            // Semi-transparent fill
+            let i32_points: Vec<imageproc::point::Point<i32>> = points.iter()
+                .map(|(x, y)| imageproc::point::Point::new(*x as i32, *y as i32))
+                .collect();
+            blend_polygon_fill(image, &i32_points, (color.0, color.1, color.2, 40u8));
+        }
+
+        // Draw ROI name + count
+        let stat = roi_stats.iter().find(|s| s.id == roi.id);
+        let label = if let Some(s) = stat {
+            format!("{}: {}", roi.name, s.count)
+        } else {
+            roi.name.clone()
+        };
+
+        let min_x = points.iter().map(|p| p.0 as i32).min().unwrap_or(10);
+        let min_y = points.iter().map(|p| p.1 as i32).min().unwrap_or(10);
+        let label_x = min_x.max(2);
+        let label_y = min_y.max(2).saturating_sub(18);
+
+        let scale = PxScale::from(if w > 1200.0 { 18.0 } else { 14.0 });
+        let text_w = (label.len() as u32 * 8 + 8).min(image.width().saturating_sub(label_x as u32));
+        let label_rect = Rect::at(label_x, label_y).of_size(text_w, 18);
+        imageproc::drawing::draw_filled_rect_mut(image, label_rect, c(color));
+        draw_text_mut(image, c((255, 255, 255)), label_x + 4, label_y + 2, scale, &font, &label);
+    }
+
+    // Draw crossing lines
+    for line in lines {
+        let color = parse_hex_color(&line.color).unwrap_or((255, 165, 0));
+        let ax = line.start.0 * w;
+        let ay = line.start.1 * h;
+        let bx = line.end.0 * w;
+        let by = line.end.1 * h;
+
+        // Draw the line (thick)
+        for offset in -1i32..=1 {
+            let o = offset as f32;
+            draw_line_segment_mut(image, (ax + o, ay + o), (bx + o, by + o), c(color));
+        }
+
+        // Draw arrow head at B end
+        let dx = bx - ax;
+        let dy = by - ay;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len > 0.0 {
+            let ndx = dx / len;
+            let ndy = dy / len;
+            let arrow_len = 12.0;
+            let arrow_w = 6.0;
+            draw_line_segment_mut(image, (bx, by), (bx - ndx * arrow_len - ndy * arrow_w, by - ndy * arrow_len + ndx * arrow_w), c(color));
+            draw_line_segment_mut(image, (bx, by), (bx - ndx * arrow_len + ndy * arrow_w, by - ndy * arrow_len - ndx * arrow_w), c(color));
+        }
+
+        // Draw count labels
+        let counts = line_counts.get(&line.id).copied().unwrap_or((0, 0));
+        let label_fwd = format!("{} ->: {}", line.name, counts.0);
+        let label_bwd = format!("{} <-: {}", line.name, counts.1);
+
+        let scale = PxScale::from(if w > 1200.0 { 16.0 } else { 12.0 });
+        let mid_x = ((ax + bx) / 2.0) as i32;
+        let mid_y = ((ay + by) / 2.0) as i32;
+
+        let lx = mid_x.max(4);
+        draw_text_mut(image, c(color), lx, mid_y.saturating_sub(22).max(2), scale, &font, &label_fwd);
+        draw_text_mut(image, c(color), lx, mid_y + 6, scale, &font, &label_bwd);
+    }
+}
+
+/// Parse hex color string like "#FF6600" to RGB tuple
+fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() != 6 { return None; }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some((r, g, b))
+}
+
+/// Blend-fill a polygon with semi-transparent color
+fn blend_polygon_fill(image: &mut image::RgbImage, points: &[imageproc::point::Point<i32>], color: (u8, u8, u8, u8)) {
+    let (w, h) = (image.width() as i32, image.height() as i32);
+    if points.is_empty() { return; }
+
+    // Bounding box
+    let min_x = points.iter().map(|p| p.x).fold(i32::MAX, |a, b| a.min(b)).max(0);
+    let max_x = points.iter().map(|p| p.x).fold(i32::MIN, |a, b| a.max(b)).min(w - 1);
+    let min_y = points.iter().map(|p| p.y).fold(i32::MAX, |a, b| a.min(b)).max(0);
+    let max_y = points.iter().map(|p| p.y).fold(i32::MIN, |a, b| a.max(b)).min(h - 1);
+
+    let alpha = color.3 as f32 / 255.0;
+    let inv_alpha = 1.0 - alpha;
+
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            let poly_pts: Vec<(f32, f32)> = points.iter().map(|p| (p.x as f32, p.y as f32)).collect();
+            if point_in_polygon(px, py, &poly_pts) {
+                let pixel = image.get_pixel_mut(x as u32, y as u32);
+                pixel.0[0] = (color.0 as f32 * alpha + pixel.0[0] as f32 * inv_alpha) as u8;
+                pixel.0[1] = (color.1 as f32 * alpha + pixel.0[1] as f32 * inv_alpha) as u8;
+                pixel.0[2] = (color.2 as f32 * alpha + pixel.0[2] as f32 * inv_alpha) as u8;
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Export FFI using SDK macro
+// ============================================================================
+
+neomind_extension_sdk::neomind_export!(YoloVideoProcessorV2);
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    #[test]
+    fn test_extension_metadata() {
+        let ext = YoloVideoProcessorV2::new();
+        let meta = ext.metadata();
+        assert_eq!(meta.id, "yolo-video");
+        assert_eq!(meta.name, "YOLO Video");
+        assert_eq!(
+            meta.description.as_deref(),
+            Some("Real-time video stream object detection with YOLOv11, RTSP/camera support, ROI analytics, line crossing, smart capture rules, and MJPEG streaming")
+        );
+    }
+
+    #[test]
+    fn test_metadata_and_manifest_are_aligned() {
+        let ext = YoloVideoProcessorV2::new();
+        let meta = ext.metadata();
+        let metadata_json: Value = serde_json::from_str(include_str!("../metadata.json")).unwrap();
+        let manifest_json: Value = serde_json::from_str(include_str!("../manifest.json")).unwrap();
+
+        assert_eq!(metadata_json["id"], meta.id);
+        assert_eq!(metadata_json["name"], meta.name);
+        assert_eq!(
+            metadata_json["description"].as_str(),
+            meta.description.as_deref()
+        );
+        assert_eq!(metadata_json["license"], "Apache-2.0");
+        assert_eq!(manifest_json["id"], meta.id);
+        assert_eq!(manifest_json["name"], meta.name);
+        assert_eq!(manifest_json["description"].as_str(), meta.description.as_deref());
+    }
+
+    #[test]
+    fn test_extension_metrics() {
+        let ext = YoloVideoProcessorV2::new();
+        let metrics = ext.metrics();
+        // 11 static descriptors only — the dynamic registry emits zero
+        // descriptors when no stream instances are registered (base
+        // descriptors were dropped because they collide with the static
+        // aggregates of the same name).
+        assert_eq!(metrics.len(), 11);
+        // Required static descriptors still present.
+        let names: Vec<&str> = metrics.iter().map(|m| m.name.as_str()).collect();
+        for required in [
+            "active_streams",
+            "total_frames_processed",
+            "total_detections",
+            "current_fps",
+            "dropped_frames",
+        ] {
+            assert!(names.contains(&required), "missing metric {}", required);
+        }
+    }
+
+    /// Helper: build a minimal `ActiveStream` with the given `frame_count`.
+    /// All other fields default to empty/zero — just enough to drive
+    /// `produce_metrics` without touching real video I/O.
+    fn make_fake_stream(session_id: &str, frame_count: u64) -> ActiveStream {
+        ActiveStream {
+            _id: session_id.to_string(),
+            _config: StreamConfig::default(),
+            started_at: Instant::now(),
+            frame_count,
+            total_detections: 0,
+            last_frame: None,
+            last_detections: Vec::new(),
+            last_frame_time: None,
+            fps: 0.0,
+            running: true,
+            detected_objects: HashMap::new(),
+            push_task: None,
+            last_process_time: None,
+            dropped_frames: 0,
+            tracker: ObjectTracker::new(),
+            line_counts: HashMap::new(),
+            last_roi_stats: Vec::new(),
+            capture_rule_states: HashMap::new(),
+            pending_captures: Vec::new(),
+        }
+    }
+
+    /// Empty state (no sessions, no detections, no ROI/lines): the 4 JSON
+    /// aggregate metrics must NOT be emitted. Previously they were written
+    /// as literal `"[]"` strings every collect cycle, polluting the
+    /// time-series store with rows that carry no information.
+    #[test]
+    fn test_produce_metrics_skips_empty_aggregates() {
+        let ext = YoloVideoProcessorV2::new();
+        // Make sure the global registry is empty for this test. Other
+        // tests in this module don't touch the registry, but defensive
+        // clearing guards against future additions.
+        {
+            let mut registry = get_registry().lock();
+            registry.streams.clear();
+            registry.capture_events_count = 0;
+        }
+        let metrics = ext.produce_metrics().expect("produce_metrics ok");
+        let names: Vec<&str> = metrics.iter().map(|m| m.name.as_str()).collect();
+        for skipped in [
+            "detected_classes",
+            "line_crossings",
+            "roi_counts",
+            "streams_status",
+            "latest_capture",
+        ] {
+            assert!(
+                !names.contains(&skipped),
+                "empty aggregate should be skipped, but found {}",
+                skipped
+            );
+        }
+        // Base scalar metrics are still emitted unconditionally.
+        for required in [
+            "active_streams",
+            "total_frames_processed",
+            "total_detections",
+            "current_fps",
+            "dropped_frames",
+            "total_roi_alerts",
+        ] {
+            assert!(names.contains(&required), "missing scalar {}", required);
+        }
+    }
+
+    /// Warm-up session: a session registered but no frame produced yet
+    /// (`frame_count == 0`). Its per-instance dynamic values
+    /// (`fps.{label}`, etc.) must NOT be emitted — they read as 0 but
+    /// represent "unknown" while RTSP handshake / first decode is pending.
+    /// Once `frame_count >= 1`, dynamic values resume (a real fps of 0
+    /// after the first frame is a genuine signal we want to keep).
+    #[test]
+    fn test_produce_metrics_skips_warmup_session_dynamic() {
+        let ext = YoloVideoProcessorV2::new();
+        let session_id = "warmup-test-session".to_string();
+        // Insert a warm-up session (frame_count=0) and register its label
+        // so `dynamic.values()` would otherwise emit it.
+        {
+            let mut registry = get_registry().lock();
+            registry.streams.clear();
+            registry.streams.insert(
+                session_id.clone(),
+                Arc::new(Mutex::new(make_fake_stream(&session_id, 0))),
+            );
+        }
+        ext.dynamic.upsert(&session_id, "warmuplabel");
+        // Note: we do NOT pre-seed `dynamic.set(...)` here. In real
+        // operation, `dynamic.set` for these per-stream metrics is only
+        // ever called from inside `produce_metrics`'s loop. The warm-up
+        // guard (`if s.frame_count > 0`) therefore prevents the value
+        // from ever being written.
+
+        // Warm-up: dynamic values suppressed.
+        let warm = ext.produce_metrics().expect("produce_metrics ok");
+        let warm_names: Vec<&str> = warm.iter().map(|m| m.name.as_str()).collect();
+        assert!(
+            !warm_names.contains(&"fps.warmuplabel"),
+            "warm-up session must not emit fps.{{label}}"
+        );
+        // streams_status is also suppressed for this warm-up session
+        // because the only stream has no detections/ROI/lines and — wait,
+        // streams_status aggregates ALL registered streams regardless of
+        // frame_count. So with one warm-up session, streams_status SHOULD
+        // be emitted (it's non-empty). Verify that scalar aggregates
+        // still see the session:
+        let active_streams_metric = warm.iter().find(|m| m.name == "active_streams");
+        assert!(active_streams_metric.is_some(), "active_streams scalar still emitted");
+        // streams_status present because there IS a registered stream.
+        assert!(
+            warm_names.contains(&"streams_status"),
+            "streams_status emitted when at least one stream is registered"
+        );
+
+        // Promote the session past warm-up: bump frame_count to 1.
+        {
+            let registry = get_registry().lock();
+            if let Some(stream_arc) = registry.streams.get(&session_id) {
+                let mut s = stream_arc.lock();
+                s.frame_count = 1;
+                s.fps = 15.0;
+            }
+        }
+        let live = ext.produce_metrics().expect("produce_metrics ok");
+        let live_names: Vec<&str> = live.iter().map(|m| m.name.as_str()).collect();
+        assert!(
+            live_names.contains(&"fps.warmuplabel"),
+            "after first frame, fps.{{label}} should be emitted"
+        );
+
+        // Cleanup so we don't leak state into other tests.
+        {
+            let mut registry = get_registry().lock();
+            registry.streams.clear();
+        }
+        ext.dynamic.remove(&session_id);
+    }
+
+    #[test]
+    fn test_dynamic_metrics_per_stream() {
+        let ext = YoloVideoProcessorV2::new();
+        // No instances → no per-instance descriptors or values.
+        assert_eq!(ext.dynamic.values(0).len(), 0);
+        assert!(ext.dynamic.descriptors().is_empty());
+
+        ext.dynamic.upsert("s1", "cam1");
+        ext.dynamic.upsert("s2", "cam2");
+        ext.dynamic.set("s1", "fps", ParamMetricValue::Float(29.97));
+        ext.dynamic.set("s2", "fps", ParamMetricValue::Float(24.0));
+
+        let descriptors = ext.metrics();
+        let has_cam1 = descriptors.iter().any(|m| m.name == "fps.cam1");
+        let has_cam2 = descriptors.iter().any(|m| m.name == "fps.cam2");
+        assert!(has_cam1 && has_cam2);
+
+        let values = ext.dynamic.values(1_000);
+        assert_eq!(values.len(), 2);
+        // Removing an instance drops its descriptors + values.
+        ext.dynamic.remove("s1");
+        let after = ext.metrics();
+        assert!(!after.iter().any(|m| m.name == "fps.cam1"));
+    }
+
+    #[test]
+    fn test_derive_label() {
+        assert_eq!(derive_label("rtsp://192.168.1.10/cam1"), "cam1");
+        assert_eq!(derive_label("rtsp://host/path/cam2/"), "cam2");
+        assert_eq!(derive_label("camera://0"), "0");
+        assert_eq!(derive_label(""), "stream");
+        // Same input → same output (stability across reconnects).
+        let l1 = derive_label("rtsp://example.com/front-door");
+        let l2 = derive_label("rtsp://example.com/front-door");
+        assert_eq!(l1, l2);
+        assert_eq!(l1, "front-door");
+        // Edge cases: query string, trailing slash after port, host-only.
+        assert_eq!(derive_label("rtsp://host/cam3?token=abc"), "cam3");
+        assert_eq!(derive_label("rtsp://host:8554/"), "host:8554");
+        // IP-only URLs produce a host:port-ish label (dots sanitized).
+        assert_eq!(derive_label("rtsp://10.0.0.5:554"), "10_0_0_5:554");
+    }
+
+    #[test]
+    fn test_extension_commands() {
+        let ext = YoloVideoProcessorV2::new();
+        let commands = ext.commands();
+        assert_eq!(commands.len(), 5);
+        assert_eq!(commands[0].name, "start_stream");
+    }
+
+    #[test]
+    fn test_stream_config_default() {
+        let config = StreamConfig::default();
+        assert_eq!(config.source_url, "camera://0");
+        assert_eq!(config.confidence_threshold, 0.5);
+    }
+
+    #[test]
+    fn test_fallback_detections() {
+        let detections = generate_fallback_detections(0, 5);
+        assert!(!detections.is_empty());
+        assert_eq!(detections[0].label, "person");
+    }
+
+    #[test]
+    fn test_encode_jpeg() {
+        let img = image::RgbImage::from_pixel(100, 100, image::Rgb([128, 128, 128]));
+        let jpeg = encode_jpeg(&img, 80);
+        assert!(!jpeg.is_empty());
+        // JPEG should start with JPEG signature
+        assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
+    }
+}

@@ -1,7 +1,7 @@
 {
   "id": "moss-tts-nano",
-  "name": "moss tts nano",
-  "version": "2.7.9",
+  "name": "Moss Tts Nano",
+  "version": "2.7.7",
   "description": "MOSS-TTS-Nano voice cloning TTS extension (speak on host audio device + synthesize wav)",
   "author": "NeoMind Team",
   "license": "Apache-2.0",

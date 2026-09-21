@@ -1,7 +1,7 @@
 {
   "id": "sensevoice-asr",
-  "name": "sensevoice asr",
-  "version": "2.7.9",
+  "name": "Sensevoice Asr",
+  "version": "2.7.7",
   "description": "SenseVoice-Small ASR extension (Mandarin/English/Japanese/Korean/Cantonese) via sherpa-onnx ONNX CPU backend",
   "author": "NeoMind Team",
   "license": "Apache-2.0",

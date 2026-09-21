@@ -98,9 +98,15 @@ mod tests {
 
         assert_eq!(meta.id, "yolo-device-inference");
         assert_eq!(meta.name, "YOLO Device Inference");
-        assert_eq!(meta.version.major, 1);
-        assert_eq!(meta.version.minor, 0);
-        assert_eq!(meta.version.patch, 0);
+        // version is a String now — assert the major component like the
+        // old semver-struct assertions did.
+        let major: u32 = meta
+            .version
+            .split('.')
+            .next()
+            .and_then(|s| s.parse().ok())
+            .expect("version should start with a numeric major");
+        assert_eq!(major, 2); // metadata declares "2.0.0"
     }
 
     #[test]

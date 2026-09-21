@@ -103,11 +103,11 @@ NeoMind 扩展在 Native 和 WASM 目标上共享一套运行时模型。
 
 ```bash
 # 从模板复制
-cp -r extensions/weather-forecast-v2 extensions/my-extension
+cp -r extensions/weather-forecast extensions/my-extension  # THEN add "extensions/my-extension" to [workspace].members in the root Cargo.toml — cargo ignores it otherwise
 cd extensions/my-extension
 
 # 更新 Cargo.toml
-sed -i 's/weather-forecast-v2/my-extension/g' Cargo.toml
+sed -i 's/weather-forecast/my-extension/g' Cargo.toml
 ```
 
 ### 2. 配置 Cargo.toml
@@ -123,7 +123,7 @@ name = "neomind_extension_my_extension"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-neomind-extension-sdk = { path = "../../NeoMind/crates/neomind-extension-sdk" }
+neomind-extension-sdk = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 async-trait = "0.1"
@@ -283,9 +283,9 @@ ExtensionMetadata::new("my-extension", "My Extension", "1.0.0")
 {类别}-{名称}-v{主版本}
 
 示例：
-- weather-forecast-v2
-- image-analyzer-v2
-- yolo-video-v2
+- weather-forecast
+- image-analyzer
+- yolo-video
 ```
 
 ---
@@ -810,7 +810,7 @@ fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
 
 ```json
 {
-  "id": "yolo-video-v2",
+  "id": "yolo-video",
   "version": "2.0.0",
   "process_config": {
     "timeout_seconds": 60,
@@ -868,3 +868,32 @@ fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
 ## 许可证
 
 MIT 许可证
+
+
+## 平台契约(SDK 0.6.5+)
+
+### 扩展私有数据目录 — `NEOMIND_EXTENSION_DATA_DIR`
+
+runner 启动扩展进程时注入:私有 `data/` 子目录,**升级与卸载均保留**(卸载显式跳过它)。用户状态(配置、人脸库、授权、抓拍历史)一律存这里,不要与包文件混放。
+
+### manifest `env_hints` — 运行时环境变量注入
+
+需要运行时专属 env 的扩展(ORT_DYLIB_PATH、RKNN/TensorRT 库路径等)在 `metadata.json` 声明,runner 解析 `{binaries}`/`{extension_dir}` 占位符并在进程启动前注入(仅当变量未设置且目标文件存在):
+
+```json
+"env_hints": { "ORT_DYLIB_PATH": "{binaries}/{ort_lib}" }
+```
+
+平台保持运行时中立,扩展不再需要自带引导代码。
+
+### 类型化事件 — `neomind_extension_sdk::events`
+
+`SdkEvent::parse` 同时接受信封与裸 payload;`DeviceMetricEvent` 已解包 MetricValue 并带 `is_virtual` —— **忽略虚拟指标**可避免与自身 `device_metrics_write` 输出形成回环。
+
+### 多模态 chat — `chat::invoke_with_images`
+
+图片以 data-URL 传入,平台路由到支持视觉的后端;注意 ~1MB capability 上限,先降采样(≤1024px JPEG 安全)。
+
+### 共享视觉运行时 — `crates/vision-common`
+
+新视觉扩展应依赖 workspace 内的 `vision-common`(直连 ort 的硬件加速抽象、YOLO/OCR 解码、图像 IO、画框、模型管理、license 门控、远程引擎),参考消费者:`extensions/vision-hub/`。

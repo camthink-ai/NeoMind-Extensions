@@ -21,10 +21,10 @@ This repository contains officially maintained extensions for the **NeoMind exte
 
 | Extension | ID | Category | Frontend | Description |
 |-----------|----|----------|----------|-------------|
-| Weather Forecast V2 | `weather-forecast-v2` | Data | WeatherCard | Real-time weather via Open-Meteo API |
-| Image Analyzer V2 | `image-analyzer-v2` | AI/ML | ImageAnalyzer | YOLOv11 object detection on images |
-| YOLO Video V2 | `yolo-video-v2` | AI/ML | YoloVideoDisplay | Real-time video stream detection with ROI/line crossing |
-| YOLO Device Inference | `yolo-device-inference` | AI/ML | DeviceBindingCard | Auto YOLO detection on device camera feeds |
+| Weather Forecast | `weather-forecast` | Data | WeatherCard | Real-time weather via Open-Meteo API |
+| Image Analyzer | `image-analyzer` | AI/ML | ImageAnalyzer | YOLOv11 object detection on images |
+| YOLO Video | `yolo-video` | AI/ML | YoloVideoDisplay | Real-time video stream detection with ROI/line crossing |
+| YOLO Device Inference | `yolo-device-inference` | AI/ML | DeviceInferenceCard | Auto YOLO detection on device camera feeds |
 | Face Recognition | `face-recognition` | AI/ML | FaceRecognitionCard | ArcFace face recognition with gallery management |
 | OCR Device Inference | `ocr-device-inference` | AI/ML | OcrDeviceCard | PP-OCRv4 text recognition on device images |
 | PaddleOCR V6 | `paddle-ocr-v6` | AI/ML | PaddleOcrV6Card | PP-OCRv6 native ONNX OCR (multi-tier: tiny/small/medium) with lazy HuggingFace model download |
@@ -34,7 +34,7 @@ This repository contains officially maintained extensions for the **NeoMind exte
 | MOSS-TTS-Nano | `moss-tts-nano` | Voice | — | MOSS-TTS-Nano voice cloning TTS — speak on host audio + synthesize wav |
 | Voice Edge TTS | `voice-edge-tts` | Voice | — | Edge TTS (sherpa-onnx ZipVoice) — cross-platform CPU streaming TTS |
 | Voice Assistant | `voice-assistant` | Voice | VoiceAssistantCard | Real-time voice assistant: mic → VAD → ASR → LLM → TTS → speaker |
-| Locate Anything V2 | `locate-anything-v2` | AI/ML | LocateCard | Visual grounding — object detection, phrase grounding, OCR via LocateAnything-3B |
+| Locate Anything | `locate-anything` | AI/ML | LocateCard | Visual grounding — object detection, phrase grounding, OCR via LocateAnything-3B |
 | Stream Player | `stream-player` | Media | StreamPlayerCard | RTSP/RTMP/HLS video player via FFmpeg |
 | DeepStream | `deepstream` | AI/Video | DeepStreamManagerCard | Multi-stream RTSP video inference on NVIDIA Jetson via DeepStream SDK |
 | Uink-RMS Bridge | `uink-rms-bridge` | Device | DisplayEditorCard | E-paper display content push & management |
@@ -64,21 +64,21 @@ This repository contains officially maintained extensions for the **NeoMind exte
 ./build.sh
 
 # Build single extension (dev mode + auto-install)
-./build.sh --dev --single weather-forecast-v2
+./build.sh --dev --single weather-forecast
 
 # Build release packages
-./build.sh --release 2.6.0
+./build.sh --release 2.7.9
 
 # Or manual build
-cargo build --release -p weather-forecast-v2
-cp target/release/libneomind_extension_weather_forecast_v2.dylib ~/.neomind/extensions/
+cargo build --release -p weather-forecast
+cp target/release/libneomind_extension_weather_forecast.dylib ~/.neomind/extensions/
 ```
 
 ### Install from Marketplace
 
 ```bash
 # Via NeoMind CLI
-neomind extension install weather-forecast-v2-2.0.0-darwin_aarch64.nep
+neomind extension install weather-forecast-2.0.0-darwin_aarch64.nep
 
 # Via Web UI
 # Navigate to Extensions → Marketplace → Install
@@ -143,9 +143,9 @@ This repository includes a **Claude Code skill** for AI-powered extension develo
 ```
 NeoMind-Extensions/
 ├── extensions/                    # All extension projects
-│   ├── weather-forecast-v2/
-│   ├── image-analyzer-v2/
-│   ├── yolo-video-v2/
+│   ├── weather-forecast/
+│   ├── image-analyzer/
+│   ├── yolo-video/
 │   ├── yolo-device-inference/
 │   ├── face-recognition/
 │   ├── ocr-device-inference/
@@ -156,7 +156,7 @@ NeoMind-Extensions/
 │   ├── moss-tts-nano/             # MOSS-TTS-Nano voice cloning TTS
 │   ├── voice-edge-tts/            # Edge TTS (ZipVoice)
 │   ├── voice-assistant/           # Voice assistant orchestrator (ASR + LLM + TTS)
-│   ├── locate-anything-v2/
+│   ├── locate-anything/
 │   ├── stream-player/
 │   ├── deepstream/               # NVIDIA DeepStream multi-stream RTSP inference (Jetson)
 │   ├── uink-rms-bridge/
@@ -188,9 +188,12 @@ NeoMind-Extensions/
 | `./build.sh` | Build all + create .nep packages |
 | `./build.sh --dev` | Dev build + auto-install |
 | `./build.sh --dev --single <ext>` | Dev build single extension |
-| `./build.sh --release 2.6.0` | Release with version |
+| `./build.sh --release 2.7.9` | Release with version |
 | `./build.sh --skip-frontend` | Skip frontend builds |
-| `./release.sh 2.6.0` | Same as `./build.sh --release` |
+| `./release.sh 2.7.9` | Same as `./build.sh --release` |
+| Gym Tracker | `gym-tracker` | Vision | GymMonitor / GymVideoOverlay / GymMemberReport / GymWorkoutSummary / GymEquipmentGrid / GymTrafficChart / GymDoorFlow / GymActivityMap / GymAlerts / GymEquipmentRank | Smart gym suite: member face recognition + body ReID, equipment zone occupancy, rep counting (joint-angle state machines), live video overlay with skeleton, member training reports, door flow and traffic analytics — ingests NE503 gym-native tracks |
+| Video VLM | `video-vlm` | AI/ML | VideoVlmDisplay | Real-time video stream VLM understanding (on-board LFM2.5-VL) |
+| Vision Hub | `vision-hub` | AI/ML | (in frontend batch) | Unified vision: hardware-accelerated detection pipelines with license gating |
 
 ---
 

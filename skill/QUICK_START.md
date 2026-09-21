@@ -20,7 +20,7 @@ Create a temperature monitoring extension for NeoMind that reads CPU temperature
 
 1. **Project Setup**
 ```bash
-cp -r extensions/weather-forecast-v2 extensions/temperature-monitor-v2
+cp -r extensions/weather-forecast extensions/temperature-monitor-v2
 cd extensions/temperature-monitor-v2
 ```
 

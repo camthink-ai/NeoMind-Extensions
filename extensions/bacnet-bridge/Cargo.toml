@@ -24,3 +24,6 @@ tokio = { version = "1", features = ["rt", "sync", "macros"] }
 default = []
 native = []
 wasm = []
+
+[dev-dependencies]
+neomind-extension-sdk = { workspace = true, features = ["testkit"] }

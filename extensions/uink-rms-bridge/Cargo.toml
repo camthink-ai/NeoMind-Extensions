@@ -36,3 +36,7 @@ pulldown-cmark = "0.12"
 default = []
 native = []
 wasm = []
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+neomind-extension-sdk = { workspace = true, features = ["testkit"] }

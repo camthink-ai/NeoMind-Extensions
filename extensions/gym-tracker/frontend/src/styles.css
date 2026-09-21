@@ -1,0 +1,2109 @@
+/* ==========================================================================
+   GymLiveState — scoped styles
+   Prefix: gym-live- · ALL colors via NeoMind CSS variables (light/dark)
+   ========================================================================== */
+
+.gym-live {
+  /* Variable aliases mapped to the host design system */
+  --gl-fg: var(--foreground);
+  --gl-muted: var(--muted-foreground);
+  --gl-accent: var(--primary);
+  --gl-on-primary: var(--primary-foreground, #ffffff);
+  --gl-card: var(--card);
+  --gl-border: var(--border);
+  --gl-muted-bg: var(--muted);
+  --gl-success: var(--color-success);
+  --gl-success-bg: var(--color-success-bg);
+  --gl-info: var(--color-info);
+  --gl-info-bg: var(--color-info-bg);
+  --gl-error: var(--color-error);
+  --gl-error-bg: var(--color-error-bg);
+
+  width: 100%;
+  height: 100%;
+  font-size: 13px;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+.dark .gym-live {
+  --gl-on-primary: var(--primary-foreground, #17172a);
+}
+
+.gym-live *,
+.gym-live *::before,
+.gym-live *::after {
+  box-sizing: border-box;
+}
+
+/* Card wrapper */
+.gym-live-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 14px;
+  background: var(--gl-card);
+  border: 1px solid var(--gl-border);
+  border-radius: var(--radius-xl, 12px);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+/* Header */
+.gym-live-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  margin-bottom: 10px;
+}
+
+.gym-live-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--gl-fg);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.gym-live-title svg {
+  width: 15px;
+  height: 15px;
+  color: var(--gl-info);
+  flex-shrink: 0;
+}
+
+.gym-live-pulse {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full, 9999px);
+  background: var(--gl-success-bg);
+  color: var(--gl-success);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.gym-live-pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gl-success);
+  animation: gym-live-ping 1.6s ease-in-out infinite;
+}
+
+@keyframes gym-live-ping {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.gym-live-pulse.stale {
+  background: var(--gl-muted-bg);
+  color: var(--gl-muted);
+}
+.gym-live-pulse.stale .gym-live-pulse-dot {
+  background: var(--gl-muted);
+  animation: none;
+}
+
+/* Hero count */
+.gym-live-hero {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 2px 0 10px;
+}
+
+.gym-live-count {
+  font-size: 38px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--gl-fg);
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.gym-live-count-label {
+  font-size: 12px;
+  color: var(--gl-muted);
+  text-transform: lowercase;
+}
+
+/* Track list */
+.gym-live-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 2px;
+  margin-right: -2px;
+}
+
+.gym-live-list::-webkit-scrollbar {
+  width: 5px;
+}
+.gym-live-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.gym-live-list::-webkit-scrollbar-thumb {
+  background: var(--gl-border);
+  border-radius: var(--radius-full, 9999px);
+}
+
+.gym-live-track {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in oklch, var(--gl-muted-bg) 35%, transparent);
+  transition: background var(--duration-fast, 150ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.gym-live-track:hover {
+  background: color-mix(in oklch, var(--gl-muted-bg) 60%, transparent);
+}
+
+/* Track id chip */
+.gym-live-track-id {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--gl-info-bg);
+  color: var(--gl-info);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* Mini bbox frame — represents the person's position in the normalized frame */
+.gym-live-frame {
+  position: relative;
+  width: 28px;
+  height: 20px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--gl-border);
+  background: color-mix(in oklch, var(--gl-muted-bg) 20%, transparent);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.gym-live-frame-box {
+  position: absolute;
+  border: 1.5px solid var(--gl-accent);
+  border-radius: 1px;
+  background: color-mix(in oklch, var(--gl-accent) 25%, transparent);
+}
+
+.gym-live-foot-dot {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--gl-success);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 1.5px color-mix(in oklch, var(--gl-success) 30%, transparent);
+}
+
+.gym-live-track-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--gl-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* States — loading / empty / error */
+.gym-live-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  text-align: center;
+}
+
+.gym-live-state svg {
+  width: 32px;
+  height: 32px;
+  opacity: 0.4;
+  color: var(--gl-muted);
+}
+
+.gym-live-state-text {
+  font-size: 12px;
+  color: var(--gl-muted);
+}
+
+.gym-live-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--gl-border);
+  border-top-color: var(--gl-accent);
+  border-radius: 50%;
+  animation: gym-live-spin 0.7s linear infinite;
+}
+
+@keyframes gym-live-spin {
+  to { transform: rotate(360deg); }
+}
+
+.gym-live-error {
+  color: var(--gl-error);
+  background: var(--gl-error-bg);
+  border: 1px solid var(--gl-error);
+}
+
+.gym-live-retry {
+  margin-top: 4px;
+  padding: 4px 14px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--gl-border);
+  background: transparent;
+  color: var(--gl-fg);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background var(--duration-fast, 150ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.gym-live-retry:hover {
+  background: var(--gl-muted-bg);
+}
+
+/* ============================================================================
+   GymEquipmentGrid
+   ============================================================================ */
+
+.gym-eq { height: 100%; min-height: 0; }
+.gym-eq-card {
+  display: flex; flex-direction: column; height: 100%;
+  border: 1px solid var(--border, #2a2a2a); border-radius: 10px;
+  background: var(--card, #171717); color: var(--foreground, #fafafa);
+  font-family: inherit; font-size: 13px; overflow: hidden;
+}
+.gym-eq-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--border, #2a2a2a);
+}
+.gym-eq-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.gym-eq-title svg { width: 16px; height: 16px; }
+.gym-eq-summary { color: var(--muted-foreground, #a1a1aa); font-size: 12px; }
+.gym-eq-state {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px; color: var(--muted-foreground, #a1a1aa); padding: 24px;
+}
+.gym-eq-state svg { width: 28px; height: 28px; opacity: .6; }
+.gym-eq-grid {
+  flex: 1; overflow: auto; padding: 10px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px; align-content: start;
+}
+.gym-eq-cell {
+  display: flex; align-items: center; gap: 10px; padding: 10px;
+  border: 1px solid var(--border, #2a2a2a); border-radius: 8px;
+  background: color-mix(in srgb, var(--card, #171717) 92%, transparent);
+}
+.gym-eq-cell.busy { border-color: rgba(34, 197, 94, .55); background: rgba(34, 197, 94, .07); }
+.gym-eq-cell.warm { border-color: color-mix(in oklab, var(--primary, #22c55e) 35%, var(--border, #2a2a2a)); }
+.gym-eq-dot.warm { background: color-mix(in oklab, var(--primary, #22c55e) 45%, #555); }
+.gym-eq-dot {
+  width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0;
+  background: #52525b; box-shadow: none;
+}
+.gym-eq-dot.on { background: #22c55e; box-shadow: 0 0 8px rgba(34, 197, 94, .8); }
+.gym-eq-cell-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.gym-eq-zone-name {
+  font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gym-eq-zone-meta {
+  font-size: 11px; color: var(--muted-foreground, #a1a1aa);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gym-eq-count {
+  font-weight: 700; font-size: 16px; color: var(--muted-foreground, #a1a1aa);
+  min-width: 20px; text-align: right;
+}
+.gym-eq-count.on { color: #22c55e; }
+
+/* ============================================================================
+   GymTrafficChart
+   ============================================================================ */
+
+.gym-traffic { height: 100%; min-height: 0; }
+.gym-traffic-card {
+  display: flex; flex-direction: column; height: 100%;
+  border: 1px solid var(--border, #2a2a2a); border-radius: 10px;
+  background: var(--card, #171717); color: var(--foreground, #fafafa);
+  font-family: inherit; font-size: 13px; overflow: hidden;
+}
+.gym-traffic-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--border, #2a2a2a);
+}
+.gym-traffic-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.gym-traffic-title svg { width: 16px; height: 16px; }
+.gym-traffic-window { color: var(--muted-foreground, #a1a1aa); font-size: 12px; }
+.gym-traffic-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 10px 14px 12px; gap: 6px; }
+.gym-traffic-now { display: flex; align-items: baseline; gap: 8px; }
+.gym-traffic-now-value { font-size: 30px; font-weight: 700; line-height: 1; }
+.gym-traffic-now-label { color: var(--muted-foreground, #a1a1aa); }
+.gym-traffic-stats { margin-left: auto; color: var(--muted-foreground, #a1a1aa); font-size: 12px; }
+.gym-traffic-plot { flex: 1; min-height: 60px; position: relative; display: flex; flex-direction: column; }
+.gym-traffic-svg { width: 100%; flex: 1; }
+.gym-traffic-area { fill: rgba(34, 197, 94, .15); }
+.gym-traffic-line { fill: none; stroke: #22c55e; stroke-width: .8; vector-effect: non-scaling-stroke; }
+.gym-traffic-pt { fill: rgba(34, 197, 94, .55); }
+.gym-traffic-plot { align-items: stretch; justify-content: center; }
+.gym-traffic-plot > .gym-live-spinner { align-self: center; }
+.gym-traffic-empty { align-self: center; color: var(--muted-foreground, #a1a1aa); font-size: 12px; }
+.gym-traffic-ticks { position: relative; height: 14px; font-size: 10px; color: var(--muted-foreground, #a1a1aa); }
+.gym-traffic-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.gym-traffic-ticks span:first-child { transform: none; }
+.gym-traffic-ticks span:last-child { transform: translateX(-100%); }
+
+/* ============================================================================
+   GymVideoOverlay
+   ============================================================================ */
+
+.gym-ov { height: 100%; min-height: 0; }
+.gym-ov-card {
+  display: flex; flex-direction: column; height: 100%;
+  position: relative;
+  border: 1px solid var(--border, #2a2a2a); border-radius: 10px;
+  background: var(--card, #171717); color: var(--foreground, #fafafa);
+  font-family: inherit; font-size: 13px; overflow: hidden;
+}
+.gym-ov-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--border, #2a2a2a);
+}
+.gym-ov-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.gym-ov-title svg { width: 16px; height: 16px; }
+.gym-ov-status { display: flex; gap: 6px; }
+.gym-ov-badge {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--border, #2a2a2a); color: var(--muted-foreground, #a1a1aa);
+}
+.gym-ov-badge.streaming { color: #22c55e; border-color: rgba(34, 197, 94, .5); }
+.gym-ov-badge.error { color: #ef4444; border-color: rgba(239, 68, 68, .5); }
+.gym-ov-badge.people { color: var(--foreground, #fafafa); }
+.gym-ov-body { flex: 1; min-height: 0; position: relative; background: #000; }
+.gym-ov-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.gym-ov-veil {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px;
+  color: var(--muted-foreground, #a1a1aa); font-size: 12px; text-align: center; padding: 16px;
+}
+.gym-ov-error { color: #ef4444; }
+.gym-ov-actions {
+  position: absolute; right: 8px; top: 8px; display: flex; gap: 6px;
+}
+.gym-ov-btn {
+  font-size: 11px; padding: 3px 10px; border-radius: 6px; cursor: pointer;
+  background: var(--secondary, #1e1e22); color: var(--secondary-foreground, #d4d4d8);
+  border: 1px solid var(--border, #2e2e34);
+}
+.gym-ov-btn:hover { background: var(--accent, #26262b); }
+.gym-ov-legend {
+  display: flex; gap: 14px; padding: 6px 14px 8px; font-size: 11px;
+  color: var(--muted-foreground, #a1a1aa); border-top: 1px solid var(--border, #2a2a2a);
+}
+.gym-ov-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.gym-ov-legend .lg { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
+.gym-ov-legend .lg-bbox { background: #22c55e; }
+.gym-ov-legend .lg-skel { background: #3b82f6; }
+.gym-ov-legend .lg-foot { background: #f59e0b; width: 7px; height: 7px; border-radius: 999px; }
+
+/* ============================================================================
+   GymZoneEditor
+   ============================================================================ */
+
+.gym-zones { height: 100%; min-height: 0; }
+.gym-zones-card {
+  display: flex; flex-direction: column; height: 100%;
+  border: 1px solid var(--border, #2a2a2a); border-radius: 10px;
+  background: var(--card, #171717); color: var(--foreground, #fafafa);
+  font-family: inherit; font-size: 13px; overflow: hidden;
+}
+.gym-zones-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--border, #2a2a2a); gap: 8px;
+}
+.gym-zones-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.gym-zones-title svg { width: 16px; height: 16px; }
+.gym-zones-actions { display: flex; gap: 6px; align-items: center; }
+.gym-zones-saved { color: #22c55e; font-size: 12px; }
+.gym-zones-btn {
+  font-size: 12px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+  background: transparent; color: var(--foreground, #fafafa);
+  border: 1px solid var(--border, #3a3a3a);
+}
+.gym-zones-btn:hover:not(:disabled) { border-color: var(--primary, #22c55e); }
+.gym-zones-btn:disabled { opacity: .45; cursor: default; }
+.gym-zones-btn.primary { background: var(--primary, #22c55e); color: #04250f; border-color: transparent; font-weight: 600; }
+.gym-zones-btn.danger { color: #ef4444; border-color: rgba(239, 68, 68, .4); }
+.gym-zones-hint {
+  padding: 6px 14px; font-size: 11px; color: var(--muted-foreground, #a1a1aa);
+  border-bottom: 1px solid var(--border, #2a2a2a);
+}
+.gym-zones-live-hint { color: var(--muted-foreground, #71717a); }
+.gym-zones-frame { padding: 8px 14px 4px; }
+.gym-zones-svg {
+  width: 100%; aspect-ratio: 16 / 9; display: block; cursor: crosshair;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.02) 0%, rgba(255,255,255,.05) 100%),
+    #0d0d0d;
+  border: 1px solid var(--border, #2a2a2a); border-radius: 8px;
+}
+.gym-zones-gridline { stroke: rgba(255, 255, 255, .05); stroke-width: .2; }
+.gym-zones-ghost { fill: rgba(255, 255, 255, .08); stroke: rgba(255, 255, 255, .35); stroke-width: .3; stroke-dasharray: 1 1; }
+.gym-zones-zone polygon { fill: rgba(34, 197, 94, .16); stroke: #22c55e; stroke-width: .45; }
+.gym-zones-zone.off polygon { fill: rgba(120, 120, 120, .1); stroke: #71717a; }
+.gym-zones-zone text { fill: #bbf7d0; font-size: 3px; }
+.gym-zones-draft polygon, .gym-zones-draft polyline { fill: rgba(59, 130, 246, .12); stroke: #3b82f6; stroke-width: .45; stroke-dasharray: 1.2 .8; }
+.gym-zones-draft circle { fill: #3b82f6; }
+.gym-zones-list { flex: 1; min-height: 0; overflow: auto; padding: 8px 14px; display: flex; flex-direction: column; gap: 6px; }
+.gym-zones-empty { color: var(--muted-foreground, #a1a1aa); justify-content: center; align-items: center; }
+.gym-zones-row { display: flex; align-items: center; gap: 8px; }
+.gym-zones-row-idx {
+  width: 20px; height: 20px; border-radius: 999px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(34, 197, 94, .18); color: #4ade80; font-size: 11px; font-weight: 700;
+}
+.gym-zones-input {
+  background: transparent; color: var(--foreground, #fafafa);
+  border: 1px solid var(--border, #3a3a3a); border-radius: 6px;
+  padding: 4px 8px; font-size: 12px; min-width: 0;
+}
+.gym-zones-input.name { flex: 1; }
+.gym-zones-input.type { flex: 1; color: var(--muted-foreground, #a1a1aa); }
+.gym-zones-input:focus { outline: none; border-color: var(--primary, #22c55e); }
+
+/* ============================================================================
+   GymMonitor (all-in-one) additions
+   ============================================================================ */
+
+.gym-ov-canvas.editing { cursor: crosshair; touch-action: none; }
+.gym-ov-zonerow {
+  display: flex; align-items: center; gap: 8px;
+  padding: 2px 6px; margin: 0 -6px; border-radius: 8px;
+  border: 1px solid transparent; cursor: pointer;
+}
+.gym-ov-zonerow.sel {
+  border-color: rgba(59, 130, 246, .55);
+  background: rgba(59, 130, 246, .1);
+}
+/* compact read-only row + expanded inspector (one form at a time) */
+.gym-ov-rowwrap { display: flex; flex-direction: column; gap: 3px; }
+.gym-ov-zonerow:hover { background: color-mix(in oklab, var(--secondary, #26262b) 55%, transparent); }
+.gym-ov-zonename {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; color: var(--foreground, #fafafa);
+}
+.gym-ov-typetag { font-size: 11px; color: var(--muted-foreground, #a1a1aa); white-space: nowrap; }
+.gym-ov-rowins {
+  display: flex; align-items: center; gap: 6px; margin-left: 28px; padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+}
+.gym-ov-rowins .gym-ov-input.name { flex: 1; }
+.gym-ov-btn.primary { background: var(--primary, #f4f4f5); color: var(--primary-foreground, #18181b); border-color: var(--primary, #f4f4f5); font-weight: 600; }
+.gym-ov-btn.primary:hover:not(:disabled) { filter: brightness(0.94); color: var(--primary-foreground, #18181b); border-color: var(--primary, #f4f4f5); }
+.gym-ov-btn.danger {
+  color: var(--destructive, #f87171);
+  border-color: color-mix(in oklab, var(--destructive, #ef4444) 45%, transparent);
+}
+.gym-ov-badge.ok { color: #22c55e; border-color: rgba(34, 197, 94, .5); }
+.gym-ov-edit-tip {
+  position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
+  background: rgba(9, 9, 11, .82); border: 1px solid rgba(255, 255, 255, .14);
+  color: #e4e4e7; font-size: 12px; padding: 5px 14px; border-radius: 999px;
+  pointer-events: none; white-space: nowrap;
+}
+.gym-ov-zonelist {
+  max-height: 160px; overflow: auto; padding: 8px 14px;
+  border-top: 1px solid var(--border, #2a2a2a);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.gym-ov-zonelist-empty { color: var(--muted-foreground, #a1a1aa); font-size: 12px; padding: 4px 0; }
+.gym-ov-zoneidx {
+  width: 20px; height: 20px; border-radius: 999px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(148, 163, 184, .18); color: #cbd5e1; font-size: 11px; font-weight: 700;
+}
+.gym-ov-input {
+  background: transparent; color: var(--foreground, #fafafa);
+  border: 1px solid var(--border, #3a3a3a); border-radius: 6px;
+  padding: 4px 8px; font-size: 12px; min-width: 0;
+}
+.gym-ov-input.name { flex: 1; }
+.gym-ov-input.type { flex: 1; color: var(--muted-foreground, #a1a1aa); }
+.gym-ov-input:focus { outline: none; border-color: var(--primary, #22c55e); }
+
+/* Monitor P1 additions */
+.gym-ov-btn.on { border-color: var(--primary, #22c55e); color: #4ade80; }
+.gym-ov-seg { display: inline-flex; border: 1px solid var(--border, #3a3a3a); border-radius: 6px; overflow: hidden; }
+.gym-ov-seg .gym-ov-btn { border: none; border-radius: 0; }
+.gym-ov-zoneidx.line { background: rgba(245, 158, 11, .18); color: #fbbf24; }
+.gym-ov-linecount { font-size: 12px; color: #fbbf24; white-space: nowrap; min-width: 64px; text-align: center; }
+
+/* ---- P3: member registration panel (view mode, click a person) ---- */
+.gym-ov-register {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--card, #171717);
+  border: 1px solid var(--border, #2a2a2a);
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.25));
+  z-index: 6;
+}
+.gym-ov-register-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #86efac;
+  white-space: nowrap;
+}
+.gym-ov-register-err {
+  font-size: 12px;
+  color: #fca5a5;
+  max-width: 220px;
+}
+.gym-ov-zoneidx.member {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.4);
+}
+
+/* ==========================================================================
+   GymWorkoutSummary — scoped styles
+   Prefix: gym-sum- · colors via NeoMind CSS variables
+   ========================================================================== */
+
+.gym-sum {
+  --gs-fg: var(--foreground);
+  --gs-muted: var(--muted-foreground);
+  --gs-accent: var(--primary);
+  --gs-card: var(--card);
+  --gs-border: var(--border);
+  --gs-muted-bg: var(--muted);
+  width: 100%;
+  height: 100%;
+  font-size: 13px;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+.gym-sum *,
+.gym-sum *::before,
+.gym-sum *::after { box-sizing: border-box; }
+
+.gym-sum-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 14px;
+  background: var(--gs-card);
+  border: 1px solid var(--gs-border);
+  border-radius: var(--radius-xl, 12px);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.gym-sum-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  margin-bottom: 10px;
+}
+
+.gym-sum-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--gs-fg);
+}
+.gym-sum-title svg { width: 16px; height: 16px; color: var(--gs-accent); }
+
+.gym-sum-daynav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gym-sum-navbtn {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--gs-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gs-fg);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+.gym-sum-navbtn:hover:not(:disabled) { background: var(--gs-muted-bg); }
+.gym-sum-navbtn:disabled { opacity: 0.35; cursor: default; }
+
+.gym-sum-day {
+  min-width: 42px;
+  text-align: center;
+  color: var(--gs-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.gym-sum-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.gym-sum-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  background: var(--gs-muted-bg);
+  border-radius: 8px;
+}
+
+.gym-sum-stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--gs-fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.gym-sum-stat-label {
+  font-size: 11px;
+  color: var(--gs-muted);
+}
+
+.gym-sum-section { flex-shrink: 0; margin-bottom: 10px; }
+.gym-sum-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gs-muted);
+  margin-bottom: 6px;
+}
+
+.gym-sum-eqlist { display: flex; flex-direction: column; gap: 5px; }
+
+.gym-sum-eqrow {
+  display: grid;
+  grid-template-columns: minmax(64px, 96px) 1fr 48px;
+  align-items: center;
+  gap: 8px;
+}
+
+.gym-sum-eqname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--gs-fg);
+}
+
+.gym-sum-eqbar {
+  height: 8px;
+  background: var(--gs-muted-bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.gym-sum-eqfill {
+  height: 100%;
+  background: var(--gs-accent);
+  border-radius: 4px;
+  opacity: 0.85;
+}
+
+.gym-sum-eqsec {
+  text-align: right;
+  color: var(--gs-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.gym-sum-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.gym-sum-session {
+  display: grid;
+  grid-template-columns: 8px 1fr 44px 52px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+}
+
+.gym-sum-session-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gs-accent);
+}
+
+.gym-sum-session-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--gs-fg);
+}
+
+.gym-sum-session-time,
+.gym-sum-session-dur {
+  text-align: right;
+  color: var(--gs-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.gym-sum-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--gs-muted);
+}
+.gym-sum-state svg { width: 24px; height: 24px; opacity: 0.5; }
+.gym-sum-state-text { font-size: 12px; }
+
+/* ---- GymWorkoutSummary v2: Gantt timeline + donut ---- */
+
+.gym-sum-tl {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 16px; /* room for hour labels */
+  position: relative;
+}
+
+.gym-sum-tl-row {
+  display: grid;
+  grid-template-columns: minmax(56px, 84px) 1fr 40px;
+  align-items: center;
+  gap: 6px;
+  height: 14px;
+}
+
+.gym-sum-tl-name {
+  font-size: 11px;
+  color: var(--gs-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gym-sum-tl-track {
+  position: relative;
+  height: 8px;
+  background: var(--gs-muted-bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.gym-sum-tl-block {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  min-width: 3px;
+  border-radius: 4px;
+  opacity: 0.9;
+}
+.gym-sum-tl-block:hover { opacity: 1; }
+
+.gym-sum-tl-dur {
+  font-size: 10px;
+  color: var(--gs-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.gym-sum-tl-hours {
+  position: absolute;
+  left: calc(minmax(56px, 84px) + 6px);
+  right: 46px;
+  bottom: 0;
+  height: 14px;
+  pointer-events: none;
+}
+.gym-sum-tl-hours span {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 9px;
+  color: var(--gs-muted);
+  opacity: 0.8;
+}
+.gym-sum-tl-hours span:first-child { transform: none; }
+.gym-sum-tl-hours span:last-child { transform: translateX(-100%); }
+
+.gym-sum-donutrow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.gym-sum-donut {
+  width: 88px;
+  height: 88px;
+  flex-shrink: 0;
+}
+.gym-sum-donut-bg { stroke: var(--gs-muted-bg); }
+
+.gym-sum-donut-total {
+  font-size: 7.5px;
+  font-weight: 700;
+  fill: var(--gs-fg);
+}
+.gym-sum-donut-sub {
+  font-size: 4.5px;
+  fill: var(--gs-muted);
+}
+
+.gym-sum-legend {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.gym-sum-legrow {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.gym-sum-legdot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.gym-sum-legname {
+  font-size: 12px;
+  color: var(--gs-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gym-sum-legval {
+  font-size: 11px;
+  color: var(--gs-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- member avatar (Monitor members tab) ---- */
+
+.gym-ov-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1.5px solid var(--gl-border, var(--border, #888));
+  background: #111;
+}
+
+/* ==========================================================================
+   Monitor v2 — solution-grade header (brand / live pill / chips / toolbar)
+   ========================================================================== */
+
+.gym-ov-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: var(--card);
+  flex-shrink: 0;
+}
+
+.gym-ov-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gym-ov-brand-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #e0f7ff;
+  background: linear-gradient(135deg, #0891b2 0%, #2563eb 100%);
+  box-shadow: 0 2px 10px rgba(8, 145, 178, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  flex-shrink: 0;
+}
+.gym-ov-brand-logo svg { width: 16px; height: 16px; }
+
+.gym-ov-brand-text { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.gym-ov-brand-name {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+.gym-ov-brand-sub {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--muted-foreground);
+  opacity: 0.85;
+}
+
+.gym-ov-live-pill {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 3.5px 10px;
+  border-radius: 999px;
+  color: var(--secondary-foreground, #d4d4d8);
+  background: var(--secondary, #1b1b20);
+  border: 1px solid var(--border, #2c2c33);
+}
+.gym-ov-live-pill.on {
+  color: #16a34a;
+  background: var(--secondary, #1b1b20);
+  border-color: color-mix(in oklab, #16a34a 45%, transparent);
+}
+.gym-ov-live-pill.connecting { color: #d97706; background: var(--secondary, #1b1b20); border-color: color-mix(in oklab, #d97706 45%, transparent); }
+.gym-ov-live-pill.error { color: var(--destructive, #dc2626); background: var(--secondary, #1b1b20); border-color: color-mix(in oklab, var(--destructive, #dc2626) 45%, transparent); }
+
+.gym-ov-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: gymOvPulse 1.6s ease-in-out infinite;
+}
+.gym-ov-live-pill:not(.on):not(.connecting) .gym-ov-live-dot { animation: none; opacity: 0.6; }
+
+@keyframes gymOvPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(134, 239, 172, 0.5); }
+  50% { opacity: 0.55; box-shadow: 0 0 0 5px rgba(134, 239, 172, 0); }
+}
+
+.gym-ov-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.gym-ov-chips { display: flex; gap: 6px; }
+
+.gym-ov-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--secondary-foreground, #d4d4d8);
+  padding: 3.5px 9px;
+  border-radius: 8px;
+  background: var(--secondary, #1b1b20);
+  border: 1px solid var(--border, #2c2c33);
+}
+.gym-ov-chip svg { width: 12px; height: 12px; color: #67e8f9; opacity: 0.9; }
+
+.gym-ov-toolbar .gym-ov-seg { margin-left: auto; }
+
+.gym-ov-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--secondary-foreground, #d4d4d8);
+  padding: 4.5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #2e2e34);
+  background: var(--secondary, #1e1e22);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.gym-ov-btn svg { width: 12px; height: 12px; opacity: 0.9; }
+.gym-ov-btn:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--secondary, #1e1e22) 92%, var(--foreground, #ffffff));
+  border-color: var(--input, #3f3f46);
+  color: var(--foreground, #f4f4f5);
+}
+.gym-ov-btn:disabled { opacity: 0.4; cursor: default; }
+.gym-ov-btn.on {
+  color: var(--primary-foreground, #18181b);
+  background: var(--primary, #d4d4d8);
+  border-color: var(--primary, #d4d4d8);
+  box-shadow: none;
+}
+.gym-ov-btn.primary {
+  color: #06202a;
+  background: linear-gradient(135deg, #22d3ee, #0ea5e9);
+  border-color: rgba(34, 211, 238, 0.6);
+  font-weight: 700;
+}
+.gym-ov-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+  color: #06202a;
+}
+.gym-ov-edit-toggle {
+  border-color: rgba(34, 211, 238, 0.35);
+  color: #a5f3fc;
+}
+
+/* ---- Monitor header: single compact strip (~34px) ---- */
+
+.gym-ov-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: block;
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  background: var(--card);
+  flex-shrink: 0;
+}
+
+.gym-ov-compact {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+
+.gym-ov-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.gym-ov-dot.on { background: #22c55e; animation: gymOvDot 1.8s ease-in-out infinite; }
+.gym-ov-dot.wait { background: #f59e0b; animation: gymOvDot 1.2s ease-in-out infinite; }
+.gym-ov-dot.off { background: #64748b; }
+
+@keyframes gymOvDot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.gym-ov-metric {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.gym-ov-flex { flex: 1 1 auto; }
+
+.gym-ov-tg {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted-foreground, #a1a1aa);
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #2e2e34);
+  background: var(--secondary, #1e1e22);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+.gym-ov-tg:hover {
+  color: var(--foreground, #fafafa);
+  background: color-mix(in oklab, var(--secondary, #1e1e22) 92%, var(--foreground, #ffffff));
+  border-color: var(--input, #3f3f46);
+}
+.gym-ov-tg.on {
+  color: var(--primary-foreground, #18181b);
+  background: var(--primary, #d4d4d8);
+  border-color: var(--primary, #d4d4d8);
+  font-weight: 600;
+}
+.gym-ov-tg:disabled { opacity: 0.35; cursor: default; }
+.gym-ov-tg-edit { color: var(--foreground, #fafafa); }
+.gym-ov-tg-save {
+  color: var(--primary-foreground, #18181b);
+  background: var(--primary, #f4f4f5);
+  border-color: var(--primary, #f4f4f5);
+  font-weight: 600;
+}
+.gym-ov-tg-save:hover:not(:disabled) {
+  filter: brightness(0.94);
+  color: var(--primary-foreground, #18181b);
+  border-color: var(--primary, #f4f4f5);
+}
+
+/* ============================================================================
+   GymSelect — host-styled dropdown (mirrors shadcn Select: h-10 trigger,
+   rounded-md border bg-card; rounded-xl bg-popover shadow-xl popup)
+   ============================================================================ */
+.gym-sel { position: relative; flex: 1; min-width: 0; }
+.gym-sel-trigger {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  height: 28px; padding: 0 8px;
+  background: var(--card, #18181b); color: var(--foreground, #fafafa);
+  border: 1px solid var(--input, #3a3a3a); border-radius: 6px;
+  font-size: 12px; text-align: left; cursor: pointer;
+}
+.gym-sel-trigger.open { border-color: var(--primary, #22c55e); }
+.gym-sel-trigger:hover { border-color: var(--muted-foreground, #a1a1aa); }
+.gym-sel-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-foreground, #a1a1aa); }
+.gym-sel-value:has(+ .gym-sel-chev) { color: inherit; }
+.gym-sel-chev { opacity: .5; flex-shrink: 0; }
+.gym-sel-pop {
+  position: fixed; z-index: 300; max-height: 240px; overflow: auto;
+  background: var(--popover, #1c1c1f); color: var(--popover-foreground, #fafafa);
+  border: 1px solid var(--border, #2a2a2a); border-radius: 12px;
+  box-shadow: 0 10px 38px -10px rgba(0, 0, 0, .5), 0 10px 20px -15px rgba(0, 0, 0, .4);
+  padding: 4px;
+}
+.gym-sel-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: 8px; font-size: 12px;
+  cursor: pointer; white-space: nowrap;
+}
+.gym-sel-item.active { background: var(--accent, rgba(255, 255, 255, .07)); }
+.gym-sel-item.selected { color: var(--primary, #22c55e); font-weight: 600; }
+.gym-sel-check { width: 14px; flex-shrink: 0; text-align: center; }
+.gym-sel-label { overflow: hidden; text-overflow: ellipsis; }
+
+/* ============================================================================
+   Unified card surface — v2.9.2
+   One look for all five widgets: opaque background (the host --card can be
+   semi-transparent in some themes, which read as "透明卡片"), one radius,
+   one border. The gradient-over-background layering makes any card-token
+   alpha composite onto the page background → visually solid.
+   ============================================================================ */
+.gym-ov-card,
+.gym-eq-card,
+.gym-traffic-card,
+.gym-live-card,
+.gym-sum-card {
+  border-radius: 12px !important;
+  border: 1px solid var(--border, #2a2a2a) !important;
+  background:
+    linear-gradient(var(--card, #171717), var(--card, #171717)),
+    var(--background, #0b0b0d) !important;
+  box-shadow: none !important;
+}
+/* headers share the same rhythm */
+.gym-ov-header, .gym-eq-header, .gym-traffic-header {
+  min-height: 40px;
+}
+/* the compact monitor toolbar sits on the opaque header, not on video */
+.gym-ov-compact {
+  background: transparent;
+}
+
+/* ============================================================================
+   New cards v2.9.3: EquipmentRank / MemberReport / Alerts
+   (ride the unified card surface from v2.9.2)
+   ============================================================================ */
+.gym-rank-body, .gym-report-body, .gym-alerts-body {
+  flex: 1; overflow: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px;
+}
+.gym-rank-empty, .gym-alerts-empty {
+  color: var(--muted-foreground, #a1a1aa); font-size: 12px; padding: 8px 0;
+  display: flex; align-items: center; gap: 8px;
+}
+.gym-rank-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.gym-rank-name { width: 84px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground, #fafafa); }
+.gym-rank-track { flex: 1; height: 8px; border-radius: 4px; background: var(--muted, rgba(255,255,255,.08)); overflow: hidden; }
+.gym-rank-bar { height: 100%; border-radius: 4px; background: var(--primary, #22c55e); }
+.gym-rank-val { width: 44px; text-align: right; color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; }
+.gym-rank-reps { width: 40px; text-align: right; color: var(--muted-foreground, #a1a1aa); font-size: 11px; }
+.gym-report-row {
+  display: grid; grid-template-columns: auto 1fr auto auto auto; gap: 10px;
+  align-items: center; font-size: 12px; padding: 4px 0;
+  border-bottom: 1px solid var(--border, #232323);
+}
+.gym-report-row:last-child { border-bottom: none; }
+.gym-report-avatar {
+  width: 26px; height: 26px; border-radius: 50%; object-fit: cover;
+  display: inline-flex; flex-shrink: 0;
+}
+.gym-report-avatar-fb {
+  align-items: center; justify-content: center;
+  background: var(--secondary, #1e1e22); border: 1px solid var(--border, #2e2e34);
+  color: var(--muted-foreground, #a1a1aa); font-size: 11px; font-weight: 600;
+}
+.gym-report-vtag {
+  font-size: 10px; color: var(--muted-foreground, #a1a1aa);
+  border: 1px solid var(--border, #2e2e34); border-radius: 4px; padding: 0 4px;
+  white-space: nowrap;
+}
+.gym-report-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground, #fafafa); }
+.gym-report-visits { color: var(--primary, #22c55e); font-variant-numeric: tabular-nums; }
+.gym-report-dur { color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; }
+.gym-report-seen { color: var(--muted-foreground, #a1a1aa); font-size: 11px; }
+.gym-alerts-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 0; }
+.gym-alerts-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; }
+.gym-alerts-dot.warn { background: var(--color-error, #ef4444); box-shadow: 0 0 6px var(--color-error, #ef4444); }
+.gym-alerts-dot.info { background: var(--color-info, #3b82f6); }
+.gym-alerts-dot.ok { background: var(--color-success, #22c55e); }
+.gym-alerts-time { color: var(--muted-foreground, #a1a1aa); font-variant-numeric: tabular-nums; font-size: 11px; width: 56px; flex-shrink: 0; }
+.gym-alerts-msg { color: var(--foreground, #fafafa); }
+.gym-ov-badge.warn { color: var(--color-error, #ef4444); border-color: color-mix(in oklab, var(--color-error, #ef4444) 50%, transparent); }
+.gym-ov-badge.ok { color: var(--color-success, #22c55e); border-color: color-mix(in oklab, var(--color-success, #22c55e) 50%, transparent); }
+
+/* ============================================================================
+   GymDoorFlow — door in/out flow card
+   ============================================================================ */
+
+.gym-door-body { padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 10px; }
+.gym-door-today { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.gym-door-today-item {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 8px 4px; border-radius: 10px;
+  background: var(--secondary, #1e1e22); border: 1px solid var(--border, #2e2e34);
+}
+.gym-door-today-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--foreground, #fafafa); }
+.gym-door-today-item.in .gym-door-today-value { color: #4ade80; }
+.gym-door-today-item.out .gym-door-today-value { color: #f87171; }
+.gym-door-today-label { font-size: 11px; color: var(--muted-foreground, #a1a1aa); }
+.gym-door-hist { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow: auto; }
+.gym-door-hist-row { display: grid; grid-template-columns: 74px 1fr; gap: 8px; align-items: center; }
+.gym-door-hist-day { font-size: 11px; color: var(--muted-foreground, #a1a1aa); white-space: nowrap; }
+.gym-door-hist-bars { display: flex; flex-direction: column; gap: 2px; }
+.gym-door-bar {
+  height: 10px; border-radius: 3px; min-width: 2px;
+  display: flex; align-items: center; justify-content: flex-end;
+  font-size: 9px; font-weight: 600; color: #10160f; padding-right: 3px;
+}
+.gym-door-bar.in { background: #4ade80; }
+.gym-door-bar.out { background: #f87171; color: #1f0b0b; }
+.gym-door-bar span { line-height: 1; }
+
+/* ---- GymMemberReport: row wrapper + expanded member detail ---- */
+.gym-report-rowwrap { display: flex; flex-direction: column; }
+.gym-report-row.clickable { cursor: pointer; padding: 4px 4px; border-radius: 8px; }
+.gym-report-row.clickable:hover { background: color-mix(in oklab, var(--secondary, #26262b) 55%, transparent); }
+.gym-report-row.sel { background: color-mix(in oklab, var(--secondary, #26262b) 80%, transparent); }
+.gym-report-detail {
+  display: flex; flex-direction: column; gap: 8px;
+  margin: 2px 0 6px 36px; padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+}
+.gym-report-detail-manage { display: flex; align-items: center; gap: 6px; }
+.gym-report-detail-manage .gym-ov-input.name { flex: 1; min-width: 0; }
+.gym-report-detail-flex { flex: 1; }
+.gym-report-records { display: flex; flex-direction: column; gap: 6px; }
+.gym-report-records-head { font-size: 12px; color: var(--foreground, #fafafa); display: flex; gap: 6px; align-items: center; }
+.gym-report-records-empty { font-size: 11px; color: var(--muted-foreground, #a1a1aa); }
+.gym-report-records-error { font-size: 11px; color: var(--destructive, #ef4444); }
+.gym-report-eq { display: flex; flex-direction: column; gap: 3px; }
+.gym-report-eq-row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.gym-report-eq-name { color: var(--foreground, #fafafa); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gym-report-eq-meta { color: var(--muted-foreground, #a1a1aa); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gym-report-sessions { display: flex; flex-direction: column; gap: 2px; max-height: 120px; overflow: auto; }
+.gym-report-session { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted-foreground, #a1a1aa); font-variant-numeric: tabular-nums; }
+.gym-report-session-dur { color: var(--foreground, #d4d4d8); }
+
+/* ---- member detail: per-exercise breakdown bars ---- */
+.gym-report-exlist { display: flex; flex-direction: column; gap: 4px; }
+.gym-report-exrow {
+  display: grid; grid-template-columns: 64px 1fr auto; gap: 8px; align-items: center;
+  font-size: 12px;
+}
+.gym-report-exname { color: var(--foreground, #fafafa); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gym-report-exbar { height: 6px; border-radius: 3px; background: var(--secondary, #26262b); overflow: hidden; }
+.gym-report-exbar-fill { height: 100%; border-radius: 3px; background: var(--primary, #22c55e); }
+.gym-report-exmeta { color: var(--muted-foreground, #a1a1aa); font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 11px; }
+
+/* ============================================================================
+   GymDrawer — viewport right side drawer
+   ============================================================================ */
+.gym-drawer-root { position: fixed; inset: 0; z-index: 240; pointer-events: none; }
+.gym-drawer-root.shown { pointer-events: auto; }
+.gym-drawer-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0, 0, 0, .35);
+  opacity: 0;
+}
+.gym-drawer-root.shown .gym-drawer-backdrop { opacity: 1; }
+.gym-drawer {
+  position: absolute; right: 0; top: max(48px, 6vh); bottom: auto;
+  max-height: calc(100vh - 96px);
+  border-radius: 14px 0 0 14px;
+  display: flex; flex-direction: column;
+  background: var(--popover, #1c1c1f); color: var(--popover-foreground, #fafafa);
+  border-left: 1px solid var(--border, #2a2a2a);
+  box-shadow: -18px 0 44px -18px rgba(0, 0, 0, .5);
+  /* no transform transition: the animation clock stalls in non-composited
+     webviews (the IAB) and the panel would freeze mid-slide */
+  transform: translateX(100%);
+}
+.gym-drawer-root.shown .gym-drawer { transform: translateX(0); }
+.gym-drawer-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 14px; border-bottom: 1px solid var(--border, #2a2a2a);
+}
+.gym-drawer-title { font-size: 13px; font-weight: 600; color: var(--foreground, #fafafa); }
+.gym-drawer-body { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px; }
+
+/* ---- drawer adjustments ---- */
+.gym-drawer .gym-report-detail { margin: 0; }
+
+/* ---- Monitor edit list: card-anchored right drawer (was below-card) ---- */
+.gym-ov-zonelist {
+  position: absolute; right: 10px; top: 54px; bottom: auto;
+  max-height: min(600px, calc(100% - 64px));
+  width: min(340px, 46%);
+  z-index: 6;
+  border-radius: 12px;
+  background: var(--popover, #1c1c1f);
+  border: 1px solid var(--border, #2a2a2a);
+  box-shadow: -12px 0 32px -14px rgba(0, 0, 0, .55);
+  padding: 8px 10px;
+}
+.gym-ov-zonelist.closed { display: none; }
+
+/* ---- edit drawer: category tabs (zones vs lines) ---- */
+.gym-ov-editkind {
+  font-size: 11.5px; font-weight: 700; color: var(--foreground, #fafafa);
+  white-space: nowrap; margin-right: 2px;
+}
+.gym-ov-drawtabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.gym-ov-drawtab {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  padding: 6px 8px; border-radius: 8px;
+  color: var(--muted-foreground, #a1a1aa);
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+  transition: all 0.12s ease;
+}
+.gym-ov-drawtab:hover { color: var(--foreground, #fafafa); }
+.gym-ov-drawtab.on {
+  color: var(--primary-foreground, #18181b);
+  background: var(--primary, #d4d4d8);
+  border-color: var(--primary, #d4d4d8);
+}
+.gym-ov-drawtab-n {
+  min-width: 18px; padding: 0 5px; border-radius: 999px;
+  font-size: 10px; font-variant-numeric: tabular-nums; line-height: 16px;
+  background: rgba(0, 0, 0, .18); color: inherit;
+}
+.gym-ov-drawtab:not(.on) .gym-ov-drawtab-n {
+  background: var(--accent, rgba(255, 255, 255, .08));
+  color: var(--muted-foreground, #a1a1aa);
+}
+
+/* ---- edit toolbar: grouped layout ---- */
+.gym-ov-tb-sep {
+  width: 1px; height: 14px; margin: 0 4px; flex-shrink: 0;
+  background: var(--border, #2e2e34);
+}
+
+/* ---- uniform control heights: the host page's global button reset
+   (min-height 44px, padding 0 8px) leaks into our widgets and makes
+   inputs/dropdowns/buttons in one row unequal — clamp every control
+   inside our surfaces to a consistent 28px rail ---- */
+.gym-ov-card button.gym-ov-btn,
+.gym-drawer-root button.gym-ov-btn,
+.gym-drawer button.gym-ov-btn {
+  min-height: 0; height: 28px; padding: 0 10px;
+}
+.gym-ov-card button.gym-ov-tg,
+button.gym-ov-tg {
+  min-height: 0;
+}
+.gym-ov-card .gym-sel-trigger,
+.gym-drawer .gym-sel-trigger,
+.gym-ov-rowins .gym-sel-trigger {
+  min-height: 0; height: 28px;
+}
+.gym-ov-card .gym-ov-input,
+.gym-drawer .gym-ov-input,
+.gym-ov-rowins .gym-ov-input,
+.gym-report-detail-manage .gym-ov-input {
+  min-height: 0; height: 28px; box-sizing: border-box;
+}
+.gym-ov-rowins, .gym-report-detail-manage { align-items: center; }
+
+/* ============================================================================
+   GymActivityMap — trails + heatmap card
+   ============================================================================ */
+.gym-activity-body { padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; }
+.gym-activity-canvas { width: 100%; aspect-ratio: 16 / 9; display: block; border-radius: 10px; border: 1px solid var(--border, #2a2a2a); }
+.gym-activity-legend { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted-foreground, #a1a1aa); }
+.gym-activity-ramp {
+  flex: 0 0 120px; height: 6px; border-radius: 3px;
+  background: linear-gradient(90deg, rgba(60,90,255,.35), rgba(255,220,0,.7), rgba(255,60,40,.95));
+}
+.gym-activity-trailhint { margin-left: auto; color: #60a5fa; }
+.gym-ov-zoneidx.excl { background: rgba(239, 68, 68, .18); color: #f87171; }
+
+/* ---- activity cards: timeline bar ---- */
+.gym-timebar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.gym-timebar-spans { display: flex; gap: 4px; }
+.gym-timebar-slider { flex: 1; min-width: 80px; accent-color: var(--primary, #22c55e); height: 20px; }
+.gym-timebar-label { font-size: 11px; color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gym-timebar-label em { font-style: normal; color: var(--muted-foreground, #a1a1aa); margin-left: 6px; }
+
+/* ---- activity cards: scrub empty state ---- */
+.gym-activity-stagewrap { position: relative; }
+.gym-activity-stagewrap .gym-activity-canvas { display: block; }
+.gym-activity-empty {
+  position: absolute; inset: 0; z-index: 3;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  font-size: 12px; color: var(--muted-foreground, #a1a1aa); text-align: center;
+  pointer-events: none;
+}
+.gym-activity-empty small { font-size: 10.5px; opacity: .75; }
+
+/* ---- timeline: header mode dropdown ---- */
+.gym-timebar-select {
+  height: 24px; font-size: 11px; cursor: pointer;
+  color: var(--secondary-foreground, #d4d4d8);
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34); border-radius: 6px;
+  padding: 0 4px;
+}
+.gym-timebar-select:hover { border-color: var(--input, #3f3f46); }
+/* ---- bottom scrub bar ---- */
+.gym-timebar { display: flex; align-items: center; gap: 8px; }
+.gym-timebar-live-dot {
+  width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0;
+  background: var(--muted-foreground, #71717a);
+}
+.gym-timebar-live-dot[data-live='1'] { background: #22c55e; animation: gymLivePulse 1.6s ease-in-out infinite; }
+@keyframes gymLivePulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+.gym-timebar-slider { flex: 1; min-width: 80px; accent-color: var(--primary, #22c55e); height: 20px; }
+.gym-timebar-label { font-size: 11px; color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gym-timebar-label em { font-style: normal; color: var(--muted-foreground, #a1a1aa); margin-left: 6px; }
+
+/* ============================================================================
+   v2.12 visual upgrade: 运动概况 + 会员到店 richer layouts
+   ============================================================================ */
+
+/* ---- 运动概况: hero stat blocks with accent + icons ---- */
+.gym-sum-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.gym-sum-stat {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 10px 12px;
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.gym-sum-stat::after {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--stat-accent, var(--primary, #22c55e));
+  opacity: .9;
+}
+.gym-sum-stat:nth-child(1) { --stat-accent: #22c55e; }
+.gym-sum-stat:nth-child(2) { --stat-accent: #3b82f6; }
+.gym-sum-stat:nth-child(3) { --stat-accent: #f59e0b; }
+.gym-sum-stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--foreground, #fafafa);
+  font-variant-numeric: tabular-nums;
+}
+.gym-sum-stat-label {
+  font-size: 11px;
+  color: var(--muted-foreground, #a1a1aa);
+}
+
+/* section titles get a subtle rail */
+.gym-sum-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground, #fafafa);
+}
+.gym-sum-section-title::before {
+  content: '';
+  width: 3px; height: 11px; border-radius: 2px;
+  background: var(--primary, #22c55e);
+}
+
+/* session rows: richer two-line layout */
+.gym-sum-session {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: var(--secondary, #1e1e22);
+  margin-bottom: 4px;
+}
+.gym-sum-session:last-child { margin-bottom: 0; }
+.gym-sum-session-dot {
+  width: 7px; height: 7px; border-radius: 999px;
+  background: var(--primary, #22c55e);
+}
+.gym-sum-session-name { color: var(--foreground, #fafafa); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gym-sum-session-time { color: var(--muted-foreground, #a1a1aa); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
+.gym-sum-session-dur {
+  color: var(--foreground, #fafafa); font-size: 12px; font-weight: 600;
+  font-variant-numeric: tabular-nums; text-align: right;
+}
+
+/* ---- 会员到店: richer row card per member ---- */
+.gym-report-row {
+  padding: 7px 10px;
+  border-radius: 10px;
+  border-bottom: none;
+  margin-bottom: 5px;
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+  transition: border-color .12s ease;
+}
+.gym-report-row:last-child { margin-bottom: 0; }
+.gym-report-row.clickable:hover { border-color: var(--input, #3f3f46); }
+.gym-report-row.sel { border-color: var(--primary, #22c55e); }
+.gym-report-avatar { width: 34px; height: 34px; }
+.gym-report-avatar-fb { font-size: 13px; }
+.gym-report-name { font-weight: 600; font-size: 13px; }
+.gym-report-visits { color: var(--primary, #22c55e); font-weight: 600; }
+.gym-report-dur { color: var(--foreground, #fafafa); }
+.gym-report-seen { font-size: 10.5px; }
+
+/* stat mini-columns inside the member row */
+.gym-report-statcol {
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  min-width: 40px;
+}
+.gym-report-statcol-v { font-size: 13px; font-weight: 700; color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.gym-report-statcol-v.accent { color: var(--primary, #22c55e); }
+.gym-report-statcol-k { font-size: 9.5px; color: var(--muted-foreground, #a1a1aa); }
+
+/* activity cards: right cluster in the header (mode select + badge) */
+.gym-traffic-headright { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+/* ============================================================================
+   v2.12b 运动概况 layout rework: kill the left rails, bar-list equipment
+   ============================================================================ */
+
+/* stat cards: accent moves to a TOP hairline (left bar felt heavy) */
+.gym-sum-stat::after {
+  left: 0; right: 0; top: 0; bottom: auto;
+  width: auto; height: 2px;
+  opacity: .85;
+}
+
+/* section title: drop the green rail, use plain weight */
+.gym-sum-section-title::before { display: none; }
+.gym-sum-section-title { letter-spacing: .02em; color: var(--muted-foreground, #a1a1aa); }
+
+/* equipment share bars — .gym-sum-eqbars namespace beats the legacy
+   grid-based .gym-sum-eqrow rules further up this file */
+.gym-sum-eqbars { display: flex; flex-direction: column; gap: 8px; }
+.gym-sum-eqbars .gym-sum-eqrow {
+  display: flex; flex-direction: column; gap: 3px;
+  grid-template-columns: none;
+  align-items: stretch;
+}
+.gym-sum-eqbars .gym-sum-eqhead {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+}
+.gym-sum-eqbars .gym-sum-eqname {
+  font-size: 12px; color: var(--foreground, #fafafa);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gym-sum-eqbars .gym-sum-eqval {
+  font-size: 11.5px; color: var(--muted-foreground, #a1a1aa);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.gym-sum-eqbars .gym-sum-eqval em {
+  font-style: normal; color: var(--foreground, #fafafa); font-weight: 600; margin-left: 5px;
+}
+.gym-sum-eqbars .gym-sum-eqtrack {
+  height: 6px; border-radius: 3px;
+  background: var(--secondary, #1e1e22); overflow: hidden;
+  grid-column: auto;
+}
+.gym-sum-eqbars .gym-sum-eqbar { height: 100%; border-radius: 3px; }
+
+/* session chips: slimmer, calmer */
+.gym-sum-session { padding: 4px 8px; margin-bottom: 3px; }
+
+/* ---- 进出场: butterfly layout — in/out oppose from a center axis ---- */
+.gym-door-hist { gap: 3px; }
+.gym-door-hist-head {
+  display: grid; grid-template-columns: 1fr 64px 1fr; gap: 6px;
+  font-size: 10.5px; color: var(--muted-foreground, #a1a1aa);
+  padding: 0 2px 2px;
+}
+.gym-door-hist-head .out { text-align: right; color: #f87171; }
+.gym-door-hist-head .in { text-align: left; color: #4ade80; }
+.gym-door-hist-head .gym-door-hist-mid { text-align: center; }
+.gym-door-hist-row {
+  display: grid; grid-template-columns: 1fr 64px 1fr; gap: 6px;
+  align-items: center; min-height: 20px;
+}
+.gym-door-hist-row .gym-door-hist-mid {
+  font-size: 10.5px; color: var(--muted-foreground, #a1a1aa);
+  text-align: center; white-space: nowrap;
+}
+.gym-door-cell { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.gym-door-cell.out { justify-content: flex-end; flex-direction: row-reverse; }
+.gym-door-cell-v {
+  font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums;
+  color: var(--foreground, #fafafa); min-width: 16px;
+}
+.gym-door-cell.out .gym-door-cell-v { text-align: right; }
+.gym-door-cell.in .gym-door-cell-v { text-align: left; }
+.gym-door-cellbar { height: 12px; border-radius: 3px; min-width: 2px; }
+.gym-door-cellbar.in { background: #4ade80; }
+.gym-door-cellbar.out { background: #f87171; }
+
+/* ============================================================================
+   v2.13 会员到店: table-like list + structured detail drawer
+   ============================================================================ */
+
+/* list = aligned table: name | visits | duration | last-seen */
+.gym-report-thead {
+  display: grid; grid-template-columns: 1fr 52px 72px 92px; gap: 10px;
+  font-size: 10.5px; color: var(--muted-foreground, #a1a1aa);
+  padding: 0 10px 4px;
+  border-bottom: 1px solid var(--border, #232323);
+}
+.gym-report-thead span:not(.gym-report-thead-name) { text-align: right; }
+.gym-report-row {
+  display: grid; grid-template-columns: 1fr 52px 72px 92px; gap: 10px;
+  align-items: center; font-size: 12px;
+  padding: 7px 10px; border-radius: 10px;
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+  margin-bottom: 4px;
+}
+.gym-report-row:last-child { margin-bottom: 0; }
+.gym-report-row.clickable:hover { border-color: var(--input, #3f3f46); }
+.gym-report-row.sel { border-color: var(--primary, #22c55e); }
+/* numeric cells right-aligned, with the unit dimmed */
+.gym-report-row > .gym-report-cell:nth-child(2),
+.gym-report-row > .gym-report-cell:nth-child(3) { text-align: right; color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; }
+.gym-report-row > .gym-report-cell:nth-child(2) { color: var(--primary, #22c55e); font-weight: 600; }
+.gym-report-row > .gym-report-cell:nth-child(4) { text-align: right; font-size: 11px; color: var(--muted-foreground, #a1a1aa); font-variant-numeric: tabular-nums; }
+.gym-report-cell em { font-style: normal; font-size: 10px; color: var(--muted-foreground, #a1a1aa); margin-left: 2px; }
+
+/* detail drawer: hero stat strip + sections */
+.gym-detail-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+  margin-bottom: 4px;
+}
+.gym-detail-stat {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 10px 12px; border-radius: 12px;
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+}
+.gym-detail-stat:nth-child(1) { border-top: 2px solid #22c55e; }
+.gym-detail-stat:nth-child(2) { border-top: 2px solid #3b82f6; }
+.gym-detail-stat:nth-child(3) { border-top: 2px solid #f59e0b; }
+.gym-detail-stat-v { font-size: 20px; font-weight: 700; color: var(--foreground, #fafafa); line-height: 1.15; font-variant-numeric: tabular-nums; }
+.gym-detail-stat-k { font-size: 10.5px; color: var(--muted-foreground, #a1a1aa); }
+.gym-detail-sec { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.gym-detail-sec-title {
+  font-size: 12px; font-weight: 600; color: var(--foreground, #fafafa);
+  display: flex; align-items: baseline; gap: 6px;
+}
+.gym-detail-sec-title em { font-style: normal; font-size: 10.5px; font-weight: 400; color: var(--muted-foreground, #a1a1aa); }
+.gym-report-detail .gym-report-records { gap: 10px; }
+
+/* ============================================================================
+   v2.13b 会员到店: multi-column member mini-cards
+   ============================================================================ */
+.gym-report-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+}
+.gym-mcard {
+  padding: 10px 12px; border-radius: 12px;
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+  transition: border-color .12s ease;
+  cursor: default;
+}
+.gym-mcard.clickable { cursor: pointer; }
+.gym-mcard.clickable:hover { border-color: var(--input, #3f3f46); }
+.gym-mcard.sel { border-color: var(--primary, #22c55e); }
+.gym-mcard-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.gym-mcard-head .gym-report-avatar { width: 32px; height: 32px; }
+.gym-mcard-name {
+  font-size: 13px; font-weight: 600; color: var(--foreground, #fafafa);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: flex; align-items: center; gap: 5px; min-width: 0;
+}
+.gym-mcard-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+  padding-top: 7px; border-top: 1px solid var(--border, #2e2e34);
+}
+.gym-mcard-stat { display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 0; }
+.gym-mcard-stat-v {
+  font-size: 12.5px; font-weight: 700; color: var(--foreground, #fafafa);
+  font-variant-numeric: tabular-nums; line-height: 1.15;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gym-mcard-stat-v.accent { color: var(--primary, #22c55e); }
+.gym-mcard-stat-v.dim { font-size: 11px; font-weight: 500; color: var(--muted-foreground, #a1a1aa); }
+.gym-mcard-stat-k { font-size: 9.5px; color: var(--muted-foreground, #a1a1aa); }
+
+/* ============================================================================
+   v2.14 member detail: large centered modal + full history
+   ============================================================================ */
+.gym-modal-root { position: fixed; inset: 0; z-index: 240; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.gym-modal-root.shown { pointer-events: auto; }
+.gym-modal-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, .45); }
+.gym-modal {
+  position: relative;
+  display: flex; flex-direction: column;
+  max-height: min(84vh, 900px);
+  background: var(--popover, #1c1c1f); color: var(--popover-foreground, #fafafa);
+  border: 1px solid var(--border, #2a2a2a); border-radius: 16px;
+  box-shadow: 0 24px 64px -20px rgba(0, 0, 0, .6);
+}
+.gym-modal .gym-drawer-head { padding: 14px 18px; border-bottom: 1px solid var(--border, #2a2a2a); }
+.gym-modal .gym-drawer-title { font-size: 15px; }
+.gym-modal .gym-drawer-body { padding: 14px 18px 18px; }
+
+/* identity sample strip */
+.gym-identity-strip {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 8px 12px; border-radius: 10px; margin-bottom: 4px;
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+  font-size: 11.5px; color: var(--foreground, #fafafa);
+}
+.gym-identity-item b { font-size: 14px; margin-right: 3px; color: var(--primary, #22c55e); }
+.gym-identity-item.dim { color: var(--muted-foreground, #a1a1aa); }
+
+/* window selector */
+.gym-detail-window { display: inline-flex; gap: 4px; margin-left: auto; }
+
+/* per-day history */
+.gym-history-day { padding: 8px 10px; border-radius: 10px; background: var(--secondary, #1e1e22); border: 1px solid var(--border, #2e2e34); }
+.gym-history-day + .gym-history-day { margin-top: 6px; }
+.gym-history-day-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+.gym-history-day-date { font-size: 12px; font-weight: 600; color: var(--foreground, #fafafa); }
+.gym-history-day-sum { font-size: 10.5px; color: var(--muted-foreground, #a1a1aa); }
+.gym-history-line { display: flex; justify-content: space-between; font-size: 11.5px; padding: 2px 0; }
+.gym-history-ex { color: var(--foreground, #fafafa); }
+.gym-history-meta { color: var(--muted-foreground, #a1a1aa); font-variant-numeric: tabular-nums; }
+
+/* 运动概况 header joins the shared card-header language (rides
+   .gym-traffic-header above; only the card-specific bits remain) */
+.gym-sum-header { margin-bottom: 0; padding: 10px 14px; }
+.gym-sum-daynav { gap: 6px; }
+.gym-sum-navbtn {
+  min-height: 24px; width: 24px; height: 24px;
+  border-radius: 6px;
+  color: var(--secondary-foreground, #d4d4d8);
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+  font-size: 13px; line-height: 1;
+}
+.gym-sum-navbtn:hover:not(:disabled) { background: var(--secondary, #26262b); border-color: var(--input, #3f3f46); }
+.gym-sum-navbtn:disabled { opacity: .35; cursor: default; }
+.gym-sum-day {
+  font-size: 11.5px; font-variant-numeric: tabular-nums;
+  color: var(--foreground, #fafafa);
+  padding: 2px 8px; border-radius: 6px;
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+}
+
+/* 运动概况 matches the traffic-card/rank-card shell exactly:
+   card has NO padding — header pads itself, body pads itself */
+.gym-sum-card {
+  padding: 0;
+  background:
+    linear-gradient(var(--card, #171717), var(--card, #171717)),
+    var(--background, #0b0b0d);
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 12px;
+  box-shadow: none;
+}
+.gym-sum-body {
+  flex: 1; min-height: 0; overflow: auto;
+  padding: 10px 14px 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+/* stat cards: plain — no colored accent bars (per feedback) */
+.gym-sum-stat::after { display: none; }
+.gym-sum-stat {
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+}
+
+/* ============================================================================
+   v2.15 member modal: de-boxed interior — the modal IS the surface
+   (flattens the border-in-border-in-border stack: detail box, identity
+   strip, stat cards, history days all lose their outlines)
+   ============================================================================ */
+.gym-modal .gym-report-detail {
+  background: none; border: none; padding: 0; margin: 0;
+}
+.gym-modal .gym-identity-strip {
+  background: none; border: none; padding: 0 0 10px; margin: 0;
+  border-bottom: 1px solid var(--border, #232323);
+  border-radius: 0;
+}
+.gym-modal .gym-detail-stats { gap: 18px; }
+.gym-modal .gym-detail-stat {
+  background: none; border: none; padding: 0;
+}
+.gym-modal .gym-detail-stat:nth-child(1),
+.gym-modal .gym-detail-stat:nth-child(2),
+.gym-modal .gym-detail-stat:nth-child(3) { border-top: none; }
+.gym-modal .gym-detail-sec { margin-top: 14px; gap: 8px; }
+.gym-modal .gym-detail-sec-title {
+  padding-bottom: 6px; margin-bottom: 2px;
+  border-bottom: 1px solid var(--border, #232323);
+}
+.gym-modal .gym-history-day {
+  background: none; border: none; padding: 0 0 8px; border-radius: 0;
+}
+.gym-modal .gym-history-day + .gym-history-day {
+  margin-top: 0; padding-top: 8px;
+  border-top: 1px dashed var(--border, #232323);
+}
+.gym-modal .gym-report-detail-manage {
+  padding-bottom: 10px; margin-bottom: 4px;
+  border-bottom: 1px solid var(--border, #232323);
+}
+
+/* exercise icon inline with labels */
+.gym-report-exicon {
+  display: inline-flex; align-items: center; margin-right: 6px;
+  color: var(--muted-foreground, #a1a1aa);
+}
+.gym-report-exicon svg { width: 14px; height: 14px; }
+.gym-report-exrow { align-items: center; }
+.gym-history-ex { display: inline-flex; align-items: center; }
+
+/* ============================================================================
+   v2.16 Workout Summary: aligned with the de-boxed member modal —
+   one card surface, hairline dividers between sections
+   ============================================================================ */
+/* stats row: plain numbers, no boxes */
+.gym-sum-body .gym-sum-stats { gap: 18px; padding: 4px 2px 2px; }
+.gym-sum-body .gym-sum-stat {
+  background: none; border: none; padding: 0;
+  align-items: flex-start;
+}
+.gym-sum-body .gym-sum-stat::after { display: none; }
+.gym-sum-body .gym-sum-stat:nth-child(1),
+.gym-sum-body .gym-sum-stat:nth-child(2),
+.gym-sum-body .gym-sum-stat:nth-child(3) { border-top: none; }
+/* section titles carry the divider (like the modal's) */
+.gym-sum-body .gym-sum-section { margin-bottom: 12px; }
+.gym-sum-body .gym-sum-section-title {
+  padding-bottom: 6px; margin-bottom: 8px;
+  border-bottom: 1px solid var(--border, #232323);
+}
+/* session rows: quiet lines, not chips */
+.gym-sum-body .gym-sum-session {
+  background: none; border: none; padding: 4px 2px; margin-bottom: 0;
+  border-bottom: 1px dashed var(--border, #1e1e24);
+}
+.gym-sum-body .gym-sum-session:last-child { border-bottom: none; }
+/* equipment bars keep their track (data viz) but the row unboxes */
+.gym-sum-eqrow { padding: 1px 0; }
+/* timeline rows stay (they ARE data) */
+
+/* alerts card: acknowledge + resolved rows */
+.gym-alerts-row.resolved { opacity: .45; }
+.gym-alerts-ack {
+  margin-left: auto; flex-shrink: 0;
+  width: 20px; height: 20px; border-radius: 6px;
+  font-size: 11px; cursor: pointer; line-height: 1;
+  color: var(--muted-foreground, #a1a1aa);
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+}
+.gym-alerts-ack:hover { color: var(--primary, #22c55e); border-color: var(--primary, #22c55e); }
+
+/* empty-state warning tone (config missing, not just no data) */
+.gym-empty-warn { color: var(--color-warning, #f59e0b); }
+
+/* ============================================================================
+   v2.17 member modal: exercise tiles + visit bar chart
+   ============================================================================ */
+
+/* exercise grid: responsive tiles replacing the weak vertical list */
+.gym-exgrid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+.gym-extile {
+  display: flex; flex-direction: column; gap: 5px;
+  padding: 12px 14px 10px;
+  border-radius: 14px;
+  background: var(--secondary, #1e1e22);
+  border: 1px solid var(--border, #2e2e34);
+}
+.gym-extile-head { display: flex; align-items: center; justify-content: space-between; }
+.gym-extile-icon { color: var(--muted-foreground, #a1a1aa); }
+.gym-extile-icon svg { width: 20px; height: 20px; }
+.gym-extile-pct {
+  font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums;
+  color: var(--foreground, #fafafa);
+}
+.gym-extile-name {
+  font-size: 12.5px; font-weight: 600; color: var(--foreground, #fafafa);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gym-extile-bar { height: 4px; border-radius: 2px; background: var(--secondary, #2a2a31); overflow: hidden; }
+.gym-extile-bar-fill { height: 100%; border-radius: 2px; background: var(--primary, #22c55e); }
+.gym-extile-nums { display: flex; align-items: baseline; gap: 3px; margin-top: 2px; }
+.gym-extile-nums b { font-size: 16px; font-weight: 700; color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; }
+.gym-extile-nums i { font-style: normal; font-size: 10px; color: var(--muted-foreground, #a1a1aa); margin-right: 5px; }
+.gym-extile-dur { font-size: 11px; color: var(--muted-foreground, #a1a1aa); }
+
+/* visits: horizontal bar chart rows */
+.gym-vischart { display: flex; flex-direction: column; gap: 7px; }
+.gym-vis-row-grid { display: grid; grid-template-columns: 44px 1fr 64px; gap: 10px; align-items: center; }
+.gym-vischart .gym-vis-row { display: grid; grid-template-columns: 44px 1fr 64px; gap: 10px; align-items: center; }
+.gym-vis-day { display: flex; flex-direction: column; align-items: center; line-height: 1.1; }
+.gym-vis-day b { font-size: 15px; font-weight: 700; color: var(--foreground, #fafafa); font-variant-numeric: tabular-nums; }
+.gym-vis-day i { font-style: normal; font-size: 9px; color: var(--muted-foreground, #a1a1aa); text-transform: uppercase; letter-spacing: .04em; }
+.gym-vis-track { height: 14px; border-radius: 7px; background: var(--secondary, #1e1e22); overflow: hidden; }
+.gym-vis-fill { height: 100%; border-radius: 7px; background: linear-gradient(90deg, color-mix(in oklab, var(--primary, #22c55e) 60%, transparent), var(--primary, #22c55e)); }
+.gym-vis-dur { font-size: 11.5px; color: var(--foreground, #e4e4e7); text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---- member modal manage form: structured two-row toolbar ---- */
+.gym-detail-manage { display: flex; flex-direction: column; gap: 8px; }
+.gym-detail-manage-row { display: flex; align-items: center; gap: 8px; }
+.gym-detail-manage-row .gym-ov-input.name { flex: 1; min-width: 0; max-width: 280px; }
+.gym-detail-manage-row .gym-sel { flex: 1; min-width: 0; max-width: 220px; }
+.gym-detail-manage-row.scope { justify-content: flex-end; }
+.gym-detail-manage-label {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted-foreground, #a1a1aa); margin-right: 2px;
+}
+.gym-modal .gym-report-detail-manage { border-bottom: none; padding: 0; margin: 0; }
+
+
+/* ============================================================================
+   Shared widget loading state (skeleton + spinner)
+   ============================================================================ */
+.gym-loading {
+  flex: 1; min-height: 80px;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  color: var(--muted-foreground, #a1a1aa); font-size: 12px;
+}
+.gym-loading .gym-live-spinner { width: 18px; height: 18px; }
+/* skeleton rows while first fetch is in flight */
+.gym-skel { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.gym-skel-row {
+  height: 14px; border-radius: 7px;
+  background: linear-gradient(90deg,
+    var(--secondary, #1e1e22) 25%,
+    color-mix(in oklab, var(--secondary, #1e1e22) 55%, var(--foreground, #fff) 6%) 50%,
+    var(--secondary, #1e1e1e) 75%);
+  background-size: 200% 100%;
+  animation: gymSkelShimmer 1.4s ease infinite;
+}
+.gym-skel-row.w60 { width: 60%; }
+.gym-skel-row.w40 { width: 40%; }
+@keyframes gymSkelShimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* latched busy with no live detection — the idleSec grace window */
+.gym-eq-cell.releasing {
+  border-color: rgba(34, 197, 94, .25);
+  background: rgba(34, 197, 94, .03);
+}
+.gym-eq-dot.releasing { background: rgba(34, 197, 94, .35); box-shadow: none; }
+
+/* traffic chart hover readout */
+.gym-traffic-plot { position: relative; cursor: crosshair; }
+.gym-traffic-xhair { stroke: var(--muted-foreground, #a1a1aa); stroke-width: .3; stroke-dasharray: 1 1; opacity: .7; }
+.gym-traffic-hover-pt { fill: var(--primary, #22c55e); stroke: #fff; stroke-width: .3; }
+.gym-traffic-tip {
+  position: absolute; top: -4px; transform: translateX(-50%);
+  pointer-events: none; white-space: nowrap;
+  background: var(--popover, #1c1c1f); color: var(--foreground, #fafafa);
+  border: 1px solid var(--border, #2a2a2a); border-radius: 8px;
+  padding: 3px 8px; font-size: 10.5px; z-index: 4;
+  display: flex; align-items: baseline; gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.gym-traffic-tip b { font-size: 14px; font-weight: 700; color: var(--primary, #22c55e); }
+.gym-traffic-tip span { color: var(--muted-foreground, #a1a1aa); }
+
+/* the host button reset (min-height 44) also leaks into the MODAL — the
+   equal-height rail missed it (card/drawer only). Clamp it here too. */
+.gym-modal .gym-detail-manage-row .gym-ov-btn {
+  min-height: 0; height: 28px; padding: 0 10px; box-sizing: border-box;
+}
+.gym-modal .gym-detail-manage-row .gym-ov-input {
+  height: 28px; box-sizing: border-box;
+}
+.gym-modal .gym-detail-manage-row .gym-sel-trigger {
+  min-height: 0; height: 28px;
+}

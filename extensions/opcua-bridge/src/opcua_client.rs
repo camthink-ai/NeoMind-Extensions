@@ -82,7 +82,7 @@ impl OpcUaClientManager {
                                         let _ = reply.send(Ok(serde_json::json!({
                                             "success": true,
                                             "server_url": server_url,
-                                            "message": "Connected (protocol stub — OPC-UA crate not yet integrated)"
+                                            "message": "⚠ STUB: no real OPC-UA connection was made (crate not yet integrated). Read returns cached data; write is refused."
                                         })));
                                     }
                                     CommandMsg::Disconnect { reply } => {
@@ -147,18 +147,15 @@ impl OpcUaClientManager {
                                         })));
                                     }
                                     CommandMsg::Write { node_id, value, data_type, reply } => {
-                                        cache.update_node_value(
-                                            &node_id,
-                                            value.clone(),
-                                            Some("Good".to_string()),
-                                            Some(chrono::Utc::now().timestamp_millis()),
-                                        );
-                                        let _ = reply.send(Ok(serde_json::json!({
-                                            "success": true,
-                                            "node_id": node_id,
-                                            "written_value": value,
-                                            "data_type": data_type,
-                                        })));
+                                        // SECURITY: this is a protocol STUB — writing only
+                                        // updates a local cache and returning success is
+                                        // dangerous misinformation in industrial contexts.
+                                        // Refuse until a real OPC-UA client is integrated.
+                                        let _ = reply.send(Err(
+                                            "write is NOT supported: OPC-UA bridge is a protocol stub — \
+                                             returning fake success on an industrial write is dangerous"
+                                                .to_string(),
+                                        ));
                                     }
                                     CommandMsg::Subscribe { node_ids, interval_ms, reply } => {
                                         // Check for existing subscription with same node set

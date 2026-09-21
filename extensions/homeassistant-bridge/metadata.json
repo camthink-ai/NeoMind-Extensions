@@ -1,7 +1,7 @@
 {
   "id": "homeassistant-bridge",
-  "name": "homeassistant uridge",
-  "version": "2.7.9",
+  "name": "Homeassistant Bridge",
+  "version": "2.7.7",
   "description": "Home Assistant bridge for NeoMind — import 3000+ HA entity integrations as devices",
   "author": "NeoMind Team",
   "license": "Apache-2.0",

@@ -200,6 +200,14 @@ do_sync() {
         # Frontend info
         local fj="$d/frontend/frontend.json"
         local metadata
+        # NOTE: this generator does NOT emit variant builds (jetson/cuda)
+        # nor title-cased names — prefer `scripts/update-versions.sh` (the
+        # canonical generator per CLAUDE.md). Preserve env_hints and any
+        # existing variant build entries so running this script doesn't
+        # silently strip them from metadata.json.
+        local existing_hints existing_variants
+        existing_hints=$(jq -c '.env_hints // empty' "$d/metadata.json" 2>/dev/null || true)
+        existing_variants=$(jq -c '.builds | with_entries(select(.key | endswith("-jetson") or endswith("-cuda"))) // empty' "$d/metadata.json" 2>/dev/null || true)
         metadata=$(jq -c -n \
             --arg id "$id" \
             --arg name "$display_name" \
@@ -209,9 +217,13 @@ do_sync() {
             --argjson cats "$cats" \
             --arg home "https://github.com/$GITHUB_REPO/tree/main/extensions/$id" \
             --argjson builds "$builds" \
+            --argjson hints "${existing_hints:-null}" \
+            --argjson variants "${existing_variants:-null}" \
             '{id:$id, name:$name, version:$version, description:$desc,
-              author:"NeoMind Team", license:"Apache-2.0", type:$etype,
-              categories:$cats, homepage:$home, builds:$builds}')
+              author:"NeoMind Team", license:"Apache-2.0", type:"native",
+              categories:$cats, homepage:$home, builds:$builds}
+              | if $variants != null and ($variants | length) > 0 then .builds = (.builds + $variants) else . end
+              | if $hints != null then . + {env_hints: $hints} else . end')
 
         if [ -f "$fj" ]; then
             local comps; comps=$(jq -c '[.components[].name]' "$fj" 2>/dev/null || echo "[]")

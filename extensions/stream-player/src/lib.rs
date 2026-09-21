@@ -43,6 +43,7 @@ enum SourceType {
 
 /// Parse source URL into source type
 fn parse_source_url(url: &str) -> std::result::Result<SourceType, String> {
+        validate_source_url(url)?;
     if url.starts_with("rtsp://") {
         Ok(SourceType::RTSP { url: url.to_string() })
     } else if url.starts_with("rtmp://") {
@@ -115,14 +116,27 @@ impl FfmpegDecoder {
         };
 
         let mut input_opts = ff::Dictionary::new();
+        // ALL network sources get IO timeouts — the old code only covered
+        // RTSP/RTMP, leaving HTTP/HLS sources able to hang forever on a
+        // dead connection (found in code review: join() would deadlock).
         if matches!(source_type, SourceType::RTSP { .. }) {
             input_opts.set("rtsp_transport", "tcp");
             input_opts.set("stimeout", "5000000");     // 5s socket timeout
-            input_opts.set("rw_timeout", "10000000");   // 10s read/write timeout
         }
-        if matches!(source_type, SourceType::RTMP { .. }) {
-            input_opts.set("rw_timeout", "10000000"); // 10s read/write timeout
+        if matches!(source_type, SourceType::RTSP { .. } | SourceType::RTMP { .. }) {
+            input_opts.set("rw_timeout", "10000000");  // 10s read/write timeout
+        }
+        if matches!(source_type, SourceType::RTMP { .. } | SourceType::Http { .. }) {
             input_opts.set("timeout", "10000000");     // 10s connection timeout
+        }
+        if matches!(source_type, SourceType::HLS { .. }) {
+            input_opts.set("rw_timeout", "15000000");  // 15s (segments can be slow)
+            input_opts.set("timeout", "10000000");     // 10s connection timeout
+        }
+        if matches!(source_type, SourceType::Http { .. } | SourceType::HLS { .. }) {
+            input_opts.set("reconnect", "1");
+            input_opts.set("reconnect_streamed", "1");
+            input_opts.set("reconnect_delay_max", "5");
         }
         if matches!(source_type, SourceType::RTSP { .. } | SourceType::RTMP { .. } | SourceType::HLS { .. }) {
             input_opts.set("analyzeduration", "2000000");
@@ -219,7 +233,7 @@ unsafe impl Send for FfmpegDecoder {}
 // JPEG Encoder (using `image` crate — fast, pure Rust)
 // ============================================================================
 
-/// Encode RGB24 data to JPEG using the `image` crate (same as yolo-video-v2).
+/// Encode RGB24 data to JPEG using the `image` crate (same as yolo-video).
 /// Much faster than ffmpeg MJPEG encoder — no color space conversion needed.
 fn encode_jpeg(rgb_data: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
     let img = match image::RgbImage::from_raw(width, height, rgb_data.to_vec()) {
@@ -1074,4 +1088,16 @@ mod tests {
         assert_eq!(config.video_bitrate, 1500);
         assert!(config.loop_file);
     }
+}
+
+fn validate_source_url(url: &str) -> std::result::Result<(), String> {
+    let lower = url.to_lowercase();
+    let valid_schemes = ["rtsp://", "rtmp://", "hls://", "http://", "https://", "file://", "camera://", "screen://"];
+    if !valid_schemes.iter().any(|s| lower.starts_with(s)) {
+        return Err(format!(
+            "source URL scheme not supported: {url} (allowed: {:?})",
+            &valid_schemes[..5]
+        ));
+    }
+    Ok(())
 }

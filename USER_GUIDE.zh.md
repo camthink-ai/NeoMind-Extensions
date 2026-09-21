@@ -74,7 +74,7 @@ cp target/release/libneomind_extension_*.dylib ~/.neomind/extensions/
 
 ```bash
 # 打包特定扩展
-bash scripts/package.sh -d extensions/weather-forecast-v2
+./build.sh --single weather-forecast
 
 # 通过 NeoMind Web UI 安装 .nep 包
 # 扩展 → 添加扩展 → 文件模式 → 上传
@@ -84,9 +84,9 @@ bash scripts/package.sh -d extensions/weather-forecast-v2
 
 ## 可用扩展
 
-### 天气预报 V2
+### 天气预报
 
-**ID**: `weather-forecast-v2`
+**ID**: `weather-forecast`
 
 使用 Open-Meteo API 的实时天气数据。
 
@@ -104,14 +104,14 @@ bash scripts/package.sh -d extensions/weather-forecast-v2
 
 ```bash
 # 构建
-cargo build --release -p neomind-weather-forecast-v2
+cargo build --release -p weather-forecast
 ```
 
 ---
 
-### 图像分析器 V2
+### 图像分析器
 
-**ID**: `image-analyzer-v2`
+**ID**: `image-analyzer`
 
 使用 YOLOv8 的 AI 图像分析。
 
@@ -129,14 +129,14 @@ cargo build --release -p neomind-weather-forecast-v2
 
 ```bash
 # 构建
-cargo build --release -p neomind-image-analyzer-v2
+cargo build --release -p image-analyzer
 ```
 
 ---
 
-### YOLO 视频 V2
+### YOLO 视频
 
-**ID**: `yolo-video-v2`
+**ID**: `yolo-video`
 
 使用 YOLOv11 的实时视频流处理。
 
@@ -156,7 +156,7 @@ cargo build --release -p neomind-image-analyzer-v2
 
 ```bash
 # 构建
-cargo build --release -p neomind-yolo-video-v2
+cargo build --release -p yolo-video
 ```
 
 ---
@@ -177,12 +177,12 @@ cargo build --release -p neomind-yolo-video-v2
 curl http://localhost:9375/api/extensions
 
 # 执行扩展命令
-curl -X POST http://localhost:9375/api/extensions/weather-forecast-v2/command \
+curl -X POST http://localhost:9375/api/extensions/weather-forecast/command \
   -H "Content-Type: application/json" \
   -d '{"command": "get_weather", "args": {"city": "北京"}}'
 
 # 获取扩展指标
-curl http://localhost:9375/api/extensions/image-analyzer-v2/metrics
+curl http://localhost:9375/api/extensions/image-analyzer/metrics
 ```
 
 ### 通过仪表板
@@ -234,7 +234,7 @@ V2 扩展为仪表板提供 React 组件：
 make build
 
 # 构建特定扩展
-cargo build --release -p neomind-weather-forecast-v2
+cargo build --release -p weather-forecast
 
 # 构建并安装
 ./build.sh --yes
@@ -246,7 +246,7 @@ make clean
 make test
 
 # 格式化代码
-make fmt
+cargo fmt
 ```
 
 ---

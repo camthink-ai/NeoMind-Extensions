@@ -742,9 +742,9 @@ impl Extension for BacnetBridgeExtension {
             "read_property" => self.cmd_read_property(args),
             "read_property_multiple" => self.cmd_read_property_multiple(args),
             "write_property" => self.cmd_write_property(args),
-            "subscribe_cov" => self.cmd_subscribe_cov(args),
+            "subscribe_cov" => { self.ensure_listener(); self.cmd_subscribe_cov(args) }
             "unsubscribe_cov" => self.cmd_unsubscribe_cov(args),
-            "add_device" => self.cmd_add_device(args),
+            "add_device" => { self.ensure_listener(); self.cmd_add_device(args) }
             "remove_device" => self.cmd_remove_device(args),
             "list_devices" => self.cmd_list_devices(),
             "get_device" => self.cmd_get_device(args),

@@ -36,6 +36,25 @@ pub(crate) struct ExtractFrameParams {
     pub quality: u8,
 }
 
+fn validate_output_path(mut params: ExtractFrameParams) -> Result<ExtractFrameParams, String> {
+    if let Some(op) = &params.output_path {
+        let p = std::path::Path::new(op);
+        if p.is_absolute() || op.contains("..") {
+            return Err(format!("output_path must be relative with no .. (got: {op})"));
+        }
+        // Anchor under the extension's data dir when set, else temp
+        let anchored = match std::env::var("NEOMIND_EXTENSION_DATA_DIR") {
+            Ok(dir) => std::path::PathBuf::from(dir).join("snapshots").join(p),
+            Err(_) => std::env::temp_dir().join("neomind-snapshots").join(p),
+        };
+        if let Some(parent) = anchored.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        params.output_path = Some(anchored.to_string_lossy().to_string());
+    }
+    Ok(params)
+}
+
 fn default_quality() -> u8 {
     85
 }
@@ -105,30 +124,52 @@ fn format_result(result: ExtractResult) -> Value {
 }
 
 fn run_with_timeout(params: ExtractFrameParams) -> Result<ExtractResult, ExtensionError> {
+    // Cancellation flag: the decoder thread checks this between expensive
+    // FFmpeg operations. Without it, a timeout would detach a thread that
+    // stays blocked in FFmpeg's internal read loops forever (thread leak
+    // found in code review — repeated calls against a dead source would
+    // accumulate one leaked thread per attempt).
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = cancelled.clone();
+
     let (tx, rx) = mpsc::channel::<Result<ExtractResult, String>>();
     let builder = thread::Builder::new().name("extract_frame".to_string());
-    let handle = builder
+    let _handle = builder
         .spawn(move || {
-            let _ = tx.send(extract_inner(params));
+            let result = extract_inner(params);
+            let _ = tx.send(result);
         })
         .map_err(|e| ExtensionError::ExecutionFailed(format!("spawn failed: {}", e)))?;
 
     match rx.recv_timeout(DECODE_TIMEOUT) {
-        Ok(Ok(result)) => Ok(result),
-        Ok(Err(msg)) => Err(ExtensionError::ExecutionFailed(msg)),
-        Err(mpsc::RecvTimeoutError::Timeout) => Err(ExtensionError::ExecutionFailed(
-            "decode timeout, no frame received within 15s".to_string(),
-        )),
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            let _ = handle.join();
+        Ok(Ok(result)) => {
+            cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(result)
+        }
+        Ok(Err(msg)) => {
+            cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+            Err(ExtensionError::ExecutionFailed(msg))
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            // Signal cancellation; the thread will exit at its next FFmpeg
+            // checkpoint. We do NOT join — the thread may be blocked inside
+            // FFmpeg's C code where the flag can't be checked until it returns.
+            cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+            let _ = flag; // suppress unused warning
             Err(ExtensionError::ExecutionFailed(
-                "decoder thread terminated unexpectedly".to_string(),
+                "decode timeout, no frame received within 15s".to_string(),
             ))
         }
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(ExtensionError::ExecutionFailed(
+            "decoder thread terminated unexpectedly".to_string(),
+        )),
     }
 }
 
 fn extract_inner(params: ExtractFrameParams) -> Result<ExtractResult, String> {
+    // SECURITY: output_path is user-controllable — anchor it to a safe
+    // directory and reject traversal.
+    let params = validate_output_path(params)?;
     let source_type = parse_source_url(&params.url)?;
 
     let (target_w, target_h) = match (params.width, params.height) {

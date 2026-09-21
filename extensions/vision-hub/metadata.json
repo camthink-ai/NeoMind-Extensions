@@ -1,0 +1,41 @@
+{
+  "id": "vision-hub",
+  "name": "Vision Hub",
+  "version": "0.1.0",
+  "description": "Unified vision extension: hardware-accelerated detection/OCR/face/grounding/VLM pipelines on device streams, uploads and URLs \u2014 one task schema, one config, no usls",
+  "author": "NeoMind Team",
+  "license": "Apache-2.0",
+  "type": "native",
+  "categories": [
+    "ai",
+    "vision",
+    "detection"
+  ],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/vision-hub",
+  "builds": {
+    "darwin-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/vision-hub-0.1.0-darwin_aarch64.nep"
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/vision-hub-0.1.0-darwin_x86_64.nep"
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/vision-hub-0.1.0-linux_amd64.nep"
+    },
+    "linux-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/vision-hub-0.1.0-linux_arm64.nep"
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/vision-hub-0.1.0-windows_amd64.nep"
+    },
+    "linux-aarch64-jetson": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/vision-hub-0.1.0-linux_arm64-jetson.nep"
+    },
+    "linux-x86_64-cuda": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/vision-hub-0.1.0-linux_amd64-cuda.nep"
+    }
+  },
+  "env_hints": {
+    "ORT_DYLIB_PATH": "{binaries}/{ort_lib}"
+  }
+}

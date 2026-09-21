@@ -2,14 +2,14 @@
 
 ## Script Overview
 
-There are 4 build scripts available, each designed for different use cases:
+There are 3 build/release scripts available, each designed for different use cases:
 
 | Script | Purpose | When to Use |
 |--------|---------|-------------|
 | `build.sh` | Build all extensions + create .nep packages | CI/CD, full release builds |
 | `release.sh` | Build + GitHub release preparation | Official releases |
-| `build-dev.sh` | Build single extension for development | Daily development |
-| `build-package.sh` | Package single extension as .nep | Testing individual extensions |
+| `build.sh --dev` | Build single extension for development | Daily development |
+| `build.sh --single` | Package single extension as .nep | Testing individual extensions |
 
 ---
 
@@ -72,7 +72,7 @@ There are 4 build scripts available, each designed for different use cases:
 
 ---
 
-### 3. build-dev.sh (Development Script) ⭐ RECOMMENDED
+### 3. build.sh --dev (Development Script) ⭐ RECOMMENDED
 
 **Purpose:** Quick development iteration for single extension
 
@@ -84,11 +84,11 @@ There are 4 build scripts available, each designed for different use cases:
 
 **Usage:**
 ```bash
-# Build and deploy yolo-video-v2
-./build-dev.sh yolo-video-v2
+# Build and deploy yolo-video
+./build.sh --dev yolo-video
 
 # Specify custom NeoMind path
-./build-dev.sh yolo-video-v2 /path/to/NeoMind
+./build.sh --dev yolo-video /path/to/NeoMind
 ```
 
 **Output:**
@@ -102,7 +102,7 @@ There are 4 build scripts available, each designed for different use cases:
 
 ---
 
-### 4. build-package.sh (Package Script)
+### 4. build.sh --single (Package Script)
 
 **Purpose:** Package single extension as .nep file
 
@@ -113,11 +113,11 @@ There are 4 build scripts available, each designed for different use cases:
 
 **Usage:**
 ```bash
-# Package yolo-video-v2 to ./dist/
-./build-package.sh yolo-video-v2
+# Package yolo-video to ./dist/
+./build.sh --single yolo-video
 
 # Package to custom output directory
-./build-package.sh yolo-video-v2 ./my-output
+./build.sh --single yolo-video ./my-output
 ```
 
 **Output:**
@@ -139,7 +139,7 @@ There are 4 build scripts available, each designed for different use cases:
 # Edit files in extensions/<name>/src/
 
 # 2. Build and deploy to NeoMind
-./build-dev.sh <extension-name>
+./build.sh --dev <extension-name>
 
 # 3. Restart NeoMind or reload extension
 # Test your changes
@@ -164,13 +164,13 @@ There are 4 build scripts available, each designed for different use cases:
 
 ```bash
 # 1. Build and package single extension
-./build-package.sh <extension-name>
+./build.sh --single <extension-name>
 
 # 2. Upload .nep via frontend
 # Test installation
 
-# 3. If issues found, use build-dev.sh for iteration
-./build-dev.sh <extension-name>
+# 3. If issues found, use build.sh --dev for iteration
+./build.sh --dev <extension-name>
 ```
 
 ---
@@ -181,13 +181,13 @@ There are 4 build scripts available, each designed for different use cases:
 
 | Scenario | Problem | Solution |
 |----------|---------|-----------|
-| Using `build.sh` then `build-dev.sh` | Different output locations | Use one workflow consistently |
-| Using `build-dev.sh` then frontend upload | Same target directory | Uninstall first via frontend |
+| Using `build.sh` then `build.sh --dev` | Different output locations | Use one workflow consistently |
+| Using `build.sh --dev` then frontend upload | Same target directory | Uninstall first via frontend |
 | Multiple scripts simultaneously | Race conditions | Don't run scripts in parallel |
 
-### Unified Path (build-dev.sh)
+### Unified Path (build.sh --dev)
 
-`build-dev.sh` uses the unified path:
+`build.sh --dev` uses the unified path:
 ```
 NeoMind/data/extensions/<extension-name>/
 ```
@@ -200,8 +200,8 @@ This is the **same path** used by frontend uploads, ensuring consistency.
 
 | Task | Command |
 |------|---------|
-| Develop extension | `./build-dev.sh <name>` |
-| Package for testing | `./build-package.sh <name>` |
+| Develop extension | `./build.sh --dev <name>` |
+| Package for testing | `./build.sh --single <name>` |
 | Full build (all extensions) | `./build.sh --skip-install` |
 | Release preparation | `./release.sh` |
 | Clean build artifacts | `cargo clean && rm -rf dist/` |
@@ -210,7 +210,7 @@ This is the **same path** used by frontend uploads, ensuring consistency.
 
 ## Best Practices
 
-1. **Use `build-dev.sh` for daily development** - Fast, unified path
+1. **Use `build.sh --dev` for daily development** - Fast, unified path
 2. **Use `build.sh` for CI/CD** - Builds everything
 3. **Use `release.sh` for releases** - Clean, reproducible
 4. **Don't mix workflows** - Stick to one script per session
@@ -222,16 +222,24 @@ This is the **same path** used by frontend uploads, ensuring consistency.
 
 ### Q: Which script should I use?
 
-**A:** For development, use `build-dev.sh`. For releases, use `build.sh` or `release.sh`.
+**A:** For development, use `build.sh --dev`. For releases, use `build.sh` or `release.sh`.
 
 ### Q: Can I run multiple scripts at once?
 
 **A:** No, this can cause race conditions. Run scripts sequentially.
 
-### Q: My extension won't load after using build-dev.sh
+### Q: My extension won't load after using build.sh --dev
 
 **A:** Restart NeoMind to reload extensions from the updated directory.
 
-### Q: Frontend upload conflicts with build-dev.sh output
+### Q: Frontend upload conflicts with build.sh --dev output
 
 **A:** They use the same directory. Uninstall via frontend first, then use one method consistently.
+
+## `scripts/update-versions.sh` (AUTHORITATIVE generator)
+
+Syncs `VERSION` → per-extension `Cargo.toml` → `metadata.json` →
+`extensions/index.json`, preserving `env_hints` and variant build entries.
+This is the canonical JSON generator; `release.sh`'s inline generation is
+a legacy fallback. `--check` validates the chain, `--bump-versions`
+updates Cargo.toml files.

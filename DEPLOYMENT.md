@@ -9,21 +9,21 @@ NeoMindProject/
 ├── NeoMind/                    # Main project
 │   ├── data/
 │   │   └── extensions/         # ← Unified extension installation directory
-│   │       ├── yolo-video-v2/
-│   │       ├── image-analyzer-v2/
+│   │       ├── yolo-video/
+│   │       ├── image-analyzer/
 │   │       └── ...
 │   └── ...
 │
 └── NeoMind-Extension/          # Extension development repository
     ├── extensions/
-    │   ├── yolo-video-v2/
+    │   ├── yolo-video/
     │   │   ├── src/
     │   │   ├── models/
     │   │   ├── frontend/
     │   │   └── metadata.json
     │   └── ...
-    ├── build-dev.sh            # Development build script
-    └── build-package.sh        # Production packaging script
+    ├── build.sh --dev            # Development build script
+    └── build.sh --single        # Production packaging script
 ```
 
 ## Core Principle
@@ -46,13 +46,13 @@ Modify code in `NeoMind-Extension/extensions/<extension-name>/`.
 ### 2. Build and Deploy to NeoMind
 
 ```bash
-cd NeoMind-Extension
-./build-dev.sh <extension-name>
+cd NeoMind-Extensions
+./build.sh --dev <extension-name>
 ```
 
 Example:
 ```bash
-./build-dev.sh yolo-video-v2
+./build.sh --dev yolo-video
 ```
 
 This script will:
@@ -81,8 +81,8 @@ curl -X POST http://localhost:9375/api/extensions/<extension-id>/reload
 ### 1. Package Extension
 
 ```bash
-cd NeoMind-Extension
-./build-package.sh <extension-name> ./dist
+cd NeoMind-Extensions
+./build.sh --single <extension-name> ./dist
 ```
 
 This generates `<extension-name>.nep` file (essentially a zip format).
@@ -107,7 +107,7 @@ Check the extension list in frontend to confirm the new extension is installed a
 
 1. **Uninstall old version**
    - Frontend calls `/api/extensions/<id>/uninstall`
-   - System will: stop process → delete files → clean registration
+   - System will: stop process → delete package files → clean registration (the extension-private `data/` dir is PRESERVED — see NEOMIND_EXTENSION_DATA_DIR)
 
 2. **Upload new version**
    - Frontend calls `/api/extensions/upload`
@@ -120,7 +120,7 @@ Check the extension list in frontend to confirm the new extension is installed a
 
 ```bash
 # Direct compile overwrite
-./build-dev.sh <extension-name>
+./build.sh --dev <extension-name>
 
 # Restart NeoMind
 ```
@@ -154,7 +154,7 @@ Used for running tests directly during development.
 
 ### Q: Why is my extension still the old version after modifying code?
 
-**A:** Ensure you use the `./build-dev.sh` script to deploy to `NeoMind/data/extensions/`, not just compile in `NeoMind-Extension/target/`.
+**A:** Ensure you use the `./build.sh --dev` script to deploy to `NeoMind/data/extensions/`, not just compile in `NeoMind-Extension/target/`.
 
 ### Q: Extension not updated after frontend upload?
 
@@ -186,25 +186,25 @@ NEOMIND_EXTENSION_DIR=/path/to/data/extensions/<extension-id>
 
 ## Script Reference
 
-### build-dev.sh
+### build.sh --dev
 
 ```bash
 # Usage
-./build-dev.sh <extension-name> [neomind-root]
+./build.sh --dev <extension-name> [neomind-root]
 
 # Examples
-./build-dev.sh yolo-video-v2
-./build-dev.sh image-analyzer-v2 /path/to/NeoMind
+./build.sh --dev yolo-video
+./build.sh --dev image-analyzer /path/to/NeoMind
 ```
 
-### build-package.sh
+### build.sh --single
 
 ```bash
 # Usage
-./build-package.sh <extension-name> [output-dir]
+./build.sh --single <extension-name> [output-dir]
 
 # Examples
-./build-package.sh yolo-video-v2 ./dist
+./build.sh --single yolo-video ./dist
 ```
 
 ---
@@ -215,8 +215,8 @@ Each extension requires a `metadata.json` file:
 
 ```json
 {
-  "id": "yolo-video-v2",
-  "name": "YOLO Video V2",
+  "id": "yolo-video",
+  "name": "YOLO Video",
   "version": "2.0.0",
   "description": "Real-time video stream processing",
   "author": "Your Name",
@@ -233,9 +233,9 @@ During installation, it will be automatically converted to `manifest.json`.
 
 | Operation | Command/Method | Output Location |
 |-----------|----------------|-----------------|
-| Development build | `./build-dev.sh <name>` | `NeoMind/data/extensions/<name>/` |
-| Production package | `./build-package.sh <name>` | `./dist/<name>.nep` |
+| Development build | `./build.sh --dev <name>` | `NeoMind/data/extensions/<name>/` |
+| Production package | `./build.sh --single <name>` | `./dist/<name>.nep` |
 | Frontend upload | Upload `.nep` file | `NeoMind/data/extensions/<name>/` |
-| Uninstall extension | `DELETE /api/extensions/:id` | Delete entire directory |
+| Uninstall extension | `DELETE /api/extensions/:id` | Delete package files (data/ preserved) |
 
 **Key: All paths unified to `NeoMind/data/extensions/`, ensuring version consistency.**

@@ -1,7 +1,7 @@
 {
   "id": "voice-assistant",
-  "name": "voice assistant",
-  "version": "2.7.9",
+  "name": "Voice Assistant",
+  "version": "2.7.7",
   "description": "Real-time voice assistant orchestrator: mic → VAD → ASR → echo reply → TTS → speaker",
   "author": "NeoMind Team",
   "license": "Apache-2.0",

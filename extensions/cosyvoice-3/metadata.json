@@ -1,7 +1,7 @@
 {
   "id": "cosyvoice-3",
-  "name": "cosyvoice 3",
-  "version": "2.7.9",
+  "name": "Cosyvoice 3",
+  "version": "2.7.7",
   "description": "CosyVoice 3 (Fun-CosyVoice3-0.5B) streaming TTS extension — speak on host audio + synthesize wav",
   "author": "NeoMind Team",
   "license": "Apache-2.0",

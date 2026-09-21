@@ -15,25 +15,25 @@ Official extension marketplace for NeoMind Edge AI Platform. Contains native ext
 cargo build --release
 
 # Build single extension
-cargo build --release -p weather-forecast-v2
+cargo build --release -p weather-forecast
 
 # Test all extensions
 cargo test
 
 # Generate JSON files (metadata.json, index.json)
-./scripts/update-versions.sh 2.4.0
+./scripts/update-versions.sh 2.7.9
 
 # Build .nep packages (uses Cargo.toml versions)
 ./build.sh
 
 # Build with specific version for filenames
-./build.sh --release 2.4.0
+./build.sh --release 2.7.9
 
 # Dev build + auto-install to NeoMind
 ./build.sh --dev
 
 # Build single extension
-./build.sh --single weather-forecast-v2
+./build.sh --single weather-forecast
 ```
 
 ## Scripts Reference
@@ -51,8 +51,8 @@ cargo test
 ```bash
 ./build.sh                           # Build all, create packages
 ./build.sh --dev                     # Dev build, auto-install to NeoMind
-./build.sh --release 2.4.0           # Release with version in filenames
-./build.sh --single weather-forecast-v2  # Single extension
+./build.sh --release 2.7.9           # Release with version in filenames
+./build.sh --single weather-forecast  # Single extension
 ./build.sh --skip-frontend           # Skip frontend builds
 ./build.sh --skip-package            # Skip .nep creation
 ./build.sh --debug                   # Debug build
@@ -96,7 +96,7 @@ git add . && git commit -m "chore: bump to v$VERSION"
 
 # Step 5: 验证包文件名版本一致
 ls dist/*.nep
-# 确认所有文件名包含正确版本号，如：weather-forecast-v2-2.7.0-darwin_aarch64.nep
+# 确认所有文件名包含正确版本号，如：weather-forecast-2.7.0-darwin_aarch64.nep
 
 # Step 6: Tag 和发布
 git tag v$VERSION
@@ -131,8 +131,8 @@ gh release create v$VERSION ./dist/*.nep --title "v$VERSION"
 ### Legacy Scripts (Removed)
 
 These scripts have been consolidated into `build.sh`:
-- ~~`build-package.sh`~~ - Use `./build.sh --single <ext>`
-- ~~`build-dev.sh`~~ - Use `./build.sh --dev`
+- ~~`build.sh --single`~~ - Use `./build.sh --single <ext>`
+- ~~`build.sh --dev`~~ - Use `./build.sh --dev`
 - ~~`build-all-platforms.sh`~~ - Use `./build.sh`
 
 ## Project Structure
@@ -141,7 +141,7 @@ These scripts have been consolidated into `build.sh`:
 NeoMind-Extensions/
 ├── extensions/              # All extension projects
 │   ├── index.json         # Marketplace index (auto-generated)
-│   ├── weather-forecast-v2/
+│   ├── weather-forecast/
 │   │   ├── Cargo.toml     # Extension metadata (version, description)
 │   │   ├── src/lib.rs     # Extension implementation
 │   │   ├── metadata.json  # Full metadata (auto-generated)
@@ -150,8 +150,8 @@ NeoMind-Extensions/
 │   │   │   ├── src/            # React source
 │   │   │   └── dist/           # Built UMD bundle
 │   │   └── models/       # ML models (optional, .onnx)
-│   ├── image-analyzer-v2/
-│   ├── yolo-video-v2/
+│   ├── image-analyzer/
+│   ├── yolo-video/
 │   ├── yolo-device-inference/
 │   ├── homeassistant-bridge/   # Home Assistant entity bridge
 │   ├── lorawan-bridge/        # LoRaWAN sensor bridge (ChirpStack/TTN)
@@ -159,7 +159,9 @@ NeoMind-Extensions/
 │   └── wasm-demo/
 ├── scripts/
 │   ├── update-versions.sh  # Generate all JSON files
-│   └── generate-json.ts    # Alternative TypeScript generator
+│   └── generate-json.ts    # DEPRECATED — does NOT handle env_hints; running it
+│                           # silently strips vision-hub's ORT_DYLIB_PATH declaration.
+│                           # Always use scripts/update-versions.sh instead.
 ├── release.sh              # Build .nep packages
 └── Cargo.toml              # Workspace configuration
 ```
@@ -169,14 +171,14 @@ NeoMind-Extensions/
 ### 1. Cargo.toml (Single Source of Truth)
 ```toml
 [package]
-name = "weather-forecast-v2"
+name = "weather-forecast"
 version = "2.0.0"
 description = "Weather forecast extension..."
 authors = ["NeoMind Team"]
 license = "Apache-2.0"
 
 [lib]
-name = "neomind_extension_weather_forecast_v2"
+name = "neomind_extension_weather_forecast"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
@@ -209,9 +211,9 @@ neomind_extension_sdk::neomind_export!(MyExtension);
 ### 3. frontend/frontend.json (Component Definitions)
 ```json
 {
-  "id": "weather-forecast-v2",
+  "id": "weather-forecast",
   "version": "2.0.0",
-  "entrypoint": "weather-forecast-v2-components.umd.cjs",
+  "entrypoint": "weather-forecast-components.umd.cjs",
   "components": [
     {
       "name": "WeatherCard",
@@ -341,17 +343,17 @@ This generates:
   "market_version": "2.3.0",
   "extensions": [
     {
-      "id": "weather-forecast-v2",
-      "name": "Weather Forecast V2",
+      "id": "weather-forecast",
+      "name": "Weather Forecast",
       "version": "2.0.0",
       "description": "...",
       "metadata_url": "https://raw.githubusercontent.com/.../metadata.json",
       "frontend": {
         "components": ["WeatherCard"],  // Array of strings, NOT objects!
-        "entrypoint": "weather-forecast-v2-components.umd.cjs"
+        "entrypoint": "weather-forecast-components.umd.cjs"
       },
       "builds": {
-        "darwin-aarch64": { "url": "https://.../weather-forecast-v2-2.0.0-darwin_aarch64.nep" },
+        "darwin-aarch64": { "url": "https://.../weather-forecast-2.0.0-darwin_aarch64.nep" },
         "linux-x86_64": { "url": "..." }
       }
     }
@@ -473,7 +475,7 @@ npm run build
 
 ## Bridge Extensions
 
-Three IoT bridge extensions connect external systems into NeoMind's device model. Each auto-registers discovered devices and exports per-device metrics via `CapabilityContext.invoke_capability()`.
+Six IoT bridge extensions connect external systems into NeoMind's device model (modbus, lorawan, homeassistant, opcua, onvif, bacnet). Each auto-registers discovered devices and exports per-device metrics via `CapabilityContext.invoke_capability()`.
 
 ### homeassistant-bridge
 

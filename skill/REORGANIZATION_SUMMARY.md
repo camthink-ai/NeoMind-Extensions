@@ -5,9 +5,9 @@
 ```
 NeoMind-Extension/
 ├── extensions/                 # 扩展实现
-│   ├── weather-forecast-v2/
-│   ├── image-analyzer-v2/
-│   └── yolo-video-v2/
+│   ├── weather-forecast/
+│   ├── image-analyzer/
+│   └── yolo-video/
 │
 ├── skill/                      # 所有Skill相关文件统一在这里
 │   ├── install.sh              # 安装脚本

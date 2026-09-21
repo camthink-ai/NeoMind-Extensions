@@ -1,7 +1,7 @@
 {
   "id": "uink-rms-bridge",
-  "name": "uink rms uridge",
-  "version": "2.7.9",
+  "name": "Uink Rms Bridge",
+  "version": "2.7.7",
   "description": "Bridge extension for Uink-RMS e-paper displays, providing device registration, telemetry collection, and image push capabilities",
   "author": "NeoMind Team",
   "license": "Apache-2.0",

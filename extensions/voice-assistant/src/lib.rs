@@ -67,7 +67,7 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 // (which is the case on that FFI thread). That ephemeral runtime is dropped
 // the moment the FFI call returns, cancelling every `tokio::spawn` task it
 // hosted. `run_session_pump` must outlive `init_session`, so we spawn it onto
-// this global persistent runtime instead. Mirrors the yolo-video-v2 pattern
+// this global persistent runtime instead. Mirrors the yolo-video pattern
 // (which side-steps the issue entirely with `std::thread::spawn`).
 fn persistent_runtime() -> &'static tokio::runtime::Runtime {
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -268,9 +268,29 @@ async fn run_session_pump(
 
     // Open WS to orchestrator with session_id in subprotocol / query.
     let url = format!("{}?session_id={}", ws_url, session_id);
-    let (mut ws, _resp) = tokio_tungstenite::connect_async(&url)
-        .await
-        .map_err(|e| ExtensionError::ExecutionFailed(format!("ws connect: {e}")))?;
+    let ws_result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        tokio_tungstenite::connect_async(&url),
+    )
+    .await;
+    let (mut ws, _resp) = match ws_result {
+        Ok(Ok((ws, resp))) => (ws, resp),
+        Ok(Err(e)) => {
+            // CRITICAL: rollback session state before erroring — the old
+            // code leaked the counter and map entries on every connect
+            // failure (found in code review #267-273).
+            inner.active_sessions.fetch_sub(1, Ordering::SeqCst);
+            inner.session_senders.write().await.remove(&session_id);
+            inner.control_senders.write().remove(&session_id);
+            return Err(ExtensionError::ExecutionFailed(format!("ws connect: {e}")));
+        }
+        Err(_) => {
+            inner.active_sessions.fetch_sub(1, Ordering::SeqCst);
+            inner.session_senders.write().await.remove(&session_id);
+            inner.control_senders.write().remove(&session_id);
+            return Err(ExtensionError::ExecutionFailed("ws connect timeout (10s)".to_string()));
+        }
+    };
 
     // Send initial config so Python knows sample rate etc.
     let start_msg = tokio_tungstenite::tungstenite::Message::Text(
@@ -315,7 +335,16 @@ async fn run_session_pump(
     loop {
         tokio::select! {
             // Browser → Python
-            Some(pcm) = browser_rx.recv() => {
+            pcm = browser_rx.recv() => {
+                let pcm = match pcm {
+                    Some(p) => p,
+                    None => {
+                        // Sender dropped (close_session) — pump MUST exit,
+                        // not disable this branch (the old code let the
+                        // heartbeat keep it alive forever).
+                        break;
+                    }
+                };
                 if ws.send(tokio_tungstenite::tungstenite::Message::Binary(pcm)).await.is_err() {
                     break;
                 }
@@ -909,7 +938,36 @@ impl Extension for VoiceAssistantExtension {
     }
 
     async fn close_session(&self, session_id: &str) -> Result<neomind_extension_sdk::SessionStats> {
+        // CRITICAL FIX: the old code only removed the sender, but the pump
+        // task's select! loop kept running forever because heartbeat.tick()
+        // is always ready and browser_rx.recv() returning None just disables
+        // that branch (doesn't break). Send a shutdown signal via the
+        // control channel, which the pump forwards as a WS close frame,
+        // causing ws.next() to return None → break.
+        // Clone the sender out of the lock — holding a parking_lot read
+        // guard across .await makes the future !Send (raw pointer inside).
+        let shutdown_tx = {
+            let control_senders = self.inner.control_senders.read();
+            control_senders.get(session_id).cloned()
+        };
+        if let Some(tx) = shutdown_tx {
+            let _ = tx.send(r#"{"type":"__shutdown__"}"#.to_string()).await;
+        }
+
         self.inner.session_senders.write().await.remove(session_id);
+        self.inner.control_senders.write().remove(session_id);
+
+        // Clean up any chat_streams owned by this session
+        let to_remove: Vec<String> = {
+            let streams = self.inner.chat_streams.read();
+            streams.keys().cloned().collect()
+        };
+        let mut streams = self.inner.chat_streams.write();
+        for sid in to_remove {
+            streams.remove(&sid);
+        }
+
+        self.inner.active_sessions.fetch_sub(1, Ordering::SeqCst);
         tracing::info!("voice-assistant session closed: {}", session_id);
         Ok(neomind_extension_sdk::SessionStats::default())
     }

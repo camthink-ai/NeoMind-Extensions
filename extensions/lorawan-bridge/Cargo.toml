@@ -25,6 +25,7 @@ tokio = { version = "1", features = ["rt", "sync"] }
 parking_lot = "0.12"
 
 [dev-dependencies]
+neomind-extension-sdk = { workspace = true, features = ["testkit"] }
 tokio = { version = "1", features = ["rt", "net", "macros", "time", "io-util"] }
 base64 = "0.22"
 

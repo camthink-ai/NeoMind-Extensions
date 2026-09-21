@@ -48,17 +48,19 @@ GITHUB_REPO="camthink-ai/NeoMind-Extensions"
 #   variant            = suffix string (e.g., jetson, cuda)
 #   filename_platform  = underscore format used in .nep filename (e.g., linux_arm64)
 VARIANT_BUILDS=(
-    "yolo-video-v2|linux-aarch64|jetson|linux_arm64"
+    "yolo-video|linux-aarch64|jetson|linux_arm64"
     "yolo-device-inference|linux-aarch64|jetson|linux_arm64"
-    "image-analyzer-v2|linux-aarch64|jetson|linux_arm64"
+    "image-analyzer|linux-aarch64|jetson|linux_arm64"
     "paddle-ocr-v6|linux-aarch64|jetson|linux_arm64"
     "ocr-device-inference|linux-aarch64|jetson|linux_arm64"
+    "vision-hub|linux-aarch64|jetson|linux_arm64"
     # x86_64 CUDA variants (built on GPU box 43.132.189.162, Tesla T4)
-    "yolo-video-v2|linux-x86_64|cuda|linux_amd64"
+    "yolo-video|linux-x86_64|cuda|linux_amd64"
     "yolo-device-inference|linux-x86_64|cuda|linux_amd64"
-    "image-analyzer-v2|linux-x86_64|cuda|linux_amd64"
+    "image-analyzer|linux-x86_64|cuda|linux_amd64"
     "paddle-ocr-v6|linux-x86_64|cuda|linux_amd64"
     "ocr-device-inference|linux-x86_64|cuda|linux_amd64"
+    "vision-hub|linux-x86_64|cuda|linux_amd64"
 )
 
 if [ -z "$MARKET_VERSION" ]; then
@@ -217,6 +219,11 @@ EOF
         fi
     fi
 
+    # Preserve env_hints from the EXISTING metadata.json (runner-injected
+    # env declarations, e.g. vision-hub's ORT_DYLIB_PATH) — the template
+    # below doesn't carry it, so re-merge after generation.
+    env_hints=$(jq -c '.env_hints // empty' "$ext_dir/metadata.json" 2>/dev/null || true)
+
     # Infer categories
     categories='["utility"]'
     if [[ "$ext_id" == *"bridge"* ]]; then
@@ -279,10 +286,14 @@ EOF
     done
 
     # Generate base metadata.json with builds field
+    # Title-case words PORTABLY: BSD sed (macOS) does not support \u/\b in
+    # the regex — the old `sed 's/\b\(.\)/\u\1/g'` produced literal "u"
+    # prefixes ("uacnet uridge") in every generated metadata.json/index.json.
+    DISPLAY_NAME=$(echo "$ext_id" | sed 's/-v2$//' | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1')
     cat > "$ext_dir/metadata.json" <<EOF
 {
   "id": "$ext_id",
-  "name": "$(echo $ext_id | sed 's/-v2$//' | sed 's/-/ /g' | sed 's/\b\(.\)/\u\1/g')",
+  "name": "$DISPLAY_NAME",
   "version": "$version",
   "description": "$description",
   "author": "NeoMind Team",
@@ -302,6 +313,14 @@ EOF
         echo "  ✓ Generated metadata.json with builds and frontend"
     else
         echo "  ✓ Generated metadata.json with builds"
+    fi
+
+    # Re-merge preserved env_hints (if the extension declares any)
+    if [ -n "$env_hints" ]; then
+        jq --argjson hints "$env_hints" '. + {env_hints: $hints}' \
+            "$ext_dir/metadata.json" > "$ext_dir/metadata.json.tmp"
+        mv "$ext_dir/metadata.json.tmp" "$ext_dir/metadata.json"
+        echo "  ✓ Preserved env_hints"
     fi
 done
 

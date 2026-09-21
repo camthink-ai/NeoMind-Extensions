@@ -25,3 +25,6 @@ uuid = { version = "1", features = ["v4"] }
 default = []
 native = []
 wasm = []
+
+[dev-dependencies]
+neomind-extension-sdk = { workspace = true, features = ["testkit"] }

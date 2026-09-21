@@ -31,5 +31,6 @@ ndarray = { workspace = true }
 ort = { workspace = true }
 
 [dev-dependencies]
+neomind-extension-sdk = { workspace = true, features = ["testkit"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "test-util"] }
 tempfile = "3"

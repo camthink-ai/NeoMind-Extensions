@@ -3,7 +3,7 @@
 ## 安装
 
 ```bash
-cd /Users/shenmingming/NeoMindProject/NeoMind-Extension
+cd "~/CamThink Project/NeoMind-Extensions"
 cargo install --path neomind-ext
 ```
 
@@ -68,7 +68,7 @@ neomind-ext test --verbose
 
 ```bash
 # 1. 手动复制目录
-cp -r extensions/weather-forecast-v2 extensions/my-extension
+cp -r extensions/weather-forecast extensions/my-extension
 cd extensions/my-extension
 
 # 2. 手动编辑多个文件
@@ -81,7 +81,7 @@ cargo build --release
 
 # 4. 手动打包
 cd ../..
-bash scripts/package.sh -d extensions/my-extension
+./build.sh --single my-extension
 ```
 
 ### 使用 neomind-ext
@@ -115,14 +115,14 @@ neomind-ext package --with-frontend
 neomind-ext new my-extension --with-frontend
 cd my-extension
 
-# 开发（自动重建）
-neomind-ext watch
+# 开发（构建并安装到本机 NeoMind）
+./build.sh --dev --single my-extension
 
-# 在另一个终端测试
-neomind-ext test --verbose
+# 测试
+neomind-ext test
 
-# 准备发布
-neomind-ext build --release
+# 打包
+./build.sh --single my-extension
 neomind-ext package --with-frontend
 neomind-ext validate dist/*.nep
 

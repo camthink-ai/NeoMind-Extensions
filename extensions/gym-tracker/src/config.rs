@@ -1,0 +1,215 @@
+// config.rs
+use serde::Deserialize;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Config {
+    // The host always sends `Init { config: {} }` at load and only delivers the
+    // real config afterwards via ConfigUpdate, so every field needs a default —
+    // `configure({})` must succeed for a cold load. An empty `device.host`
+    // means "not provisioned yet": the extension idles (no ingest thread) until
+    // a real config arrives and configure() runs again.
+    #[serde(default)]
+    pub device: DeviceCfg,
+    #[serde(default)]
+    pub device_id: String,
+    pub rtsp_url: Option<String>,
+    #[serde(default)]
+    pub ingest: IngestCfg,
+    #[serde(default)]
+    pub identity: IdentityCfg,
+    #[serde(default)]
+    pub roi: RoiCfg,
+    #[serde(default = "default_data_dir")]
+    pub data_dir: String,
+}
+fn default_data_dir() -> String {
+    std::env::var("NEOMIND_EXTENSION_DATA_DIR").unwrap_or_else(|_| ".".into())
+}
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct DeviceCfg {
+    pub host: String,
+    #[serde(default)]
+    pub port: Option<u16>,
+    pub username: String,
+    pub password: String,
+    #[serde(default)]
+    pub tls_insecure: bool,
+}
+// TLS verification defaults to ON; self-signed deployments
+// opt in explicitly via tls_insecure: true in config.json
+#[derive(Debug, Clone, Deserialize)]
+pub struct IngestCfg {
+    pub topic: String,
+    pub publish_hz: u32,
+    pub track_ttl_sec: u32,
+    pub reconnect_backoff_sec: Vec<u64>,
+}
+#[derive(Debug, Clone, Deserialize)]
+pub struct IdentityCfg {
+    pub match_threshold: f32,
+    pub auto_capture_unknown: bool,
+    pub unknown_prefix: String,
+    /// A track whose nearest member is FARTHER than this auto-enrolls as a
+    /// new (unnamed) member. Deliberately above match_threshold: the gap
+    /// between the two absorbs embedding drift for already-known people
+    /// (same-person re-embeds were measured 0-352, unknown persons 684+).
+    #[serde(default = "default_auto_capture_distance")]
+    pub auto_capture_distance: f32,
+    /// Strong-confidence line for auto-appending a sample to a matched
+    /// member's library (new outfits accumulate only when we're SURE).
+    #[serde(default = "default_append_confidence")]
+    pub append_confidence: f32,
+    /// A new sample must be at least this far from every stored sample of
+    /// that member (closer samples are redundant, not diversity).
+    #[serde(default = "default_append_min_dist")]
+    pub append_min_dist: f32,
+    /// Seconds between auto-appends to the same member.
+    #[serde(default = "default_append_cooldown_sec")]
+    pub append_cooldown_sec: i64,
+    /// Max L2 distance for a FACE (arcface) match — the identity anchor.
+    /// Scale differs from osnet; calibrate live (see member dist readout).
+    #[serde(default = "default_face_match_threshold")]
+    pub face_match_threshold: f32,
+}
+fn default_face_match_threshold() -> f32 {
+    // L2-normalized arcface space (the camera L2-norms the 512-d emb):
+    // same-person ≈ 0.6-1.0, cross-person ≈ 1.1-1.4. The old 60.0 was the
+    // pre-normalization scale — it would match EVERY face to its nearest
+    // member.
+    1.0
+}
+fn default_auto_capture_distance() -> f32 {
+    600.0
+}
+fn default_append_confidence() -> f32 {
+    // Same normalized-emb scale as face_match_threshold (tighter gate).
+    0.7
+}
+fn default_append_min_dist() -> f32 {
+    // Normalized-emb diversity gate (matches the test fixtures' scale).
+    0.15
+}
+fn default_append_cooldown_sec() -> i64 {
+    60
+}
+
+/// Hard cap on samples per member (primary + extras). Bounded library =
+/// bounded matching cost and bounded damage from a poisoned sample.
+pub const MAX_EMBEDDINGS_PER_MEMBER: usize = 20;
+/// Cap on FACE samples per member (arcface). Faces are far more stable than
+/// outfits — a handful of good samples saturates recognition.
+pub const MAX_FACE_EMBEDDINGS_PER_MEMBER: usize = 8;
+#[derive(Debug, Clone, Deserialize)]
+pub struct RoiCfg {
+    pub dwell_debounce_sec: u32,
+    pub hysteresis: bool,
+    /// foot_log retention in days (trails/heatmap time-range replay).
+    /// Storage is ~1-2 MB/day even at full occupancy; 30 days ≈ 50 MB.
+    #[serde(default = "default_foot_retain_days")]
+    pub foot_retain_days: u32,
+}
+fn default_foot_retain_days() -> u32 {
+    30
+}
+
+impl Default for IngestCfg {
+    fn default() -> Self {
+        Self {
+            topic: "gym/track".into(),
+            publish_hz: 8,
+            track_ttl_sec: 30,
+            reconnect_backoff_sec: vec![1, 2, 5, 10, 30],
+        }
+    }
+}
+impl Default for IdentityCfg {
+    fn default() -> Self {
+        Self {
+            // Max L2 distance for a member match, in the osnet uint8-quantized
+            // embedding space. 40.0 sits well below the ~52 distance measured
+            // between unrelated probes; tune live with the exposed distances.
+            match_threshold: 40.0,
+            auto_capture_unknown: true,
+            unknown_prefix: "Member".into(),
+            auto_capture_distance: 600.0,
+            append_confidence: 0.7,
+            append_min_dist: 0.15,
+            append_cooldown_sec: 60,
+            // normalized arcface space (see default_face_match_threshold)
+            face_match_threshold: 1.0,
+        }
+    }
+}
+impl Default for RoiCfg {
+    fn default() -> Self {
+        Self {
+            dwell_debounce_sec: 3,
+            hysteresis: true,
+            foot_retain_days: default_foot_retain_days(),
+        }
+    }
+}
+
+impl Config {
+    pub fn parse(raw: &str) -> Result<Self, serde_json::Error> {
+        if raw.trim().is_empty() {
+            return Err(serde::de::Error::custom("empty config"));
+        }
+        serde_json::from_str(raw)
+    }
+    /// True once a device host has been supplied — gates the ingest thread and
+    /// device login so an unprovisioned cold load stays inert.
+    pub fn provisioned(&self) -> bool {
+        !self.device.host.trim().is_empty()
+    }
+    // NE503 this firmware: HTTPS 443 (self-signed), WS wss, RTSP on :8554. See "NE503 device reality" in the plan.
+    pub fn ws_url(&self) -> String {
+        format!("wss://{}/api/v1/events/stream", self.device.host)
+    }
+    pub fn rest_base(&self) -> String {
+        format!("https://{}", self.device.host)
+    }
+    pub fn rtsp_url(&self, stream: &str) -> String {
+        format!("rtsp://{}:8554/{}", self.device.host, stream)
+    }
+}
+
+#[cfg(test)]
+pub fn default_identity_for_tests() -> IdentityCfg {
+    IdentityCfg {
+        match_threshold: 0.1,
+        auto_capture_unknown: false,
+        unknown_prefix: "U".into(),
+        auto_capture_distance: 0.5,
+        append_confidence: 0.1,
+        append_min_dist: 0.15,
+        append_cooldown_sec: 60,
+        face_match_threshold: 0.3,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn parse_full() {
+        let s = r#"{"device":{"host":"192.168.93.200","username":"admin","password":"password","tls_insecure":true},"device_id":"ne503-001","ingest":{"topic":"gym/track","publish_hz":8,"track_ttl_sec":30,"reconnect_backoff_sec":[1,2,5,10,30]},"identity":{"match_threshold":0.1,"auto_capture_unknown":true,"unknown_prefix":"未知会员"},"roi":{"dwell_debounce_sec":3,"hysteresis":true},"data_dir":"/tmp/gym"}"#;
+        let c = Config::parse(s).unwrap();
+        assert_eq!(c.device.host, "192.168.93.200");
+        assert_eq!(c.ws_url(), "wss://192.168.93.200/api/v1/events/stream");
+        assert_eq!(c.rest_base(), "https://192.168.93.200");
+        assert_eq!(c.rtsp_url("sub"), "rtsp://192.168.93.200:8554/sub");
+        assert!(c.device.tls_insecure);
+    }
+    #[test]
+    fn rejects_empty() {
+        assert!(Config::parse("").is_err());
+    }
+    #[test]
+    fn cold_load_empty_config() {
+        // The host's Init handshake: `configure({})` must not fail.
+        let c: Config = serde_json::from_str("{}").unwrap();
+        assert!(!c.provisioned());
+        assert_eq!(c.ingest.topic, "gym/track");
+    }
+}

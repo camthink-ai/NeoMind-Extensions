@@ -6,7 +6,7 @@
 #   ./build.sh                    # Build all, create packages
 #   ./build.sh --dev              # Dev build, install to NeoMind
 #   ./build.sh --release 2.4.0    # Release build with version
-#   ./build.sh --single yolo-video-v2  # Build single extension
+#   ./build.sh --single yolo-video  # Build single extension
 #
 # For release: ./build.sh --release VERSION
 
@@ -104,8 +104,8 @@ while [[ $# -gt 0 ]]; do
             echo "  ./build.sh                           # Build all, create packages"
             echo "  ./build.sh --dev                     # Dev build, auto-install"
             echo "  ./build.sh --release 2.4.0           # Release with version"
-            echo "  ./build.sh --single weather-forecast-v2  # Single extension"
-            echo "  ./build.sh --single yolo-video-v2 --variant jetson --features nvdec  # Jetson build"
+            echo "  ./build.sh --single weather-forecast  # Single extension"
+            echo "  ./build.sh --single yolo-video --variant jetson --features nvdec  # Jetson build"
             exit 0
             ;;
         *)
@@ -167,9 +167,10 @@ fi
 
 # V2 Extensions list
 V2_EXTENSIONS=(
-    "weather-forecast-v2"
-    "image-analyzer-v2"
-    "yolo-video-v2"
+    "weather-forecast"
+    "image-analyzer"
+    "yolo-video"
+    "video-vlm"
     "yolo-device-inference"
     "ocr-device-inference"
     "paddle-ocr-v6"
@@ -183,7 +184,7 @@ V2_EXTENSIONS=(
     "bacnet-bridge"
     "onvif-bridge"
     "opcua-bridge"
-    "locate-anything-v2"
+    "locate-anything"
     "moss-tts-nano"
     "cosyvoice-3"
     "sensevoice-asr"
@@ -191,6 +192,8 @@ V2_EXTENSIONS=(
     "voice-assistant"
     "paddle-ocr-vl"
     "deepstream"
+    "gym-tracker"
+    "vision-hub"
 )
 
 # Filter to single extension if specified
@@ -481,7 +484,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                     NEOMIND_EXT_DIR="$HOME/Library/Application Support/com.neomind.neomind/data/extensions"
                     FALLBACK=""
                     if [ -d "$NEOMIND_EXT_DIR" ]; then
-                        for cand in ocr-device-inference yolo-device-inference image-analyzer-v2 yolo-video-v2; do
+                        for cand in vision-hub ocr-device-inference yolo-device-inference image-analyzer yolo-video; do
                             cand_lib="$NEOMIND_EXT_DIR/$cand/binaries/$PLATFORM/libonnxruntime.dylib"
                             if [ -f "$cand_lib" ]; then
                                 cand_minor=$(otool -L "$cand_lib" 2>/dev/null | grep -oE 'current version [0-9]+\.[0-9]+' | head -1 | awk '{print $3}' | cut -d. -f2)
@@ -742,8 +745,18 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                                 install_name_tool -change "$dep" "@loader_path/$LIB_NAME" \
                                     "$BINARY_PATH" 2>/dev/null && \
                                     echo -e "    ${GREEN}→${NC} Fixed ORT reference (kept bundled version): $LIB_NAME"
+                            elif BUNDLED_ORT=$(ls "$BINARY_DIR"/libonnxruntime*.dylib 2>/dev/null | head -1) && [ -n "$BUNDLED_ORT" ]; then
+                                # A correct ORT is already bundled under a different
+                                # soname (e.g. the binary links the versioned homebrew
+                                # name but we bundled the unversioned release file).
+                                # Rewrite the reference to the bundled file instead of
+                                # copying a MISMATCHED version from the build env.
+                                BUNDLED_ORT_NAME=$(basename "$BUNDLED_ORT")
+                                install_name_tool -change "$dep" "@loader_path/$BUNDLED_ORT_NAME" \
+                                    "$BINARY_PATH" 2>/dev/null && \
+                                    echo -e "    ${GREEN}→${NC} Fixed ORT reference (kept bundled $BUNDLED_ORT_NAME)"
                             else
-                                # Fallback: if we somehow didn't bundle ORT, copy from resolved path
+                                # Fallback: no bundled ORT at all — copy from resolved path
                                 cp "$REAL_DEP" "$BINARY_DIR/$LIB_NAME"
                                 install_name_tool -change "$dep" "@loader_path/$LIB_NAME" \
                                     "$BINARY_PATH" 2>/dev/null && \
@@ -951,7 +964,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             # Generate component type from extension ID
             # Use full extension ID (with hyphens converted) to ensure uniqueness
             # e.g., yolo-device-inference -> yolo-device-inference-card
-            # e.g., yolo-video-v2 -> yolo-video-card (remove -v2 suffix for cleaner names)
+            # e.g., yolo-video -> yolo-video-card (remove -v2 suffix for cleaner names)
             COMPONENT_TYPE=$(echo "$ext" | sed 's/-v2$//' | sed 's/-v1$//')"-card"
 
             # For multi-component extensions, each component needs a unique type
@@ -1111,6 +1124,20 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
         fi
 
         # Build manifest JSON using jq for proper escaping
+        # env_hints: optional runner-injected env vars declared in metadata.json
+        # (e.g. {"ORT_DYLIB_PATH": "{binaries}/{ort_lib}"}); absent → null.
+        # `{ort_lib}` is resolved HERE to the platform's onnxruntime filename
+        # (dylib/so/dll); `{binaries}`/`{extension_dir}` stay for the runner.
+        case "$PLATFORM" in
+            windows*) ORT_LIB_NAME="onnxruntime.dll" ;;
+            linux*)   ORT_LIB_NAME="libonnxruntime.so" ;;
+            *)        ORT_LIB_NAME="libonnxruntime.dylib" ;;
+        esac
+        ENV_HINTS=$(jq -c --arg ort "$ORT_LIB_NAME" \
+            '(.env_hints // empty) | map_values(gsub("\\{ort_lib\\}"; $ort))' \
+            "extensions/$ext/metadata.json" 2>/dev/null || true)
+        [ -z "$ENV_HINTS" ] && ENV_HINTS="null"
+
         if [ "$IS_WASM" = true ]; then
             # WASM extension - single binary, no platform directory
             MANIFEST_JSON=$(jq -n \
@@ -1124,6 +1151,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                 --arg type "wasm" \
                 --argjson has_models "$HAS_MODELS" \
                 --argjson dashboard_components "$DASHBOARD_COMPONENTS" \
+                --argjson env_hints "$ENV_HINTS" \
                 '{
                     format: $format,
                     format_version: $format_version,
@@ -1137,7 +1165,8 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                     frontend: {
                         "components": $dashboard_components
                     }
-                } | if $has_models then . + {"models": "models/"} else . end')
+                } | if $has_models then . + {"models": "models/"} else . end
+                  | if $env_hints != null then . + {"env_hints": $env_hints} else . end')
         else
             # Native extension - platform-specific binary
             MANIFEST_JSON=$(jq -n \
@@ -1153,6 +1182,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                 --arg lib_ext "$LIB_EXT" \
                 --argjson has_models "$HAS_MODELS" \
                 --argjson dashboard_components "$DASHBOARD_COMPONENTS" \
+                --argjson env_hints "$ENV_HINTS" \
                 '{
                     format: $format,
                     format_version: $format_version,
@@ -1166,7 +1196,8 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
                     frontend: {
                         "components": $dashboard_components
                     }
-                } | if $has_models then . + {"models": "models/"} else . end')
+                } | if $has_models then . + {"models": "models/"} else . end
+                  | if $env_hints != null then . + {"env_hints": $env_hints} else . end')
         fi
 
         echo "$MANIFEST_JSON" > "$PACKAGE_DIR/manifest.json"
@@ -1363,6 +1394,14 @@ if [ "$AUTO_INSTALL" = true ]; then
                 cp "$EXT_DIR/frontend/dist/"*.umd.cjs "$EXT_INSTALL_DIR/frontend/" 2>/dev/null || true
             fi
 
+            # Copy bundled models (dev installs previously shipped without
+            # them — release packaging always included them)
+            if [ -d "$EXT_DIR/models" ]; then
+                for mf in "$EXT_DIR/models"/*.onnx "$EXT_DIR/models"/*.txt; do
+                    [ -f "$mf" ] && cp "$mf" "$EXT_INSTALL_DIR/models/"
+                done
+            fi
+
             # Copy frontend.json for reference
             if [ -f "$EXT_DIR/frontend/frontend.json" ]; then
                 cp "$EXT_DIR/frontend/frontend.json" "$EXT_INSTALL_DIR/frontend.json"
@@ -1393,9 +1432,15 @@ if [ "$AUTO_INSTALL" = true ]; then
                 COMPONENT_TYPE=$(echo "$ext" | sed 's/-v2$//' | sed 's/-v1//')"-card"
 
                 if [ -n "$GLOBAL_NAME" ]; then
-                    DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" --arg global_name "$GLOBAL_NAME" '
+                    # Multi-component extensions need a unique registry type per
+                    # component (DynamicRegistry keys by type) — same rule as the
+                    # release path: slugify the export name when count > 1.
+                    DEV_COMPONENT_COUNT=$(jq '.components | length' "$FRONTEND_JSON" 2>/dev/null || echo "0")
+                    DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" --arg global_name "$GLOBAL_NAME" --argjson component_count "$DEV_COMPONENT_COUNT" '
                         [.components[] | {
-                            "type": $component_type,
+                            "type": (if $component_count > 1 then
+                                (.name | gsub("(?<=[a-z0-9])(?=[A-Z])"; "-") | ascii_downcase)
+                            else $component_type end),
                             "name": .displayName,
                             "description": .description,
                             "category": (if .type == "card" then "custom"
@@ -1460,9 +1505,15 @@ if [ "$AUTO_INSTALL" = true ]; then
                         }]
                     ' "$FRONTEND_JSON" 2>/dev/null)
                 else
-                    DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" '
+                    # Multi-component extensions need a unique registry type per
+                    # component (DynamicRegistry keys by type) — same rule as the
+                    # release path below: slugify the export name when count > 1.
+                    DEV_COMPONENT_COUNT=$(jq '.components | length' "$FRONTEND_JSON" 2>/dev/null || echo "0")
+                    DASHBOARD_COMPONENTS=$(jq -c --arg entrypoint "$ACTUAL_ENTRYPOINT" --arg component_type "$COMPONENT_TYPE" --argjson component_count "$DEV_COMPONENT_COUNT" '
                         [.components[] | {
-                            "type": $component_type,
+                            "type": (if $component_count > 1 then
+                                (.name | gsub("(?<=[a-z0-9])(?=[A-Z])"; "-") | ascii_downcase)
+                            else $component_type end),
                             "name": .displayName,
                             "description": .description,
                             "category": (if .type == "card" then "custom"
@@ -1532,7 +1583,16 @@ if [ "$AUTO_INSTALL" = true ]; then
                 fi
             fi
 
-            # Write manifest.json
+            # Write manifest.json (env_hints passthrough from metadata.json)
+            case "$PLATFORM" in
+                windows*) ORT_LIB_NAME="onnxruntime.dll" ;;
+                linux*)   ORT_LIB_NAME="libonnxruntime.so" ;;
+                *)        ORT_LIB_NAME="libonnxruntime.dylib" ;;
+            esac
+            DEV_ENV_HINTS=$(jq -c --arg ort "$ORT_LIB_NAME" \
+                '(.env_hints // empty) | map_values(gsub("\\{ort_lib\\}"; $ort))' \
+                "extensions/$ext/metadata.json" 2>/dev/null || true)
+            [ -z "$DEV_ENV_HINTS" ] && DEV_ENV_HINTS="null"
             jq -n \
                 --arg format "neomind-extension-package" \
                 --arg format_version "2.0" \
@@ -1545,6 +1605,7 @@ if [ "$AUTO_INSTALL" = true ]; then
                 --arg platform "$PLATFORM" \
                 --arg lib_ext "$LIB_EXT" \
                 --argjson dashboard_components "$DASHBOARD_COMPONENTS" \
+                --argjson env_hints "$DEV_ENV_HINTS" \
                 '{
                     format: $format,
                     format_version: $format_version,
@@ -1558,7 +1619,14 @@ if [ "$AUTO_INSTALL" = true ]; then
                     frontend: {
                         "components": $dashboard_components
                     }
-                }' > "$EXT_INSTALL_DIR/manifest.json"
+                } | if $env_hints != null then . + {"env_hints": $env_hints} else . end' > "$EXT_INSTALL_DIR/manifest.json"
+
+            # Boot-time discovery requires the manifest as a sidecar next to
+            # the dylib (data/extensions/<id>/binaries/<platform>/extension.json);
+            # without it a server restart fails to load the extension
+            # ("Native extensions must have a sidecar JSON file").
+            cp "$EXT_INSTALL_DIR/manifest.json" \
+               "$EXT_INSTALL_DIR/binaries/$PLATFORM/extension.json"
 
             echo -e "  ${GREEN}✓${NC} Installed $ext"
         done

@@ -11,7 +11,11 @@ name = "neomind_extension_{{EXTENSION_NAME_UNDERSCORED}}"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-neomind-extension-sdk = { path = "../../../NeoMind/crates/neomind-extension-sdk" }
+# Prefer the published crate: the old `path = "../../../NeoMind/..."` dep
+# only resolved when the core repo happened to be checked out next to this
+# one, and broke every `neomind-ext new` since the workspace moved to the
+# crates.io dependency.
+neomind-extension-sdk = "0.6"
 serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = "0.1"
