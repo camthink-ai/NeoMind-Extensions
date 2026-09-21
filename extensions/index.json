@@ -11,15 +11,14 @@
       "license": "Apache-2.0",
       "type": "native",
       "categories": [
-        "utility"
+        "iot",
+        "bridge",
+        "device-integration"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/bacnet-bridge",
       "builds": {
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/bacnet-bridge-2.12.0-darwin_aarch64.nep"
-        },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/bacnet-bridge-2.12.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/bacnet-bridge-2.12.0-linux_amd64.nep"
@@ -28,7 +27,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/bacnet-bridge-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/bacnet-bridge-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/bacnet-bridge-2.12.0-windows_amd64.nep"
         }
       },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/bacnet-bridge/metadata.json"
@@ -49,9 +48,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/cosyvoice-3-2.12.0-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/cosyvoice-3-2.12.0-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/cosyvoice-3-2.12.0-linux_amd64.nep"
         },
@@ -59,7 +55,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/cosyvoice-3-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/cosyvoice-3-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/cosyvoice-3-2.12.0-windows_amd64.nep"
         }
       },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/cosyvoice-3/metadata.json"
@@ -73,15 +69,15 @@
       "license": "Apache-2.0",
       "type": "native",
       "categories": [
-        "utility"
+        "ai",
+        "vision",
+        "video",
+        "streaming"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/deepstream",
       "builds": {
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/deepstream-2.12.0-darwin_aarch64.nep"
-        },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/deepstream-2.12.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/deepstream-2.12.0-linux_amd64.nep"
@@ -90,7 +86,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/deepstream-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/deepstream-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/deepstream-2.12.0-windows_amd64.nep"
         }
       },
       "frontend": {
@@ -110,15 +106,14 @@
       "license": "Apache-2.0",
       "type": "native",
       "categories": [
-        "utility"
+        "ai",
+        "face-recognition",
+        "device-integration"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/face-recognition",
       "builds": {
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/face-recognition-2.12.0-darwin_aarch64.nep"
-        },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/face-recognition-2.12.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/face-recognition-2.12.0-linux_amd64.nep"
@@ -127,7 +122,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/face-recognition-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/face-recognition-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/face-recognition-2.12.0-windows_amd64.nep"
         }
       },
       "frontend": {
@@ -154,9 +149,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/gym-tracker-2.12.0-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/gym-tracker-2.12.0-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/gym-tracker-2.12.0-linux_amd64.nep"
         },
@@ -164,7 +156,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/gym-tracker-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/gym-tracker-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/gym-tracker-2.12.0-windows_amd64.nep"
         }
       },
       "frontend": {
@@ -194,15 +186,14 @@
       "license": "Apache-2.0",
       "type": "native",
       "categories": [
-        "utility"
+        "iot",
+        "bridge",
+        "device-integration"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/homeassistant-bridge",
       "builds": {
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/homeassistant-bridge-2.12.0-darwin_aarch64.nep"
-        },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/homeassistant-bridge-2.12.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/homeassistant-bridge-2.12.0-linux_amd64.nep"
@@ -211,7 +202,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/homeassistant-bridge-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/homeassistant-bridge-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/homeassistant-bridge-2.12.0-windows_amd64.nep"
         }
       },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/homeassistant-bridge/metadata.json"
@@ -234,9 +225,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/image-analyzer-2.12.0-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/image-analyzer-2.12.0-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/image-analyzer-2.12.0-linux_amd64.nep"
         },
@@ -244,7 +232,13 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/image-analyzer-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/image-analyzer-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/image-analyzer-2.12.0-windows_amd64.nep"
+        },
+        "linux-aarch64-jetson": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/image-analyzer-2.12.0-linux_arm64-jetson.nep"
+        },
+        "linux-x86_64-cuda": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/image-analyzer-2.12.0-linux_amd64-cuda.nep"
         }
       },
       "frontend": {
@@ -271,9 +265,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/locate-anything-2.12.0-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/locate-anything-2.12.0-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/locate-anything-2.12.0-linux_amd64.nep"
         },
@@ -281,7 +272,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/locate-anything-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/locate-anything-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/locate-anything-2.12.0-windows_amd64.nep"
         }
       },
       "frontend": {
@@ -301,15 +292,14 @@
       "license": "Apache-2.0",
       "type": "native",
       "categories": [
-        "utility"
+        "iot",
+        "bridge",
+        "device-integration"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/lorawan-bridge",
       "builds": {
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/lorawan-bridge-2.12.0-darwin_aarch64.nep"
-        },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/lorawan-bridge-2.12.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/lorawan-bridge-2.12.0-linux_amd64.nep"
@@ -318,7 +308,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/lorawan-bridge-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/lorawan-bridge-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/lorawan-bridge-2.12.0-windows_amd64.nep"
         }
       },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/lorawan-bridge/metadata.json"
@@ -332,15 +322,14 @@
       "license": "Apache-2.0",
       "type": "native",
       "categories": [
-        "utility"
+        "iot",
+        "bridge",
+        "device-integration"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/modbus-bridge",
       "builds": {
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/modbus-bridge-2.12.0-darwin_aarch64.nep"
-        },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/modbus-bridge-2.12.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/modbus-bridge-2.12.0-linux_amd64.nep"
@@ -349,7 +338,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/modbus-bridge-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/modbus-bridge-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/modbus-bridge-2.12.0-windows_amd64.nep"
         }
       },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/modbus-bridge/metadata.json"
@@ -370,9 +359,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/moss-tts-nano-2.12.0-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/moss-tts-nano-2.12.0-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/moss-tts-nano-2.12.0-linux_amd64.nep"
         },
@@ -380,7 +366,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/moss-tts-nano-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/moss-tts-nano-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/moss-tts-nano-2.12.0-windows_amd64.nep"
         }
       },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/moss-tts-nano/metadata.json"
@@ -403,9 +389,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/ocr-device-inference-2.12.0-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/ocr-device-inference-2.12.0-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/ocr-device-inference-2.12.0-linux_amd64.nep"
         },
@@ -413,7 +396,13 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/ocr-device-inference-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/ocr-device-inference-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/ocr-device-inference-2.12.0-windows_amd64.nep"
+        },
+        "linux-aarch64-jetson": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/ocr-device-inference-2.12.0-linux_arm64-jetson.nep"
+        },
+        "linux-x86_64-cuda": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/ocr-device-inference-2.12.0-linux_amd64-cuda.nep"
         }
       },
       "frontend": {
@@ -433,15 +422,14 @@
       "license": "Apache-2.0",
       "type": "native",
       "categories": [
-        "utility"
+        "iot",
+        "bridge",
+        "device-integration"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/onvif-bridge",
       "builds": {
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/onvif-bridge-2.12.0-darwin_aarch64.nep"
-        },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/onvif-bridge-2.12.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/onvif-bridge-2.12.0-linux_amd64.nep"
@@ -450,7 +438,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/onvif-bridge-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/onvif-bridge-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/onvif-bridge-2.12.0-windows_amd64.nep"
         }
       },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/onvif-bridge/metadata.json"
@@ -464,15 +452,14 @@
       "license": "Apache-2.0",
       "type": "native",
       "categories": [
-        "utility"
+        "iot",
+        "bridge",
+        "device-integration"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/opcua-bridge",
       "builds": {
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/opcua-bridge-2.12.0-darwin_aarch64.nep"
-        },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/opcua-bridge-2.12.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/opcua-bridge-2.12.0-linux_amd64.nep"
@@ -481,7 +468,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/opcua-bridge-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/opcua-bridge-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/opcua-bridge-2.12.0-windows_amd64.nep"
         }
       },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/opcua-bridge/metadata.json"
@@ -496,16 +483,13 @@
       "type": "native",
       "categories": [
         "ai",
-        "computer-vision",
+        "ocr",
         "device-integration"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/paddle-ocr-v6",
       "builds": {
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/paddle-ocr-v6-2.12.0-darwin_aarch64.nep"
-        },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/paddle-ocr-v6-2.12.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/paddle-ocr-v6-2.12.0-linux_amd64.nep"
@@ -514,7 +498,13 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/paddle-ocr-v6-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/paddle-ocr-v6-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/paddle-ocr-v6-2.12.0-windows_amd64.nep"
+        },
+        "linux-aarch64-jetson": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/paddle-ocr-v6-2.12.0-linux_arm64-jetson.nep"
+        },
+        "linux-x86_64-cuda": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/paddle-ocr-v6-2.12.0-linux_amd64-cuda.nep"
         }
       },
       "frontend": {
@@ -535,16 +525,13 @@
       "type": "native",
       "categories": [
         "ai",
-        "computer-vision",
+        "ocr",
         "device-integration"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/paddle-ocr-vl",
       "builds": {
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/paddle-ocr-vl-2.12.0-darwin_aarch64.nep"
-        },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/paddle-ocr-vl-2.12.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/paddle-ocr-vl-2.12.0-linux_amd64.nep"
@@ -553,7 +540,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/paddle-ocr-vl-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/paddle-ocr-vl-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/paddle-ocr-vl-2.12.0-windows_amd64.nep"
         }
       },
       "frontend": {
@@ -580,9 +567,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/sensevoice-asr-2.12.0-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/sensevoice-asr-2.12.0-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/sensevoice-asr-2.12.0-linux_amd64.nep"
         },
@@ -590,7 +574,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/sensevoice-asr-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/sensevoice-asr-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/sensevoice-asr-2.12.0-windows_amd64.nep"
         }
       },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/sensevoice-asr/metadata.json"
@@ -604,15 +588,13 @@
       "license": "Apache-2.0",
       "type": "native",
       "categories": [
-        "utility"
+        "video",
+        "streaming"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/stream-player",
       "builds": {
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/stream-player-2.12.0-darwin_aarch64.nep"
-        },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/stream-player-2.12.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/stream-player-2.12.0-linux_amd64.nep"
@@ -621,7 +603,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/stream-player-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/stream-player-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/stream-player-2.12.0-windows_amd64.nep"
         }
       },
       "frontend": {
@@ -641,15 +623,14 @@
       "license": "Apache-2.0",
       "type": "native",
       "categories": [
-        "utility"
+        "iot",
+        "bridge",
+        "device-integration"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/uink-rms-bridge",
       "builds": {
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/uink-rms-bridge-2.12.0-darwin_aarch64.nep"
-        },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/uink-rms-bridge-2.12.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/uink-rms-bridge-2.12.0-linux_amd64.nep"
@@ -658,7 +639,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/uink-rms-bridge-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/uink-rms-bridge-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/uink-rms-bridge-2.12.0-windows_amd64.nep"
         }
       },
       "frontend": {
@@ -678,17 +659,14 @@
       "license": "Apache-2.0",
       "type": "native",
       "categories": [
-        "ai",
-        "vision",
+        "video",
+        "streaming",
         "detection"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/video-vlm",
       "builds": {
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/video-vlm-2.12.0-darwin_aarch64.nep"
-        },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/video-vlm-2.12.0-darwin_x86_64.nep"
         },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/video-vlm-2.12.0-linux_amd64.nep"
@@ -697,7 +675,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/video-vlm-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/video-vlm-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/video-vlm-2.12.0-windows_amd64.nep"
         }
       },
       "frontend": {
@@ -724,9 +702,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/vision-hub-2.12.0-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/vision-hub-2.12.0-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/vision-hub-2.12.0-linux_amd64.nep"
         },
@@ -734,7 +709,13 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/vision-hub-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/vision-hub-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/vision-hub-2.12.0-windows_amd64.nep"
+        },
+        "linux-aarch64-jetson": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/vision-hub-2.12.0-linux_arm64-jetson.nep"
+        },
+        "linux-x86_64-cuda": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/vision-hub-2.12.0-linux_amd64-cuda.nep"
         }
       },
       "env_hints": {
@@ -758,9 +739,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/voice-assistant-2.12.0-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/voice-assistant-2.12.0-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/voice-assistant-2.12.0-linux_amd64.nep"
         },
@@ -768,7 +746,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/voice-assistant-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/voice-assistant-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/voice-assistant-2.12.0-windows_amd64.nep"
         }
       },
       "frontend": {
@@ -795,9 +773,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/voice-edge-tts-2.12.0-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/voice-edge-tts-2.12.0-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/voice-edge-tts-2.12.0-linux_amd64.nep"
         },
@@ -805,7 +780,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/voice-edge-tts-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/voice-edge-tts-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/voice-edge-tts-2.12.0-windows_amd64.nep"
         }
       },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/voice-edge-tts/metadata.json"
@@ -819,24 +794,21 @@
       "license": "Apache-2.0",
       "type": "native",
       "categories": [
-        "utility"
+        "demo"
       ],
       "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/wasm-demo",
       "builds": {
         "darwin-aarch64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/wasm-demo-2.12.0.nep"
-        },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/wasm-demo-2.12.0.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/wasm-demo-2.12.0-darwin_aarch64.nep"
         },
         "linux-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/wasm-demo-2.12.0.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/wasm-demo-2.12.0-linux_amd64.nep"
         },
         "linux-aarch64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/wasm-demo-2.12.0.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/wasm-demo-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/wasm-demo-2.12.0.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/wasm-demo-2.12.0-windows_amd64.nep"
         }
       },
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/wasm-demo/metadata.json"
@@ -857,9 +829,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/weather-forecast-2.12.0-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/weather-forecast-2.12.0-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/weather-forecast-2.12.0-linux_amd64.nep"
         },
@@ -867,7 +836,7 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/weather-forecast-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/weather-forecast-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/weather-forecast-2.12.0-windows_amd64.nep"
         }
       },
       "frontend": {
@@ -896,9 +865,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-device-inference-2.12.0-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-device-inference-2.12.0-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-device-inference-2.12.0-linux_amd64.nep"
         },
@@ -906,7 +872,13 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-device-inference-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-device-inference-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-device-inference-2.12.0-windows_amd64.nep"
+        },
+        "linux-aarch64-jetson": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-device-inference-2.12.0-linux_arm64-jetson.nep"
+        },
+        "linux-x86_64-cuda": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-device-inference-2.12.0-linux_amd64-cuda.nep"
         }
       },
       "frontend": {
@@ -919,7 +891,7 @@
     },
     {
       "id": "yolo-video",
-      "name": "YOLO Video",
+      "name": "Yolo Video",
       "version": "2.12.0",
       "description": "Real-time video stream object detection with YOLOv11, RTSP/camera support, ROI analytics, line crossing, smart capture rules, and MJPEG streaming",
       "author": "NeoMind Team",
@@ -935,9 +907,6 @@
         "darwin-aarch64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-video-2.12.0-darwin_aarch64.nep"
         },
-        "darwin-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-video-2.12.0-darwin_x86_64.nep"
-        },
         "linux-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-video-2.12.0-linux_amd64.nep"
         },
@@ -945,7 +914,13 @@
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-video-2.12.0-linux_arm64.nep"
         },
         "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-video-2.12.0-windows_x86_64.nep"
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-video-2.12.0-windows_amd64.nep"
+        },
+        "linux-aarch64-jetson": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-video-2.12.0-linux_arm64-jetson.nep"
+        },
+        "linux-x86_64-cuda": {
+          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-video-2.12.0-linux_amd64-cuda.nep"
         }
       },
       "frontend": {

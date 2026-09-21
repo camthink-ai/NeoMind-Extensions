@@ -18,7 +18,7 @@
 set -euo pipefail
 
 GITHUB_REPO="camthink-ai/NeoMind-Extensions"
-PLATFORMS=(darwin-aarch64 darwin-x86_64 linux-x86_64 linux-aarch64 windows-x86_64)
+PLATFORMS=(darwin-aarch64 linux-x86_64 linux-aarch64 windows-x86_64)
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 EXT_DIR="$ROOT_DIR/extensions"
 

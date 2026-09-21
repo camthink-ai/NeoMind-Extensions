@@ -249,7 +249,7 @@ EOF
     fi
 
     # Build platforms for builds field
-    platforms='darwin-aarch64 darwin-x86_64 linux-x86_64 linux-aarch64 windows-x86_64'
+    platforms='darwin-aarch64 linux-x86_64 linux-aarch64 windows-x86_64'
     builds_json="{"
     first=true
     for platform in $platforms; do
@@ -351,7 +351,7 @@ for ext_dir in "$EXTENSIONS_DIR"/*/; do
     ext_version=$(grep -E "^version" "$ext_dir/Cargo.toml" 2>/dev/null | head -1 | sed 's/.*=.*"\(.*\)"/\1/' || echo "2.0.0")
 
     # Build platforms
-    platforms='darwin-aarch64 darwin-x86_64 linux-x86_64 linux-aarch64 windows-x86_64'
+    platforms='darwin-aarch64 linux-x86_64 linux-aarch64 windows-x86_64'
     builds="{}"
     for platform in $platforms; do
         platform_underscore=$(echo $platform | sed 's/-/_/')
