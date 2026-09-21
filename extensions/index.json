@@ -245,12 +245,6 @@
         },
         "windows-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/image-analyzer-2.12.0-windows_x86_64.nep"
-        },
-        "linux-aarch64-jetson": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/image-analyzer-2.7.8-linux_arm64-jetson.nep"
-        },
-        "linux-x86_64-cuda": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/image-analyzer-2.7.8-linux_amd64-cuda.nep"
         }
       },
       "frontend": {
@@ -741,12 +735,6 @@
         },
         "windows-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/vision-hub-2.12.0-windows_x86_64.nep"
-        },
-        "linux-aarch64-jetson": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/vision-hub-0.1.0-linux_arm64-jetson.nep"
-        },
-        "linux-x86_64-cuda": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/vision-hub-0.1.0-linux_amd64-cuda.nep"
         }
       },
       "env_hints": {
@@ -958,12 +946,6 @@
         },
         "windows-x86_64": {
           "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-video-2.12.0-windows_x86_64.nep"
-        },
-        "linux-aarch64-jetson": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/yolo-video-2.7.8-linux_arm64-jetson.nep"
-        },
-        "linux-x86_64-cuda": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/yolo-video-2.7.8-linux_amd64-cuda.nep"
         }
       },
       "frontend": {
