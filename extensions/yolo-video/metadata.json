@@ -1,7 +1,7 @@
 {
   "id": "yolo-video",
   "name": "YOLO Video",
-  "version": "2.7.8",
+  "version": "2.12.0",
   "description": "Real-time video stream object detection with YOLOv11, RTSP/camera support, ROI analytics, line crossing, smart capture rules, and MJPEG streaming",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
@@ -14,19 +14,19 @@
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/yolo-video",
   "builds": {
     "darwin-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/yolo-video-2.7.8-darwin_aarch64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-video-2.12.0-darwin_aarch64.nep"
     },
     "darwin-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/yolo-video-2.7.8-darwin_x86_64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-video-2.12.0-darwin_x86_64.nep"
     },
     "linux-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/yolo-video-2.7.8-linux_amd64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-video-2.12.0-linux_amd64.nep"
     },
     "linux-aarch64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/yolo-video-2.7.8-linux_arm64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-video-2.12.0-linux_arm64.nep"
     },
     "windows-x86_64": {
-      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/yolo-video-2.7.8-windows_amd64.nep"
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.12.0/yolo-video-2.12.0-windows_x86_64.nep"
     },
     "linux-aarch64-jetson": {
       "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.7.8/yolo-video-2.7.8-linux_arm64-jetson.nep"
