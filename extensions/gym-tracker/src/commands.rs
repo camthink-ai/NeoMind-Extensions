@@ -39,6 +39,249 @@ pub struct Ctx {
 /// Handle one command. Returns a JSON value or an error string (the caller maps
 /// this to `ExtensionError::Other`). No command owns I/O beyond what the
 /// [`Ctx`] handles already do.
+/// Identity maintenance: face anchoring + face/body library growth +
+/// unknown-visitor auto-enrollment. Extracted from get_live_state so the
+/// INGEST path can run it viewer-independently (2026-09-17 closed-loop
+/// audit: auto-enroll only fired while a frontend polled get_live_state —
+/// with nobody watching, visitors left sessions with no member). Both
+/// callers serialize on a global lock; unknown-streaks live in LiveState
+/// so they cooperate.
+fn nearest_member(ems: &[crate::db::Member], emb: &[f32]) -> Option<(usize, f32)> {
+    let mut best: Option<(usize, f32)> = None;
+    for (i, m) in ems.iter().enumerate() {
+        for sample in m.all_embeddings() {
+            let d = l2_dist(emb, sample);
+            if d.is_finite() && best.map_or(true, |(_, b)| d < b) {
+                best = Some((i, d));
+            }
+        }
+    }
+    best
+}
+fn match_one(
+    ems: &[crate::db::Member],
+    emb: &[f32],
+    match_threshold: f32,
+) -> Option<(String, String, f32)> {
+    nearest_member(ems, emb)
+        .filter(|(_, d)| *d <= match_threshold)
+        .map(|(i, d)| (ems[i].id.clone(), ems[i].name.clone(), d))
+}
+
+pub(crate) fn identity_maintenance(
+    db: &std::sync::Arc<crate::db::Db>,
+    state: &std::sync::Arc<crate::state::LiveState>,
+    identity: &crate::config::IdentityCfg,
+    tracks: &[crate::types::Track],
+    faces: &[crate::types::FaceBox],
+) -> (Vec<crate::db::Member>, HashMap<i64, (usize, f32)>) {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut members = db.list_members().unwrap_or_default();
+    let now = chrono::Utc::now().timestamp();
+            // ---- face identity anchor (arcface) ----
+            // A frame-level face emb matching a member's FACE library
+            // anchors that member's identity on the geometrically enclosing
+            // track — clothing-independent. The anchored track's BODY emb
+            // then auto-appends to that member's body library WITHOUT the
+            // body confidence gate (the face already confirmed identity;
+            // that is precisely how new outfits get recorded), and the
+            // face emb itself appends under the usual diversity/cooldown
+            // gates. Face overrides body when both speak.
+            let now = chrono::Utc::now().timestamp();
+            // track_id -> (member_idx, face_dist)
+            let mut face_anchored: HashMap<i64, (usize, f32)> = HashMap::new();
+            for fe in faces {
+                let Some(emb) = fe.emb.as_ref() else { continue };
+                if emb.is_empty() {
+                    continue;
+                }
+                let mut best: Option<(usize, f32)> = None;
+                for (i, m) in members.iter().enumerate() {
+                    for sample in &m.face_embeddings {
+                        let d = l2_dist(emb, sample);
+                        if d.is_finite() && best.map_or(true, |(_, b)| d < b) {
+                            best = Some((i, d));
+                        }
+                    }
+                }
+                let Some((i, d)) = best.filter(|(_, d)| *d <= identity.face_match_threshold)
+                else {
+                    continue;
+                };
+                let m = &members[i];
+                // grow the face library: diverse + cooldown gated
+                if m.face_embeddings
+                    .iter()
+                    .all(|s| l2_dist(emb, s) >= identity.append_min_dist)
+                    && (m.face_embeddings.is_empty()
+                        || now - db.last_embedding_append_kind(&m.id, "face")
+                            >= identity.append_cooldown_sec)
+                {
+                    if db
+                                                .append_member_embedding_kind(&m.id, emb, "face")
+                        .unwrap_or(false)
+                    {
+                        members[i].face_embeddings.push(emb.clone());
+                    }
+                }
+                // anchor: among tracks whose bbox contains the face center,
+                // pick the TIGHTEST fit — a departed person's track can
+                // linger inside the TTL with an overlapping bbox, and the
+                // smallest containing box is the one actually on the face.
+                let (fx, fy) = (fe.bbox.x + fe.bbox.w / 2.0, fe.bbox.y + fe.bbox.h / 2.0);
+                let tightest = tracks
+                    .iter()
+                    .filter(|t| {
+                        let b = &t.bbox;
+                        fx >= b.x && fx <= b.x + b.w && fy >= b.y && fy <= b.y + b.h
+                    })
+                    .min_by(|a, b| (a.bbox.w * a.bbox.h).total_cmp(&(b.bbox.w * b.bbox.h)));
+                if let Some(t) = tightest {
+                    face_anchored.insert(t.track_id, (i, d));
+                }
+            }
+            // face-confirmed body-append: identity is certain, record the outfit
+            for (tid, (i, _)) in &face_anchored {
+                let Some(t) = tracks.iter().find(|t| t.track_id == *tid) else {
+                    continue;
+                };
+                let Some(f) = t.face.as_ref() else { continue };
+                if f.emb.is_empty() {
+                    continue;
+                }
+                let m = &members[*i];
+                let diverse = m
+                    .all_embeddings()
+                    .all(|s| l2_dist(&f.emb, s) >= identity.append_min_dist);
+                if diverse
+                    && m.extra_embeddings.len() + 1 < crate::config::MAX_EMBEDDINGS_PER_MEMBER
+                    && now - db.last_embedding_append_kind(&m.id, "body")
+                        >= identity.append_cooldown_sec
+                {
+                    if db
+                                                .append_member_embedding(&m.id, &f.emb)
+                        .unwrap_or(false)
+                    {
+                        tracing::info!(member = %m.id,
+                            "outfit recorded (face-confirmed identity)");
+                        members[*i].extra_embeddings.push(f.emb.clone());
+                    }
+                }
+            }
+            // (free fns, not closures: the borrow checker otherwise pins
+            // `members` immutable while the auto-enroll loop pushes to it)
+            // Nearest member = min L2 over ALL of that member's samples
+            // (primary + accumulated extras) — a member recognized in any
+            // of their recorded outfits.
+            // ---- auto-enrollment (identity.auto_capture_unknown) ----
+            // A track with an embedding whose nearest member sits BEYOND
+            // auto_capture_distance is a first-time visitor: enroll their
+            // embedding now as `{prefix}-{n}` (source=auto, unnamed) so the
+            // identity is captured on first sight; the display name is
+            // filled in later via rename_member. The wide gap between
+            // match_threshold (450) and auto_capture_distance (600) absorbs
+            // embedding drift for people already in the library — an
+            // enrolled person whose re-embed lands at 500 is "unknown but
+            // not enrollable", not a duplicate entry.
+            if identity.auto_capture_unknown {
+                for t in tracks {
+                    let Some(f) = t.face.as_ref() else { continue };
+                    if f.emb.is_empty() {
+                        continue;
+                    }
+                    // Persistence gate: enroll only after the track has been
+                    // unknown for N consecutive observations. Far-field /
+                    // moving people flicker between "unknown" and "matched"
+                    // as embeddings drift — enrolling on the first unknown
+                    // reading forks a duplicate member per dropout.
+                    {
+                        let mut streaks = state.unknown_streaks_write();
+                        if nearest_member(&members, &f.emb)
+                            .map_or(false, |(_, d)| d <= identity.auto_capture_distance)
+                        {
+                            streaks.insert(t.track_id, 0);
+                            continue;
+                        }
+                        let s = streaks.entry(t.track_id).or_insert(0);
+                        *s += 1;
+                        if *s < 3 {
+                            continue; // need 3 consecutive unknown readings
+                        }
+                    }
+                    // Size gate: far-field bodies produce unstable
+                    // embeddings — don't build a member library from them.
+                    // 0.15 (was 0.10): with 4K tiles feeding far-field
+                    // tracks, h 0.10–0.14 embeddings drifted >600 and each
+                    // drift forked a new 访客 (154 members, 54 with no
+                    // session, ~18/day from 2-3 real people). Those tracks
+                    // still track + match, they just don't enroll.
+                    if t.bbox.h < 0.15 {
+                        continue;
+                    }
+                    match db
+                                                .insert_auto_member(&identity.unknown_prefix, &f.emb)
+                    {
+                        Ok(m) => {
+                            state.unknown_streaks_write().insert(t.track_id, 0);
+                            members.push(m)
+                        }
+                        Err(e) => tracing::warn!(
+                            member_err = %e, "auto member insert failed"),
+                    }
+                }
+            }
+            // ---- library growth: strong-confidence sample appending ----
+            // A MATCHED member (d ≤ match_threshold) seen with STRONG
+            // confidence (d ≤ append_confidence, much tighter) whose
+            // current embedding is far from every stored sample
+            // (≥ append_min_dist — i.e. a new look, not a redundant
+            // re-sample) gets the new sample appended, subject to a
+            // cooldown. This is how the library persists across outfits:
+            // day 1 red shirt (auto-enrolled), day 2 blue shirt → new
+            // visitor → renamed/confirmed → the blue-shirt embedding
+            // accumulates once identity is certain.
+            for t in tracks {
+                let Some(f) = t.face.as_ref() else { continue };
+                if f.emb.is_empty() {
+                    continue;
+                }
+                let Some((i, d)) = nearest_member(&members, &f.emb) else {
+                    continue;
+                };
+                if d > identity.append_confidence {
+                    continue; // matched but not certain enough to write
+                }
+                let m = &members[i];
+                let diverse = m
+                    .all_embeddings()
+                    .all(|s| l2_dist(&f.emb, s) >= identity.append_min_dist);
+                if !diverse {
+                    continue;
+                }
+                if m.extra_embeddings.len() as i64
+                    >= crate::config::MAX_EMBEDDINGS_PER_MEMBER as i64 - 1
+                {
+                    continue; // library full
+                }
+                if now - db.last_embedding_append_at(&m.id) < identity.append_cooldown_sec {
+                    continue; // cooldown — one sample per minute max
+                }
+                match db.append_member_embedding(&m.id, &f.emb) {
+                    Ok(true) => {
+                        tracing::info!(
+                            member_id = %m.id, dist = d,
+                            samples = m.extra_embeddings.len() + 2,
+                            "member embedding library extended");
+                        members[i].extra_embeddings.push(f.emb.clone());
+                    }
+                    Ok(false) => {}
+                    Err(e) => tracing::warn!(member_err = %e, "append failed"),
+                }
+            }
+    (members, face_anchored)
+}
+
 pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
     match cmd {
         // Live mirror of tracks currently tracked by the device-app.
@@ -105,227 +348,9 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
             // distance is within identity.match_threshold. Members load per
             // poll — tiny (a gym's worth of rows) and always fresh.
             let mut members = ctx.db.list_members().map_err(|e| e.to_string())?;
-            // ---- face identity anchor (arcface) ----
-            // A frame-level face emb matching a member's FACE library
-            // anchors that member's identity on the geometrically enclosing
-            // track — clothing-independent. The anchored track's BODY emb
-            // then auto-appends to that member's body library WITHOUT the
-            // body confidence gate (the face already confirmed identity;
-            // that is precisely how new outfits get recorded), and the
-            // face emb itself appends under the usual diversity/cooldown
-            // gates. Face overrides body when both speak.
-            let now = chrono::Utc::now().timestamp();
-            // track_id -> (member_idx, face_dist)
-            let mut face_anchored: HashMap<i64, (usize, f32)> = HashMap::new();
-            for fe in &faces {
-                let Some(emb) = fe.emb.as_ref() else { continue };
-                if emb.is_empty() {
-                    continue;
-                }
-                let mut best: Option<(usize, f32)> = None;
-                for (i, m) in members.iter().enumerate() {
-                    for sample in &m.face_embeddings {
-                        let d = l2_dist(emb, sample);
-                        if d.is_finite() && best.map_or(true, |(_, b)| d < b) {
-                            best = Some((i, d));
-                        }
-                    }
-                }
-                let Some((i, d)) = best.filter(|(_, d)| *d <= ctx.identity.face_match_threshold)
-                else {
-                    continue;
-                };
-                let m = &members[i];
-                // grow the face library: diverse + cooldown gated
-                if m.face_embeddings
-                    .iter()
-                    .all(|s| l2_dist(emb, s) >= ctx.identity.append_min_dist)
-                    && (m.face_embeddings.is_empty()
-                        || now - ctx.db.last_embedding_append_kind(&m.id, "face")
-                            >= ctx.identity.append_cooldown_sec)
-                {
-                    if ctx
-                        .db
-                        .append_member_embedding_kind(&m.id, emb, "face")
-                        .unwrap_or(false)
-                    {
-                        members[i].face_embeddings.push(emb.clone());
-                    }
-                }
-                // anchor: among tracks whose bbox contains the face center,
-                // pick the TIGHTEST fit — a departed person's track can
-                // linger inside the TTL with an overlapping bbox, and the
-                // smallest containing box is the one actually on the face.
-                let (fx, fy) = (fe.bbox.x + fe.bbox.w / 2.0, fe.bbox.y + fe.bbox.h / 2.0);
-                let tightest = tracks
-                    .iter()
-                    .filter(|t| {
-                        let b = &t.bbox;
-                        fx >= b.x && fx <= b.x + b.w && fy >= b.y && fy <= b.y + b.h
-                    })
-                    .min_by(|a, b| (a.bbox.w * a.bbox.h).total_cmp(&(b.bbox.w * b.bbox.h)));
-                if let Some(t) = tightest {
-                    face_anchored.insert(t.track_id, (i, d));
-                }
-            }
-            // face-confirmed body-append: identity is certain, record the outfit
-            for (tid, (i, _)) in &face_anchored {
-                let Some(t) = tracks.iter().find(|t| t.track_id == *tid) else {
-                    continue;
-                };
-                let Some(f) = t.face.as_ref() else { continue };
-                if f.emb.is_empty() {
-                    continue;
-                }
-                let m = &members[*i];
-                let diverse = m
-                    .all_embeddings()
-                    .all(|s| l2_dist(&f.emb, s) >= ctx.identity.append_min_dist);
-                if diverse
-                    && m.extra_embeddings.len() + 1 < crate::config::MAX_EMBEDDINGS_PER_MEMBER
-                    && now - ctx.db.last_embedding_append_kind(&m.id, "body")
-                        >= ctx.identity.append_cooldown_sec
-                {
-                    if ctx
-                        .db
-                        .append_member_embedding(&m.id, &f.emb)
-                        .unwrap_or(false)
-                    {
-                        tracing::info!(member = %m.id,
-                            "outfit recorded (face-confirmed identity)");
-                        members[*i].extra_embeddings.push(f.emb.clone());
-                    }
-                }
-            }
-            // (free fns, not closures: the borrow checker otherwise pins
-            // `members` immutable while the auto-enroll loop pushes to it)
-            // Nearest member = min L2 over ALL of that member's samples
-            // (primary + accumulated extras) — a member recognized in any
-            // of their recorded outfits.
-            let nearest_member = |ems: &[crate::db::Member], emb: &[f32]| -> Option<(usize, f32)> {
-                let mut best: Option<(usize, f32)> = None;
-                for (i, m) in ems.iter().enumerate() {
-                    for sample in m.all_embeddings() {
-                        let d = l2_dist(emb, sample);
-                        if d.is_finite() && best.map_or(true, |(_, b)| d < b) {
-                            best = Some((i, d));
-                        }
-                    }
-                }
-                best
-            };
-            let match_one =
-                |ems: &[crate::db::Member], emb: &[f32]| -> Option<(String, String, f32)> {
-                    nearest_member(ems, emb)
-                        .filter(|(_, d)| *d <= ctx.identity.match_threshold)
-                        .map(|(i, d)| (ems[i].id.clone(), ems[i].name.clone(), d))
-                };
-            // ---- auto-enrollment (identity.auto_capture_unknown) ----
-            // A track with an embedding whose nearest member sits BEYOND
-            // auto_capture_distance is a first-time visitor: enroll their
-            // embedding now as `{prefix}-{n}` (source=auto, unnamed) so the
-            // identity is captured on first sight; the display name is
-            // filled in later via rename_member. The wide gap between
-            // match_threshold (450) and auto_capture_distance (600) absorbs
-            // embedding drift for people already in the library — an
-            // enrolled person whose re-embed lands at 500 is "unknown but
-            // not enrollable", not a duplicate entry.
-            if ctx.identity.auto_capture_unknown {
-                for t in &tracks {
-                    let Some(f) = t.face.as_ref() else { continue };
-                    if f.emb.is_empty() {
-                        continue;
-                    }
-                    // Persistence gate: enroll only after the track has been
-                    // unknown for N consecutive observations. Far-field /
-                    // moving people flicker between "unknown" and "matched"
-                    // as embeddings drift — enrolling on the first unknown
-                    // reading forks a duplicate member per dropout.
-                    {
-                        let mut streaks = ctx.state.unknown_streaks_write();
-                        if nearest_member(&members, &f.emb)
-                            .map_or(false, |(_, d)| d <= ctx.identity.auto_capture_distance)
-                        {
-                            streaks.insert(t.track_id, 0);
-                            continue;
-                        }
-                        let s = streaks.entry(t.track_id).or_insert(0);
-                        *s += 1;
-                        if *s < 3 {
-                            continue; // need 3 consecutive unknown readings
-                        }
-                    }
-                    // Size gate: far-field bodies produce unstable
-                    // embeddings — don't build a member library from them.
-                    // 0.15 (was 0.10): with 4K tiles feeding far-field
-                    // tracks, h 0.10–0.14 embeddings drifted >600 and each
-                    // drift forked a new 访客 (154 members, 54 with no
-                    // session, ~18/day from 2-3 real people). Those tracks
-                    // still track + match, they just don't enroll.
-                    if t.bbox.h < 0.15 {
-                        continue;
-                    }
-                    match ctx
-                        .db
-                        .insert_auto_member(&ctx.identity.unknown_prefix, &f.emb)
-                    {
-                        Ok(m) => {
-                            ctx.state.unknown_streaks_write().insert(t.track_id, 0);
-                            members.push(m)
-                        }
-                        Err(e) => tracing::warn!(
-                            member_err = %e, "auto member insert failed"),
-                    }
-                }
-            }
-            // ---- library growth: strong-confidence sample appending ----
-            // A MATCHED member (d ≤ match_threshold) seen with STRONG
-            // confidence (d ≤ append_confidence, much tighter) whose
-            // current embedding is far from every stored sample
-            // (≥ append_min_dist — i.e. a new look, not a redundant
-            // re-sample) gets the new sample appended, subject to a
-            // cooldown. This is how the library persists across outfits:
-            // day 1 red shirt (auto-enrolled), day 2 blue shirt → new
-            // visitor → renamed/confirmed → the blue-shirt embedding
-            // accumulates once identity is certain.
-            for t in &tracks {
-                let Some(f) = t.face.as_ref() else { continue };
-                if f.emb.is_empty() {
-                    continue;
-                }
-                let Some((i, d)) = nearest_member(&members, &f.emb) else {
-                    continue;
-                };
-                if d > ctx.identity.append_confidence {
-                    continue; // matched but not certain enough to write
-                }
-                let m = &members[i];
-                let diverse = m
-                    .all_embeddings()
-                    .all(|s| l2_dist(&f.emb, s) >= ctx.identity.append_min_dist);
-                if !diverse {
-                    continue;
-                }
-                if m.extra_embeddings.len() as i64
-                    >= crate::config::MAX_EMBEDDINGS_PER_MEMBER as i64 - 1
-                {
-                    continue; // library full
-                }
-                if now - ctx.db.last_embedding_append_at(&m.id) < ctx.identity.append_cooldown_sec {
-                    continue; // cooldown — one sample per minute max
-                }
-                match ctx.db.append_member_embedding(&m.id, &f.emb) {
-                    Ok(true) => {
-                        tracing::info!(
-                            member_id = %m.id, dist = d,
-                            samples = m.extra_embeddings.len() + 2,
-                            "member embedding library extended");
-                        members[i].extra_embeddings.push(f.emb.clone());
-                    }
-                    Ok(false) => {}
-                    Err(e) => tracing::warn!(member_err = %e, "append failed"),
-                }
-            }
+            let (mut members, face_anchored) = identity_maintenance(
+                &ctx.db, &ctx.state, &ctx.identity, &tracks, &faces);
+
             // Opportunistic heatmap persistence + workout record flush /
             // session close — belt-and-braces alongside the ingest loop's
             // 5 s tick (RS-3, 2026-09-16 audit): whichever fires first
@@ -347,7 +372,7 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                             "dist": (d * 1000.0).round() / 1000.0, "via": "face",
                         }))
                         .or_else(|| t.face.as_ref()
-                            .and_then(|f| match_one(&members, &f.emb))
+                            .and_then(|f| match_one(&members, &f.emb, ctx.identity.match_threshold))
                             .map(|(id, name, dist)| json!({
                                 "id": id, "name": name,
                                 "dist": (dist * 1000.0).round() / 1000.0,
@@ -362,6 +387,8 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                         "exercise": workouts.get(&t.track_id).map(|w| json!({
                             "name": w.0, "reps": w.1, "sets": w.2, "zone": w.3,
                             "zone_hold": (w.4 * 10.0).round() / 10.0,
+                            "depth": w.5, "sym": w.6.map(|s| (s * 10.0).round() / 10.0),
+                            "depth": w.5, "sym": w.6.map(|s| (s * 10.0).round() / 10.0),
                         })),
                         // Pose/face round-trip the producer's optional fields so
                         // debug tooling (and P2 rep counting) can see them without
@@ -433,6 +460,8 @@ pub fn handle(ctx: &Ctx, cmd: &str, args: &Value) -> Result<Value, String> {
                         "exercise": workouts.get(&t.track_id).map(|w| json!({
                             "name": w.0, "reps": w.1, "sets": w.2, "zone": w.3,
                             "zone_hold": (w.4 * 10.0).round() / 10.0,
+                            "depth": w.5, "sym": w.6.map(|s| (s * 10.0).round() / 10.0),
+                            "depth": w.5, "sym": w.6.map(|s| (s * 10.0).round() / 10.0),
                         })),
                     })
                 })
@@ -988,10 +1017,14 @@ mod tests {
 
     #[test]
     fn auto_enroll_capture_and_rename_flow() {
-        // match 0.1 / auto-capture on beyond 0.5 / prefix U (unit scale)
+        // match 0.1 / auto-capture on beyond 0.5 / prefix U (unit scale).
+        // append gates pinned too: they default to the normalized FACE
+        // scale (0.7) which sits above this test's body-scale 0.1 match
+        // line — the drift-band embedding would be appended into U-1's
+        // library and then "match" itself at distance 0.
         let ctx = make_ctx_identity(
             30,
-            r#"{ "match_threshold": 0.1, "auto_capture_unknown": true, "unknown_prefix": "U", "auto_capture_distance": 0.5 }"#,
+            r#"{ "match_threshold": 0.1, "auto_capture_unknown": true, "unknown_prefix": "U", "auto_capture_distance": 0.5, "append_confidence": 0.05, "append_min_dist": 0.05 }"#,
         );
         let emb = |v: Vec<f32>| Some(crate::types::Face { emb: v, det: 0.8 });
 

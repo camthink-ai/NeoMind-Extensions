@@ -39,6 +39,10 @@ struct Track {
     still_frames: u32,
     home: Option<Pt>,
     anchor: Pt,
+    /// last match was a far-field tile det — far targets flicker at the
+    /// model level with multi-second gaps; their TTL budget is extended
+    /// (they're near-stationary, so the held position stays valid)
+    tile_sourced: bool,
 }
 
 struct Ghost {
@@ -55,6 +59,9 @@ pub struct Det {
     pub src: String,
     pub ts: u64,
     pub kp: Vec<[f32; 3]>,
+    /// osnet body-ReID embedding (sparse: only on reid-refresh frames).
+    /// L2-normalized by the producer.
+    pub emb: Option<Vec<f32>>,
 }
 
 fn kp_get(kp: &[[f32; 3]], i: usize) -> Option<Pt> {
@@ -155,6 +162,10 @@ pub struct ShadowTracker {
     next_id: i64,
     dt_ema: f32,
     last_now: Option<f64>,
+    /// consecutive-frame counters for pairs of tracks stacked within
+    /// half a body height — the general duplicate-box defense (model
+    /// double-detect, full+tile, cross-column: any etiology)
+    stack_pairs: HashMap<(i64, i64), u32>,
 }
 
 impl Default for ShadowTracker {
@@ -168,6 +179,7 @@ impl ShadowTracker {
         Self {
             tracks: HashMap::new(),
             ghosts: HashMap::new(),
+            stack_pairs: HashMap::new(),
             next_id: 0,
             dt_ema: 0.1,
             last_now: None,
@@ -294,17 +306,24 @@ impl ShadowTracker {
 
         // unmatched detections: tile suppression / takeover / mint
         let mut ids: Vec<Option<i64>> = vec![None; dets.len()];
-        let mut new_centers: HashMap<i64, (Pt, f32)> = HashMap::new();
+        let mut new_centers: HashMap<i64, (Pt, f32, bool)> = HashMap::new();
         for (di, &(_, dc, dh)) in centers.iter().enumerate() {
             let tid = if let Some(ti) = assign.get(&di) {
                 tids[*ti]
             } else if is_tile[di] {
-                // stale-duplicate suppression: only near a SIZE-COMPARABLE
-                // full detection (far-beside-near mints, 2026-09-14 fix)
+                // stale-duplicate suppression: near a SIZE-COMPARABLE
+                // full detection, OR near ANY MATCHED det of any source
+                // (2026-09-17 extension: two overlapping tile columns
+                // emit two dets for one far person — det #1 matches its
+                // track, det #2 is unmatched and used to MINT a phantom.
+                // A matched neighbor proves person-hood; the unmatched
+                // tile det beside it is the duplicate — drop it. Two
+                // REAL adjacent far persons both match their own tracks,
+                // so neither is ever suppressed.)
                 let mut near_full = false;
                 for (dj, &(_, dc2, dh2)) in centers.iter().enumerate() {
-                    if is_tile[dj] {
-                        continue;
+                    if is_tile[dj] && !assign.contains_key(&dj) {
+                        continue; // unmatched tile neighbors prove nothing
                     }
                     if dh > 1e-6 && dh2 > 1e-6 && !(0.4..2.5).contains(&(dh / dh2)) {
                         continue;
@@ -327,6 +346,35 @@ impl ShadowTracker {
                     }
                 }
             } else {
+                // containment suppression (2026-09-17 duplicate-dets fix):
+                // the model sometimes emits a PARTIAL duplicate box on
+                // one person (IoU below any NMS threshold — e.g. torso +
+                // full body). An unmatched FULL det near an already-
+                // MATCHED det (any source) with comparable size is that
+                // fragment — drop it rather than mint a phantom id.
+                if !is_tile[di] {
+                    let mut contained = false;
+                    for (dj, &(_, dc2, dh2)) in centers.iter().enumerate() {
+                        if dj == di || !assign.contains_key(&dj) {
+                            continue; // only MATCHED neighbors prove personhood
+                        }
+                        if dh <= 1e-6 || dh2 <= 1e-6
+                            || !(0.3..1.3).contains(&(dh / dh2))
+                        {
+                            continue;
+                        }
+                        let dist = ((dc.x - dc2.x).powi(2)
+                            + (dc.y - dc2.y).powi(2))
+                            .sqrt();
+                        if dist < 0.5f32.max(0.6 * dh.max(dh2)) {
+                            contained = true;
+                            break;
+                        }
+                    }
+                    if contained {
+                        continue; // drop: ids[di] stays None
+                    }
+                }
                 match self.resurrect(dc, dh) {
                     Some(t) => t,
                     None => {
@@ -364,13 +412,17 @@ impl ShadowTracker {
                 }
             };
             ids[centers[di].0] = Some(tid);
-            new_centers.insert(tid, (dc, dh));
+            new_centers.insert(tid, (dc, dh, is_tile[di]));
         }
 
         // refresh matched tracks / expire into ghosts
         let matched_tids: Vec<i64> = matched_tracks.iter().map(|ti| tids[*ti]).collect();
+        let matched_tile: HashMap<i64, bool> = assign
+            .iter()
+            .map(|(&di, &ti)| (tids[ti], is_tile[di]))
+            .collect();
         for (tid, tr) in self.tracks.iter_mut() {
-            if let Some(&(nc, nh)) = new_centers.get(tid) {
+            if let Some(&(nc, nh, _mtile)) = new_centers.get(tid) {
                 if !matched_tids.contains(tid) {
                     tr.missed += 1; // tile-only keep-alive
                     continue;
@@ -400,6 +452,9 @@ impl ShadowTracker {
                 tr.last_center = nc;
                 tr.anchor = nc;
                 tr.missed = 0;
+                if let Some(mt) = matched_tile.get(tid) {
+                    tr.tile_sourced = *mt;
+                }
                 // rep-aware stickiness: motionless OR oscillating near home
                 let spd = tr.vel.map(|v| (v.x * v.x + v.y * v.y).sqrt()).unwrap_or(0.0);
                 let home = match tr.home {
@@ -425,11 +480,22 @@ impl ShadowTracker {
                 }
             } else {
                 tr.missed += 1;
+                // Stillness decays under occlusion (2026-09-17 id-churn
+                // fix): a person resting at a machine (still gate 0.12)
+                // who walks off behind equipment is missed for 0.5-1.5 s
+                // and reappears 0.15-0.25 away — the STILL gate rejected
+                // the re-association and minted a fresh id. After ~3
+                // missed frames the track forgets it was parked and
+                // reverts to the mover gate (0.30 + speed headroom).
+                // Brief 1-2-frame flickers keep the tight still gate.
+                if tr.missed > 3 {
+                    tr.still_frames = 0;
+                }
             }
         }
 
         // minted tracks register their state
-        for (tid, &(nc, dh)) in new_centers.iter() {
+        for (tid, &(nc, dh, mtile)) in new_centers.iter() {
             if !self.tracks.contains_key(tid) {
                 self.tracks.insert(
                     *tid,
@@ -442,16 +508,84 @@ impl ShadowTracker {
                         still_frames: 0,
                         home: Some(nc),
                         anchor: nc,
+                        tile_sourced: mtile,
                     },
                 );
             }
         }
 
-        // expire → ghosts
+        // ---- stacked-track merge (2026-09-17 duplicate-box defense) ----
+        // Two live tracks within half a body height for 10 consecutive
+        // frames are one person double-detected — whatever the source
+        // (model double-detect, full+tile, cross-column). Retire the
+        // YOUNGER id outright (not to ghosts — its detections re-match
+        // the survivor next frame; a ghost could resurrect the dupe).
+        {
+            let ids: Vec<i64> = self.tracks.keys().copied().collect();
+            for a in 0..ids.len() {
+                for b in (a + 1)..ids.len() {
+                    let (ta, tb) = (&self.tracks[&ids[a]], &self.tracks[&ids[b]]);
+                    let d = ((ta.last_center.x - tb.last_center.x).powi(2)
+                        + (ta.last_center.y - tb.last_center.y).powi(2))
+                        .sqrt();
+                    // 0.7×body-height: far-field tile estimates jitter
+                    // ±half a body between refreshes — a tight radius let
+                    // the pair flap across the line and reset forever
+                    let close = d < 0.7f32 * ta.h.max(tb.h).max(1e-6);
+                    let key = (ids[a].min(ids[b]), ids[a].max(ids[b]));
+                    if close {
+                        *self.stack_pairs.entry(key).or_insert(0) += 1;
+                    } else {
+                        // decay, don't reset: one flappy frame must not
+                        // forgive a persistent stack
+                        if let Some(n) = self.stack_pairs.get_mut(&key) {
+                            *n = (*n / 2).saturating_sub(1);
+                        }
+                    }
+                }
+            }
+            // retire the younger ONLY when it is starving (missed > 2):
+            // killing a track that matched THIS frame created a
+            // merge→mint→merge churn loop (7 ids in 25 s at one spot —
+            // the mid-field person's full track kept pairing with the
+            // lingering tile track of the same person). A matched track
+            // is a live person; the merge exists to reap ZOMBIES.
+            let retire: Vec<i64> = self
+                .stack_pairs
+                .iter()
+                .filter(|(_, n)| **n > 8)
+                .filter_map(|((_, y), _)| {
+                    let starving = self
+                        .tracks
+                        .get(y)
+                        .map(|t| t.missed > 2)
+                        .unwrap_or(false);
+                    starving.then_some(*y)
+                })
+                .collect();
+            for v in &retire {
+                self.stack_pairs.retain(|(a, b), _| a != v && b != v);
+                if self.tracks.remove(v).is_some() {
+                    tracing::debug!(retired = v, "stacked duplicate merged");
+                }
+            }
+            if self.stack_pairs.len() > 64 {
+                self.stack_pairs.clear(); // bound: stale keys after churn
+            }
+        }
+
+        // expire → ghosts. Tile-sourced (far-field) tracks get a 3×
+        // budget: borderline far targets flicker at the model level with
+        // multi-second miss gaps — expiring at the base TTL minted a new
+        // id per flicker cycle (the 2026-09-17 id-churn report: 12 ids
+        // for 5 people in 30 s). They hold position while invisible
+        // (the display TTL hides the box after 3 s regardless).
         let expired: Vec<i64> = self
             .tracks
             .iter()
-            .filter(|(_, tr)| tr.missed > MAX_MISSED)
+            .filter(|(_, tr)| {
+                tr.missed > if tr.tile_sourced { 3 * MAX_MISSED } else { MAX_MISSED }
+            })
             .map(|(t, _)| *t)
             .collect();
         for tid in expired {
@@ -581,6 +715,20 @@ pub fn lean_frame_from_detect(
         }
         let Some((bx, by, bw, bh)) = bbox_kp(&d.kp) else { continue };
         let Some(f) = foot_kp(&d.kp) else { continue };
+        // body-fragment gate (2026-09-17 floating-hand-id fix): an
+        // extended arm / held dumbbell fires its own tiny det with
+        // wrist+elbow keypoints — enough to pass the >=3-kp rule and
+        // mint a phantom "hand person". A real person at full-frame
+        // scale is >=0.10 tall; below that, demand a visible HIP (a
+        // compact/crouching person still shows one). Far field is the
+        // tile pipeline's job, so tile dets are exempt.
+        if d.src != "tile" {
+            let has_hip = d.kp.get(11).map_or(false, |k| k[2] > 0.0)
+                || d.kp.get(12).map_or(false, |k| k[2] > 0.0);
+            if bh < 0.07 || (bh < 0.10 && !has_hip) {
+                continue;
+            }
+        }
         tracks.push(crate::types::Track {
             track_id: tid,
             bbox: crate::types::Bbox {
@@ -594,9 +742,13 @@ pub fn lean_frame_from_detect(
                 kpts: d.kp.clone(),
                 score: pose_score_kp(&d.kp),
             }),
-            // lean detect stream has no per-track embeddings — faces ride
-            // frame-level (see `faces` param)
-            face: None,
+            // osnet body-ReID emb on reid-refresh frames rides the det;
+            // the identity stack consumes it as the track's appearance
+            // (same field the face-emb path uses downstream)
+            face: d.emb.clone().map(|e| crate::types::Face {
+                emb: e,
+                det: 0.9, // producer-side confidence proxy
+            }),
             vel: vels.get(&tid).map(|(vx, vy)| [*vx, *vy]),
             ts: Some(d.ts),
             // the device's exercise engine is skipped in lean mode
@@ -737,7 +889,7 @@ mod tests {
         kp[6] = [cx + h * 0.15, cy - h * 0.25, 0.9];
         kp[11] = [cx - h * 0.12, cy + h * 0.25, 0.8];
         kp[12] = [cx + h * 0.12, cy + h * 0.25, 0.8];
-        Det { src: "full".into(), ts: 0, kp }
+        Det { src: "full".into(), ts: 0, kp, emb: None }
     }
 
     #[test]
@@ -803,7 +955,7 @@ mod tests {
         kp[12] = [cx + h * 0.12, cy + h * 0.25, 0.8];
         kp[15] = [cx - h * 0.10, cy + h * 0.50, 0.7];
         kp[16] = [cx + h * 0.10, cy + h * 0.50, 0.7];
-        Det { src: "full".into(), ts, kp }
+        Det { src: "full".into(), ts, kp, emb: None }
     }
 
     #[test]

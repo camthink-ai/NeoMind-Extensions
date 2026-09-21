@@ -450,7 +450,33 @@ impl Extension for GymTrackerExtension {
                 // bundle into EVERY 30 fps video frame was 4-6x redundant
                 // (track data changes at the ~7 Hz publish rate) and the
                 // extension's single hottest allocation path
-                for s in state.h264_since(h264_cursor) {
+                let mut backlog = state.h264_since(h264_cursor);
+                // LIVE-EDGE SKIP after a backpressure stall: replaying a
+                // deep backlog visibly REWINDS the video (and the ts-keyed
+                // overlay jumps with it). Threshold 2 s (60 frames): a
+                // normal one-wake send burst piles ~30 frames legitimately
+                // (each platform-relay send takes ~30 ms) and must replay,
+                // not skip — only a real stall (>2 s) jumps to the newest
+                // keyframe; the browser's device-seq gap check resyncs
+                // within one GOP.
+                if backlog.len() > 60 {
+                    let skip_to = backlog
+                        .iter()
+                        .rposition(|s| s.key)
+                        .unwrap_or(backlog.len());
+                    if skip_to > 0 {
+                        state::push_diag()
+                            .queue_overflow
+                            .fetch_add(skip_to as u64, std::sync::atomic::Ordering::Relaxed);
+                        tracing::warn!(
+                            backlog = backlog.len(),
+                            skipped = skip_to,
+                            "live-edge skip after send stall"
+                        );
+                        backlog.drain(..skip_to);
+                    }
+                }
+                for s in backlog {
                     h264_cursor = s.seq;
                     state::push_diag().pushed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let meta = serde_json::json!({

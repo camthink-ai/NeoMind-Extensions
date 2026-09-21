@@ -224,6 +224,25 @@ fn process_track_frame(
     state.apply_frame_filtered(&frame, &excl_owned);
     analytics.on_frame(&frame);
     analytics.on_workout_frame(&frame, &active, &members, &cfg.identity, cfg.roi.dwell_debounce_sec);
+    // Viewer-independent identity maintenance (auto-enroll / library
+    // growth): throttled to 1 Hz — the per-frame cost is a member-list
+    // load + N×M distance pass, which only needs to keep up with people
+    // walking in, not with the 25 Hz detect rate.
+    {
+        use std::sync::atomic::{AtomicI64, Ordering};
+        static IDENTITY_TICK: AtomicI64 = AtomicI64::new(0);
+        let now = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0));
+        let last = IDENTITY_TICK.load(Ordering::Relaxed);
+        if now - last >= 1 && now > 1 {
+            IDENTITY_TICK.store(now, Ordering::Relaxed);
+            crate::commands::identity_maintenance(
+                db, state, &cfg.identity, &frame.tracks, &frame.faces,
+            );
+        }
+    }
 }
 
 /// Frame-level face boxes out of the lean detect payload's `faces` array
@@ -246,7 +265,14 @@ fn parse_detect_faces(d: &serde_json::Value) -> Vec<crate::types::FaceBox> {
                             h: g(3),
                         },
                         det: f["det"].as_f64().unwrap_or(0.0) as f32,
-                        emb: None,
+                        // ArcFace 512-dim embedding from the camera's face
+                        // pipeline — the entire member-identification chain
+                        // (register, match, face-library growth) keys off it.
+                        emb: f["emb"].as_array().map(|e| {
+                            e.iter()
+                                .filter_map(|v| v.as_f64().map(|x| x as f32))
+                                .collect::<Vec<f32>>()
+                        }).filter(|v| !v.is_empty()),
                     })
                 })
                 .collect()
@@ -532,6 +558,10 @@ async fn connect_and_drain(
                                             dets.push(crate::shadow::Det {
                                                 src: dj["src"].as_str().unwrap_or("full").into(),
                                                 ts: dj["ts"].as_u64().unwrap_or(ts_ns),
+                                                // osnet body emb (reid-refresh frames only)
+                                                emb: dj["emb"].as_array().map(|e| {
+                                                    e.iter().filter_map(|v| v.as_f64().map(|x| x as f32)).collect::<Vec<f32>>()
+                                                }).filter(|v| !v.is_empty()),
                                                 kp,
                                             });
                                         }
@@ -544,6 +574,52 @@ async fn connect_and_drain(
                                     // behind a frame's full processing.
                                     let lean_frame = {
                                         let mut g = crate::shadow::shadow().lock();
+                                        // far-field assist dedup (2026-09-17
+                                        // double-box fix): the 4K tile band
+                                        // overlaps mid-field persons the
+                                        // full-frame already detects; two
+                                        // dets for one person stabilized
+                                        // into TWO stacked tracks (the
+                                        // tracker's suppression only fires
+                                        // for UNMATCHED tile dets). Drop
+                                        // any tile det near a full det,
+                                        // deterministically, BEFORE the
+                                        // tracker ever sees it.
+                                        {
+                                            let center_h = |d: &crate::shadow::Det| {
+                                                let mut x0 = f32::MAX; let mut y0 = f32::MAX;
+                                                let mut x1 = f32::MIN; let mut y1 = f32::MIN;
+                                                for k in &d.kp {
+                                                    if k[2] > 0.0 {
+                                                        x0 = x0.min(k[0]); y0 = y0.min(k[1]);
+                                                        x1 = x1.max(k[0]); y1 = y1.max(k[1]);
+                                                    }
+                                                }
+                                                if x1 <= x0 { return None; }
+                                                Some(((x0 + x1) / 2.0, (y0 + y1) / 2.0, y1 - y0))
+                                            };
+                                            let full: Vec<(f32, f32, f32)> = dets
+                                                .iter()
+                                                .filter(|d| d.src != "tile")
+                                                .filter_map(center_h)
+                                                .collect();
+                                            if !full.is_empty() {
+                                                dets.retain(|d| {
+                                                    if d.src != "tile" { return true; }
+                                                    let Some((tx, ty, th)) = center_h(d) else { return false; };
+                                                    !full.iter().any(|(fx, fy, fh)| {
+                                                        let near = ((tx - fx).powi(2)
+                                                            + (ty - fy).powi(2))
+                                                            .sqrt()
+                                                            < 0.75f32.max(0.9 * th.max(*fh));
+                                                        let size_ok = th <= 1e-6
+                                                            || *fh <= 1e-6
+                                                            || (th / *fh > 0.35 && th / *fh < 2.9);
+                                                        near && size_ok
+                                                    })
+                                                });
+                                            }
+                                        }
                                         let ids = g.0.update(&dets, now);
                                         // center = visible-kpts bbox center — the
                                         // SAME metric the py side reports (bbox

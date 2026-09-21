@@ -1981,7 +1981,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
           }
           ctx.font = '12px system-ui, sans-serif'
           ctx.fillStyle = '#93c5fd'
-          ctx.fillText(d.length === 1 ? '再点一点确定方向 (a→b)' : '', X(d[0][0]) + 10, Y(d[0][1]) - 8)
+          ctx.fillText(d.length === 1 ? (lang === 'zh' ? '再点一点确定方向 (a→b)' : 'one more point to set direction (a→b)') : '', X(d[0][0]) + 10, Y(d[0][1]) - 8)
         }
       }
 
@@ -2809,7 +2809,7 @@ export const GymVideoOverlay = forwardRef<HTMLDivElement, ExtensionComponentProp
                                 <div className="gym-ov-rowins">
                                   <input className="gym-ov-input name" key={`rn-${m.id}`} autoFocus
                                     defaultValue={m.name}
-                                    placeholder={m.source === 'auto' ? '补填姓名' : '会员姓名'}
+                                    placeholder={m.source === 'auto' ? (lang === 'zh' ? '补填姓名' : 'member name') : (lang === 'zh' ? '会员姓名' : 'member name')}
                                     onKeyDown={(e) => {
                                       if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
                                     }}

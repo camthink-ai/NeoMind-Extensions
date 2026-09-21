@@ -85,6 +85,10 @@ struct Inner {
     heat: Vec<u32>,
     heat_day: i64,
     workouts: HashMap<i64, WorkoutTracker>,
+    /// per-track observation ledger (frame count, first-seen ts) —
+    /// sessions open only for tracks present ≥1.5 s AND ≥8 frames:
+    /// far-field flicker mints created 86 zero-duration sessions/10 min
+    track_obs: HashMap<i64, (u32, f64)>,
     alerts: VecDeque<Alert>,
     /// alerts not yet flushed to alerts_log.
     alerts_unsaved: u32,
@@ -166,6 +170,7 @@ impl Analytics {
                 heat,
                 heat_day,
                 workouts: Default::default(),
+                track_obs: Default::default(),
                 alerts: Default::default(),
                 alerts_unsaved: 0,
                 lying: Default::default(),
@@ -776,6 +781,14 @@ impl Inner {
         let now = f.ts_ns as f64 / 1e9;
         let matches = crate::identity::match_tracks(idcfg, members, &f.tracks, &f.faces);
         for t in &f.tracks {
+            let obs = self
+                .track_obs
+                .entry(t.track_id)
+                .or_insert((0, now));
+            obs.0 = obs.0.saturating_add(1);
+            if obs.0 < 3 || now - obs.1 < 1.5 {
+                continue; // flicker-born track — not session-worthy (yet)
+            }
             let w = self
                 .workouts
                 .entry(t.track_id)
@@ -1059,7 +1072,7 @@ impl Inner {
     /// Live workout snapshot for get_live_state.
     pub fn workout_snapshot(
         &self,
-    ) -> HashMap<i64, (String, u32, u32, Option<String>, f64)> {
+    ) -> HashMap<i64, (String, u32, u32, Option<String>, f64, Option<f32>, Option<f32>)> {
         self.workouts
             .iter()
             .map(|(tid, w)| {
@@ -1071,6 +1084,9 @@ impl Inner {
                         w.sets + w.counter.sets,
                         w.zone_enter.as_ref().map(|(z, _)| z.clone()),
                         w.zone_hold,
+                        // rep quality: last rep depth + L/R symmetry
+                        w.counter.depth_deg,
+                        w.counter.symmetry_deg,
                     ),
                 )
             })
@@ -1102,7 +1118,7 @@ impl Analytics {
 
     pub fn workout_snapshot(
         &self,
-    ) -> HashMap<i64, (String, u32, u32, Option<String>, f64)> {
+    ) -> HashMap<i64, (String, u32, u32, Option<String>, f64, Option<f32>, Option<f32>)> {
         self.inner.lock().workout_snapshot()
     }
 }

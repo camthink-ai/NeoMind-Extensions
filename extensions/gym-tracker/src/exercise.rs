@@ -186,7 +186,9 @@ fn thresholds(exercise: &str) -> Option<(f32, f32)> {
         "chest_fly" => (150.0, 110.0),                     // elbow (shallow arc)
         "dumbbell_row" => (160.0, 90.0),                   // elbow
         "kettlebell_swing" => (170.0, 120.0),              // hip angle
-        _ => return None, // cardio / plank / standing: duration only
+        "legraise" => (152.0, 128.0),                      // hip closes, knees straight
+        "shrug" => (80.0, 55.0),                           // shoulder up-travel
+        _ => return None, // cardio / plank / wallsit / standing: duration only
     })
 }
 
@@ -205,7 +207,8 @@ fn primary_angle(pose: &Pose, exercise: &str) -> Option<f32> {
     };
     match exercise {
         "squat" | "lunge" | "leg_press" => best((L_HIP, L_KNEE, L_ANKLE)),
-        "deadlift" | "kettlebell_swing" => best((L_SHOULDER, L_HIP, L_KNEE)),
+        "deadlift" | "kettlebell_swing" | "legraise" => best((L_SHOULDER, L_HIP, L_KNEE)),
+        "shrug" => best((L_ELBOW, L_SHOULDER, L_HIP)),
         "crunch" | "situp" => best((L_SHOULDER, L_HIP, L_KNEE)),
         // raises count on wrist ELEVATION (straight arm), not a joint.
         // (the local `best` closure takes joint triplets — inline instead)
@@ -224,6 +227,28 @@ fn primary_angle(pose: &Pose, exercise: &str) -> Option<f32> {
             best((L_SHOULDER, L_ELBOW, L_WRIST))
         }
         _ => None,
+    }
+}
+
+/// Left / right primary-joint angles separately (symmetry metric).
+fn primary_angle_lr(pose: &Pose, exercise: &str) -> (Option<f32>, Option<f32>) {
+    let l = |(a, b, c): (usize, usize, usize)| {
+        joint_angle(kp(pose, a), kp(pose, b), kp(pose, c))
+    };
+    let r = |(a, b, c): (usize, usize, usize)| {
+        joint_angle(kp(pose, a + 1), kp(pose, b + 1), kp(pose, c + 1))
+    };
+    match exercise {
+        "squat" | "lunge" | "leg_press" | "legraise" | "deadlift"
+        | "kettlebell_swing" | "crunch" | "situp" => (
+            l((L_SHOULDER, L_HIP, L_KNEE)),
+            r((L_SHOULDER, L_HIP, L_KNEE)),
+        ),
+        "shrug" => (l((L_ELBOW, L_SHOULDER, L_HIP)), r((L_ELBOW, L_SHOULDER, L_HIP))),
+        _ => (
+            l((L_SHOULDER, L_ELBOW, L_WRIST)),
+            r((L_SHOULDER, L_ELBOW, L_WRIST)),
+        ),
     }
 }
 
@@ -268,6 +293,9 @@ pub struct PoseTimeline {
     /// 90 = raised to horizontal, 180 = overhead. Straight-arm raises
     /// oscillate HERE while the elbow stays quiet.
     pub wrist_elev: Vec<Option<f32>>,
+    /// best shoulder angle (elbow-shoulder-hip, deg) — shrug driver:
+    /// quiet elbows + small shoulder-amplitude oscillation
+    pub shoulder: Vec<Option<f32>>,
 }
 
 fn shoulder_hip_angle(pose: &Pose) -> Option<f32> {
@@ -326,6 +354,10 @@ impl PoseTimeline {
             wrist_elevation(pose, L_SHOULDER, L_WRIST),
             wrist_elevation(pose, R_SHOULDER, R_WRIST),
         ));
+        self.shoulder.push(best(
+            joint_angle(kp(pose, L_ELBOW), kp(pose, L_SHOULDER), kp(pose, L_HIP)),
+            joint_angle(kp(pose, R_ELBOW), kp(pose, R_SHOULDER), kp(pose, R_HIP)),
+        ));
         if self.t.len() > MAX {
             for v in [
                 &mut self.torso,
@@ -340,6 +372,7 @@ impl PoseTimeline {
             self.arms_up.remove(0);
             self.stride.remove(0);
             self.wrist_elev.remove(0);
+            self.shoulder.remove(0);
         }
     }
 
@@ -420,6 +453,16 @@ pub fn classify_with_history(tl: &PoseTimeline) -> &'static str {
         // torso-hip oscillating, elbow quiet → crunch (small) / situp (big)
         if let Some(o) = tho {
             if o.amplitude > 12.0 && elbow_osc.map_or(true, |e| e.amplitude < o.amplitude) {
+                // knees stay straight while the hip closes → legraise
+                // (crunch/situp flex the knees; Python _STRAIGHT set)
+                let min_knee = tl
+                    .knee
+                    .iter()
+                    .filter_map(|v| *v)
+                    .fold(f32::MAX, f32::min);
+                if min_knee > 160.0 {
+                    return "legraise";
+                }
                 return if o.amplitude > 35.0 {
                     "situp"
                 } else {
@@ -512,6 +555,27 @@ pub fn classify_with_history(tl: &PoseTimeline) -> &'static str {
                 return "lateral_raise";
             }
         }
+        // quiet everything + knees HELD in the 75-125° band → wallsit
+        // (a hold: duration counts, no reps — same tier as plank)
+        {
+            let knees: Vec<f32> = tl.knee.iter().filter_map(|v| *v).collect();
+            let knee_quiet = knee_osc.map_or(true, |o| o.amplitude < 15.0);
+            if knee_quiet && !knees.is_empty() {
+                let held = knees[knees.len() / 2..]
+                    .iter()
+                    .all(|k| (75.0..=125.0).contains(k));
+                if held {
+                    return "wallsit";
+                }
+            }
+        }
+        // quiet ELBOW but small SHOULDER-angle oscillation → shrug
+        if let Some(sh) = oscillation(&tl.shoulder, &tl.t) {
+            let elbow_quiet = elbow_osc.map_or(true, |e| e.amplitude < 15.0);
+            if elbow_quiet && sh.amplitude > 8.0 && sh.amplitude < 35.0 {
+                return "shrug";
+            }
+        }
         return "standing";
     }
 
@@ -553,6 +617,13 @@ pub struct RepCounter {
     last_transition: f64,
     last_rep: f64,
     rest_since: Option<f64>,
+    /// depth of the LAST completed rep: primary-joint angle at its
+    /// deepest (min) point — Python's depth_deg parity
+    pub depth_deg: Option<f32>,
+    min_angle: f32,
+    /// EMA of |left − right| primary-joint angle while both sides are
+    /// visible — Python's symmetry_deg parity (lower = more symmetric)
+    pub symmetry_deg: Option<f32>,
 }
 
 impl RepCounter {
@@ -567,6 +638,9 @@ impl RepCounter {
             last_transition: now,
             last_rep: now,
             rest_since: Some(now),
+            depth_deg: None,
+            min_angle: f32::MAX,
+            symmetry_deg: None,
         }
     }
 
@@ -582,6 +656,15 @@ impl RepCounter {
             self.phase = Phase::Unknown;
             return self.reps;
         };
+        if angle < self.min_angle {
+            self.min_angle = angle;
+        }
+        // symmetry: |L − R| on the primary joint, EMA-smoothed
+        if let (Some(l), Some(r)) = primary_angle_lr(pose, &self.exercise) {
+            let d = (l - r).abs();
+            self.symmetry_deg =
+                Some(self.symmetry_deg.map_or(d, |s| s * 0.9 + d * 0.1));
+        }
 
         let new_phase = if angle >= up_a {
             Phase::Up
@@ -598,8 +681,11 @@ impl RepCounter {
                     self.reps += 1;
                     self.last_rep = now;
                     self.rest_since = None; // active again
+                    self.depth_deg =
+                        Some(self.min_angle).filter(|v| v.is_finite());
                 }
                 self.reached_down = false;
+                self.min_angle = f32::MAX; // depth window = one rep
             }
             if new_phase == Phase::Down {
                 self.reached_down = true;
@@ -760,6 +846,7 @@ mod temporal_tests {
             stride: vec![stride; n],
             // old tests: quiet straight-arm elevation by default
             wrist_elev: vec![Some(30.0); n],
+            shoulder: Vec::new(),
         };
         t.torso[0] = Some(torso);
         t
@@ -972,6 +1059,7 @@ mod dumbbell_tests {
             arms_up: vec![arms_up; n],
             stride: vec![stride; n],
             wrist_elev: wrist_elev.iter().map(|v| Some(*v)).collect(),
+            shoulder: Vec::new(),
         }
     }
 

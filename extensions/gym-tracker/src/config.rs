@@ -72,16 +72,22 @@ pub struct IdentityCfg {
     pub face_match_threshold: f32,
 }
 fn default_face_match_threshold() -> f32 {
-    60.0
+    // L2-normalized arcface space (the camera L2-norms the 512-d emb):
+    // same-person ≈ 0.6-1.0, cross-person ≈ 1.1-1.4. The old 60.0 was the
+    // pre-normalization scale — it would match EVERY face to its nearest
+    // member.
+    1.0
 }
 fn default_auto_capture_distance() -> f32 {
     600.0
 }
 fn default_append_confidence() -> f32 {
-    250.0
+    // Same normalized-emb scale as face_match_threshold (tighter gate).
+    0.7
 }
 fn default_append_min_dist() -> f32 {
-    150.0
+    // Normalized-emb diversity gate (matches the test fixtures' scale).
+    0.15
 }
 fn default_append_cooldown_sec() -> i64 {
     60
@@ -126,10 +132,11 @@ impl Default for IdentityCfg {
             auto_capture_unknown: true,
             unknown_prefix: "Member".into(),
             auto_capture_distance: 600.0,
-            append_confidence: 250.0,
-            append_min_dist: 150.0,
+            append_confidence: 0.7,
+            append_min_dist: 0.15,
             append_cooldown_sec: 60,
-            face_match_threshold: 60.0,
+            // normalized arcface space (see default_face_match_threshold)
+            face_match_threshold: 1.0,
         }
     }
 }
