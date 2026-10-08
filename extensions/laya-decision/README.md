@@ -1,14 +1,29 @@
-# LAYA Decision Layer Monitor
+# LAYA Decision Layer (host)
 
-Status monitor for NeoMind's built-in LAYA decision layer. The decision
-layer itself is compiled into the platform (`decision-native` feature +
-ONNX artifacts under `<data>/models/decision/`); this extension makes it
-observable — it does NOT implement or replace it.
+This extension HOSTS NeoMind's LAYA decision runtime (System-1): a
+byte-faithful port of the platform's compiled ONNX engine, served from this
+extension's own isolated process on loopback. Installing it IS the
+deployment — any build (default server, tauri desktop) gains the decision
+layer with no feature rebuild; uninstalling removes it. The platform
+discovers the sidecar from the install record and dials it per request, so
+the effect is live without a server restart.
 
+- **Engine + sidecar**: loads the artifacts under `<data>/models/decision/`
+  (model.onnx | model_int8.onnx | tokenizer/ | remap.json |
+  rl_agent_config.json), serves the platform's existing `/v1/systemone`
+  protocol on `127.0.0.1:<sidecarPort>` (default 8123; the same config the
+  platform reads for the port handshake). Binds loopback only.
+- **Honest liveness**: `engine_up` becomes true only after a successful
+  bind and is cleared if the serve loop ever exits — status never claims a
+  dead engine, and the lazy start (configure/status/metrics) retries.
 - **Metrics** (per collect cycle): `model_present`, `model_size_mb`,
-  `decisions_logged` — derived from the data dir (`dataDir` config).
-- **`status` command**: artifact presence/size, audit-log count, and the
-  last decision record (`logs/decisions.jsonl`).
+  `decisions_logged`, plus the sidecar port/engine state.
+- **`status` command**: artifact presence/size, engine/up + port, audit-log
+  count, and the last decision record (`logs/decisions.jsonl`).
 - **LayaDecisionCard** (dashboard): live mode badge (shadow/guidance),
   backend id, and the authoritative counters via
   `GET /api/decisions/status`. Polls every 10s (configurable).
+
+The compiled `decision-native` platform path remains for deployments that
+want zero extra processes. Regression eval: `tests/probe_router.py` (16
+zh/en probes against the canonical router questions).

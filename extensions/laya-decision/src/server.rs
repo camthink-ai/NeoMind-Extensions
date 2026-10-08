@@ -20,11 +20,22 @@ pub struct SystemOneRequest {
     pub questions: BTreeMap<String, WireQuestion>,
 }
 
+/// Bind the sidecar listener. Split from [`serve_on`] so the caller can
+/// distinguish "bind failed" (port taken — retry later, report honestly)
+/// from "serving", and only then claim the engine is up.
+pub fn bind(port: u16) -> Result<tiny_http::Server, String> {
+    tiny_http::Server::http(("127.0.0.1", port))
+        .map_err(|e| format!("bind 127.0.0.1:{port}: {e}"))
+}
+
 /// Serve forever on the calling thread. Every request is answered; protocol
 /// errors return 400 with a JSON error body (the client surfaces the text).
 pub fn serve(engine: Arc<LayaEngine>, port: u16) -> Result<(), String> {
-    let server = tiny_http::Server::http(("127.0.0.1", port))
-        .map_err(|e| format!("bind 127.0.0.1:{port}: {e}"))?;
+    serve_on(bind(port)?, engine)
+}
+
+/// The serve loop over an ALREADY-BOUND listener (see [`bind`]).
+pub fn serve_on(server: tiny_http::Server, engine: Arc<LayaEngine>) -> Result<(), String> {
     for mut request in server.incoming_requests() {
         let (status, body) = match (request.method(), request.url()) {
             (tiny_http::Method::Get, "/health") => (200, "{}".to_string()),

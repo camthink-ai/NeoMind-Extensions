@@ -35,7 +35,11 @@ pub struct LayaDecisionExtension {
     request_count: AtomicI64,
     /// Sidecar port (default 8123; config `sidecarPort`). 0 = disabled.
     sidecar_port: Mutex<u16>,
-    engine_up: AtomicBool,
+    /// TRUE only while the sidecar is actually accepting connections —
+    /// set after a successful bind, CLEARED if the serve loop ever exits,
+    /// so status never claims a dead engine and the lazy start retries.
+    /// Shared (Arc) with the serve thread for exactly that.
+    engine_up: Arc<AtomicBool>,
 }
 
 impl LayaDecisionExtension {
@@ -44,7 +48,7 @@ impl LayaDecisionExtension {
             data_dir: Mutex::new(String::new()), // empty = auto-detect (dir())
             request_count: AtomicI64::new(0),
             sidecar_port: Mutex::new(8123),
-            engine_up: AtomicBool::new(false),
+            engine_up: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -86,18 +90,38 @@ impl LayaDecisionExtension {
         match laya::LayaEngine::load(&dir) {
             Ok(engine) => {
                 let engine = Arc::new(engine);
+                let up = self.engine_up.clone();
+                // Bind success signal: the thread reports Ok once the
+                // listener exists (Err = bind refused, e.g. port taken).
+                let (tx, rx) = std::sync::mpsc::channel::<std::result::Result<(), String>>();
                 std::thread::Builder::new()
                     .name("laya-sidecar".into())
                     .spawn(move || {
-                        if let Err(e) = server::serve(engine, port) {
-                            // Bind failure is fatal for the sidecar but must
-                            // not kill the extension process — monitoring
-                            // keeps working; status reports engine_down.
-                            eprintln!("laya sidecar server error: {e}");
+                        match server::bind(port) {
+                            Ok(srv) => {
+                                let _ = tx.send(Ok(()));
+                                let serve_res = server::serve_on(srv, engine);
+                                // serve_on returning is catastrophic (or a
+                                // tiny_http internal error): stop claiming
+                                // the engine is up so the next lazy start
+                                // retries instead of lying forever.
+                                up.store(false, Ordering::SeqCst);
+                                if let Err(e) = serve_res {
+                                    eprintln!("laya sidecar server error: {e}");
+                                }
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Err(e.clone()));
+                                eprintln!("laya sidecar bind failed: {e}");
+                            }
                         }
                     })
                     .ok();
-                self.engine_up.store(true, Ordering::SeqCst);
+                match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                    Ok(Ok(())) => self.engine_up.store(true, Ordering::SeqCst),
+                    Ok(Err(e)) => eprintln!("laya sidecar not started (will retry on next configure/status): {e}"),
+                    Err(_) => eprintln!("laya sidecar bind did not report within 5s"),
+                }
             }
             Err(e) => eprintln!("laya engine load failed: {e}"),
         }
