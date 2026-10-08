@@ -1,0 +1,21 @@
+{
+  "id": "laya-decision",
+  "name": "LAYA Decision Layer",
+  "version": "2.12.0",
+  "description": "Status monitor for the LAYA decision layer — live mode/backend/counters via /api/decisions/status, model artifact presence, and decision audit-log stats for dashboards",
+  "author": "NeoMind Team",
+  "license": "Apache-2.0",
+  "type": "native",
+  "categories": [
+    "ai",
+    "monitoring"
+  ],
+  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/laya-decision",
+  "builds": {},
+  "frontend": {
+    "components": [
+      "LayaDecisionCard"
+    ],
+    "entrypoint": "laya-decision-components.umd.cjs"
+  }
+}

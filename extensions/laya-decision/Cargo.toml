@@ -1,0 +1,25 @@
+[package]
+name = "laya-decision"
+version = "2.12.0"
+edition = "2021"
+authors = ["NeoMind Team"]
+license = "Apache-2.0"
+description = "LAYA decision layer monitor — artifacts presence, decision audit-log stats, and the dashboard status card"
+
+[lib]
+name = "neomind_extension_laya_decision"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neomind-extension-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+
+# Required by the SDK's FFI export macro (RwLock wrapper)
+tokio = { version = "1", features = ["rt", "sync"] }
+
+[features]
+default = []
+native = []
+wasm = []

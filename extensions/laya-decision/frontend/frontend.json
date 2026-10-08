@@ -1,0 +1,34 @@
+{
+  "id": "laya-decision",
+  "version": "2.0.0",
+  "entrypoint": "laya-decision-components.umd.cjs",
+  "components": [
+    {
+      "name": "LayaDecisionCard",
+      "type": "card",
+      "displayName": "LAYA Decision Layer",
+      "description": "Live status of the LAYA decision layer: mode (shadow = record-only / guidance = LLM hints), backend, and decision/cache/error counters via /api/decisions/status.",
+      "icon": "cpu",
+      "defaultSize": { "width": 340, "height": 240 },
+      "minSize": { "width": 280, "height": 200 },
+      "maxSize": { "width": 480, "height": 320 },
+      "configSchema": {
+        "refreshInterval": {
+          "type": "number",
+          "required": false,
+          "default": 10000,
+          "description": "Refresh interval in milliseconds (default: 10s)"
+        }
+      },
+      "refreshable": true,
+      "refreshInterval": 10000
+    }
+  ],
+  "i18n": {
+    "defaultLanguage": "en",
+    "supportedLanguages": ["en", "zh"]
+  },
+  "dependencies": {
+    "react": ">=18.0.0"
+  }
+}

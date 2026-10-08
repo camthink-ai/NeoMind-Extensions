@@ -11,6 +11,7 @@ members = [
     "extensions/face-recognition",
     "extensions/stream-player",
     "extensions/wasm-demo",
+    "extensions/laya-decision",
     "extensions/uink-rms-bridge",
     "extensions/modbus-bridge",
     "extensions/lorawan-bridge",

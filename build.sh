@@ -193,6 +193,7 @@ V2_EXTENSIONS=(
     "paddle-ocr-vl"
     "deepstream"
     "gym-tracker"
+    "laya-decision"
 )
 
 # Filter to single extension if specified
