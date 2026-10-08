@@ -1,10 +1,10 @@
 [package]
 name = "laya-decision"
-version = "2.12.0"
+version = "2.13.0"
 edition = "2021"
 authors = ["NeoMind Team"]
 license = "Apache-2.0"
-description = "LAYA decision layer monitor — artifacts presence, decision audit-log stats, and the dashboard status card"
+description = "LAYA decision layer — hosts the ONNX decision runtime behind the /v1/systemone sidecar protocol, plus artifact/audit monitoring and the dashboard status card"
 
 [lib]
 name = "neomind_extension_laya_decision"
@@ -19,7 +19,18 @@ async-trait = { workspace = true }
 # Required by the SDK's FFI export macro (RwLock wrapper)
 tokio = { version = "1", features = ["rt", "sync"] }
 
+# LAYA inference engine — byte-faithful port of neomind-core's decision
+# native runtime (feature `decision-native`); the fidelity contract
+# (build_sequence/render_options vs laya/common.py) carries over.
+ort = { workspace = true }
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+# Minimal localhost HTTP server for the /v1/systemone sidecar protocol.
+tiny_http = "0.12"
+
 [features]
 default = []
 native = []
 wasm = []
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

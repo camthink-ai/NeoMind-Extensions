@@ -1,8 +1,8 @@
 {
   "id": "laya-decision",
   "name": "LAYA Decision Layer",
-  "version": "2.12.0",
-  "description": "Status monitor for the LAYA decision layer — live mode/backend/counters via /api/decisions/status, model artifact presence, and decision audit-log stats for dashboards",
+  "version": "2.13.0",
+  "description": "HOSTS the LAYA decision layer: in-process ONNX inference behind the /v1/systemone sidecar protocol (port 8123) — any NeoMind build gets LAYA by installing this extension; plus artifact/audit monitoring and the dashboard status card",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
   "type": "native",
@@ -17,5 +17,8 @@
       "LayaDecisionCard"
     ],
     "entrypoint": "laya-decision-components.umd.cjs"
+  },
+  "env_hints": {
+    "ORT_DYLIB_PATH": "{binaries}/{ort_lib}"
   }
 }
