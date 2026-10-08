@@ -246,6 +246,8 @@ EOF
         categories='["video", "streaming"]'
     elif [[ "$ext_id" == *"wasm"* ]]; then
         categories='["demo"]'
+    elif [[ "$ext_id" == *"laya"* ]] || [[ "$ext_id" == *"decision"* ]]; then
+        categories='["ai", "decision", "routing"]'
     fi
 
     # Build platforms for builds field

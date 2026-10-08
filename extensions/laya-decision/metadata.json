@@ -1,17 +1,31 @@
 {
   "id": "laya-decision",
-  "name": "LAYA Decision Layer",
+  "name": "Laya Decision",
   "version": "2.13.0",
-  "description": "HOSTS the LAYA decision layer: in-process ONNX inference behind the /v1/systemone sidecar protocol (port 8123) — any NeoMind build gets LAYA by installing this extension; plus artifact/audit monitoring and the dashboard status card",
+  "description": "LAYA decision layer — hosts the ONNX decision runtime behind the /v1/systemone sidecar protocol, plus artifact/audit monitoring and the dashboard status card",
   "author": "NeoMind Team",
   "license": "Apache-2.0",
   "type": "native",
   "categories": [
     "ai",
-    "monitoring"
+    "decision",
+    "routing"
   ],
   "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/laya-decision",
-  "builds": {},
+  "builds": {
+    "darwin-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.13.0/laya-decision-2.13.0-darwin_aarch64.nep"
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.13.0/laya-decision-2.13.0-linux_amd64.nep"
+    },
+    "linux-aarch64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.13.0/laya-decision-2.13.0-linux_arm64.nep"
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.13.0/laya-decision-2.13.0-windows_amd64.nep"
+    }
+  },
   "frontend": {
     "components": [
       "LayaDecisionCard"
