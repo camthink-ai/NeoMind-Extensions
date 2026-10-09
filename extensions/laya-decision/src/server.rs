@@ -24,8 +24,7 @@ pub struct SystemOneRequest {
 /// distinguish "bind failed" (port taken — retry later, report honestly)
 /// from "serving", and only then claim the engine is up.
 pub fn bind(port: u16) -> Result<tiny_http::Server, String> {
-    tiny_http::Server::http(("127.0.0.1", port))
-        .map_err(|e| format!("bind 127.0.0.1:{port}: {e}"))
+    tiny_http::Server::http(("127.0.0.1", port)).map_err(|e| format!("bind 127.0.0.1:{port}: {e}"))
 }
 
 /// Serve forever on the calling thread. Every request is answered; protocol

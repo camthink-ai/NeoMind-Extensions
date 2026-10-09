@@ -21,13 +21,13 @@ pub mod laya;
 pub mod server;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicI64, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use neomind_extension_sdk::{
     async_trait, json, Extension, ExtensionCommand, ExtensionError, ExtensionMetadata,
-    ExtensionMetricValue, MetricDataType, MetricDescriptor, ParamMetricValue,
-    ParameterDefinition, Result,
+    ExtensionMetricValue, MetricDataType, MetricDescriptor, ParamMetricValue, ParameterDefinition,
+    Result,
 };
 
 pub struct LayaDecisionExtension {
@@ -124,7 +124,9 @@ impl LayaDecisionExtension {
                     .ok();
                 match rx.recv_timeout(std::time::Duration::from_secs(5)) {
                     Ok(Ok(())) => self.engine_up.store(true, Ordering::SeqCst),
-                    Ok(Err(e)) => eprintln!("laya sidecar not started (will retry on next configure/status): {e}"),
+                    Ok(Err(e)) => eprintln!(
+                        "laya sidecar not started (will retry on next configure/status): {e}"
+                    ),
                     Err(_) => eprintln!("laya sidecar bind did not report within 5s"),
                 }
             }
@@ -288,7 +290,11 @@ impl Extension for LayaDecisionExtension {
         ]
     }
 
-    async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
+    async fn execute_command(
+        &self,
+        command: &str,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
         self.request_count.fetch_add(1, Ordering::SeqCst);
         match command {
             "decide" => {
@@ -299,26 +305,40 @@ impl Extension for LayaDecisionExtension {
                 self.start_engine();
                 let engine = match self.engine.get() {
                     Some(e) => e,
-                    None => {
-                        return Err(ExtensionError::ExecutionFailed(
-                            "engine not loaded — check model artifacts under <data>/models/decision/".to_string(),
-                        ))
-                    }
+                    None => return Err(ExtensionError::ExecutionFailed(
+                        "engine not loaded — check model artifacts under <data>/models/decision/"
+                            .to_string(),
+                    )),
                 };
                 let state = args
                     .get("state")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let questions: std::collections::BTreeMap<String, laya::WireQuestion> =
-                    match args.get("questions") {
-                        Some(q) => serde_json::from_value(q.clone()).map_err(|e| {
-                            ExtensionError::InvalidArguments(format!(
-                                "bad questions (expect {{qid: {{type, instructions, criteria}}}}): {e}"
-                            ))
-                        })?,
-                        None => default_router_questions(),
-                    };
+                let questions: std::collections::BTreeMap<String, laya::WireQuestion> = match args
+                    .get("questions")
+                {
+                    Some(q) => serde_json::from_value(q.clone()).map_err(|e| {
+                        ExtensionError::InvalidArguments(format!(
+                            "bad questions (expect {{qid: {{type, instructions, criteria}}}}): {e}"
+                        ))
+                    })?,
+                    // Ask shorthand (mirrors POST /api/decisions/ask):
+                    // state + options [{label: desc} | [labels]] +
+                    // optional instructions → one choice question.
+                    None if args.get("options").is_some() => {
+                        let mut m = std::collections::BTreeMap::new();
+                        m.insert(
+                            "ask".to_string(),
+                            ask_question(
+                                args.get("instructions").and_then(|v| v.as_str()),
+                                args.get("options"),
+                            )?,
+                        );
+                        m
+                    }
+                    None => default_router_questions(),
+                };
                 let started = std::time::Instant::now();
                 let answers = engine
                     .decide(&state, &questions)
@@ -394,6 +414,48 @@ impl Extension for LayaDecisionExtension {
 }
 
 neomind_extension_sdk::neomind_export!(LayaDecisionExtension);
+
+/// Build one ad-hoc choice question from the ask shorthand. Accepts
+/// ["a","b"] or {"a": "desc"}; errors when fewer than 2 options resolve —
+/// same contract as POST /api/decisions/ask.
+fn ask_question(
+    instructions: Option<&str>,
+    options: Option<&serde_json::Value>,
+) -> std::result::Result<laya::WireQuestion, ExtensionError> {
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    match options {
+        Some(serde_json::Value::Array(arr)) => {
+            for v in arr {
+                if let Some(l) = v.as_str() {
+                    pairs.push((l.to_string(), l.to_string()));
+                }
+            }
+        }
+        Some(serde_json::Value::Object(map)) => {
+            for (k, v) in map {
+                pairs.push((k.clone(), v.as_str().unwrap_or(k).to_string()));
+            }
+        }
+        _ => {}
+    }
+    if pairs.len() < 2 {
+        return Err(ExtensionError::InvalidArguments(
+            "options must resolve to ≥2 entries: [\"a\",\"b\"] or {\"label\": \"description\"}"
+                .to_string(),
+        ));
+    }
+    let mut criteria = serde_json::Map::new();
+    for (l, d) in pairs {
+        criteria.insert(l, serde_json::Value::String(d));
+    }
+    Ok(laya::WireQuestion {
+        kind: laya::QuestionKind::Choice,
+        instructions: instructions
+            .unwrap_or("Which option best matches the user request?")
+            .to_string(),
+        criteria: serde_json::Value::Object(criteria),
+    })
+}
 
 /// The canonical router questions, duplicated from the platform contract
 /// (crates/neomind-api/src/handlers/decisions.rs TOOL_*/SIMPLE_*/DOMAIN_*).
