@@ -40,6 +40,9 @@ pub struct LayaDecisionExtension {
     /// so status never claims a dead engine and the lazy start retries.
     /// Shared (Arc) with the serve thread for exactly that.
     engine_up: Arc<AtomicBool>,
+    /// The loaded engine, shared between the sidecar thread and the
+    /// `decide` command (one instance, one memory footprint).
+    engine: std::sync::OnceLock<Arc<laya::LayaEngine>>,
 }
 
 impl LayaDecisionExtension {
@@ -49,6 +52,7 @@ impl LayaDecisionExtension {
             request_count: AtomicI64::new(0),
             sidecar_port: Mutex::new(8123),
             engine_up: Arc::new(AtomicBool::new(false)),
+            engine: std::sync::OnceLock::new(),
         }
     }
 
@@ -90,6 +94,7 @@ impl LayaDecisionExtension {
         match laya::LayaEngine::load(&dir) {
             Ok(engine) => {
                 let engine = Arc::new(engine);
+                let _ = self.engine.set(engine.clone());
                 let up = self.engine_up.clone();
                 // Bind success signal: the thread reports Ok once the
                 // listener exists (Err = bind refused, e.g. port taken).
@@ -248,21 +253,83 @@ impl Extension for LayaDecisionExtension {
     }
 
     fn commands(&self) -> Vec<ExtensionCommand> {
-        vec![ExtensionCommand {
-            name: "status".to_string(),
-            display_name: "Status".to_string(),
-            description: "One JSON summary: artifact presence/size, audit-log count and the last decision record".to_string(),
-            payload_template: String::new(),
-            parameters: Vec::new(),
-            fixed_values: std::collections::HashMap::new(),
-            samples: vec![json!({})],
-            parameter_groups: Vec::new(),
-        }]
+        vec![
+            ExtensionCommand {
+                name: "status".to_string(),
+                display_name: "Status".to_string(),
+                description: "One JSON summary: artifact presence/size, audit-log count and the last decision record".to_string(),
+                payload_template: String::new(),
+                parameters: Vec::new(),
+                fixed_values: std::collections::HashMap::new(),
+                samples: vec![json!({})],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
+                name: "decide".to_string(),
+                display_name: "Decide".to_string(),
+                description: "Run the decision model directly: one state string + optional questions ({qid: {type, instructions, criteria}}); defaults to the canonical router trio (tool/simple/domain)".to_string(),
+                payload_template: String::new(),
+                parameters: vec![ParameterDefinition {
+                    name: "state".to_string(),
+                    description: "The context/question input, exactly as the platform builds it (\"User request: …\")".to_string(),
+                    required: true,
+                    param_type: MetricDataType::String,
+                    ..ParameterDefinition::new("state", MetricDataType::String)
+                }],
+                fixed_values: std::collections::HashMap::new(),
+                samples: vec![
+                    json!({"state": "User request: 查看所有在线设备的状态"}),
+                    json!({"state": "User request: what alerts need attention?", "questions": {
+                        "tool": {"type": "choice", "instructions": "Which tool should serve this user request?", "criteria": {"none": "pure conversation"}}
+                    }}),
+                ],
+                parameter_groups: Vec::new(),
+            },
+        ]
     }
 
     async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value> {
         self.request_count.fetch_add(1, Ordering::SeqCst);
         match command {
+            "decide" => {
+                // Standard decision-model command: run the LOCAL engine on
+                // one state (+ optional custom questions, wire format
+                // identical to POST /v1/systemone). No HTTP hop — the
+                // command shares the engine instance with the sidecar.
+                self.start_engine();
+                let engine = match self.engine.get() {
+                    Some(e) => e,
+                    None => {
+                        return Err(ExtensionError::ExecutionFailed(
+                            "engine not loaded — check model artifacts under <data>/models/decision/".to_string(),
+                        ))
+                    }
+                };
+                let state = args
+                    .get("state")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let questions: std::collections::BTreeMap<String, laya::WireQuestion> =
+                    match args.get("questions") {
+                        Some(q) => serde_json::from_value(q.clone()).map_err(|e| {
+                            ExtensionError::InvalidArguments(format!(
+                                "bad questions (expect {{qid: {{type, instructions, criteria}}}}): {e}"
+                            ))
+                        })?,
+                        None => default_router_questions(),
+                    };
+                let started = std::time::Instant::now();
+                let answers = engine
+                    .decide(&state, &questions)
+                    .map_err(ExtensionError::ExecutionFailed)?;
+                self.request_count.fetch_add(1, Ordering::SeqCst);
+                Ok(json!({
+                    "state": state,
+                    "answers": answers,
+                    "latency_ms": started.elapsed().as_millis() as u64,
+                }))
+            }
             "status" => {
                 // Lazy start: the host only calls `configure` when a saved
                 // config exists (has_config=false skips it), so the engine
@@ -327,3 +394,66 @@ impl Extension for LayaDecisionExtension {
 }
 
 neomind_extension_sdk::neomind_export!(LayaDecisionExtension);
+
+/// The canonical router questions, duplicated from the platform contract
+/// (crates/neomind-api/src/handlers/decisions.rs TOOL_*/SIMPLE_*/DOMAIN_*).
+/// DRIFT WARNING: these strings are a training contract — if the platform
+/// rewords them, update here (and tests/probe_router.py) or this default
+/// evaluates a different task than production routing.
+fn default_router_questions() -> std::collections::BTreeMap<String, laya::WireQuestion> {
+    use laya::QuestionKind;
+    let mut m = std::collections::BTreeMap::new();
+    m.insert(
+        "tool".to_string(),
+        laya::WireQuestion {
+            kind: QuestionKind::Choice,
+            instructions: "Which tool should serve this user request?".to_string(),
+            criteria: serde_json::json!({
+                "shell": "ALL neomind CLI platform operations, INCLUDING device control commands (reboot a device, send downlink), rules, agents config, dashboards, transforms, messages, extensions, purge/export/import",
+                "query_conclusion": "read an AI agent's most recent conclusion — instant and free ('is X ok', 'what did the inspection say')",
+                "run_now": "trigger a FRESH run of an AI AGENT right now — only for agents; device commands (e.g. reboot a sensor) are shell, not this",
+                "skill": "load a step-by-step workflow guide for a complex or unfamiliar domain (onboarding, development guides)",
+                "memory": "persist or recall cross-conversation facts and preferences ('remember…', 'forget…', 'what do you know about me')",
+                "vision": "understand, read or describe the CONTENT of an image — what is in it, gauge readings, text, anomalies; no pixel changes",
+                "image_edit": "modify image pixels: crop, draw, blur, annotate, highlight — changes the picture, does not interpret it",
+                "web_fetch": "fetch the content of an external URL",
+                "file_write": "create or overwrite a WHOLE file with new content",
+                "file_edit": "surgically replace an exact existing string inside an existing file, keeping the rest untouched",
+                "none": "pure conversation — greeting, identity, thanks, chat with no platform entity"
+            }),
+        },
+    );
+    m.insert(
+        "simple".to_string(),
+        laya::WireQuestion {
+            kind: QuestionKind::Noul,
+            instructions: "Can this request be completed with a single direct command or lookup, without multi-step reasoning, correlation or drafting?".to_string(),
+            criteria: serde_json::Value::Null,
+        },
+    );
+    m.insert(
+        "domain".to_string(),
+        laya::WireQuestion {
+            kind: QuestionKind::Choice,
+            instructions: "Which NeoMind CLI domain (or special path) should handle the user request?".to_string(),
+            criteria: serde_json::json!({
+                "device": "inspect, onboard, control or configure devices and read their metrics",
+                "rule": "create, inspect or manage automation rules (threshold alerts, event triggers)",
+                "message": "send notifications or manage notification channels and alert history",
+                "extension": "install, configure or invoke extension capabilities (vision AI, bridges)",
+                "agent": "create, run or manage scheduled AI agents",
+                "dashboard": "create or edit dashboards and bind data sources to cards/widgets",
+                "transform": "create or test data transforms (computed/virtual metrics)",
+                "widget": "develop or manage community dashboard widgets",
+                "connector": "manage protocol connectors (Modbus, OPC-UA, BACnet, LoRaWAN)",
+                "push": "configure forwarding telemetry to external systems (data push)",
+                "llm": "configure or switch LLM backends",
+                "settings": "platform settings (retention, language, system configuration)",
+                "system": "system diagnostics, health, logs, version info",
+                "image_edit": "edit or annotate an image (crop, draw, blur)",
+                "converse": "plain conversation, greeting, opinion or summary needing no platform tool"
+            }),
+        },
+    );
+    m
+}
