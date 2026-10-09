@@ -91,10 +91,14 @@ fn default_temps() -> Vec<f32> {
     vec![1.0, 1.0, 1.0]
 }
 fn default_max_len() -> usize {
-    512
+    // MUST match the platform's native runtime (native.rs): a missing field
+    // in rl_agent_config.json builds a DIFFERENT sequence here than the
+    // compiled engine would — byte-identical answers depend on identical
+    // defaults. Was 512/160 from an earlier checkpoint generation.
+    1024
 }
 fn default_head_len() -> usize {
-    160
+    256
 }
 
 #[derive(Deserialize)]
