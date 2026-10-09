@@ -1,6 +1,6 @@
 {
   "name": "@neomind/laya-decision-frontend",
-  "version": "2.0.0",
+  "version": "2.13.0",
   "description": "LAYA decision layer status card for the NeoMind extension runtime",
   "type": "module",
   "scripts": {

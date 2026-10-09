@@ -43,6 +43,12 @@ pub struct LayaDecisionExtension {
     /// The loaded engine, shared between the sidecar thread and the
     /// `decide` command (one instance, one memory footprint).
     engine: std::sync::OnceLock<Arc<laya::LayaEngine>>,
+    /// Serializes `start_engine`'s check-and-load: configure and the 60s
+    /// metrics tick can race into it concurrently — the old check-then-act
+    /// double-loaded the ~550MB model and double-spawned the sidecar (the
+    /// loser's bind failed and reported an error). Held across the whole
+    /// start attempt; contention is irrelevant at this frequency.
+    start_lock: Mutex<()>,
 }
 
 impl LayaDecisionExtension {
@@ -53,6 +59,7 @@ impl LayaDecisionExtension {
             sidecar_port: Mutex::new(8123),
             engine_up: Arc::new(AtomicBool::new(false)),
             engine: std::sync::OnceLock::new(),
+            start_lock: Mutex::new(()),
         }
     }
 
@@ -83,6 +90,10 @@ impl LayaDecisionExtension {
     /// reports it). Idempotent: a second call with the engine already up
     /// only re-binds if the port changed (not supported — restart instead).
     fn start_engine(&self) {
+        // Serialize the whole start attempt (see `start_lock`): the
+        // engine_up early-exit is only sound when no other caller can be
+        // between the check and the bind confirmation.
+        let _start = self.start_lock.lock().unwrap();
         if self.engine_up.load(Ordering::SeqCst) {
             return;
         }
@@ -364,6 +375,14 @@ impl Extension for LayaDecisionExtension {
                     "model_size_bytes": size,
                     "decisions_logged": logged,
                     "last_decision": last,
+                    // The .nep ships the ENGINE only — model artifacts (~1.2GB
+                    // fp32 / ~167MB int8) are a separate deployment asset. A
+                    // fresh install with no artifacts used to report bare
+                    // booleans with no route forward; this hint names the
+                    // expected files and where they go.
+                    "install_hint": if present { serde_json::Value::Null } else { serde_json::json!(
+                        "Model artifacts MISSING — this extension ships the engine only. Obtain the v22 checkpoint set (model.onnx + model.onnx.data, OR model_int8.onnx, plus tokenizer/, remap.json, rl_agent_config.json) and place them under <data>/models/decision/. The engine starts automatically on the next status/configure once the files are present."
+                    )},
                     "sidecar": {
                         "port": port,
                         "url": format!("http://127.0.0.1:{port}"),

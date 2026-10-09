@@ -24,6 +24,25 @@ the effect is live without a server restart.
   backend id, and the authoritative counters via
   `GET /api/decisions/status`. Polls every 10s (configurable).
 
+## Model artifacts (NOT bundled in the .nep)
+
+The .nep ships the ENGINE (extension.dylib + ORT runtime) only. The LAYA
+checkpoints are a separate deployment asset (~1.2 GB fp32, ~167 MB int8).
+A fresh install needs these under `<data>/models/decision/`:
+
+```
+model.onnx + model.onnx.data   # fp32 (default; 100% port fidelity)
+   — or —
+model_int8.onnx                 # int8 (set engine.int8 in the settings UI)
+tokenizer/                      # HF tokenizer (tokenizer.json et al.)
+remap.json  rl_agent_config.json
+```
+
+Until the files are present the extension installs fine but reports
+`model_present: false` / `engine_up: false` (the `status` command's
+`install_hint` names exactly this). The engine starts automatically once
+the artifacts land — no reinstall needed.
+
 The compiled `decision-native` platform path remains for deployments that
 want zero extra processes. Regression eval: `tests/probe_router.py` (16
 zh/en probes against the canonical router questions).
