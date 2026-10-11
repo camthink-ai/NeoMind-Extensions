@@ -21,13 +21,9 @@ base64 = "0.22"
 parking_lot = "0.12"
 tracing = "0.1"
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 chrono = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 ureq = { version = "3", features = ["json"] }
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-chrono = { version = "0.4", default-features = false, features = ["wasmbind"] }
 
 [features]
 default = []

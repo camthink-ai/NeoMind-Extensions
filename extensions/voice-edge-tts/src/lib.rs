@@ -442,7 +442,7 @@ fn rodio_open_output_stream()
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn audio_thread(_rx: Receiver<AudioCmd>) {
-    // No audio backend on this platform (e.g. wasm). Drain and fail all sessions.
+    // No audio backend on this platform. Drain and fail all sessions.
     drain_channel_failing(_rx);
 }
 

@@ -26,8 +26,6 @@ Cargo.lock
 *.wasm
 *.wat
 
-# Exception: Pre-built WASM files for CI
-!extensions/weather-forecast/weather_forecast_wasm.wasm
 
 # Built .nep packages (too large for git)
 dist/
