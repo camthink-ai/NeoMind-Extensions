@@ -25,12 +25,12 @@
 
 ## 概述
 
-NeoMind 扩展在 Native 和 WASM 目标上共享一套运行时模型。
+NeoMind 扩展是 native cdylib 库，由扩展运行时加载。
 
 ### 核心特性
 
 - **进程隔离架构**：所有扩展默认在独立进程中运行，崩溃不影响主进程
-- **统一运行时模型**：Native 和 WASM 共用一套开发与运行模型
+- **纯 Native**：一套代码、一套运行模型 —— 所有扩展都构建为 native cdylib
 - **运行时协议 v3**：更稳定的隔离扩展协议与安全边界
 - **构建器模式**：流式 API 定义指标、命令和参数
 - **声明式宏**：通过 `neomind_export!`、`metric_float!` 等减少样板代码
@@ -43,7 +43,6 @@ NeoMind 扩展在 Native 和 WASM 目标上共享一套运行时模型。
 | 类型 | 文件扩展名 | 用途 |
 |-----|-----------|------|
 | Native | `.dylib` / `.so` / `.dll` | 最大性能，AI 推理 |
-| WASM | `.wasm` | 跨平台，沙箱执行 |
 
 ---
 
@@ -68,7 +67,6 @@ NeoMind 扩展在 Native 和 WASM 目标上共享一套运行时模型。
 │                  Extension Runner 进程                       │
 │  - 您的扩展在此隔离环境中运行                                 │
 │  - Native: 通过 FFI 加载                                     │
-│  - WASM: 通过 wasmtime 执行                                  │
 │  - 崩溃不影响主进程                                          │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -832,7 +830,6 @@ fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
 | Linux | x86_64 | `*.so` |
 | Linux | ARM64 | `*.so` |
 | Windows | x86_64 | `*.dll` |
-| **跨平台** | 任意 | `*.wasm` |
 
 ---
 

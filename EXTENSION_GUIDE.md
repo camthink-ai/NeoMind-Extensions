@@ -25,12 +25,12 @@ Complete guide for developing extensions for the **NeoMind extension runtime**.
 
 ## Overview
 
-NeoMind extensions share one runtime model across Native and WASM targets.
+NeoMind extensions are native cdylib libraries loaded by the extension runner.
 
 ### Key Features
 
 - **Process Isolation Architecture**: All extensions run in isolated processes by default - crashes don't affect the main process
-- **Shared Runtime Model**: Single codebase and runtime model for Native and WASM
+- **Native-Only**: One codebase, one runtime model — every extension builds as a native cdylib
 - **Runtime Protocol v3**: Stable isolated extension protocol with improved safety
 - **Builder Patterns**: Fluent API for defining metrics, commands, and parameters
 - **Declarative Macros**: Reduce boilerplate with `neomind_export!`, `metric_float!`, etc.
@@ -43,7 +43,6 @@ NeoMind extensions share one runtime model across Native and WASM targets.
 | Type | File Extension | Use Case |
 |------|---------------|----------|
 | Native | `.dylib` / `.so` / `.dll` | Maximum performance, AI inference |
-| WASM | `.wasm` | Cross-platform, sandboxed execution |
 
 ---
 
@@ -68,7 +67,6 @@ All extensions run in isolated processes by default, ensuring system stability:
 │                  Extension Runner Process                    │
 │  - Your extension runs here in isolation                    │
 │  - Native: loaded via FFI                                   │
-│  - WASM: executed via wasmtime                              │
 │  - Crashes don't affect main process                        │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -874,7 +872,6 @@ Configure resource limits in `metadata.json`:
 | Linux | x86_64 | `*.so` |
 | Linux | ARM64 | `*.so` |
 | Windows | x86_64 | `*.dll` |
-| **Cross-platform** | Any | `*.wasm` |
 
 ---
 

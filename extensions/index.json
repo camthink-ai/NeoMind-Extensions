@@ -825,34 +825,6 @@
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/voice-edge-tts/metadata.json"
     },
     {
-      "id": "wasm-demo",
-      "name": "Wasm Demo",
-      "version": "2.13.0",
-      "description": "WASM sandbox demo extension showcasing NeoMind extension SDK capabilities with counter, greeting, and echo commands",
-      "author": "NeoMind Team",
-      "license": "Apache-2.0",
-      "type": "native",
-      "categories": [
-        "demo"
-      ],
-      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions/tree/main/extensions/wasm-demo",
-      "builds": {
-        "darwin-aarch64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.13.0/wasm-demo-2.13.0-darwin_aarch64.nep"
-        },
-        "linux-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.13.0/wasm-demo-2.13.0-linux_amd64.nep"
-        },
-        "linux-aarch64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.13.0/wasm-demo-2.13.0-linux_arm64.nep"
-        },
-        "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.13.0/wasm-demo-2.13.0-windows_amd64.nep"
-        }
-      },
-      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/wasm-demo/metadata.json"
-    },
-    {
       "id": "weather-forecast",
       "name": "Weather Forecast",
       "version": "2.13.0",

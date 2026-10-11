@@ -10,7 +10,6 @@ NeoMind 边缘 AI 平台的官方扩展仓库。
 
 ### 核心特性
 
-- **统一运行时模型**：Native 和 WASM 共享同一套扩展运行时
 - **运行时协议 v3**：隔离加载协议，安全性更高
 - **前端组件**：基于 React 的仪表板组件
 - **CSS 变量主题**：明暗模式支持
@@ -49,7 +48,6 @@ NeoMind 边缘 AI 平台的官方扩展仓库。
 | BACnet 桥接 | `bacnet-bridge` | IoT 桥接 | — | BACnet/IP 楼宇自动化 — 设备发现、传感器读取、COV 订阅 |
 | ONVIF 桥接 | `onvif-bridge` | IoT 桥接 | — | ONVIF IP 摄像头发现、RTSP 取流、PTZ 控制 |
 | OPC-UA 桥接 | `opcua-bridge` | IoT 桥接 | — | OPC-UA 服务器连接、节点浏览、数据订阅 |
-| WASM 演示 | `wasm-demo` | 演示 | — | WASM 目标的计数器演示 |
 
 ---
 
@@ -347,7 +345,6 @@ NeoMind-Extension/
 │   ├── bacnet-bridge/          # BACnet 桥接
 │   ├── onvif-bridge/           # ONVIF 桥接
 │   ├── opcua-bridge/           # OPC-UA 桥接
-│   ├── wasm-demo/              # WASM 演示
 │   └── index.json              # 市场索引
 ├── skill/                      # Claude Code 技能（AI 辅助开发）
 │   ├── install.sh              # 技能安装脚本

@@ -12,7 +12,6 @@
 | `image-analyzer` | Native | 图像分析扩展 (YOLOv8) |
 | `yolo-video` | Native | 视频处理扩展 (YOLOv11) |
 | `yolo-device-inference` | Native | 设备推理扩展 (YOLOv8) |
-| `wasm-demo` | WASM | WebAssembly 演示扩展 |
 
 ## .nep 包格式
 
@@ -179,7 +178,7 @@ curl -X POST http://localhost:9375/api/extensions/upload/file \
 
 以下文件已从 Git 中排除（`.gitignore`）：
 - `dist/` - 构建的 .nep 包
-- `*.dylib`, `*.so`, `*.dll`, `*.wasm` - 二进制文件
+- `*.dylib`, `*.so`, `*.dll` - 二进制文件
 - `target/` - Rust 构建目录
 - `node_modules/` - Node.js 依赖
 - `models/` - 模型文件（太大）

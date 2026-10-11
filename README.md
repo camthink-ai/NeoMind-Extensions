@@ -13,7 +13,7 @@ This repository contains officially maintained extensions for the **NeoMind exte
 - **Runtime Protocol**: v3 (process-isolated architecture)
 - **SDK Version**: 0.6+ (builder patterns, helper macros, streaming API)
 - **ABI Version**: 3
-- **Platforms**: macOS (ARM64/x86_64), Linux (x86_64/ARM64), Windows (x86_64/x86), WASM
+- **Platforms**: macOS (ARM64/x86_64), Linux (x86_64/ARM64), Windows (x86_64/x86)
 
 ---
 
@@ -44,7 +44,6 @@ This repository contains officially maintained extensions for the **NeoMind exte
 | BACnet Bridge | `bacnet-bridge` | IoT Bridge | — | BACnet/IP building automation — device discovery, sensor reading, COV subscriptions |
 | ONVIF Bridge | `onvif-bridge` | IoT Bridge | — | ONVIF IP camera discovery, RTSP streaming, PTZ control |
 | OPC-UA Bridge | `opcua-bridge` | IoT Bridge | — | OPC-UA server connection, node browsing, data subscriptions |
-| WASM Demo | `wasm-demo` | Demo | — | Counter demo for WASM target |
 
 > **Latest Release**: See [GitHub Releases](https://github.com/camthink-ai/NeoMind-Extensions/releases)
 
@@ -166,7 +165,6 @@ NeoMind-Extensions/
 │   ├── bacnet-bridge/
 │   ├── onvif-bridge/
 │   ├── opcua-bridge/
-│   ├── wasm-demo/
 │   └── index.json               # Marketplace index (auto-generated)
 ├── scripts/
 │   └── update-versions.sh        # Generate metadata.json + index.json
@@ -207,7 +205,6 @@ NeoMind-Extensions/
 | Linux | ARM64 | `*.so` | `aarch64-unknown-linux-gnu` |
 | Windows | x86_64 | `*.dll` | `x86_64-pc-windows-msvc` |
 | Windows | x86 | `*.dll` | `i686-pc-windows-msvc` |
-| Cross-platform | Any | `*.wasm` | `wasm32-unknown-unknown` |
 
 ---
 

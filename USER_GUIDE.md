@@ -24,7 +24,6 @@ NeoMind extensions run on the shared extension runtime using the isolated runtim
 
 | Feature | Description |
 |---------|-------------|
-| **Shared Runtime Model** | Single runtime model for Native and WASM targets |
 | **Runtime Protocol v3** | Isolated extension protocol with improved safety |
 | **Frontend Components** | React-based dashboard widgets |
 | **CSS Theming** | Light/dark mode support |
@@ -34,7 +33,6 @@ NeoMind extensions run on the shared extension runtime using the isolated runtim
 | Type | File Extension | Performance | Safety |
 |------|---------------|-------------|--------|
 | **Native** | `.dylib` / `.so` / `.dll` | Maximum | Standard |
-| **WASM** | `.wasm` | 90-95% | Sandboxed |
 
 ---
 
@@ -221,7 +219,7 @@ V2 extensions provide React components for the dashboard:
 **Symptom**: Extension runs slowly
 
 **Solutions**:
-1. Use Native instead of WASM for compute-heavy tasks
+1. Compute-heavy tasks run as native cdylib extensions
 2. Enable process isolation for AI extensions
 3. Check system resources
 

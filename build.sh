@@ -176,7 +176,6 @@ V2_EXTENSIONS=(
     "paddle-ocr-v6"
     "face-recognition"
     "stream-player"
-    "wasm-demo"
     "uink-rms-bridge"
     "homeassistant-bridge"
     "lorawan-bridge"
@@ -212,25 +211,9 @@ fi
 echo ""
 echo -e "${BLUE}Building extensions for runtime protocol v3...${NC}"
 
-# Detect WASM extensions and build them
-WASM_EXTENSIONS=()
-NATIVE_EXTENSIONS=()
-
-for ext in "${V2_EXTENSIONS[@]}"; do
-    EXT_DIR="extensions/$ext"
-
-    # Check if this is a WASM extension by reading metadata.json
-    EXT_TYPE="native"
-    if [ -f "$EXT_DIR/metadata.json" ]; then
-        EXT_TYPE=$(jq -r '.type // "native"' "$EXT_DIR/metadata.json" 2>/dev/null)
-    fi
-
-    if [ "$EXT_TYPE" = "wasm" ]; then
-        WASM_EXTENSIONS+=("$ext")
-    else
-        NATIVE_EXTENSIONS+=("$ext")
-    fi
-done
+# WASM support was removed from the platform (NeoMind 1.2.0): every
+# extension builds as a native cdylib.
+NATIVE_EXTENSIONS=("${V2_EXTENSIONS[@]}")
 
 # Build native extensions
 if [ ${#NATIVE_EXTENSIONS[@]} -gt 0 ]; then
@@ -261,28 +244,6 @@ if [ ${#NATIVE_EXTENSIONS[@]} -gt 0 ]; then
     fi
 fi
 
-# Build WASM extensions
-if [ ${#WASM_EXTENSIONS[@]} -gt 0 ]; then
-    echo ""
-    echo -e "${BLUE}Building WASM Extensions...${NC}"
-
-    # Check if wasm32 target is installed
-    if ! rustup target list | grep -q "wasm32-unknown-unknown"; then
-        echo -e "${YELLOW}Installing wasm32-unknown-unknown target...${NC}"
-        rustup target add wasm32-unknown-unknown
-    fi
-
-    for ext in "${WASM_EXTENSIONS[@]}"; do
-        echo -e "  ${BLUE}Building${NC} $ext (WASM)..."
-
-        if [ "$BUILD_TYPE" = "release" ]; then
-            cargo build --release -p "$ext" --target wasm32-unknown-unknown 2>/dev/null || true
-        else
-            cargo build -p "$ext" --target wasm32-unknown-unknown 2>/dev/null || true
-        fi
-    done
-fi
-
 # Find built extensions
 BUILD_DIR="target/$BUILD_TYPE"
 echo ""
@@ -306,20 +267,6 @@ for ext in "${NATIVE_EXTENSIONS[@]}"; do
         BUILT_EXTENSIONS+=("$ext")
     else
         echo -e "  ${YELLOW}⚠${NC} $ext (not found: $LIB_FILE)"
-    fi
-done
-
-# Check WASM extensions
-for ext in "${WASM_EXTENSIONS[@]}"; do
-    LIB_NAME=$(echo "$ext" | tr '-' '_')
-    # WASM files are in target/wasm32-unknown-unknown/release/ not target/release/wasm32-unknown-unknown/release/
-    WASM_FILE="target/wasm32-unknown-unknown/${BUILD_TYPE}/neomind_extension_${LIB_NAME}.wasm"
-
-    if [ -f "$WASM_FILE" ]; then
-        echo -e "  ${GREEN}✓${NC} $ext -> neomind_extension_${LIB_NAME}.wasm [wasm]"
-        BUILT_EXTENSIONS+=("$ext")
-    else
-        echo -e "  ${YELLOW}⚠${NC} $ext (not found: $WASM_FILE)"
     fi
 done
 
@@ -369,28 +316,14 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
         EXT_DIR="extensions/$ext"
         LIB_NAME=$(echo "$ext" | tr '-' '_')
 
-        # Check if this is a WASM extension
-        # WASM files are in target/wasm32-unknown-unknown/release/
-        WASM_FILE="target/wasm32-unknown-unknown/${BUILD_TYPE}/neomind_extension_${LIB_NAME}.wasm"
-        
         # On Windows, DLL files don't have 'lib' prefix
         if [ "$LIB_EXT" = "dll" ]; then
-            NATIVE_LIB_FILE="$BUILD_DIR/neomind_extension_${LIB_NAME}.${LIB_EXT}"
+            LIB_FILE="$BUILD_DIR/neomind_extension_${LIB_NAME}.${LIB_EXT}"
         else
-            NATIVE_LIB_FILE="$BUILD_DIR/libneomind_extension_${LIB_NAME}.${LIB_EXT}"
+            LIB_FILE="$BUILD_DIR/libneomind_extension_${LIB_NAME}.${LIB_EXT}"
         fi
-
-        IS_WASM=false
-        if [ -f "$WASM_FILE" ]; then
-            IS_WASM=true
-            LIB_FILE="$WASM_FILE"
-            EXT_TYPE="wasm"
-            BINARY_NAME="extension.wasm"
-        else
-            LIB_FILE="$NATIVE_LIB_FILE"
-            EXT_TYPE="native"
-            BINARY_NAME="extension.${LIB_EXT}"
-        fi
+        EXT_TYPE="native"
+        BINARY_NAME="extension.${LIB_EXT}"
 
         # Get version from Cargo.toml (or use MARKET_VERSION for filename)
         EXT_VERSION=$(grep -m1 'version = ' "$EXT_DIR/Cargo.toml" 2>/dev/null | sed 's/.*version = "\([^"]*\)".*/\1/' || echo "0.1.0")
@@ -406,138 +339,125 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
         TEMP_DIR=$(mktemp -d)
         PACKAGE_DIR="$TEMP_DIR/$ext"
 
-        if [ "$IS_WASM" = true ]; then
-            # WASM extension - no platform-specific directory
-            mkdir -p "$PACKAGE_DIR/binaries"
-            mkdir -p "$PACKAGE_DIR/frontend"
-        else
-            # Native extension - platform-specific directory
-            mkdir -p "$PACKAGE_DIR/binaries/$PLATFORM"
-            mkdir -p "$PACKAGE_DIR/frontend"
-        fi
+        mkdir -p "$PACKAGE_DIR/binaries/$PLATFORM"
+        mkdir -p "$PACKAGE_DIR/frontend"
         mkdir -p "$PACKAGE_DIR/models"
 
         # Copy binary
-        if [ "$IS_WASM" = true ]; then
-            cp "$LIB_FILE" "$PACKAGE_DIR/binaries/$BINARY_NAME"
-        else
-            cp "$LIB_FILE" "$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
-        fi
+        cp "$LIB_FILE" "$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
 
         # Copy ONNX Runtime library for native extensions using ort
-        if [ "$IS_WASM" = false ]; then
-            ORT_LIB=""
-            BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
+        ORT_LIB=""
+        BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
 
-            # Check common locations for ONNX Runtime library
-            if [ -n "$ORT_LIB_PATH" ] && [ -d "$ORT_LIB_PATH" ]; then
-                # Use ORT_LIB_PATH if set
-                # IMPORTANT: Exclude dSYM directories - they contain debug symbols, not the actual library
-                if [ "$LIB_EXT" = "dylib" ]; then
-                    # Prefer the unversioned symlink (libonnxruntime.dylib), fall back to versioned
-                    if [ -f "$ORT_LIB_PATH/libonnxruntime.dylib" ]; then
-                        ORT_LIB="$ORT_LIB_PATH/libonnxruntime.dylib"
-                    else
-                        ORT_LIB=$(find "$ORT_LIB_PATH" -maxdepth 1 -name "libonnxruntime*.dylib" -not -path "*/dSYM/*" 2>/dev/null | head -1)
-                    fi
-                elif [ "$LIB_EXT" = "so" ]; then
-                    ORT_LIB=$(find "$ORT_LIB_PATH" -maxdepth 1 -name "libonnxruntime.so*" 2>/dev/null | head -1)
-                elif [ "$LIB_EXT" = "dll" ]; then
-                    ORT_LIB=$(find "$ORT_LIB_PATH" -maxdepth 1 -name "onnxruntime*.dll" 2>/dev/null | head -1)
+        # Check common locations for ONNX Runtime library
+        if [ -n "$ORT_LIB_PATH" ] && [ -d "$ORT_LIB_PATH" ]; then
+            # Use ORT_LIB_PATH if set
+            # IMPORTANT: Exclude dSYM directories - they contain debug symbols, not the actual library
+            if [ "$LIB_EXT" = "dylib" ]; then
+                # Prefer the unversioned symlink (libonnxruntime.dylib), fall back to versioned
+                if [ -f "$ORT_LIB_PATH/libonnxruntime.dylib" ]; then
+                    ORT_LIB="$ORT_LIB_PATH/libonnxruntime.dylib"
+                else
+                    ORT_LIB=$(find "$ORT_LIB_PATH" -maxdepth 1 -name "libonnxruntime*.dylib" -not -path "*/dSYM/*" 2>/dev/null | head -1)
                 fi
+            elif [ "$LIB_EXT" = "so" ]; then
+                ORT_LIB=$(find "$ORT_LIB_PATH" -maxdepth 1 -name "libonnxruntime.so*" 2>/dev/null | head -1)
+            elif [ "$LIB_EXT" = "dll" ]; then
+                ORT_LIB=$(find "$ORT_LIB_PATH" -maxdepth 1 -name "onnxruntime*.dll" 2>/dev/null | head -1)
+            fi
+        fi
+
+        # Also check LD_LIBRARY_PATH
+        if [ -z "$ORT_LIB" ] && [ -n "$LD_LIBRARY_PATH" ]; then
+            IFS=':' read -ra PATHS <<< "$LD_LIBRARY_PATH"
+            for p in "${PATHS[@]}"; do
+                if [ -d "$p" ]; then
+                    if [ "$LIB_EXT" = "so" ]; then
+                        ORT_LIB=$(find "$p" -maxdepth 1 -name "libonnxruntime.so*" 2>/dev/null | head -1)
+                    fi
+                    [ -n "$ORT_LIB" ] && break
+                fi
+            done
+        fi
+
+        if [ -n "$ORT_LIB" ] && [ -f "$ORT_LIB" ]; then
+            # ort crate (>=2.0.0-rc) dlopens the unversioned libonnxruntime.{dylib|so}
+            # at init time and panics if GetVersionString() doesn't match its pinned
+            # MINOR_VERSION (rc.10 → 1.22.x). Brew/macports often ship 1.21.x which
+            # is incompatible. Probe for a known-good 1.22 binary in sibling NeoMind
+            # extensions before falling back to the build-env discovery.
+            ORT_BASENAME=$(basename "$ORT_LIB")
+            ORT_MINOR=""
+            if [ "$OS" = "Darwin" ] && command -v otool &> /dev/null; then
+                ORT_MINOR=$(otool -L "$ORT_LIB" 2>/dev/null | grep -oE 'current version [0-9]+\.[0-9]+' | head -1 | awk '{print $3}' | cut -d. -f2)
+            fi
+            if [ -z "$ORT_MINOR" ] && [ "$LIB_EXT" = "dylib" ]; then
+                ORT_MINOR=$(echo "$ORT_BASENAME" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 | cut -d. -f2)
             fi
 
-            # Also check LD_LIBRARY_PATH
-            if [ -z "$ORT_LIB" ] && [ -n "$LD_LIBRARY_PATH" ]; then
-                IFS=':' read -ra PATHS <<< "$LD_LIBRARY_PATH"
-                for p in "${PATHS[@]}"; do
-                    if [ -d "$p" ]; then
-                        if [ "$LIB_EXT" = "so" ]; then
-                            ORT_LIB=$(find "$p" -maxdepth 1 -name "libonnxruntime.so*" 2>/dev/null | head -1)
-                        fi
-                        [ -n "$ORT_LIB" ] && break
-                    fi
-                done
-            fi
-
-            if [ -n "$ORT_LIB" ] && [ -f "$ORT_LIB" ]; then
-                # ort crate (>=2.0.0-rc) dlopens the unversioned libonnxruntime.{dylib|so}
-                # at init time and panics if GetVersionString() doesn't match its pinned
-                # MINOR_VERSION (rc.10 → 1.22.x). Brew/macports often ship 1.21.x which
-                # is incompatible. Probe for a known-good 1.22 binary in sibling NeoMind
-                # extensions before falling back to the build-env discovery.
-                ORT_BASENAME=$(basename "$ORT_LIB")
-                ORT_MINOR=""
-                if [ "$OS" = "Darwin" ] && command -v otool &> /dev/null; then
-                    ORT_MINOR=$(otool -L "$ORT_LIB" 2>/dev/null | grep -oE 'current version [0-9]+\.[0-9]+' | head -1 | awk '{print $3}' | cut -d. -f2)
-                fi
-                if [ -z "$ORT_MINOR" ] && [ "$LIB_EXT" = "dylib" ]; then
-                    ORT_MINOR=$(echo "$ORT_BASENAME" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 | cut -d. -f2)
-                fi
-
-                # ort-sys 2.0.0-rc.10 requires ORT 1.22.x. If the discovered dylib is older,
-                # try to grab a known-good 1.22 binary from an already-installed NeoMind
-                # extension (ocr-device-inference, yolo-device-inference, etc. all share
-                # the same CoreML-enabled 33MB 1.22 build).
-                if [ "$LIB_EXT" = "dylib" ] && [ -n "$ORT_MINOR" ] && [ "$ORT_MINOR" != "22" ]; then
-                    echo -e "    ${YELLOW}⚠${NC} Found ORT 1.${ORT_MINOR}.x at $ORT_LIB but ort crate needs 1.22.x"
-                    NEOMIND_EXT_DIR="$HOME/Library/Application Support/com.neomind.neomind/data/extensions"
-                    FALLBACK=""
-                    if [ -d "$NEOMIND_EXT_DIR" ]; then
-                        for cand in ocr-device-inference yolo-device-inference image-analyzer yolo-video; do
-                            cand_lib="$NEOMIND_EXT_DIR/$cand/binaries/$PLATFORM/libonnxruntime.dylib"
-                            if [ -f "$cand_lib" ]; then
-                                cand_minor=$(otool -L "$cand_lib" 2>/dev/null | grep -oE 'current version [0-9]+\.[0-9]+' | head -1 | awk '{print $3}' | cut -d. -f2)
-                                if [ "$cand_minor" = "22" ]; then
-                                    FALLBACK="$cand_lib"
-                                    echo -e "    ${GREEN}→${NC} Using known-good ORT 1.22 from $cand"
-                                    break
-                                fi
+            # ort-sys 2.0.0-rc.10 requires ORT 1.22.x. If the discovered dylib is older,
+            # try to grab a known-good 1.22 binary from an already-installed NeoMind
+            # extension (ocr-device-inference, yolo-device-inference, etc. all share
+            # the same CoreML-enabled 33MB 1.22 build).
+            if [ "$LIB_EXT" = "dylib" ] && [ -n "$ORT_MINOR" ] && [ "$ORT_MINOR" != "22" ]; then
+                echo -e "    ${YELLOW}⚠${NC} Found ORT 1.${ORT_MINOR}.x at $ORT_LIB but ort crate needs 1.22.x"
+                NEOMIND_EXT_DIR="$HOME/Library/Application Support/com.neomind.neomind/data/extensions"
+                FALLBACK=""
+                if [ -d "$NEOMIND_EXT_DIR" ]; then
+                    for cand in ocr-device-inference yolo-device-inference image-analyzer yolo-video; do
+                        cand_lib="$NEOMIND_EXT_DIR/$cand/binaries/$PLATFORM/libonnxruntime.dylib"
+                        if [ -f "$cand_lib" ]; then
+                            cand_minor=$(otool -L "$cand_lib" 2>/dev/null | grep -oE 'current version [0-9]+\.[0-9]+' | head -1 | awk '{print $3}' | cut -d. -f2)
+                            if [ "$cand_minor" = "22" ]; then
+                                FALLBACK="$cand_lib"
+                                echo -e "    ${GREEN}→${NC} Using known-good ORT 1.22 from $cand"
+                                break
                             fi
-                        done
-                    fi
-                    if [ -n "$FALLBACK" ]; then
-                        ORT_LIB="$FALLBACK"
-                        ORT_BASENAME=$(basename "$ORT_LIB")
-                    else
-                        echo -e "    ${RED}✗${NC} No ORT 1.22 fallback found. ort crate will panic at load time."
-                        echo -e "    Install onnxruntime 1.22.x (brew install onnxruntime@1.22 or download from"
-                        echo -e "    https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0) and re-run."
-                        exit 1
-                    fi
+                        fi
+                    done
                 fi
-
-                cp "$ORT_LIB" "$BINARY_DIR/"
-                chmod +x "$BINARY_DIR/$(basename $ORT_LIB)"
-                echo -e "    ${GREEN}→${NC} Bundled ONNX Runtime: $(basename $ORT_LIB)"
-
-                # Always provide the unversioned alias (ort crate dlopens it at init).
-                # Use `cp` not `ln -sf` — symlinks don't survive zip packaging.
-                ORT_BASENAME_NO_VER="libonnxruntime.$LIB_EXT"
-                if [ "$LIB_EXT" = "dll" ]; then
-                    ORT_BASENAME_NO_VER="onnxruntime.dll"
+                if [ -n "$FALLBACK" ]; then
+                    ORT_LIB="$FALLBACK"
+                    ORT_BASENAME=$(basename "$ORT_LIB")
+                else
+                    echo -e "    ${RED}✗${NC} No ORT 1.22 fallback found. ort crate will panic at load time."
+                    echo -e "    Install onnxruntime 1.22.x (brew install onnxruntime@1.22 or download from"
+                    echo -e "    https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0) and re-run."
+                    exit 1
                 fi
-                if [ "$(basename $ORT_LIB)" != "$ORT_BASENAME_NO_VER" ]; then
-                    cp "$ORT_LIB" "$BINARY_DIR/$ORT_BASENAME_NO_VER"
-                    chmod +x "$BINARY_DIR/$ORT_BASENAME_NO_VER"
-                    echo -e "    ${GREEN}→${NC} Unversioned alias: $ORT_BASENAME_NO_VER (real copy, not symlink)"
-                fi
+            fi
 
-                # Verify architecture matches the target platform
-                if [ "$OS" = "Darwin" ] && command -v file &> /dev/null; then
-                    BUNDLED_ORT_ARCH=$(file "$BINARY_DIR/$(basename $ORT_LIB)" 2>/dev/null | grep -oE 'x86_64|arm64' || echo "unknown")
-                    EXPECTED_ARCH=""
-                    case "$PLATFORM" in
-                        darwin_aarch64) EXPECTED_ARCH="arm64" ;;
-                    esac
-                    if [ -n "$EXPECTED_ARCH" ] && [ "$BUNDLED_ORT_ARCH" != "$EXPECTED_ARCH" ]; then
-                        echo -e "    ${RED}✗ ERROR${NC} ORT architecture mismatch! Expected $EXPECTED_ARCH but got $BUNDLED_ORT_ARCH"
-                        echo -e "    ${RED}✗${NC} ORT source: $ORT_LIB"
-                        echo -e "    ${RED}✗${NC} ORT_LIB_PATH: $ORT_LIB_PATH"
-                        exit 1
-                    else
-                        echo -e "    ${GREEN}✓${NC} ORT architecture verified: $BUNDLED_ORT_ARCH"
-                    fi
+            cp "$ORT_LIB" "$BINARY_DIR/"
+            chmod +x "$BINARY_DIR/$(basename $ORT_LIB)"
+            echo -e "    ${GREEN}→${NC} Bundled ONNX Runtime: $(basename $ORT_LIB)"
+
+            # Always provide the unversioned alias (ort crate dlopens it at init).
+            # Use `cp` not `ln -sf` — symlinks don't survive zip packaging.
+            ORT_BASENAME_NO_VER="libonnxruntime.$LIB_EXT"
+            if [ "$LIB_EXT" = "dll" ]; then
+                ORT_BASENAME_NO_VER="onnxruntime.dll"
+            fi
+            if [ "$(basename $ORT_LIB)" != "$ORT_BASENAME_NO_VER" ]; then
+                cp "$ORT_LIB" "$BINARY_DIR/$ORT_BASENAME_NO_VER"
+                chmod +x "$BINARY_DIR/$ORT_BASENAME_NO_VER"
+                echo -e "    ${GREEN}→${NC} Unversioned alias: $ORT_BASENAME_NO_VER (real copy, not symlink)"
+            fi
+
+            # Verify architecture matches the target platform
+            if [ "$OS" = "Darwin" ] && command -v file &> /dev/null; then
+                BUNDLED_ORT_ARCH=$(file "$BINARY_DIR/$(basename $ORT_LIB)" 2>/dev/null | grep -oE 'x86_64|arm64' || echo "unknown")
+                EXPECTED_ARCH=""
+                case "$PLATFORM" in
+                    darwin_aarch64) EXPECTED_ARCH="arm64" ;;
+                esac
+                if [ -n "$EXPECTED_ARCH" ] && [ "$BUNDLED_ORT_ARCH" != "$EXPECTED_ARCH" ]; then
+                    echo -e "    ${RED}✗ ERROR${NC} ORT architecture mismatch! Expected $EXPECTED_ARCH but got $BUNDLED_ORT_ARCH"
+                    echo -e "    ${RED}✗${NC} ORT source: $ORT_LIB"
+                    echo -e "    ${RED}✗${NC} ORT_LIB_PATH: $ORT_LIB_PATH"
+                    exit 1
+                else
+                    echo -e "    ${GREEN}✓${NC} ORT architecture verified: $BUNDLED_ORT_ARCH"
                 fi
             fi
         fi
@@ -546,7 +466,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
         # Copy ALL DLLs from FFMPEG_DIR/bin to cover transitive dependencies.
         # BtbN FFmpeg shared builds have codec DLLs (libx264-164.dll, libx265-209.dll, etc.)
         # that avcodec-61.dll depends on at load time. A curated list always misses some.
-        if [ "$IS_WASM" = false ] && [ "$LIB_EXT" = "dll" ]; then
+        if [ "$LIB_EXT" = "dll" ]; then
             echo -e "    ${BLUE}→${NC} Bundling Windows dependency DLLs (FFMPEG_DIR=$FFMPEG_DIR)..."
 
             BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
@@ -610,7 +530,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
 
         # Bundle shared library dependencies for Linux
         # Uses ldd to automatically detect all non-system dependencies (FFmpeg, etc.)
-        if [ "$IS_WASM" = false ] && [ "$LIB_EXT" = "so" ]; then
+        if [ "$LIB_EXT" = "so" ]; then
             BINARY_PATH="$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
             BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
 
@@ -656,7 +576,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
 
         # Fix the binary's LC_ID_DYLIB to use @executable_path instead of absolute path
         # This is critical for Rust cdylib which sets LC_ID_DYLIB to absolute build path
-        if [ "$IS_WASM" = false ] && [ "$OS" = "Darwin" ]; then
+        if [ "$OS" = "Darwin" ]; then
             echo -e "    ${BLUE}→${NC} Fixing library ID for macOS..."
             
             # Get the binary path
@@ -688,18 +608,10 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
 
         # Fix dynamic library dependencies for portability (native only)
         # Solution: Copy self-referenced dependency libraries to the package
-        if [ "$IS_WASM" = false ] && [ "$OS" = "Darwin" ]; then
+        if [ "$OS" = "Darwin" ]; then
             echo -e "    ${BLUE}→${NC} Fixing dynamic library dependencies..."
             
             # Get the binary path
-            if [ "$IS_WASM" = true ]; then
-                BINARY_PATH="$PACKAGE_DIR/binaries/$BINARY_NAME"
-                BINARY_DIR="$PACKAGE_DIR/binaries"
-            else
-                BINARY_PATH="$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
-                BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
-            fi
-            
             # Get all dependent dylibs with absolute paths or @rpath references
             # Match: /Users/ (build env), /opt/homebrew/ (Homebrew), /usr/local/ (Intel Homebrew), @rpath/
             DEPS=$(otool -L "$BINARY_PATH" 2>/dev/null | \
@@ -871,7 +783,7 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
 
 
         # Fix dynamic library dependencies for Linux (set rpath for bundled libraries)
-        if [ "$IS_WASM" = false ] && [ "$OS" = "Linux" ]; then
+        if [ "$OS" = "Linux" ]; then
             BINARY_PATH="$PACKAGE_DIR/binaries/$PLATFORM/$BINARY_NAME"
             BINARY_DIR="$PACKAGE_DIR/binaries/$PLATFORM"
 
@@ -1138,78 +1050,9 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             "extensions/$ext/metadata.json" 2>/dev/null || true)
         [ -z "$ENV_HINTS" ] && ENV_HINTS="null"
 
-        if [ "$IS_WASM" = true ]; then
-            # WASM extension - single binary, no platform directory
-            MANIFEST_JSON=$(jq -n \
-                --arg format "neomind-extension-package" \
-                --arg format_version "2.0" \
-                --argjson abi_version 3 \
-                --arg id "$ext" \
-                --arg name "$(echo $ext | sed 's/-v2$//' | sed 's/-/ /g')" \
-                --arg version "$EXT_VERSION" \
-                --arg sdk_version "2.0.0" \
-                --arg type "wasm" \
-                --argjson has_models "$HAS_MODELS" \
-                --argjson dashboard_components "$DASHBOARD_COMPONENTS" \
-                --argjson env_hints "$ENV_HINTS" \
-                '{
-                    format: $format,
-                    format_version: $format_version,
-                    abi_version: $abi_version,
-                    id: $id,
-                    name: $name,
-                    version: $version,
-                    sdk_version: $sdk_version,
-                    type: $type,
-                    binaries: { "wasm": "binaries/extension.wasm" },
-                    frontend: {
-                        "components": $dashboard_components
-                    }
-                } | if $has_models then . + {"models": "models/"} else . end
-                  | if $env_hints != null then . + {"env_hints": $env_hints} else . end')
-        else
-            # Native extension - platform-specific binary
-            MANIFEST_JSON=$(jq -n \
-                --arg format "neomind-extension-package" \
-                --arg format_version "2.0" \
-                --argjson abi_version 3 \
-                --arg id "$ext" \
-                --arg name "$(echo $ext | sed 's/-v2$//' | sed 's/-/ /g')" \
-                --arg version "$EXT_VERSION" \
-                --arg sdk_version "2.0.0" \
-                --arg type "native" \
-                --arg platform "$PLATFORM" \
-                --arg lib_ext "$LIB_EXT" \
-                --argjson has_models "$HAS_MODELS" \
-                --argjson dashboard_components "$DASHBOARD_COMPONENTS" \
-                --argjson env_hints "$ENV_HINTS" \
-                '{
-                    format: $format,
-                    format_version: $format_version,
-                    abi_version: $abi_version,
-                    id: $id,
-                    name: $name,
-                    version: $version,
-                    sdk_version: $sdk_version,
-                    type: $type,
-                    binaries: { ($platform): ("binaries/" + $platform + "/extension." + $lib_ext) },
-                    frontend: {
-                        "components": $dashboard_components
-                    }
-                } | if $has_models then . + {"models": "models/"} else . end
-                  | if $env_hints != null then . + {"env_hints": $env_hints} else . end')
-        fi
-
         echo "$MANIFEST_JSON" > "$PACKAGE_DIR/manifest.json"
 
         # Create .nep package with platform suffix for native extensions
-        if [ "$IS_WASM" = true ]; then
-            # WASM is cross-platform, no platform suffix needed
-            OUTPUT_FILE="dist/${ext}-${PACKAGE_VERSION}.nep"
-        else
-            # Native extensions need platform suffix (+ optional variant suffix)
-            OUTPUT_FILE="dist/${ext}-${PACKAGE_VERSION}-${PLATFORM}${VARIANT_SUFFIX}.nep"
-        fi
         # Resolve absolute output path BEFORE changing directory
         # Create dist/ directory first to ensure it exists
         mkdir -p "$(dirname "$OUTPUT_FILE")"
