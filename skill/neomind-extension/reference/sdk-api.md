@@ -78,7 +78,6 @@ pub trait Extension: Send + Sync {
     fn latest_output(&self) -> Option<PushOutputMessage> { None }
     async fn start_push(&self, _session_id: &str) -> Result<()> { Ok(()) }
     async fn stop_push(&self, _session_id: &str) -> Result<()> { Ok(()) }
-    #[cfg(not(target_arch = "wasm32"))]
     fn set_output_sender(
         &self, _sender: Arc<tokio::sync::mpsc::Sender<PushOutputMessage>>,
     ) {}

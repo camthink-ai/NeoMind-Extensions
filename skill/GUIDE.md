@@ -266,7 +266,6 @@ The skill covers development for all supported platforms:
 | Linux    | x86_64        | `*.so`           |
 | Linux    | ARM64         | `*.so`           |
 | Windows  | x86_64        | `*.dll`          |
-| Universal| Any           | `*.wasm`         |
 
 ## Updating the Skill
 

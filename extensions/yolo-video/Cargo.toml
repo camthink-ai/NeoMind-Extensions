@@ -46,7 +46,6 @@ gstreamer-app = { version = "0.21", optional = true }
 [features]
 default = []
 native = []
-wasm = []
 # NVDEC hardware video decode via GStreamer nvv4l2decoder (Jetson only)
 nvdec = ["dep:gstreamer", "dep:gstreamer-app"]
 # Process isolation feature for high-risk extensions

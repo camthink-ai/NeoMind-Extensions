@@ -79,7 +79,6 @@ neomind-extension/
 - Process isolation model
 - IPC communication protocol
 - runtime protocol v3 interface
-- Native vs WASM comparison
 
 ### 3. SDK Reference
 - Extension trait implementation

@@ -33,7 +33,6 @@ ffmpeg-next = { version = "7", default-features = false, features = ["codec", "f
 [features]
 default = []
 native = []
-wasm = []
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

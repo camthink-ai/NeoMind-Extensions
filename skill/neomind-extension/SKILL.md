@@ -27,7 +27,7 @@ description: |
   paddle-ocr-v6, paddle-ocr-vl, stream-player, deepstream,
   modbus/lorawan/homeassistant/opcua/onvif/bacnet-bridge,
   uink-rms-bridge, locate-anything, voice-assistant, cosyvoice-3, moss-tts-nano,
-  sensevoice-asr, voice-edge-tts, wasm-demo, gym-tracker, video-vlm, vision-hub.
+  sensevoice-asr, voice-edge-tts, gym-tracker, video-vlm, vision-hub.
 
 version: 3.0.0
 argument-hint: "[extension-name]"
@@ -1307,7 +1307,6 @@ Usually caused by bad metadata.json format. Regenerate with
 
 ### Other
 - **locate-anything** — location/geo extension.
-- **wasm-demo** — WASM extension experiment.
 
 ---
 

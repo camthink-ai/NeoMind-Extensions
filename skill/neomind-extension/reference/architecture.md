@@ -21,7 +21,6 @@ cdylib.
               ▼
 ┌──────────────────────────────────┐      ┌──────────────────────────────────┐
 │  Extension Runner Process        │      │  Extension Runner Process        │
-│   • dlopens libneomind_ext_*.so │      │   • loads .wasm via wasmtime     │
 │   • calls neomind_export! FFI    │      │   • same IPC protocol            │
 │   • hosts Tokio runtime          │      │   • sandboxed                    │
 │   • delivers events to ext       │      │                                  │
@@ -140,22 +139,6 @@ If a panic unwinds through any handler, the runner catches it (thanks to
 `panic = "unwind"`), logs it, and either continues with the same instance (if state is
 still consistent) or calls `reset_instance` to start fresh.
 
-## Native vs WASM
-
-| Feature | Native cdylib | WASM |
-|---|---|---|
-| Performance | Maximum | Good |
-| Platform | Per-platform binary (6 targets) | Universal `.wasm` |
-| File extension | `.dylib` / `.so` / `.dll` | `.wasm` |
-| System access | Full (fs, net, GPU) | Sandboxed |
-| Allowed crates | Any Rust crate | WASM-compatible only |
-| Tokio runtime | Hosted by runner | Limited |
-| Capabilities | Via injected fn ptrs | Via host imports |
-| Typical use | ML inference, bridges, voice | Lightweight utilities |
-
-This skill focuses on native cdylib extensions — that's what 26 of the 27 current
-extensions are. WASM (see `extensions/wasm-demo/`) uses the same `Extension` trait via
-the SDK's `wasm/` feature gate but is otherwise out of scope here.
 
 ## Where to look in the platform source
 

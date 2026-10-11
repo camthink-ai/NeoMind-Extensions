@@ -166,12 +166,7 @@ do_sync() {
         [ -f "$d/Cargo.toml" ] || continue
         local id; id=$(basename "$d")
         local desc; desc=$(grep -E "^description" "$d/Cargo.toml" | head -1 | sed 's/.*=.*"\(.*\)"/\1/')
-        # WASM extensions from the same explicit list build.sh builds for;
-        # metadata.json can't be the source of truth for this — do_sync itself
-        # writes it, and a previous hard-coded type:"native" already
-        # overwrote wasm-demo's real type.
         local etype="native"
-        case "$id" in wasm-demo) etype="wasm" ;; esac
 
         # Keep an existing (possibly hand-edited) display name; generate one
         # only for brand-new extensions. The old unconditional sed generated
@@ -189,11 +184,7 @@ do_sync() {
         for p in "${PLATFORMS[@]}"; do
             local ps; ps=$(platform_suffix "$p")
             local url
-            if [ "$etype" = "wasm" ]; then
-                url="https://github.com/$GITHUB_REPO/releases/download/v$VERSION/${id}-${VERSION}.nep"
-            else
-                url="https://github.com/$GITHUB_REPO/releases/download/v$VERSION/${id}-${VERSION}-${ps}.nep"
-            fi
+            url="https://github.com/$GITHUB_REPO/releases/download/v$VERSION/${id}-${VERSION}-${ps}.nep"
             builds=$(echo "$builds" | jq --arg p "$p" --arg u "$url" '. + {($p): {url: $u}}')
         done
 

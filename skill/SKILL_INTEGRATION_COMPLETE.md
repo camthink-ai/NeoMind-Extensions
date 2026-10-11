@@ -138,7 +138,6 @@ Based on official documentation from:
 - Process isolation model
 - IPC communication protocol
 - runtime protocol v3 interface
-- Native vs WASM comparison
 
 **SDK Mastery**:
 - Extension trait implementation

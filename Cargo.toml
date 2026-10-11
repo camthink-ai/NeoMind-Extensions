@@ -43,7 +43,6 @@ license = "MIT"
 
 [workspace.dependencies]
 ndarray = "0.16"
-# Minimal dependencies for WASM extensions
 serde = { version = "1.0", features = ["derive"] }
 # IMPORTANT: preserve_order feature is required for ABI compatibility between
 # extension-runner and extension binaries. This ensures serde_json::Value uses

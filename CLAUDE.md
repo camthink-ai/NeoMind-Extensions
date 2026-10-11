@@ -155,8 +155,7 @@ NeoMind-Extensions/
 │   ├── yolo-device-inference/
 │   ├── homeassistant-bridge/   # Home Assistant entity bridge
 │   ├── lorawan-bridge/        # LoRaWAN sensor bridge (ChirpStack/TTN)
-│   ├── modbus-bridge/         # Modbus TCP/RTU device bridge
-│   └── wasm-demo/
+│   └── modbus-bridge/         # Modbus TCP/RTU device bridge
 ├── scripts/
 │   ├── update-versions.sh  # Generate all JSON files
 │   └── generate-json.ts    # DEPRECATED — does NOT handle env_hints; running it

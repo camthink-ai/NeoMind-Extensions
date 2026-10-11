@@ -35,7 +35,6 @@ chrono = "0.4"
 [features]
 default = []
 native = []
-wasm = []
 
 [dev-dependencies]
 neomind-extension-sdk = { workspace = true, features = ["testkit"] }
