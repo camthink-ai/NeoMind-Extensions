@@ -1,6 +1,6 @@
 [package]
 name = "laya-decision"
-version = "2.13.0"
+version = "2.14.0"
 edition = "2021"
 authors = ["NeoMind Team"]
 license = "Apache-2.0"
@@ -11,6 +11,8 @@ name = "neomind_extension_laya_decision"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+ureq = { version = "2.12", features = ["tls"] }
+sha2 = "0.10"
 neomind-extension-sdk = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

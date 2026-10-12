@@ -1,11 +1,13 @@
 /**
  * LAYA Decision Layer — dashboard status card.
  *
- * Live view via the platform's authoritative endpoint
- * (GET /api/decisions/status): mode badge (shadow = record-only /
- * guidance = LLM hints), backend id, and the decision/cache/error
- * counters. Polls on refreshInterval; degrades to the "off" state when
- * the layer is absent (non-decision build or no artifacts).
+ * Reads the extension's OWN `status` command via the platform's generic
+ * extension-command endpoint (POST /extensions/laya-decision/command) —
+ * self-sufficient by design since the platform's decision endpoints were
+ * removed (the layer is 100% extension-owned now). Shows: engine state,
+ * artifact size, sidecar port, and the audit counter. Polls on
+ * refreshInterval; degrades to the "artifacts missing" state with the
+ * install hint when model files are absent.
  */
 
 import { forwardRef, useEffect, useState, useCallback } from 'react'
@@ -29,18 +31,20 @@ export interface DataSource {
 }
 
 interface DecisionStatus {
-  enabled?: boolean
-  reason?: string
-  available?: boolean
-  shadow?: boolean
-  backend?: string
-  decides_total?: number
-  cache_hits_total?: number
-  errors_total?: number
+  model_present?: boolean
+  model_size_bytes?: number
+  decisions_logged?: number
+  last_decision?: any
+  install_hint?: string | null
+  sidecar?: {
+    port?: number
+    url?: string
+    engine_up?: boolean
+  }
 }
 
 // ============================================================================
-// API — the platform's session-authenticated surface
+// API — the platform's session-authenticated extension-command surface
 // ============================================================================
 
 const getApiHeaders = (): Record<string, string> => {
@@ -51,12 +55,16 @@ const getApiHeaders = (): Record<string, string> => {
   return headers
 }
 
-const fetchStatus = async (): Promise<DecisionStatus> => {
+const fetchStatus = async (extensionId: string): Promise<DecisionStatus> => {
   const base =
     (window as any).__NEOMIND_API_BASE__ ||
     (import.meta as any).env?.VITE_API_BASE ||
     ''
-  const res = await fetch(`${base}/api/decisions/status`, { headers: getApiHeaders() })
+  const res = await fetch(`${base}/extensions/${extensionId}/command`, {
+    method: 'POST',
+    headers: getApiHeaders(),
+    body: JSON.stringify({ command: 'status', args: {} }),
+  })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const body = await res.json()
   return body?.data ?? body
@@ -69,27 +77,25 @@ const fetchStatus = async (): Promise<DecisionStatus> => {
 const label = {
   en: {
     title: 'Decision Layer (LAYA)',
-    builtin: 'built-in',
-    shadow: 'shadow · record only',
-    guidance: 'guidance · LLM hints',
-    off: 'not enabled',
-    offHint: 'This extension hosts the decision runtime — install it and it goes live without a restart (native artifacts and LAYA_SIDECAR_URL also work)',
-    unavailable: 'model unavailable',
-    decides: 'decisions',
-    cache: 'cache hits',
-    errors: 'errors',
+    engine: 'engine · onnx',
+    ready: 'ready',
+    artifactsMissing: 'model artifacts missing',
+    extensionError: 'extension unreachable',
+    offHint:
+      'This extension hosts the decision runtime — decide/status commands work right after install; place the model artifacts under <data>/models/decision/ to go live',
+    decides: 'decisions logged',
+    size: 'model size',
   },
   zh: {
     title: '决策层 (LAYA)',
-    builtin: '内置模块',
-    shadow: '影子模式 · 只记录',
-    guidance: '引导模式 · 注入 LLM',
-    off: '未启用',
-    offHint: '本扩展即决策运行时——安装后无需重启即生效（也支持原生模型产物或 LAYA_SIDECAR_URL）',
-    unavailable: '模型不可用',
-    decides: '决策',
-    cache: '缓存命中',
-    errors: '错误',
+    engine: '引擎 · ONNX',
+    ready: '就绪',
+    artifactsMissing: '模型文件缺失',
+    extensionError: '扩展不可达',
+    offHint:
+      '本扩展即决策运行时——安装后 decide/status 命令即可用；将模型产物放入 <data>/models/decision/ 后引擎自动启动',
+    decides: '已记录决策',
+    size: '模型大小',
   },
 }
 
@@ -98,8 +104,15 @@ const pickLang = (): 'en' | 'zh' =>
     ? 'zh'
     : 'en'
 
+const fmtSize = (b?: number): string => {
+  if (!b) return '—'
+  if (b >= 1 << 30) return `${(b / (1 << 30)).toFixed(2)} GB`
+  if (b >= 1 << 20) return `${(b / (1 << 20)).toFixed(0)} MB`
+  return `${(b / (1 << 10)).toFixed(0)} KB`
+}
+
 export const LayaDecisionCard = forwardRef<HTMLDivElement, ExtensionComponentProps>(
-  ({ title, className, config }, ref) => {
+  ({ title, dataSource, className, config }, ref) => {
     const [status, setStatus] = useState<DecisionStatus | null>(null)
     const [failed, setFailed] = useState(false)
     const [tick, setTick] = useState(0)
@@ -108,13 +121,14 @@ export const LayaDecisionCard = forwardRef<HTMLDivElement, ExtensionComponentPro
 
     useEffect(() => {
       let cancelled = false
-      fetchStatus()
+      const extensionId = dataSource?.extensionId || 'laya-decision'
+      fetchStatus(extensionId)
         .then((s) => !cancelled && (setStatus(s), setFailed(false)))
         .catch(() => !cancelled && setFailed(true))
       return () => {
         cancelled = true
       }
-    }, [tick])
+    }, [tick, dataSource?.extensionId])
 
     const interval = Number(config?.refreshInterval ?? 10000)
     useEffect(() => {
@@ -123,8 +137,8 @@ export const LayaDecisionCard = forwardRef<HTMLDivElement, ExtensionComponentPro
     }, [interval])
 
     const L = label[pickLang()]
-    const enabled = status?.enabled === true
-    const unavailable = enabled && status?.available === false
+    const present = status?.model_present === true
+    const engineUp = present && status?.sidecar?.engine_up === true
 
     return (
       <div
@@ -142,30 +156,18 @@ export const LayaDecisionCard = forwardRef<HTMLDivElement, ExtensionComponentPro
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 15, fontWeight: 600 }}>{title ?? L.title}</span>
-          <span
-            style={{
-              fontSize: 11,
-              padding: '1px 6px',
-              borderRadius: 4,
-              background: 'rgba(127,127,127,0.15)',
-              color: 'inherit',
-              opacity: 0.8,
-            }}
-          >
-            {L.builtin}
-          </span>
           <div style={{ flex: 1 }} />
-          {status?.backend && (
+          {status?.sidecar?.port ? (
             <span style={{ fontSize: 11, opacity: 0.7, fontFamily: 'monospace' }}>
-              {status.backend}
+              127.0.0.1:{status.sidecar.port}
             </span>
-          )}
+          ) : null}
         </div>
 
-        {!enabled ? (
-          <div style={{ fontSize: 12, opacity: 0.7 }}>
-            {failed ? L.off : status?.reason ? `${L.off} — ${status.reason}` : L.offHint}
-          </div>
+        {failed ? (
+          <div style={{ fontSize: 12, opacity: 0.7 }}>{L.extensionError}</div>
+        ) : !present ? (
+          <div style={{ fontSize: 12, opacity: 0.7 }}>{L.offHint}</div>
         ) : (
           <>
             <div>
@@ -174,21 +176,18 @@ export const LayaDecisionCard = forwardRef<HTMLDivElement, ExtensionComponentPro
                   fontSize: 12,
                   padding: '2px 8px',
                   borderRadius: 999,
-                  background: unavailable
-                    ? 'rgba(217,119,6,0.15)'
-                    : status?.shadow
-                      ? 'rgba(127,127,127,0.15)'
-                      : 'rgba(59,130,246,0.15)',
+                  background: engineUp
+                    ? 'rgba(59,130,246,0.15)'
+                    : 'rgba(217,119,6,0.15)',
                 }}
               >
-                {unavailable ? L.unavailable : status?.shadow ? L.shadow : L.guidance}
+                {L.engine} · {engineUp ? L.ready : L.artifactsMissing}
               </span>
             </div>
             <div style={{ display: 'flex', gap: 16, marginTop: 'auto' }}>
               {[
-                [L.decides, status?.decides_total ?? 0],
-                [L.cache, status?.cache_hits_total ?? 0],
-                [L.errors, status?.errors_total ?? 0],
+                [L.decides, status?.decisions_logged ?? 0],
+                [L.size, fmtSize(status?.model_size_bytes)],
               ].map(([k, v]) => (
                 <div key={String(k)} style={{ display: 'flex', flexDirection: 'column' }}>
                   <span style={{ fontSize: 18, fontWeight: 600 }}>{String(v)}</span>

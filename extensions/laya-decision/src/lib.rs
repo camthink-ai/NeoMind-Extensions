@@ -1,22 +1,30 @@
-//! LAYA Decision Layer extension — the decision runtime, hosted.
+//! LAYA Decision Layer extension — the decision runtime, 100% extension-owned.
 //!
-//! v2: the extension no longer just OBSERVES the decision layer — it HOSTS
-//! it. On configure it loads the ONNX checkpoint from
-//! `<data>/models/decision/` (same convention as the platform's
-//! decision-native feature) and serves the `/v1/systemone` sidecar protocol
-//! on 127.0.0.1:8123 (config: `sidecarPort`). The platform's built-in
-//! `LayaSidecar` HTTP client discovers it by the installed-extension record
-//! — so ANY NeoMind build (default, tauri desktop, decision-native) gets
-//! the LAYA decision layer by installing this extension. No feature
-//! rebuild, no Python process.
+//! The platform's decision-layer code has been removed (chat hooks, injection
+//! modes, the `/api/decisions` endpoints); this extension is the layer's only
+//! home. Two surfaces, one engine instance:
+//!
+//! - **Commands** (the primary path): `decide` runs the engine directly on a
+//!   state + optional questions (no HTTP hop); `status` reports artifact
+//!   presence, sidecar state, and the audit counter. Callers: the LLM via
+//!   extension command tools, agents, and the dashboard card.
+//! - **Sidecar** (`/v1/systemone` on 127.0.0.1, config `sidecarPort`,
+//!   default 8123): the Jev-compatible wire API for any external or future
+//!   agent-loop consumer that prefers HTTP over commands.
+//!
+//! On configure/status it lazily loads the ONNX checkpoint from
+//! `<data>/models/decision/` (model.onnx | model_int8.onnx + tokenizer/ +
+//! remap.json + rl_agent_config.json). Any NeoMind build gains the decision
+//! layer by installing this extension; uninstalling removes it.
 //!
 //! Monitoring is unchanged: metrics (artifact presence/size, audit-log
-//! count), the `status` command (now also reporting the sidecar port and
-//! engine state), and the dashboard card.
+//! count), the `status` command (sidecar port + engine state), and the
+//! dashboard card (reads `status` via the extension-command endpoint).
 //!
 //! All reads are missing-file safe: a deployment without artifacts reports
 //! `model_present=false` and serves nothing, never errors.
 
+pub mod downloader;
 pub mod laya;
 pub mod server;
 
@@ -32,6 +40,10 @@ use neomind_extension_sdk::{
 
 pub struct LayaDecisionExtension {
     data_dir: Mutex<String>,
+    /// Model-artifact downloader (progress per-mille on the metrics channel).
+    downloader: downloader::Downloader,
+    /// Configured artifact base URL (default: GitHub release decision-v22).
+    model_base: Mutex<String>,
     request_count: AtomicI64,
     /// Sidecar port (default 8123; config `sidecarPort`). 0 = disabled.
     sidecar_port: Mutex<u16>,
@@ -53,7 +65,13 @@ pub struct LayaDecisionExtension {
 
 impl LayaDecisionExtension {
     pub fn new() -> Self {
+        Self::with_downloader(downloader::Downloader::new())
+    }
+
+    fn with_downloader(dl: downloader::Downloader) -> Self {
         Self {
+            downloader: dl,
+            model_base: Mutex::new(downloader::DEFAULT_MODEL_BASE.to_string()),
             data_dir: Mutex::new(String::new()), // empty = auto-detect (dir())
             request_count: AtomicI64::new(0),
             sidecar_port: Mutex::new(8123),
@@ -278,20 +296,41 @@ impl Extension for LayaDecisionExtension {
                 parameter_groups: Vec::new(),
             },
             ExtensionCommand {
+                name: "download".to_string(),
+                display_name: "Download model".to_string(),
+                description: "Fetch the missing model artifacts (int8 tier, ~167MB) from the configured modelBase into <data>/models/decision/ — runs in the background; check `status` for download_progress. Files are checksum-verified before landing; existing files are kept.".to_string(),
+                payload_template: String::new(),
+                parameters: Vec::new(),
+                fixed_values: std::collections::HashMap::new(),
+                samples: vec![json!({})],
+                parameter_groups: Vec::new(),
+            },
+            ExtensionCommand {
                 name: "decide".to_string(),
                 display_name: "Decide".to_string(),
-                description: "Run the decision model directly: one state string + optional questions ({qid: {type, instructions, criteria}}); defaults to the canonical router trio (tool/simple/domain)".to_string(),
+                description: "Run the typed-decision model directly on one state. Pick a preset: routing (tool/domain/simple — call when unsure which tool or CLI domain fits a request), guidance (workflow shape/clarify/scope/skill — call to decide whether to ask, which guide to load), memory (should stored memory be consulted, at what granularity), notify (should this event be pushed to the user now — state = event JSON). Or pass custom questions ({qid: {type, instructions, criteria}}).".to_string(),
                 payload_template: String::new(),
-                parameters: vec![ParameterDefinition {
-                    name: "state".to_string(),
-                    description: "The context/question input, exactly as the platform builds it (\"User request: …\")".to_string(),
-                    required: true,
-                    param_type: MetricDataType::String,
-                    ..ParameterDefinition::new("state", MetricDataType::String)
-                }],
+                parameters: vec![
+                    ParameterDefinition {
+                        name: "state".to_string(),
+                        description: "The context/question input, exactly as the platform builds it (\"User request: …\"); for the notify preset pass the event JSON string".to_string(),
+                        required: true,
+                        param_type: MetricDataType::String,
+                        ..ParameterDefinition::new("state", MetricDataType::String)
+                    },
+                    ParameterDefinition {
+                        name: "preset".to_string(),
+                        description: "Question pack: routing (default) | guidance | memory | notify".to_string(),
+                        required: false,
+                        param_type: MetricDataType::String,
+                        ..ParameterDefinition::new("preset", MetricDataType::String)
+                    },
+                ],
                 fixed_values: std::collections::HashMap::new(),
                 samples: vec![
                     json!({"state": "User request: 查看所有在线设备的状态"}),
+                    json!({"state": "User request: 我上次说的偏好是什么", "preset": "memory"}),
+                    json!({"state": "{\"event\":{\"type\":\"rule_triggered\",\"severity\":\"critical\"},\"detail\":\"temp 85C\"}", "preset": "notify"}),
                     json!({"state": "User request: what alerts need attention?", "questions": {
                         "tool": {"type": "choice", "instructions": "Which tool should serve this user request?", "criteria": {"none": "pure conversation"}}
                     }}),
@@ -326,6 +365,11 @@ impl Extension for LayaDecisionExtension {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+                let preset = args
+                    .get("preset")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("routing")
+                    .to_string();
                 let questions: std::collections::BTreeMap<String, laya::WireQuestion> = match args
                     .get("questions")
                 {
@@ -348,7 +392,9 @@ impl Extension for LayaDecisionExtension {
                         );
                         m
                     }
-                    None => default_router_questions(),
+                    None => preset_questions(&preset).ok_or_else(|| ExtensionError::InvalidArguments(format!(
+                        "unknown preset '{preset}' (routing | guidance | memory | notify)"
+                    )))?,
                 };
                 let started = std::time::Instant::now();
                 let answers = engine
@@ -360,6 +406,41 @@ impl Extension for LayaDecisionExtension {
                     "answers": answers,
                     "latency_ms": started.elapsed().as_millis() as u64,
                 }))
+            }
+            "download" => {
+                // Idempotent background fetch of the int8 artifact tier.
+                let dir = self.dir();
+                let base = self.model_base.lock().unwrap().clone();
+                if self.downloader.active.load(Ordering::SeqCst) == 1 {
+                    return Ok(json!({"download": "already-running", "progress_permille": self.downloader.progress.load(Ordering::SeqCst)}));
+                }
+                if downloader::Downloader::artifacts_present(&dir.join("models").join("decision")) {
+                    return Ok(json!({"download": "already-present"}));
+                }
+                let dl_active = self.downloader.active.clone();
+                let dl_progress = self.downloader.progress.clone();
+                dl_active.store(1, Ordering::SeqCst);
+                dl_progress.store(0, Ordering::SeqCst);
+                let target_dir = dir.join("models").join("decision");
+                let target_label = target_dir.display().to_string();
+                std::thread::spawn(move || {
+                    let res = {
+                        // one-shot Downloader sharing the shared progress atoms
+                        let dl = downloader::Downloader {
+                            progress: dl_progress.clone(),
+                            active: dl_active.clone(),
+                        };
+                        dl.ensure_models(&base, &target_dir)
+                    };
+                    if let Err(e) = res {
+                        // surfaced via status: store an error marker in progress
+                        // (9999 = failed; status reports the code)
+                        dl_progress.store(9999, Ordering::SeqCst);
+                        eprintln!("[laya-decision] model download failed: {e}");
+                    }
+                    dl_active.store(0, Ordering::SeqCst);
+                });
+                Ok(json!({"download": "started", "target": target_label, "base": self.model_base.lock().unwrap().clone()}))
             }
             "status" => {
                 // Lazy start: the host only calls `configure` when a saved
@@ -381,8 +462,13 @@ impl Extension for LayaDecisionExtension {
                     // booleans with no route forward; this hint names the
                     // expected files and where they go.
                     "install_hint": if present { serde_json::Value::Null } else { serde_json::json!(
-                        "Model artifacts MISSING — this extension ships the engine only. Obtain the v22 checkpoint set (model.onnx + model.onnx.data, OR model_int8.onnx, plus tokenizer/, remap.json, rl_agent_config.json) and place them under <data>/models/decision/. The engine starts automatically on the next status/configure once the files are present."
+                        "Model artifacts MISSING — run the download command to fetch the int8 tier (~167MB, checksum-verified) from the configured modelBase, or place the v22 checkpoint set (model_int8.onnx + tokenizer/ + remap.json + rl_agent_config.json) under <data>/models/decision/ manually. The engine starts automatically once the files are present."
                     )},
+                    "download": {
+                        "progress_permille": self.downloader.progress.load(Ordering::SeqCst),
+                        "active": self.downloader.active.load(Ordering::SeqCst) == 1,
+                        "model_base": self.model_base.lock().unwrap().clone(),
+                    },
                     "sidecar": {
                         "port": port,
                         "url": format!("http://127.0.0.1:{port}"),
@@ -537,4 +623,91 @@ fn default_router_questions() -> std::collections::BTreeMap<String, laya::WireQu
         },
     );
     m
+}
+
+/// Question-preset packs for `decide --preset`. Wording is the production
+/// contract (LAYA_CHARTER §2): trained in the fine-tuning pipeline, mirrored
+/// here. `routing` works on every checkpoint; `guidance` needs v21+; the
+/// `memory`/`notify` heads were trained in the v23 line — on the deployed
+/// v22 checkpoint they run zero-shot (usable floor, not gate-grade).
+fn preset_questions(preset: &str) -> Option<std::collections::BTreeMap<String, laya::WireQuestion>> {
+    use laya::QuestionKind;
+    let mut m = std::collections::BTreeMap::new();
+    match preset {
+        "routing" => return Some(default_router_questions()),
+        "guidance" => {
+            m.insert("workflow".to_string(), laya::WireQuestion {
+                kind: QuestionKind::Choice,
+                instructions: "What shape of work does this request need?".into(),
+                criteria: serde_json::json!({
+                    "direct": "exactly one command, lookup, or question",
+                    "multi_step": "two or more operations chained or spread across turns",
+                    "guided": "an interactive guided setup flow",
+                    "converse": "pure conversation, no platform operations"
+                }),
+            });
+            m.insert("clarify".to_string(), laya::WireQuestion {
+                kind: QuestionKind::Noul,
+                instructions: "Does this request need more details from the user before acting?".into(),
+                criteria: serde_json::Value::Null,
+            });
+            m.insert("scope".to_string(), laya::WireQuestion {
+                kind: QuestionKind::Choice,
+                instructions: "What is the scope of this request?".into(),
+                criteria: serde_json::json!({
+                    "neomind_op": "platform operations",
+                    "neomind_setup": "initial setup/onboarding",
+                    "general_chat": "general conversation",
+                    "out_of_scope": "unrelated to the platform"
+                }),
+            });
+            m.insert("skill".to_string(), laya::WireQuestion {
+                kind: QuestionKind::Choice,
+                instructions: "Which workflow guide (if any) should be loaded for this request?".into(),
+                criteria: serde_json::json!({
+                    "agent-management": "create, run or manage scheduled AI agents",
+                    "connector-management": "manage protocol connectors (Modbus, OPC-UA, BACnet, LoRaWAN)",
+                    "dashboard-management": "create or edit dashboards and bind data sources",
+                    "data-push-management": "configure forwarding telemetry to external systems",
+                    "device-onboarding": "connect and register new devices step by step",
+                    "extension-development": "build custom extensions",
+                    "extension-management": "install, configure or invoke extensions",
+                    "llm-management": "configure or switch LLM backends",
+                    "message-management": "send notifications or manage channels and alert history",
+                    "rule-management": "create, inspect or manage automation rules",
+                    "settings-management": "platform settings (retention, language, configuration)",
+                    "system-info": "system diagnostics, health, logs, version info",
+                    "transform-management": "create or test data transforms (computed metrics)",
+                    "widget-development": "develop community dashboard widgets",
+                    "widget-management": "manage dashboard widgets",
+                    "none": "no guide needed — direct operation or conversation"
+                }),
+            });
+        }
+        "memory" => {
+            m.insert("timing".to_string(), laya::WireQuestion {
+                kind: QuestionKind::Noul,
+                instructions: "Should stored user memory (preferences, prior facts, procedures) be consulted before answering this message?".into(),
+                criteria: serde_json::Value::Null,
+            });
+            m.insert("granularity".to_string(), laya::WireQuestion {
+                kind: QuestionKind::Choice,
+                instructions: "How much stored memory should be attached to this message's context?".into(),
+                criteria: serde_json::json!({
+                    "none": "no memory needed — the message is self-contained",
+                    "preferences": "the user's stated preferences and personal facts only",
+                    "knowledge": "the full relevant knowledge file or procedure guide"
+                }),
+            });
+        }
+        "notify" => {
+            m.insert("notify".to_string(), laya::WireQuestion {
+                kind: QuestionKind::Noul,
+                instructions: "A platform event just occurred. Should the user be proactively notified about it right now?".into(),
+                criteria: serde_json::Value::Null,
+            });
+        }
+        _ => return None,
+    }
+    Some(m)
 }

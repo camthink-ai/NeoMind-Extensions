@@ -1050,9 +1050,45 @@ if [ "$SKIP_PACKAGE" = false ] && [ "$BUILD_TYPE" = "release" ]; then
             "extensions/$ext/metadata.json" 2>/dev/null || true)
         [ -z "$ENV_HINTS" ] && ENV_HINTS="null"
 
+        # Native extension - platform-specific binary
+        # (restored after the WASM-removal refactor dropped this block along
+        # with the WASM branch — HEAD could not package ANY extension)
+        MANIFEST_JSON=$(jq -n \
+                --arg format "neomind-extension-package" \
+                --arg format_version "2.0" \
+                --argjson abi_version 3 \
+                --arg id "$ext" \
+                --arg name "$(echo $ext | sed 's/-v2$//' | sed 's/-/ /g')" \
+                --arg version "$EXT_VERSION" \
+                --arg sdk_version "2.0.0" \
+                --arg type "native" \
+                --arg platform "$PLATFORM" \
+                --arg lib_ext "$LIB_EXT" \
+                --argjson has_models "$HAS_MODELS" \
+                --argjson dashboard_components "$DASHBOARD_COMPONENTS" \
+                --argjson env_hints "$ENV_HINTS" \
+                '{
+                    format: $format,
+                    format_version: $format_version,
+                    abi_version: $abi_version,
+                    id: $id,
+                    name: $name,
+                    version: $version,
+                    sdk_version: $sdk_version,
+                    type: $type,
+                    binaries: { ($platform): ("binaries/" + $platform + "/extension." + $lib_ext) },
+                    frontend: {
+                        "components": $dashboard_components
+                    }
+                } | if $has_models then . + {"models": "models/"} else . end
+                  | if $env_hints != null then . + {"env_hints": $env_hints} else . end')
+
         echo "$MANIFEST_JSON" > "$PACKAGE_DIR/manifest.json"
 
         # Create .nep package with platform suffix for native extensions
+        # Native extensions need platform suffix (+ optional variant suffix)
+        OUTPUT_FILE="dist/${ext}-${PACKAGE_VERSION}-${PLATFORM}${VARIANT_SUFFIX}.nep"
+
         # Resolve absolute output path BEFORE changing directory
         # Create dist/ directory first to ensure it exists
         mkdir -p "$(dirname "$OUTPUT_FILE")"
