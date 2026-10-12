@@ -161,7 +161,7 @@ mod tests {
             "weather-forecast",
             "image-analyzer",
             "yolo-video",
-            "wasm-demo",
+            "laya-decision",
             "yolo-device-inference",
         ] {
             let metadata_path = format!("../{id}/metadata.json");
@@ -169,7 +169,7 @@ mod tests {
                 "weather-forecast" => serde_json::from_str(include_str!("../metadata.json")).unwrap(),
                 "image-analyzer" => serde_json::from_str(include_str!("../../image-analyzer/metadata.json")).unwrap(),
                 "yolo-video" => serde_json::from_str(include_str!("../../yolo-video/metadata.json")).unwrap(),
-                "wasm-demo" => serde_json::from_str(include_str!("../../wasm-demo/metadata.json")).unwrap(),
+                "laya-decision" => serde_json::from_str(include_str!("../../laya-decision/metadata.json")).unwrap(),
                 "yolo-device-inference" => serde_json::from_str(include_str!("../../yolo-device-inference/metadata.json")).unwrap(),
                 _ => unreachable!(),
             };

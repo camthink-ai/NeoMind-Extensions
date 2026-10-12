@@ -58,7 +58,7 @@ async-trait = "0.1"
 ort = { version = "2.0.0-rc.10", default-features = false, features = ["half", "load-dynamic"] }
 
 
-neomind-extension-sdk = "0.7.1"
+neomind-extension-sdk = "0.8.0"
 
 
 # Patch usls to skip unreliable is_available() check for CUDA EP.

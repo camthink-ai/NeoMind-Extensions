@@ -15,7 +15,7 @@ crate-type = ["cdylib", "rlib"]
 # only resolved when the core repo happened to be checked out next to this
 # one, and broke every `neomind-ext new` since the workspace moved to the
 # crates.io dependency.
-neomind-extension-sdk = "0.6"
+neomind-extension-sdk = "0.8"
 serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = "0.1"
