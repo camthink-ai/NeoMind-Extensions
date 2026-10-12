@@ -32,7 +32,6 @@ pub const ARTIFACT_FILES: &[&str] = &[
     "golden.jsonl",
     "tokenizer/tokenizer.json",
     "tokenizer/tokenizer_config.json",
-    "tokenizer/special_tokens_map.json",
     "model_int8.onnx",
 ];
 
