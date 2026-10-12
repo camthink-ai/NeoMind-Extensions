@@ -4001,6 +4001,17 @@ neomind_extension_sdk::neomind_export!(YoloVideoProcessorV2);
 
 #[cfg(test)]
 mod tests {
+
+    /// The stream registry is a process-global singleton; tests that touch
+    /// it must not interleave (a concurrent clear() starves another test's
+    /// streams_status assertion — flaky only under `cargo test` default
+    /// multi-threading).
+    static REGISTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    macro_rules! registry_serial {
+        () => {
+            let _guard = REGISTRY_TEST_LOCK.lock();
+        }
+    }
     use super::*;
     use serde_json::Value;
 
@@ -4012,7 +4023,7 @@ mod tests {
         assert_eq!(meta.name, "Video VLM");
         assert_eq!(
             meta.description.as_deref(),
-            Some("Real-time video stream object detection with YOLOv11, RTSP/camera support, ROI analytics, line crossing, smart capture rules, and MJPEG streaming")
+            Some("Real-time video stream understanding: RTSP/file/camera input, on-board VLM analysis with timeline, voice, and hardware-accelerated streaming")
         );
     }
 
@@ -4094,6 +4105,7 @@ mod tests {
     /// time-series store with rows that carry no information.
     #[test]
     fn test_produce_metrics_skips_empty_aggregates() {
+        registry_serial!();
         let ext = YoloVideoProcessorV2::new();
         // Make sure the global registry is empty for this test. Other
         // tests in this module don't touch the registry, but defensive
@@ -4139,6 +4151,7 @@ mod tests {
     /// after the first frame is a genuine signal we want to keep).
     #[test]
     fn test_produce_metrics_skips_warmup_session_dynamic() {
+        registry_serial!();
         let ext = YoloVideoProcessorV2::new();
         let session_id = "warmup-test-session".to_string();
         // Insert a warm-up session (frame_count=0) and register its label
@@ -4250,7 +4263,7 @@ mod tests {
     fn test_extension_commands() {
         let ext = YoloVideoProcessorV2::new();
         let commands = ext.commands();
-        assert_eq!(commands.len(), 5);
+        assert_eq!(commands.len(), 8);
         assert_eq!(commands[0].name, "start_stream");
     }
 

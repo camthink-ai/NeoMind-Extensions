@@ -905,13 +905,15 @@ mod tests {
 
     #[test]
     fn test_parse_camera_url() {
+        // camera:// maps to the raw UVC device node as a File source
+        // (RK3576: video0-11 are the ISP; UVC starts at video25).
         let result = parse_source_url("camera://0");
         assert!(result.is_ok());
         match result.unwrap() {
-            SourceType::Camera { device_index, .. } => {
-                assert_eq!(device_index, 0);
+            SourceType::File { path, .. } => {
+                assert_eq!(path, "/dev/video25");
             }
-            _ => panic!("Expected Camera type"),
+            _ => panic!("Expected File source for camera://"),
         }
     }
 

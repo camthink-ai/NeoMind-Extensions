@@ -2,6 +2,6 @@
   "id": "video-vlm",
   "name": "Video VLM",
   "version": "2.0.0",
-  "description": "Real-time video stream object detection with YOLOv11, RTSP/camera support, ROI analytics, line crossing, smart capture rules, and MJPEG streaming",
+  "description": "Real-time video stream understanding: RTSP/file/camera input, on-board VLM analysis with timeline, voice, and hardware-accelerated streaming",
   "author": "NeoMind Team"
 }

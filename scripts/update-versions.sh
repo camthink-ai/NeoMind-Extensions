@@ -287,7 +287,13 @@ EOF
     # Title-case words PORTABLY: BSD sed (macOS) does not support \u/\b in
     # the regex — the old `sed 's/\b\(.\)/\u\1/g'` produced literal "u"
     # prefixes ("uacnet uridge") in every generated metadata.json/index.json.
-    DISPLAY_NAME=$(echo "$ext_id" | sed 's/-v2$//' | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1')
+    # Preserve a hand-authored name (release.sh does the same): title-casing
+    # rewrites acronyms ("Video VLM" -> "Video Vlm") and breaks the
+    # metadata-alignment tests in extensions that assert their real name.
+    DISPLAY_NAME=$(jq -r '.name // ""' "$ext_dir/metadata.json" 2>/dev/null || echo "")
+    if [ -z "$DISPLAY_NAME" ]; then
+      DISPLAY_NAME=$(echo "$ext_id" | sed 's/-v2$//' | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1')
+    fi
     cat > "$ext_dir/metadata.json" <<EOF
 {
   "id": "$ext_id",

@@ -401,6 +401,25 @@ int _neomind_extension_shutdown();
 
 > 详细发布步骤和版本规范见上方 [Release Process](#release-process-1) 章节。
 
+### SOP: CI green BEFORE market JSON moves (2026-10-12, post-v2.14.0 incident)
+
+Market `metadata.json` / `index.json` download URLs are user-facing the
+moment they land on `main`. Never point them at a release that does not
+exist yet. Order of operations, mandatory:
+
+1. Land code + CI fixes on `main`; wait for **Build .nep Packages V2 green
+   on all four platforms**.
+2. `./release.sh X.Y.Z` (sync VERSION/Cargo/metadata/index) — this is the
+   FIRST time market URLs change.
+3. `./release.sh X.Y.Z --commit` + push the tag; CI rebuilds and attaches
+   the .nep assets to `vX.Y.Z`.
+4. Verify assets exist on the release before announcing anything.
+
+The v2.14.0 cycle violated this (release.sh ran while CI had been red
+since 2026-09-21), leaving every extension's download URL dead for the
+duration of the CI repair. If a release must be cut while CI is red,
+revert market JSON to the last green tag instead.
+
 ## Important Rules
 
 ### HTTP Client in Extensions
