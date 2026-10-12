@@ -33,6 +33,7 @@ fail()  { echo -e "  ${RED}✗${NC} $1"; }
 platform_suffix() {
     case "$1" in
         linux-x86_64)  echo "linux_amd64" ;;
+        windows-x86_64) echo "windows_amd64" ;;
         linux-aarch64) echo "linux_arm64" ;;
         *)             echo "${1//-/_}" ;;
     esac
