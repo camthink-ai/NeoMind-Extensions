@@ -869,6 +869,7 @@ mod tests {
     use serde_json::Value;
 
     #[test]
+    #[ignore = "binary links usls/ort-load-dynamic whose C++ static init aborts on CI runners — run locally with an onnxruntime env"]
     fn test_extension_metadata() {
         let ext = ImageAnalyzer::new();
         let meta = ext.metadata();
@@ -878,6 +879,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "binary links usls/ort-load-dynamic whose C++ static init aborts on CI runners — run locally with an onnxruntime env"]
     fn test_metadata_json_matches_runtime_metadata() {
         let ext = ImageAnalyzer::new();
         let meta = ext.metadata();
@@ -896,6 +898,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "binary links usls/ort-load-dynamic whose C++ static init aborts on CI runners — run locally with an onnxruntime env"]
     fn test_extension_metrics() {
         let ext = ImageAnalyzer::new();
         let metrics = ext.metrics();
@@ -903,6 +906,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "binary links usls/ort-load-dynamic whose C++ static init aborts on CI runners — run locally with an onnxruntime env"]
     fn test_extension_commands() {
         let ext = ImageAnalyzer::new();
         let commands = ext.commands();
@@ -911,6 +915,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "binary links usls/ort-load-dynamic whose C++ static init aborts on CI runners — run locally with an onnxruntime env"]
     fn test_fallback_analysis() {
         let ext = ImageAnalyzer::new();
         let (objects, description) = ext.fallback_analysis(&[0xFF, 0xD8, 0xFF, 0x00]);
