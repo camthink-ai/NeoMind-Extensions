@@ -18,7 +18,6 @@ on:
           - paddle-ocr-v6
           - face-recognition
           - stream-player
-          - vision-hub
           - locate-anything
           - uink-rms-bridge
           - homeassistant-bridge
@@ -35,7 +34,6 @@ on:
           - paddle-ocr-vl
           - deepstream
           - gym-tracker
-          - wasm-demo
       release:
         description: 'Create GitHub Release'
         required: false

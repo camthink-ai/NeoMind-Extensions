@@ -159,8 +159,8 @@ NeoMind-Extensions/
 ├── scripts/
 │   ├── update-versions.sh  # Generate all JSON files
 │   └── generate-json.ts    # DEPRECATED — does NOT handle env_hints; running it
-│                           # silently strips vision-hub's ORT_DYLIB_PATH declaration.
-│                           # Always use scripts/update-versions.sh instead.
+│                           # silently strips env_hints declarations (e.g.
+│                           # ORT_DYLIB_PATH). Always use scripts/update-versions.sh instead.
 ├── release.sh              # Build .nep packages
 └── Cargo.toml              # Workspace configuration
 ```

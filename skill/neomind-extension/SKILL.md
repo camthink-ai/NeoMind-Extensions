@@ -22,12 +22,12 @@ description: |
   - Python sidecar pattern: Rust WS/HTTP client + external Python service
   - Cross-platform building for 6 platforms + hardware acceleration caveats
 
-  Based on 27 production extensions: weather-forecast, image-analyzer,
+  Based on 26 production extensions: weather-forecast, image-analyzer,
   yolo-video, yolo-device-inference, face-recognition, ocr-device-inference,
   paddle-ocr-v6, paddle-ocr-vl, stream-player, deepstream,
   modbus/lorawan/homeassistant/opcua/onvif/bacnet-bridge,
   uink-rms-bridge, locate-anything, voice-assistant, cosyvoice-3, moss-tts-nano,
-  sensevoice-asr, voice-edge-tts, gym-tracker, video-vlm, vision-hub.
+  sensevoice-asr, voice-edge-tts, gym-tracker, video-vlm, laya-decision.
 
 version: 3.0.0
 argument-hint: "[extension-name]"

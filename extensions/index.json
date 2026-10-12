@@ -726,43 +726,6 @@
       "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/video-vlm/metadata.json"
     },
     {
-      "id": "vision-hub",
-      "name": "Vision Hub",
-      "version": "2.12.0",
-      "description": "Unified vision extension: hardware-accelerated detection/OCR/face/grounding/VLM pipelines on device streams, uploads and URLs — one task schema, one config, no usls [commercial edition — source and releases moved to the NeoMind-Extensions-Pro private repo]",
-      "author": "NeoMind Team",
-      "license": "Apache-2.0",
-      "type": "native",
-      "categories": [
-        "utility"
-      ],
-      "homepage": "https://github.com/camthink-ai/NeoMind-Extensions-Pro",
-      "builds": {
-        "darwin-aarch64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.13.0/vision-hub--darwin_aarch64.nep"
-        },
-        "linux-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.13.0/vision-hub--linux_amd64.nep"
-        },
-        "linux-aarch64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.13.0/vision-hub--linux_arm64.nep"
-        },
-        "windows-x86_64": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.13.0/vision-hub--windows_amd64.nep"
-        },
-        "linux-aarch64-jetson": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.13.0/vision-hub--linux_arm64-jetson.nep"
-        },
-        "linux-x86_64-cuda": {
-          "url": "https://github.com/camthink-ai/NeoMind-Extensions/releases/download/v2.13.0/vision-hub--linux_amd64-cuda.nep"
-        }
-      },
-      "env_hints": {
-        "ORT_DYLIB_PATH": "{binaries}/{ort_lib}"
-      },
-      "metadata_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/vision-hub/metadata.json"
-    },
-    {
       "id": "voice-assistant",
       "name": "Voice Assistant",
       "version": "2.13.0",

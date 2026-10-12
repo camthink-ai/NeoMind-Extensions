@@ -954,10 +954,11 @@ Attach data-URL images to a chat turn; the platform routes them to a
 vision-capable backend. Mind the ~1MB capability-input cap — downscale
 frames first (≤1024px JPEG is safe).
 
-### Shared vision runtime — `crates/vision-common`
+### Shared vision runtime — moved to the private Extensions-Pro repo
 
-New vision extensions should depend on the workspace crate
 `vision-common` (hardware-acceleration abstraction over direct ort,
 YOLO/OCR decoders, image IO, drawing, model manager with download/cache,
-license gating, remote engines) instead of vendoring usls or copy-pasting
-bootstrap code. See `extensions/vision-hub/` for the reference consumer.
+license gating, remote engines) and its reference consumer `vision-hub`
+now live in the private **NeoMind-Extensions-Pro** repo (commercial
+edition). This workspace carries no vision crates; open-source vision
+extensions vendor their own runtime dependencies.

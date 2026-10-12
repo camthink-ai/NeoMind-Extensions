@@ -53,14 +53,12 @@ VARIANT_BUILDS=(
     "image-analyzer|linux-aarch64|jetson|linux_arm64"
     "paddle-ocr-v6|linux-aarch64|jetson|linux_arm64"
     "ocr-device-inference|linux-aarch64|jetson|linux_arm64"
-    "vision-hub|linux-aarch64|jetson|linux_arm64"
     # x86_64 CUDA variants (built on GPU box 43.132.189.162, Tesla T4)
     "yolo-video|linux-x86_64|cuda|linux_amd64"
     "yolo-device-inference|linux-x86_64|cuda|linux_amd64"
     "image-analyzer|linux-x86_64|cuda|linux_amd64"
     "paddle-ocr-v6|linux-x86_64|cuda|linux_amd64"
     "ocr-device-inference|linux-x86_64|cuda|linux_amd64"
-    "vision-hub|linux-x86_64|cuda|linux_amd64"
 )
 
 if [ -z "$MARKET_VERSION" ]; then
@@ -220,7 +218,7 @@ EOF
     fi
 
     # Preserve env_hints from the EXISTING metadata.json (runner-injected
-    # env declarations, e.g. vision-hub's ORT_DYLIB_PATH) — the template
+    # env declarations, e.g. ORT_DYLIB_PATH) — the template
     # below doesn't carry it, so re-merge after generation.
     env_hints=$(jq -c '.env_hints // empty' "$ext_dir/metadata.json" 2>/dev/null || true)
 

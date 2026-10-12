@@ -891,6 +891,6 @@ runner 启动扩展进程时注入:私有 `data/` 子目录,**升级与卸载均
 
 图片以 data-URL 传入,平台路由到支持视觉的后端;注意 ~1MB capability 上限,先降采样(≤1024px JPEG 安全)。
 
-### 共享视觉运行时 — `crates/vision-common`
+### 共享视觉运行时 — 已迁至私有 Extensions-Pro 仓库
 
-新视觉扩展应依赖 workspace 内的 `vision-common`(直连 ort 的硬件加速抽象、YOLO/OCR 解码、图像 IO、画框、模型管理、license 门控、远程引擎),参考消费者:`extensions/vision-hub/`。
+`vision-common`(直连 ort 的硬件加速抽象、YOLO/OCR 解码、图像 IO、画框、模型管理、license 门控、远程引擎)及其参考消费者 `vision-hub` 已迁至私有 **NeoMind-Extensions-Pro** 仓库(商业版)。本仓库不再包含视觉 crate;开源视觉扩展请自行引入所需运行时依赖。

@@ -191,7 +191,6 @@ NeoMind-Extensions/
 | `./release.sh 2.7.9` | Same as `./build.sh --release` |
 | Gym Tracker | `gym-tracker` | Vision | GymMonitor / GymVideoOverlay / GymMemberReport / GymWorkoutSummary / GymEquipmentGrid / GymTrafficChart / GymDoorFlow / GymActivityMap / GymAlerts / GymEquipmentRank | Smart gym suite: member face recognition + body ReID, equipment zone occupancy, rep counting (joint-angle state machines), live video overlay with skeleton, member training reports, door flow and traffic analytics — ingests NE503 gym-native tracks |
 | Video VLM | `video-vlm` | AI/ML | VideoVlmDisplay | Real-time video stream VLM understanding (on-board LFM2.5-VL) |
-| Vision Hub | `vision-hub` | AI/ML | (in frontend batch) | Unified vision: hardware-accelerated detection pipelines with license gating |
 
 ---
 

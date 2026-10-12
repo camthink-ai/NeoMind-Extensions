@@ -166,7 +166,6 @@ neomind-ext package --with-frontend
 | `neomind-ext clean` | 清理构建产物 |
 | 健身房追踪 | `gym-tracker` | 视觉 | — | NE503 摄像头轨迹驱动的器械占用状态机 |
 | 视频 VLM | `video-vlm` | AI/ML | VideoVlmDisplay | 实时视频流 VLM 理解(板端 LFM2.5-VL)|
-| Vision Hub | `vision-hub` | AI/ML | (前端批次中)| 统一视觉扩展:硬件加速检测管线 + 许可门控 |
 
 ### 优势
 
